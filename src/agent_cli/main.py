@@ -494,6 +494,14 @@ def cmd_agent(args: list[str]) -> None:
                 )
                 if tr.get(verdict_key) is not None:
                     die("role already taken for this round")
+            if role == "implementer":
+                if task.get("state") != "implementing":
+                    die("task state must be implementing")
+            if role == "reviewer":
+                if task.get("state") != "reviewing":
+                    die("task state must be reviewing")
+                if tr is None or tr.get("implementer_verdict") != "done":
+                    die("implementer_verdict must be done before reviewer start")
             aid = str(uuid.uuid4())
             store.write(
                 "agent",
@@ -626,7 +634,7 @@ def cmd_gate(args: list[str]) -> None:
         die(
             "Usage: agent gate record --task UUID --stage grok-pr|codex-pr "
             "--dimension quality|logic --vendor grok|codex --verdict approved|rejected "
-            "--head SHA --agent UUID"
+            "--head SHA --agent UUID [--evidence TEXT]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")

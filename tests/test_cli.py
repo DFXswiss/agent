@@ -417,6 +417,53 @@ def test_gate_record_codex_before_grok_dies(
         )
 
 
+def test_reviewer_start_before_implementer_done_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="reviewing|implementer_verdict"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "s",
+                "--task",
+                tid,
+                "--role",
+                "reviewer",
+                "--vendor",
+                "grok",
+                "--round",
+                "1",
+            ],
+        )
+
+
 def test_implementer_finish_blocked_sets_failed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
