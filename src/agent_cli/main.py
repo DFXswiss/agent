@@ -333,7 +333,9 @@ def cmd_checklist(args: list[str]) -> None:
     if not args or args[0] != "set":
         die(
             "Usage: agent checklist set --task ID --key KEY --status ja|nein|n_a|pending "
-            "--source human|runner|script"
+            "--source human|runner|script "
+            "[--evidence TEXT] [--deviation-declared true|false] "
+            "[--deviation-granted true|false] [--granted-by TEXT] [--actor-session ID]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
@@ -410,11 +412,7 @@ def cmd_round(args: list[str]) -> None:
             die("cannot start a round on a done task")
         current = int(task.get("current_round") or 0)
         for agent in store.rows("agent"):
-            if (
-                agent.get("task_id") == tid
-                and agent.get("round") == current
-                and agent.get("status") == "working"
-            ):
+            if agent.get("task_id") == tid and agent.get("status") == "working":
                 die("round still has a working agent")
         n = current + 1
         task["current_round"] = n
@@ -685,11 +683,7 @@ def cmd_gate(args: list[str]) -> None:
         expected_role = f"pr-reviewer-{dimension}"
         if agent.get("role") != expected_role:
             die(f"agent role must be {expected_role}")
-        if (
-            verdict == "rejected"
-            and task.get("workflow") in ("implement", "resolve-conflicts")
-            and task.get("state") == "done"
-        ):
+        if verdict == "rejected" and task.get("state") == "done":
             die("cannot reject a gate on a done task")
         gid = str(uuid.uuid4())
         store.write(

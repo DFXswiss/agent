@@ -694,6 +694,37 @@ def test_round_start_with_working_agent_dies(
         run(tmp_path, ["round", "start", "--task", tid])
 
 
+def test_round_start_with_working_pr_reviewer_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "grok",
+        ],
+    )
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="round still has a working agent"):
+        run(tmp_path, ["round", "start", "--task", tid])
+
+
 def test_implementer_finish_after_session_closed_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
