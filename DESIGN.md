@@ -195,7 +195,7 @@ agent ping ack --id <uuid>
 | Across people | The hub publishes to SSE (`/api/stream`) and WebSocket (`/sync/ws?token=…`) **filtered by visibility**. Unrelated logins must not see foreign activity metadata. |
 | Offline | Events queue locally. On reconnect, per-origin catch-up. |
 
-The previous local HTML dashboard that polled every three seconds is not the contract.
+`agent sync --follow` stays on `/sync/ws?token=…` after one push+pull; a dead or failed socket is a loud error (no silent poll fallback). The previous local HTML dashboard that polled every three seconds is not the contract.
 
 ## 12. Auth and cookies
 
@@ -223,6 +223,14 @@ agent init
 agent session register|heartbeat|list|close
 agent task create|list|show|state|summary
 agent checklist set
+agent round start --task UUID
+agent agent start --session ID --task UUID --role ROLE --vendor grok|codex [--round N]
+agent agent finish --id UUID --verdict VERDICT [--note TEXT]
+agent check record --task UUID --name NAME --command CMD --result pass|fail|skip [--output TEXT]
+agent gate record --task UUID --stage grok-pr|codex-pr --dimension quality|logic --vendor grok|codex --verdict approved|rejected --head SHA --agent UUID [--evidence TEXT]
+agent work add --session ID --key KEY --closable-by agent|human [--note TEXT]
+agent work set --session ID --key KEY --status open|done|cancelled --source human|runner|script [--actor-session ID]
+agent work list [--session ID]
 agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
