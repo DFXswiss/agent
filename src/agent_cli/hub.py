@@ -56,16 +56,15 @@ class Hub:
     def push(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         return self.request("POST", "/sync/push", headers=self._headers(), json={"events": events})
 
-    def pull(self, after_hub_seq: int) -> dict[str, Any]:
-        return self.request(
-            "GET",
-            "/sync/pull",
-            headers=self._headers(),
-            params={"after_hub_seq": str(after_hub_seq)},
-        )
+    def pull(self, cursors: dict[str, int]) -> dict[str, Any]:
+        params = [("cursor", f"{origin}:{seq}") for origin, seq in cursors.items()]
+        return self.request("GET", "/sync/pull", headers=self._headers(), params=params)
 
     def restore(self) -> dict[str, Any]:
         return self.request("GET", "/sync/restore", headers=self._headers())
+
+    def ack(self, ping_id: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/pings/{ping_id}/ack", headers=self._headers())
 
 
 def _detail(response: httpx.Response) -> str:

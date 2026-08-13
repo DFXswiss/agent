@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -75,15 +76,46 @@ class StoreError(SystemExit):
 class Store:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
         self.path = path
-        self.conn = sqlite3.connect(str(path))
+        self.identity_path = path.parent / "device.json"
+        self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
-        if self.meta("device_id") is None:
-            self.set_meta("device_id", str(uuid.uuid4()))
+        os.chmod(path, 0o600)
+        self._load_identity()
+
+    def _load_identity(self) -> None:
+        if self.identity_path.is_file():
+            data = json.loads(self.identity_path.read_text(encoding="utf-8"))
+            device_id = data.get("device_id")
+            if not isinstance(device_id, str) or device_id == "":
+                raise StoreError("device.json is missing device_id")
+            self.set_meta("device_id", device_id)
+            for key in ("device_token", "github_login", "hub_url", "pair_challenge"):
+                value = data.get(key)
+                if isinstance(value, str) and value:
+                    self.set_meta(key, value)
+            return
+        device_id = self.meta("device_id") or str(uuid.uuid4())
+        self.set_meta("device_id", device_id)
+        self.save_identity()
+
+    def save_identity(self) -> None:
+        payload = {
+            "device_id": self.device_id(),
+            "device_token": self.meta("device_token"),
+            "github_login": self.meta("github_login"),
+            "hub_url": self.meta("hub_url"),
+            "pair_challenge": self.meta("pair_challenge"),
+        }
+        tmp = self.identity_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.identity_path)
 
     def close(self) -> None:
         self.conn.close()
@@ -104,6 +136,8 @@ class Store:
             (key, value),
         )
         self.conn.commit()
+        if key in ("device_token", "github_login", "hub_url", "pair_challenge"):
+            self.save_identity()
 
     def sync_get(self, key: str, default: str | None = None) -> str | None:
         row = self.conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
@@ -119,6 +153,7 @@ class Store:
         self.conn.commit()
 
     def next_seq(self) -> int:
+        self.conn.execute("BEGIN IMMEDIATE")
         row = self.conn.execute(
             "SELECT COALESCE(MAX(origin_seq), 0) AS m FROM ledger_event WHERE origin_device_id = ?",
             (self.device_id(),),
@@ -283,6 +318,19 @@ class Store:
 
     def mark_pushed(self, seq: int) -> None:
         self.sync_set("pushed_origin_seq", str(seq))
+
+    def origin_cursor(self, origin: str) -> int:
+        raw = self.sync_get(f"origin:{origin}", "0")
+        return int(raw or "0")
+
+    def mark_origin(self, origin: str, seq: int) -> None:
+        current = self.origin_cursor(origin)
+        if seq > current:
+            self.sync_set(f"origin:{origin}", str(seq))
+
+    def all_cursors(self) -> dict[str, int]:
+        rows = self.conn.execute("SELECT key, value FROM sync_state WHERE key LIKE 'origin:%'").fetchall()
+        return {r["key"][7:]: int(r["value"]) for r in rows}
 
     def rows(self, table: str) -> list[dict[str, Any]]:
         found = self.conn.execute(

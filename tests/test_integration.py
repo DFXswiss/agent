@@ -77,8 +77,8 @@ def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
     alice_http = TestClient(app)
     bob_http = TestClient(app)
 
-    alice = Store(tmp_path / "alice.sqlite")
-    bob = Store(tmp_path / "bob.sqlite")
+    alice = Store(tmp_path / "alice" / "ledger.sqlite")
+    bob = Store(tmp_path / "bob" / "ledger.sqlite")
     _pair(alice_http, alice, "code-alice", "alice-box")
     _pair(bob_http, bob, "code-bob", "bob-box")
 
@@ -93,19 +93,19 @@ def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
     alice_hub = Hub("http://hub", token=alice.meta("device_token"), client=_Client(alice_http))
     bob_hub = Hub("http://hub", token=bob.meta("device_token"), client=_Client(bob_http))
     alice_hub.push(alice.pending_events())
-    pulled = bob_hub.pull(0)
+    pulled = bob_hub.pull({})
     titles = [e["payload"].get("title") for e in pulled["events"]]
     assert "Alice work" in titles
     for event in pulled["events"]:
         bob.apply_remote(event)
     assert bob.row("task", "task-a")["title"] == "Alice work"
 
-    wiped = Store(tmp_path / "alice-wiped.sqlite")
+    wiped = Store(tmp_path / "alice-wiped" / "ledger.sqlite")
     wiped.set_meta("device_id", alice.device_id())
     wiped.set_meta("device_token", alice.meta("device_token"))
     wiped.set_meta("github_login", "alice")
     restore = alice_hub.restore()
     assert restore["device_id"] == alice.device_id()
-    for event in restore["own_events"]:
+    for event in restore.get("events") or restore.get("own_events") or []:
         wiped.apply_remote(event)
     assert wiped.row("task", "task-a")["title"] == "Alice work"

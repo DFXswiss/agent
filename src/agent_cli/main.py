@@ -328,7 +328,9 @@ def cmd_pair(args: list[str]) -> None:
     try:
         if store.meta("device_token"):
             die("this device is already paired")
-        challenge = secrets.token_hex(16)
+        challenge = store.meta("pair_challenge") or secrets.token_hex(16)
+        store.set_meta("pair_challenge", challenge)
+        store.set_meta("hub_url", hub_url.rstrip("/"))
         hub = Hub(hub_url)
         try:
             prepared = hub.prepare(store.device_id(), challenge, name)
@@ -384,13 +386,11 @@ def cmd_restore(_: list[str]) -> None:
             hub.close()
         if body.get("device_id") != store.device_id():
             die("restore device_id does not match this device")
-        for event in body.get("own_events") or []:
+        events = body.get("events") or body.get("own_events") or []
+        for event in events:
             store.apply_remote(event)
-        for row in body.get("rows") or []:
-            store.apply_replica_row(row)
-        if "hub_seq" in body:
-            store.sync_set("hub_seq", str(body["hub_seq"]))
-        print(f"restored events={len(body.get('own_events') or [])} rows={len(body.get('rows') or [])}")
+            store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
+        print(f"restored events={len(events)}")
     finally:
         store.close()
 
@@ -433,12 +433,26 @@ def cmd_ping(args: list[str]) -> None:
             return
         if sub == "ack":
             pid = require_flag(rest, "--id")
-            row = _need(store, "ping", pid)
+            row = store.row("ping", pid)
             login = store.meta("github_login")
-            if row.get("to_login") != login:
+            if row is not None and row.get("to_login") != login:
                 die("only the recipient can ack")
-            row["acked_at"] = utcnow()
-            store.write("ping", "update", pid, _strip(row))
+            hub = _hub_from_store(store)
+            try:
+                result = hub.ack(pid)
+            finally:
+                hub.close()
+            payload = result.get("payload")
+            if isinstance(payload, dict):
+                store.apply_replica_row(
+                    {
+                        "table": "ping",
+                        "row_id": pid,
+                        "origin_device_id": row["_origin_device_id"] if row else "web",
+                        "payload": payload,
+                        "updated_at": payload.get("acked_at") or utcnow(),
+                    }
+                )
             print(f"acked {pid}")
             return
         die(f"unknown ping command: {sub}")
@@ -510,17 +524,13 @@ def _sync_once(store: Store) -> None:
         if pending:
             hub.push(pending)
             store.mark_pushed(pending[-1]["origin_seq"])
-        after = int(store.sync_get("hub_seq", "0") or "0")
-        pulled = hub.pull(after)
+        pulled = hub.pull(store.all_cursors())
         events = pulled.get("events")
         if not isinstance(events, list):
             die("pull response missing events")
-        last = after
         for event in events:
             store.apply_remote(event)
-            last = max(last, int(event["hub_seq"]))
-        if last != after:
-            store.sync_set("hub_seq", str(last))
+            store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
         print(f"sync pushed={len(pending)} pulled={len(events)}")
     finally:
         hub.close()
