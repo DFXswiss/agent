@@ -500,6 +500,144 @@ def test_implementer_finish_blocked_sets_failed(
     assert task["state"] == "failed"
 
 
+def _seed_foreign_implement_task(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "session",
+                "op": "insert",
+                "row_id": "sess-f",
+                "payload": {"id": "sess-f", "kind": "human", "status": "active"},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 2,
+                "table": "task",
+                "op": "insert",
+                "row_id": "t-foreign",
+                "payload": {
+                    "id": "t-foreign",
+                    "session_id": "sess-f",
+                    "workflow": "implement",
+                    "state": "implementing",
+                    "current_round": 1,
+                },
+                "occurred_at": "2026-08-13T12:00:01Z",
+            }
+        )
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 3,
+                "table": "task_round",
+                "op": "insert",
+                "row_id": "r-foreign",
+                "payload": {
+                    "id": "r-foreign",
+                    "task_id": "t-foreign",
+                    "round": 1,
+                    "implementer_verdict": None,
+                },
+                "occurred_at": "2026-08-13T12:00:02Z",
+            }
+        )
+    finally:
+        store.close()
+
+
+def test_agent_start_on_foreign_task_dies(tmp_path: Path) -> None:
+    _seed_foreign_implement_task(tmp_path)
+    with pytest.raises(SystemExit, match="another device"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "sess-f",
+                "--task",
+                "t-foreign",
+                "--role",
+                "implementer",
+                "--vendor",
+                "grok",
+                "--round",
+                "1",
+            ],
+        )
+
+
+def test_check_record_on_foreign_task_dies(tmp_path: Path) -> None:
+    _seed_foreign_implement_task(tmp_path)
+    with pytest.raises(SystemExit, match="another device"):
+        run(
+            tmp_path,
+            [
+                "check",
+                "record",
+                "--task",
+                "t-foreign",
+                "--name",
+                "lint",
+                "--command",
+                "true",
+                "--result",
+                "pass",
+            ],
+        )
+
+
+def test_implementer_blocked_sets_round_finished_at(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "blocked"])
+    capsys.readouterr()
+
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        rounds = [
+            r
+            for r in store.rows("task_round")
+            if r.get("task_id") == tid and r.get("round") == 1
+        ]
+        assert len(rounds) == 1
+        assert rounds[0].get("finished_at") is not None
+    finally:
+        store.close()
+
+
 def test_reviewer_finish_rejected_sets_implementing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

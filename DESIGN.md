@@ -225,6 +225,7 @@ agent task create|list|show|state|summary
 agent checklist set
 agent round start --task UUID
 agent agent start --session ID --task UUID --role ROLE --vendor grok|codex [--round N]
+  (implementer and reviewer require --vendor grok)
 agent agent finish --id UUID --verdict VERDICT [--note TEXT]
 agent check record --task UUID --name NAME --command CMD --result pass|fail|skip [--output TEXT]
 agent gate record --task UUID --stage grok-pr|codex-pr --dimension quality|logic --vendor grok|codex --verdict approved|rejected --head SHA --agent UUID [--evidence TEXT]

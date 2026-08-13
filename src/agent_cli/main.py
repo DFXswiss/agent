@@ -414,6 +414,7 @@ def cmd_round(args: list[str]) -> None:
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
                 die("round still has a working agent")
+        _require_owned(store, task, "task")
         n = current + 1
         task["current_round"] = n
         task["state"] = "implementing"
@@ -500,6 +501,10 @@ def cmd_agent(args: list[str]) -> None:
                     die("task state must be reviewing")
                 if tr is None or tr.get("implementer_verdict") != "done":
                     die("implementer_verdict must be done before reviewer start")
+            _require_owned(store, session, "session")
+            _require_owned(store, task, "task")
+            if tr is not None:
+                _require_owned(store, tr, "task_round")
             aid = str(uuid.uuid4())
             store.write(
                 "agent",
@@ -542,7 +547,11 @@ def cmd_agent(args: list[str]) -> None:
                 tr = _find_round(store, agent["task_id"], agent["round"])
                 if tr.get("implementer_verdict") is not None:
                     die("implementer already finished this round")
+                _require_owned(store, task, "task")
+                _require_owned(store, tr, "task_round")
                 tr["implementer_verdict"] = verdict
+                if verdict == "blocked":
+                    tr["finished_at"] = utcnow()
                 store.write("task_round", "update", tr["id"], _strip(tr))
                 task["state"] = "reviewing" if verdict == "done" else "failed"
                 task["updated_at"] = utcnow()
@@ -559,6 +568,8 @@ def cmd_agent(args: list[str]) -> None:
                     die("implementer_verdict must be done before reviewer finish")
                 if tr.get("reviewer_verdict") is not None:
                     die("reviewer already finished this round")
+                _require_owned(store, task, "task")
+                _require_owned(store, tr, "task_round")
                 tr["reviewer_verdict"] = verdict
                 tr["finished_at"] = utcnow()
                 store.write("task_round", "update", tr["id"], _strip(tr))
@@ -568,6 +579,7 @@ def cmd_agent(args: list[str]) -> None:
             elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
                 if verdict not in ("approved", "rejected"):
                     die("pr-reviewer verdict must be approved|rejected")
+                _require_owned(store, task, "task")
             else:
                 die(f"unknown agent role: {role}")
             agent["status"] = "done"
@@ -603,6 +615,7 @@ def cmd_check(args: list[str]) -> None:
         session = _need(store, "session", task["session_id"])
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
+        _require_owned(store, task, "task")
         cid = str(uuid.uuid4())
         store.write(
             "local_check",
@@ -685,6 +698,7 @@ def cmd_gate(args: list[str]) -> None:
             die(f"agent role must be {expected_role}")
         if verdict == "rejected" and task.get("state") == "done":
             die("cannot reject a gate on a done task")
+        _require_owned(store, task, "task")
         gid = str(uuid.uuid4())
         store.write(
             "review_gate",
@@ -1058,6 +1072,11 @@ def _need(store: Store, table: str, row_id: str) -> dict:
     return row
 
 
+def _require_owned(store: Store, row: dict, what: str) -> None:
+    if row.get("_origin_device_id") != store.device_id():
+        die(f"cannot mutate {what} owned by another device")
+
+
 def _strip(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
@@ -1112,6 +1131,14 @@ def _assert_ready(store: Store, task: dict) -> None:
             die(f"task is not done: checklist {key}={status}")
         if status == "n_a" and key not in N_A_ALLOWED:
             die(f"task is not done: checklist {key}=n_a is not allowed")
+        if status == "n_a":
+            evidence = item.get("evidence") if item else None
+            if not isinstance(evidence, str) or evidence == "":
+                die(f"task is not done: checklist {key}=n_a requires evidence")
+        if key == "mergeable" and status == "ja":
+            evidence = item.get("evidence") if item else None
+            if not isinstance(evidence, str) or evidence == "":
+                die("task is not done: checklist mergeable=ja requires evidence")
     declared = items.get("deviation_declared")
     granted = items.get("deviation_granted")
     if declared is not None and declared.get("status") == "ja":
