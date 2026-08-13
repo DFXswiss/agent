@@ -2,6 +2,8 @@
 
 Local ledger client. Record sessions, tasks, checklists and review pings on this machine, then pair the device to the [agent-core](https://github.com/DFXswiss/agent-core) hub with GitHub.
 
+Product decisions (visibility, pairing, sync, restore, what we will not build) are in [DESIGN.md](DESIGN.md).
+
 This device is the write owner of its own rows. The hub holds a full copy. `agent sync` pushes and pulls every event. `agent restore` rebuilds a wiped database from the hub.
 
 ## Install
