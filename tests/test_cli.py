@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
 
 from agent_cli.main import main
-from agent_cli.store import Store
+from agent_cli.store import Store, utcnow
 
 
 def run(home: Path, argv: list[str]) -> None:
@@ -314,3 +315,380 @@ def test_done_requires_gates_after_summaries_and_checklist(
 
     with pytest.raises(SystemExit, match="missing gate|gate"):
         run(tmp_path, ["task", "state", tid, "done"])
+
+
+def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "grok",
+        ],
+    )
+    agent_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", agent_id, "--verdict", "approved"])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "approved",
+            "--head",
+            "abcdef0",
+            "--agent",
+            agent_id,
+        ],
+    )
+    assert "gate grok-pr/quality=approved" in capsys.readouterr().out
+
+
+def test_gate_record_codex_before_grok_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "codex",
+        ],
+    )
+    agent_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", agent_id, "--verdict", "approved"])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="codex-pr requires approved grok-pr"):
+        run(
+            tmp_path,
+            [
+                "gate",
+                "record",
+                "--task",
+                tid,
+                "--stage",
+                "codex-pr",
+                "--dimension",
+                "quality",
+                "--vendor",
+                "codex",
+                "--verdict",
+                "approved",
+                "--head",
+                "abcdef0",
+                "--agent",
+                agent_id,
+            ],
+        )
+
+
+def test_implementer_finish_blocked_sets_failed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "blocked"])
+    capsys.readouterr()
+
+    run(tmp_path, ["task", "show", tid])
+    task = json.loads(capsys.readouterr().out)
+    assert task["state"] == "failed"
+
+
+def test_reviewer_finish_rejected_sets_implementing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "reviewer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    rev_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", rev_id, "--verdict", "rejected"])
+    capsys.readouterr()
+
+    run(tmp_path, ["task", "show", tid])
+    task = json.loads(capsys.readouterr().out)
+    assert task["state"] == "implementing"
+
+
+def test_implementer_finish_on_pr_review_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["task", "state", tid, "pr-review"])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="task state must be implementing"):
+        run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+
+
+def test_second_implementer_finish_same_round_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    first_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", first_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    # First finish left state reviewing + implementer_verdict set. Force a second
+    # working implementer on the same round so finish hits the double-finish guard.
+    second_id = str(uuid.uuid4())
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["state"] = "implementing"
+        store.write(
+            "task",
+            "update",
+            tid,
+            {k: v for k, v in task.items() if not k.startswith("_")},
+        )
+        store.write(
+            "agent",
+            "insert",
+            second_id,
+            {
+                "id": second_id,
+                "session_id": "s",
+                "task_id": tid,
+                "round": 1,
+                "role": "implementer",
+                "vendor": "grok",
+                "status": "working",
+                "started_at": utcnow(),
+                "finished_at": None,
+                "note": None,
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="implementer already finished this round"):
+        run(tmp_path, ["agent", "finish", "--id", second_id, "--verdict", "done"])
+
+
+def test_round_start_with_working_agent_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="round still has a working agent"):
+        run(tmp_path, ["round", "start", "--task", tid])
+
+
+def test_implementer_finish_after_session_closed_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        session = store.row("session", "s")
+        assert session is not None
+        session["status"] = "closed"
+        store.write(
+            "session",
+            "update",
+            "s",
+            {k: v for k, v in session.items() if not k.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="session is not active"):
+        run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])

@@ -406,7 +406,17 @@ def cmd_round(args: list[str]) -> None:
         workflow = task.get("workflow")
         if workflow not in ("implement", "resolve-conflicts"):
             die("round start requires workflow implement|resolve-conflicts")
-        n = int(task.get("current_round") or 0) + 1
+        if task.get("state") == "done":
+            die("cannot start a round on a done task")
+        current = int(task.get("current_round") or 0)
+        for agent in store.rows("agent"):
+            if (
+                agent.get("task_id") == tid
+                and agent.get("round") == current
+                and agent.get("status") == "working"
+            ):
+                die("round still has a working agent")
+        n = current + 1
         task["current_round"] = n
         task["state"] = "implementing"
         task["updated_at"] = utcnow()
@@ -463,8 +473,27 @@ def cmd_agent(args: list[str]) -> None:
             task = _need(store, "task", tid)
             if task.get("session_id") != session_id:
                 die("session does not own this task")
+            tr = None
             if round_num is not None:
-                _find_round(store, tid, round_num)
+                tr = _find_round(store, tid, round_num)
+            if role in ("implementer", "reviewer"):
+                if round_num != int(task.get("current_round") or 0):
+                    die("agent round must match task.current_round")
+                for other in store.rows("agent"):
+                    if (
+                        other.get("task_id") == tid
+                        and other.get("round") == round_num
+                        and other.get("role") == role
+                        and other.get("status") == "working"
+                    ):
+                        die("role already taken for this round")
+                if tr is None:
+                    die(f"task_round task={tid} round={round_num} not found")
+                verdict_key = (
+                    "implementer_verdict" if role == "implementer" else "reviewer_verdict"
+                )
+                if tr.get(verdict_key) is not None:
+                    die("role already taken for this round")
             aid = str(uuid.uuid4())
             store.write(
                 "agent",
@@ -494,10 +523,19 @@ def cmd_agent(args: list[str]) -> None:
                 die(f"agent {aid} is not working")
             role = agent.get("role")
             task = _need(store, "task", agent["task_id"])
+            session = _need(store, "session", task["session_id"])
+            if session.get("status") != "active":
+                die("session is not active")
             if role == "implementer":
                 if verdict not in ("done", "blocked"):
                     die("implementer verdict must be done|blocked")
+                if agent.get("round") != int(task.get("current_round") or 0):
+                    die("agent round is not the current round")
+                if task.get("state") != "implementing":
+                    die("task state must be implementing")
                 tr = _find_round(store, agent["task_id"], agent["round"])
+                if tr.get("implementer_verdict") is not None:
+                    die("implementer already finished this round")
                 tr["implementer_verdict"] = verdict
                 store.write("task_round", "update", tr["id"], _strip(tr))
                 task["state"] = "reviewing" if verdict == "done" else "failed"
@@ -506,9 +544,15 @@ def cmd_agent(args: list[str]) -> None:
             elif role == "reviewer":
                 if verdict not in ("approved", "rejected"):
                     die("reviewer verdict must be approved|rejected")
+                if agent.get("round") != int(task.get("current_round") or 0):
+                    die("agent round is not the current round")
+                if task.get("state") != "reviewing":
+                    die("task state must be reviewing")
                 tr = _find_round(store, agent["task_id"], agent["round"])
                 if tr.get("implementer_verdict") != "done":
                     die("implementer_verdict must be done before reviewer finish")
+                if tr.get("reviewer_verdict") is not None:
+                    die("reviewer already finished this round")
                 tr["reviewer_verdict"] = verdict
                 tr["finished_at"] = utcnow()
                 store.write("task_round", "update", tr["id"], _strip(tr))
@@ -533,7 +577,10 @@ def cmd_agent(args: list[str]) -> None:
 
 def cmd_check(args: list[str]) -> None:
     if not args or args[0] != "record":
-        die("Usage: agent check record --task UUID --name NAME --command CMD --result pass|fail|skip")
+        die(
+            "Usage: agent check record --task UUID --name NAME --command CMD "
+            "--result pass|fail|skip [--output TEXT]"
+        )
     rest = args[1:]
     tid = require_flag(rest, "--task")
     name = require_flag(rest, "--name")
@@ -630,6 +677,12 @@ def cmd_gate(args: list[str]) -> None:
         expected_role = f"pr-reviewer-{dimension}"
         if agent.get("role") != expected_role:
             die(f"agent role must be {expected_role}")
+        if (
+            verdict == "rejected"
+            and task.get("workflow") in ("implement", "resolve-conflicts")
+            and task.get("state") == "done"
+        ):
+            die("cannot reject a gate on a done task")
         gid = str(uuid.uuid4())
         store.write(
             "review_gate",
@@ -649,9 +702,10 @@ def cmd_gate(args: list[str]) -> None:
             },
         )
         if verdict == "rejected" and task.get("workflow") in ("implement", "resolve-conflicts"):
-            task["state"] = "implementing"
-            task["updated_at"] = utcnow()
-            store.write("task", "update", tid, _strip(task))
+            if task.get("state") != "implementing":
+                task["state"] = "implementing"
+                task["updated_at"] = utcnow()
+                store.write("task", "update", tid, _strip(task))
         print(f"gate {stage}/{dimension}={verdict}")
     finally:
         store.close()

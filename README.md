@@ -23,6 +23,7 @@ Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`.
 agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
+agent sync --follow   # stay on the hub WebSocket; a dead socket is a loud error
 agent restore   # after a wiped laptop
 ```
 
