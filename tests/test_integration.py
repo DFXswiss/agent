@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import httpx
 import pytest
-import yaml
 
 pytest.importorskip("agent_core")
+import httpx
 
 from fastapi.testclient import TestClient
 
@@ -37,7 +36,7 @@ class _Client:
 
 def _cfg(tmp_path: Path) -> Config:
     teams = tmp_path / "teams.yaml"
-    teams.write_text(yaml.safe_dump({"teams": {"dfx": {"members": ["alice", "bob"]}}}), encoding="utf-8")
+    teams.write_text("teams:\n  dfx:\n    members: [alice, bob]\n", encoding="utf-8")
     return Config(
         public_url="http://hub",
         session_secret="s" * 32,
