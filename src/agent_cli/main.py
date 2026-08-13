@@ -743,6 +743,7 @@ def cmd_work(args: list[str]) -> None:
             session = _need(store, "session", session_id)
             if session.get("status") != "active":
                 die(f"session {session_id} is not active")
+            _require_owned(store, session, "session")
             for row in store.rows("open_work"):
                 if row.get("session_id") == session_id and row.get("key") == key:
                     die(f"work {key} already exists for session {session_id}")
@@ -776,6 +777,7 @@ def cmd_work(args: list[str]) -> None:
             session = _need(store, "session", session_id)
             if session.get("status") != "active":
                 die(f"session {session_id} is not active")
+            _require_owned(store, session, "session")
             matches = [
                 r
                 for r in store.rows("open_work")

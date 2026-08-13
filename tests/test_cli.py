@@ -594,6 +594,39 @@ def test_check_record_on_foreign_task_dies(tmp_path: Path) -> None:
         )
 
 
+def test_work_add_on_foreign_session_dies(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "session",
+                "op": "insert",
+                "row_id": "sess-f",
+                "payload": {"id": "sess-f", "kind": "human", "status": "active"},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="another device"):
+        run(
+            tmp_path,
+            [
+                "work",
+                "add",
+                "--session",
+                "sess-f",
+                "--key",
+                "standing",
+                "--closable-by",
+                "agent",
+            ],
+        )
+
+
 def test_implementer_blocked_sets_round_finished_at(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
