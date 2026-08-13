@@ -45,7 +45,7 @@ agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor gro
 agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>
 agent work list --session <session-id>
-agent checklist set --task <uuid> --key spec_written --status ja --source human
+agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
 agent status
 agent dashboard

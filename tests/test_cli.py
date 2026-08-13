@@ -941,3 +941,129 @@ def test_implementer_finish_after_session_closed_dies(
 
     with pytest.raises(SystemExit, match="session is not active"):
         run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+
+
+def test_agent_finish_on_foreign_agent_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    foreign_agent_id = str(uuid.uuid4())
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        store.apply_remote(
+            {
+                "origin_device_id": "other-device",
+                "origin_seq": 1,
+                "table": "agent",
+                "op": "insert",
+                "row_id": foreign_agent_id,
+                "payload": {
+                    "id": foreign_agent_id,
+                    "session_id": "s",
+                    "task_id": tid,
+                    "round": 1,
+                    "role": "implementer",
+                    "vendor": "grok",
+                    "status": "working",
+                    "started_at": utcnow(),
+                    "finished_at": None,
+                    "note": None,
+                },
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="another device"):
+        run(tmp_path, ["agent", "finish", "--id", foreign_agent_id, "--verdict", "done"])
+
+    run(tmp_path, ["task", "show", tid])
+    task = json.loads(capsys.readouterr().out)
+    assert task["state"] == "implementing"
+
+
+def test_work_set_done_happy_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(
+        tmp_path,
+        ["work", "add", "--session", "s", "--key", "standing", "--closable-by", "agent"],
+    )
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "work",
+            "set",
+            "--session",
+            "s",
+            "--key",
+            "standing",
+            "--status",
+            "done",
+            "--source",
+            "script",
+        ],
+    )
+    assert "work standing=done" in capsys.readouterr().out
+    run(tmp_path, ["work", "list"])
+    listing = capsys.readouterr().out
+    assert "s  standing  done  agent" in listing
+
+
+def test_checklist_deviation_flags_persist(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(
+        tmp_path,
+        [
+            "checklist",
+            "set",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--status",
+            "ja",
+            "--source",
+            "human",
+            "--deviation-declared",
+            "true",
+            "--deviation-granted",
+            "true",
+            "--granted-by",
+            "reviewer",
+            "--actor-session",
+            "s",
+        ],
+    )
+    capsys.readouterr()
+
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        items = [
+            r
+            for r in store.rows("checklist_item")
+            if r.get("task_id") == tid and r.get("key") == "session_registered"
+        ]
+        assert len(items) == 1
+        item = items[0]
+        assert item["status"] == "ja"
+        assert item["deviation_declared"] is True
+        assert item["deviation_granted"] is True
+        assert item["granted_by"] == "reviewer"
+    finally:
+        store.close()

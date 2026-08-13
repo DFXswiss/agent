@@ -532,6 +532,7 @@ def cmd_agent(args: list[str]) -> None:
             agent = _need(store, "agent", aid)
             if agent.get("status") != "working":
                 die(f"agent {aid} is not working")
+            _require_owned(store, agent, "agent")
             role = agent.get("role")
             task = _need(store, "task", agent["task_id"])
             session = _need(store, "session", task["session_id"])
