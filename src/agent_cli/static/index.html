@@ -5,27 +5,52 @@
   <title>Agent ledger</title>
   <style>
     :root { font-family: ui-sans-serif, system-ui, sans-serif; color: #1a1a1a; background: #f4f1ea; }
-    body { margin: 24px; max-width: 1100px; }
+    body { margin: 24px; max-width: 1200px; }
     h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    h2 { font-size: 1.05rem; margin: 28px 0 8px; }
     .sub { color: #555; margin-bottom: 20px; }
-    table { width: 100%; border-collapse: collapse; background: #fff; margin-bottom: 24px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.92rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; margin-bottom: 8px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
     th { background: #efeae0; }
     .failed { color: #c00; }
-    .implementing, .working { color: #0b5; font-weight: 600; }
+    .implementing, .working, .open { color: #0b5; font-weight: 600; }
+    .done, .approved { color: #060; }
+    code { font-size: 0.85em; }
   </style>
 </head>
 <body>
   <h1>Agent ledger</h1>
   <p class="sub">Local replica including teammates after sync. <span id="stamp"></span></p>
   <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
+
+  <h2>Sessions</h2>
+  <table id="sessions"><thead><tr><th>Id</th><th>Kind</th><th>Status</th><th>Last seen</th><th>Origin</th></tr></thead><tbody></tbody></table>
+
   <h2>Tasks</h2>
-  <table id="tasks"><thead><tr><th>Id</th><th>Title</th><th>State</th><th>Origin</th></tr></thead><tbody></tbody></table>
+  <table id="tasks"><thead><tr><th>Id</th><th>Title</th><th>Workflow</th><th>State</th><th>Round</th><th>Origin</th></tr></thead><tbody></tbody></table>
+
+  <h2>Rounds</h2>
+  <table id="rounds"><thead><tr><th>Task</th><th>Round</th><th>Implementer</th><th>Reviewer</th><th>Started</th><th>Finished</th></tr></thead><tbody></tbody></table>
+
+  <h2>Agents</h2>
+  <table id="agents"><thead><tr><th>Id</th><th>Role</th><th>Vendor</th><th>Status</th><th>Task</th><th>Round</th></tr></thead><tbody></tbody></table>
+
+  <h2>Local checks</h2>
+  <table id="checks"><thead><tr><th>Task</th><th>Name</th><th>Result</th><th>Command</th><th>Ran at</th></tr></thead><tbody></tbody></table>
+
+  <h2>Review gates</h2>
+  <table id="gates"><thead><tr><th>Task</th><th>Stage</th><th>Dimension</th><th>Vendor</th><th>Verdict</th><th>Head</th></tr></thead><tbody></tbody></table>
+
+  <h2>Open work</h2>
+  <table id="work"><thead><tr><th>Session</th><th>Key</th><th>Status</th><th>Closable by</th><th>Note</th></tr></thead><tbody></tbody></table>
+
   <h2>Pings</h2>
   <table id="pings"><thead><tr><th>From</th><th>To</th><th>Kind</th><th>Acked</th></tr></thead><tbody></tbody></table>
+
   <p id="err" class="failed" hidden></p>
   <script>
     function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+    function empty(cols) { return `<tr><td colspan='${cols}'>—</td></tr>`; }
     async function tick() {
       const err = document.getElementById("err");
       try {
@@ -36,12 +61,38 @@
         document.getElementById("stamp").textContent = data.generated_at;
         document.getElementById("dev").textContent = data.device_id;
         document.getElementById("login").textContent = data.login || "not paired";
+
+        document.querySelector("#sessions tbody").innerHTML = (data.sessions || []).map(s =>
+          `<tr><td>${esc(s.id)}</td><td>${esc(s.kind)}</td><td class="${esc(s.status)}">${esc(s.status)}</td><td>${esc(s.last_seen_at)}</td><td>${esc(s._origin_device_id)}</td></tr>`
+        ).join("") || empty(5);
+
         document.querySelector("#tasks tbody").innerHTML = (data.tasks || []).map(t =>
-          `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td class="${esc(t.state)}">${esc(t.state)}</td><td>${esc(t._origin_device_id)}</td></tr>`
-        ).join("") || "<tr><td colspan='4'>—</td></tr>";
+          `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td>${esc(t.workflow)}</td><td class="${esc(t.state)}">${esc(t.state)}</td><td>r${esc(t.current_round)}</td><td>${esc(t._origin_device_id)}</td></tr>`
+        ).join("") || empty(6);
+
+        document.querySelector("#rounds tbody").innerHTML = (data.rounds || []).map(r =>
+          `<tr><td>${esc(r.task_id)}</td><td>${esc(r.round)}</td><td>${esc(r.implementer_verdict)}</td><td>${esc(r.reviewer_verdict)}</td><td>${esc(r.started_at)}</td><td>${esc(r.finished_at)}</td></tr>`
+        ).join("") || empty(6);
+
+        document.querySelector("#agents tbody").innerHTML = (data.agents || []).map(a =>
+          `<tr><td>${esc(a.id)}</td><td>${esc(a.role)}</td><td>${esc(a.vendor)}</td><td class="${esc(a.status)}">${esc(a.status)}</td><td>${esc(a.task_id)}</td><td>${esc(a.round)}</td></tr>`
+        ).join("") || empty(6);
+
+        document.querySelector("#checks tbody").innerHTML = (data.checks || []).map(c =>
+          `<tr><td>${esc(c.task_id)}</td><td>${esc(c.name)}</td><td class="${esc(c.result)}">${esc(c.result)}</td><td><code>${esc(c.command)}</code></td><td>${esc(c.ran_at)}</td></tr>`
+        ).join("") || empty(5);
+
+        document.querySelector("#gates tbody").innerHTML = (data.gates || []).map(g =>
+          `<tr><td>${esc(g.task_id)}</td><td>${esc(g.stage)}</td><td>${esc(g.dimension)}</td><td>${esc(g.vendor)}</td><td class="${esc(g.verdict)}">${esc(g.verdict)}</td><td><code>${esc(g.head_sha)}</code></td></tr>`
+        ).join("") || empty(6);
+
+        document.querySelector("#work tbody").innerHTML = (data.work || []).map(w =>
+          `<tr><td>${esc(w.session_id)}</td><td>${esc(w.key)}</td><td class="${esc(w.status)}">${esc(w.status)}</td><td>${esc(w.closable_by)}</td><td>${esc(w.note)}</td></tr>`
+        ).join("") || empty(5);
+
         document.querySelector("#pings tbody").innerHTML = (data.pings || []).map(p =>
           `<tr><td>${esc(p.from_login)}</td><td>${esc(p.to_login)}</td><td>${esc(p.kind)}</td><td>${esc(p.acked_at)}</td></tr>`
-        ).join("") || "<tr><td colspan='4'>—</td></tr>";
+        ).join("") || empty(4);
       } catch (e) {
         err.hidden = false;
         err.textContent = String(e);

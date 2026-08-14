@@ -66,6 +66,27 @@ class Hub:
     def ack(self, ping_id: str) -> dict[str, Any]:
         return self.request("POST", f"/api/pings/{ping_id}/ack", headers=self._headers())
 
+    def sync_ws_url(self) -> str:
+        if self.token is None or self.token == "":
+            raise HubError("device token is not set; run agent pair")
+        if self.base_url.startswith("https://"):
+            ws_base = "wss://" + self.base_url.removeprefix("https://")
+        elif self.base_url.startswith("http://"):
+            ws_base = "ws://" + self.base_url.removeprefix("http://")
+        else:
+            raise HubError(f"unsupported hub URL scheme: {self.base_url}")
+        return f"{ws_base}/sync/ws?token={self.token}"
+
+    def connect_sync_ws(self) -> Any:
+        """Open a synchronous WebSocket to GET /sync/ws. Caller must close it."""
+        from websockets.sync.client import connect
+
+        url = self.sync_ws_url()
+        try:
+            return connect(url)
+        except Exception as exc:
+            raise HubError(f"hub websocket failed: {exc}") from exc
+
 
 def _detail(response: httpx.Response) -> str:
     try:
