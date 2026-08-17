@@ -163,6 +163,23 @@ def test_apply_control_foreign_not_ok(tmp_path: Path) -> None:
         store.close()
 
 
+def test_apply_control_bad_quoting_acks_false(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s1", "--kind", "human"])
+    store = Store(tmp_path / "ledger.sqlite")
+    runtime = Runtime(runner=lambda argv: Completed(0, "tmux 3.3a", "") if argv[:2] == ["tmux", "-V"] else Completed(1, "", ""))
+    try:
+        ack = apply_control(
+            store,
+            runtime,
+            {"type": "control", "session_id": "s1", "action": "start", "payload": {"command": "'"}},
+        )
+        assert ack["ok"] is False
+        assert "quoting" in (ack.get("error") or "")
+    finally:
+        store.close()
+
+
 def test_should_sync_on_ws_false_for_control_messages() -> None:
     for msg_type in ("control", "terminal", "control-ack", "control-ready"):
         assert should_sync_on_ws({"type": msg_type}) is False

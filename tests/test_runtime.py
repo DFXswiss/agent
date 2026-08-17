@@ -98,6 +98,12 @@ def test_start_stop_input_argv() -> None:
         rt.input_key("sess-1", "escape")
 
 
+def test_start_invalid_quoting_dies() -> None:
+    rt = Runtime(runner=lambda argv: Completed(0, "tmux 3.3a", "") if argv[:2] == ["tmux", "-V"] else Completed(1, "", ""))
+    with pytest.raises(SystemExit, match="invalid command quoting"):
+        rt.start("sess-1", "'", None, None)
+
+
 def test_start_without_tmux_dies() -> None:
     rt = Runtime(runner=lambda argv: Completed(127, "", "not found"))
     with pytest.raises(SystemExit, match="tmux is not installed"):

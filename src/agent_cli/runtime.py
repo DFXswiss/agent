@@ -72,7 +72,10 @@ class Runtime:
             argv.extend(["-y", str(rows)])
         if command is not None and command != "":
             argv.append("--")
-            argv.extend(shlex.split(command))
+            try:
+                argv.extend(shlex.split(command))
+            except ValueError as exc:
+                raise SystemExit("invalid command quoting") from exc
         completed = self._run(argv)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "tmux new-session failed").strip()

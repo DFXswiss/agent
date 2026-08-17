@@ -1314,7 +1314,7 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
             die(f"unknown control action: {action}")
         ack["ok"] = True
         return ack
-    except (SystemExit, StoreError) as exc:
+    except (SystemExit, StoreError, ValueError) as exc:
         err = exc.args[0] if getattr(exc, "args", None) else str(exc)
         if isinstance(err, int):
             err = f"exit {err}"
@@ -1322,6 +1322,9 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
         if text.startswith("agent: "):
             text = text[len("agent: ") :]
         ack["error"] = text
+        return ack
+    except Exception as exc:
+        ack["error"] = str(exc) or "error"
         return ack
 
 
