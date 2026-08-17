@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .hub import Hub, HubError
+from .runtime import Runtime, tmux_name
 from .store import Store, StoreError, utcnow
 
 CHECKLIST = {
@@ -140,6 +142,8 @@ def _bool_flag(args: list[str], name: str) -> bool | None:
 def should_sync_on_ws(message: dict) -> bool:
     """Whether a hub WebSocket message should trigger push+pull."""
     msg_type = message.get("type")
+    if msg_type in ("control", "terminal", "control-ack", "control-ready"):
+        return False
     if msg_type == "events":
         return True
     if msg_type == "ping" and "id" in message:
@@ -155,7 +159,7 @@ def cmd_init(_: list[str]) -> None:
 
 def cmd_session(args: list[str]) -> None:
     if not args:
-        die("Usage: agent session register|heartbeat|list|close")
+        die("Usage: agent session register|heartbeat|list|close|start|stop|input")
     store = open_store()
     try:
         sub, rest = args[0], args[1:]
@@ -222,6 +226,29 @@ def cmd_session(args: list[str]) -> None:
             row["last_seen_at"] = utcnow()
             store.write("session", "update", sid, _strip(row))
             print(f"closed {sid}")
+            return
+        if sub == "start":
+            sid = require_flag(rest, "--id")
+            cmd = flag(rest, "--cmd")
+            cols = _dim_flag(rest, "--cols")
+            rows = _dim_flag(rest, "--rows")
+            runtime = Runtime()
+            name = _session_start(store, runtime, sid, cmd, cols, rows)
+            print(f"started {sid} tmux={name}")
+            return
+        if sub == "stop":
+            sid = require_flag(rest, "--id")
+            runtime = Runtime()
+            _session_stop(store, runtime, sid)
+            print(f"stopped {sid}")
+            return
+        if sub == "input":
+            sid = require_flag(rest, "--id")
+            data = flag(rest, "--data")
+            key = flag(rest, "--key")
+            runtime = Runtime()
+            _session_input(store, runtime, sid, data, key)
+            print(f"input {sid}")
             return
         die(f"unknown session command: {sub}")
     finally:
@@ -866,12 +893,20 @@ def cmd_sync(args: list[str]) -> None:
         if not follow:
             return
         hub = _hub_from_store(store)
+        runtime = Runtime()
+        terminal_seq: dict[str, int] = {}
+        last_capture: dict[str, str] = {}
         try:
             try:
                 ws = hub.connect_sync_ws()
             except HubError as exc:
                 die(str(exc))
             try:
+                try:
+                    ws.send(json.dumps({"type": "control-ready"}))
+                except Exception as exc:
+                    die(f"control-ready send failed: {exc}")
+                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
                 for raw in ws:
                     try:
                         message = json.loads(raw)
@@ -879,8 +914,15 @@ def cmd_sync(args: list[str]) -> None:
                         continue
                     if not isinstance(message, dict):
                         continue
+                    if message.get("type") == "control":
+                        ack = apply_control(store, runtime, message)
+                        try:
+                            ws.send(json.dumps(ack))
+                        except Exception as exc:
+                            die(f"control-ack send failed: {exc}")
                     if should_sync_on_ws(message):
                         _sync_once(store)
+                    _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
             except HubError as exc:
                 die(str(exc))
             except Exception as exc:
@@ -1011,15 +1053,23 @@ def cmd_dashboard(args: list[str]) -> None:
         def log_message(self, fmt: str, *rest: object) -> None:
             return
 
+        def _json(self, code: int, payload: dict) -> None:
+            body = json.dumps(payload).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
             if path == "/api/state":
-                body = json.dumps(store.snapshot()).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                snap = store.snapshot()
+                device = store.device_id()
+                for session in snap.get("sessions") or []:
+                    session["can_control"] = session.get("_origin_device_id") == device
+                    session["control_connected"] = True
+                self._json(200, snap)
                 return
             if path in ("/", "/index.html"):
                 if not STATIC.is_file():
@@ -1032,6 +1082,45 @@ def cmd_dashboard(args: list[str]) -> None:
                 self.wfile.write(body)
                 return
             self.send_error(404)
+
+        def do_POST(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path
+            match = re.fullmatch(r"/api/sessions/([^/]+)/control", path)
+            if match is None:
+                self.send_error(404)
+                return
+            sid = match.group(1)
+            length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except (TypeError, ValueError, UnicodeDecodeError):
+                self._json(400, {"ok": False, "error": "invalid JSON"})
+                return
+            if not isinstance(body, dict):
+                self._json(400, {"ok": False, "error": "body must be an object"})
+                return
+            row = store.row("session", sid)
+            if row is None:
+                self.send_error(404)
+                return
+            if row.get("_origin_device_id") != store.device_id():
+                self.send_error(403)
+                return
+            payload = body.get("payload")
+            if not isinstance(payload, dict):
+                payload = {k: v for k, v in body.items() if k != "action"}
+            message = {
+                "type": "control",
+                "session_id": sid,
+                "action": body.get("action"),
+                "payload": payload,
+            }
+            ack = apply_control(store, Runtime(), message)
+            if not ack.get("ok"):
+                self._json(400, {"ok": False, "error": ack.get("error")})
+                return
+            self._json(200, {"ok": True})
 
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"dashboard http://127.0.0.1:{port}")
@@ -1082,6 +1171,192 @@ def _require_owned(store: Store, row: dict, what: str) -> None:
 
 def _strip(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("_")}
+
+
+def _dim_flag(args: list[str], name: str) -> int | None:
+    raw = flag(args, name)
+    if raw is None:
+        return None
+    if not raw.isdigit():
+        die(f"{name} must be an integer 1..500")
+    value = int(raw)
+    if value < 1 or value > 500:
+        die(f"{name} must be an integer 1..500")
+    return value
+
+
+def _dim_value(raw: object, label: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        if isinstance(raw, str) and raw.isdigit():
+            value = int(raw)
+        else:
+            die(f"{label} must be an integer 1..500")
+            raise AssertionError("unreachable")
+    else:
+        value = raw
+    if value < 1 or value > 500:
+        die(f"{label} must be an integer 1..500")
+    return value
+
+
+def _session_start(
+    store: Store,
+    runtime: Runtime,
+    sid: str,
+    command: str | None,
+    cols: int | None,
+    rows: int | None,
+) -> str:
+    row = _need(store, "session", sid)
+    _require_owned(store, row, "session")
+    if row.get("status") != "active":
+        die(f"session {sid} is not active")
+    if not runtime.available():
+        die("tmux is not installed")
+    name = tmux_name(sid)
+    runtime.start(sid, command, cols, rows)
+    meta: dict = dict(row.get("runtime") or {})
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["tmux_session"] = name
+    meta["control"] = "attached"
+    if cols is not None:
+        meta["cols"] = cols
+    if rows is not None:
+        meta["rows"] = rows
+    row["runtime"] = meta
+    store.write("session", "update", sid, _strip(row))
+    return name
+
+
+def _session_stop(store: Store, runtime: Runtime, sid: str) -> None:
+    row = _need(store, "session", sid)
+    _require_owned(store, row, "session")
+    runtime.stop(sid)
+    meta: dict = dict(row.get("runtime") or {})
+    if not isinstance(meta, dict):
+        meta = {}
+    meta["tmux_session"] = meta.get("tmux_session") or tmux_name(sid)
+    meta["control"] = "stopped"
+    row["runtime"] = meta
+    store.write("session", "update", sid, _strip(row))
+
+
+def _session_input(
+    store: Store,
+    runtime: Runtime,
+    sid: str,
+    data: str | None,
+    key: str | None,
+) -> None:
+    row = _need(store, "session", sid)
+    _require_owned(store, row, "session")
+    if row.get("status") != "active":
+        die(f"session {sid} is not active")
+    has_data = data is not None
+    has_key = key is not None
+    if has_data == has_key:
+        die("input requires exactly one of --data or --key")
+    if has_data:
+        runtime.input_text(sid, data or "")
+    else:
+        runtime.input_key(sid, key or "")
+
+
+def _session_resize(store: Store, runtime: Runtime, sid: str, cols: int, rows: int) -> None:
+    row = _need(store, "session", sid)
+    _require_owned(store, row, "session")
+    runtime.resize(sid, cols, rows)
+
+
+def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
+    """Execute a hub control frame on this device. Returns a control-ack dict."""
+    sid = message.get("session_id")
+    action = message.get("action")
+    payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+    ack: dict = {
+        "type": "control-ack",
+        "session_id": sid,
+        "action": action,
+        "ok": False,
+    }
+    try:
+        if not isinstance(sid, str) or sid == "":
+            die("session_id is required")
+        if action == "start":
+            command = payload.get("command")
+            if command is None:
+                command = payload.get("cmd")
+            if command is not None and not isinstance(command, str):
+                die("command must be a string")
+            cols = payload.get("cols")
+            rows = payload.get("rows")
+            cols_i = _dim_value(cols, "cols") if cols is not None else None
+            rows_i = _dim_value(rows, "rows") if rows is not None else None
+            _session_start(store, runtime, sid, command, cols_i, rows_i)
+        elif action == "stop":
+            _session_stop(store, runtime, sid)
+        elif action == "input":
+            data = payload.get("data")
+            key = payload.get("key")
+            if data is not None and not isinstance(data, str):
+                die("data must be a string")
+            if key is not None and not isinstance(key, str):
+                die("key must be a string")
+            _session_input(store, runtime, sid, data, key)
+        elif action == "resize":
+            if "cols" not in payload or "rows" not in payload:
+                die("resize requires cols and rows")
+            cols_i = _dim_value(payload.get("cols"), "cols")
+            rows_i = _dim_value(payload.get("rows"), "rows")
+            _session_resize(store, runtime, sid, cols_i, rows_i)
+        else:
+            die(f"unknown control action: {action}")
+        ack["ok"] = True
+        return ack
+    except (SystemExit, StoreError) as exc:
+        err = exc.args[0] if getattr(exc, "args", None) else str(exc)
+        if isinstance(err, int):
+            err = f"exit {err}"
+        text = str(err) if err is not None else "error"
+        if text.startswith("agent: "):
+            text = text[len("agent: ") :]
+        ack["error"] = text
+        return ack
+
+
+def _publish_terminals(
+    store: Store,
+    runtime: Runtime,
+    ws: object,
+    terminal_seq: dict[str, int],
+    last_capture: dict[str, str],
+) -> None:
+    device = store.device_id()
+    for session in store.rows("session"):
+        if session.get("_origin_device_id") != device:
+            continue
+        meta = session.get("runtime") or {}
+        if not isinstance(meta, dict) or meta.get("control") != "attached":
+            continue
+        sid = session["id"]
+        text = runtime.capture(sid)
+        if last_capture.get(sid) == text:
+            continue
+        last_capture[sid] = text
+        seq = terminal_seq.get(sid, 0) + 1
+        terminal_seq[sid] = seq
+        data = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        frame = {
+            "type": "terminal",
+            "session_id": sid,
+            "seq": seq,
+            "data": data,
+        }
+        try:
+            ws.send(json.dumps(frame))  # type: ignore[attr-defined]
+        except Exception as exc:
+            die(f"terminal send failed: {exc}")
 
 
 def _find_round(store: Store, task_id: str, round_num: object) -> dict:

@@ -16,6 +16,16 @@
     .implementing, .working, .open { color: #0b5; font-weight: 600; }
     .done, .approved { color: #060; }
     code { font-size: 0.85em; }
+    tr.session-row { cursor: pointer; }
+    tr.session-row:hover { background: #faf7f0; }
+    tr.session-row.selected { background: #ebe4d4; }
+    #session-detail { background: #fff; border: 1px solid #e0d8c8; padding: 14px 16px; margin: 12px 0 8px; }
+    #session-detail[hidden] { display: none; }
+    #detail-pre { background: #1a1a1a; color: #d8d8d8; padding: 12px; overflow: auto; max-height: 240px; font-size: 0.85rem; }
+    .control-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+    .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
+    .control-form button { padding: 6px 12px; cursor: pointer; }
+    .watch-note { color: #555; margin-top: 10px; }
   </style>
 </head>
 <body>
@@ -24,7 +34,13 @@
   <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
 
   <h2>Sessions</h2>
-  <table id="sessions"><thead><tr><th>Id</th><th>Kind</th><th>Status</th><th>Last seen</th><th>Origin</th></tr></thead><tbody></tbody></table>
+  <table id="sessions"><thead><tr><th>Id</th><th>Kind</th><th>Status</th><th>Control</th><th>Last seen</th><th>Origin</th></tr></thead><tbody></tbody></table>
+
+  <div id="session-detail" hidden>
+    <h2>Session <code id="detail-id"></code></h2>
+    <pre id="detail-pre"></pre>
+    <div id="detail-controls"></div>
+  </div>
 
   <h2>Tasks</h2>
   <table id="tasks"><thead><tr><th>Id</th><th>Title</th><th>Workflow</th><th>State</th><th>Round</th><th>Origin</th></tr></thead><tbody></tbody></table>
@@ -49,8 +65,88 @@
 
   <p id="err" class="failed" hidden></p>
   <script>
+    let selectedSessionId = null;
+    let sessionsById = {};
+
     function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
     function empty(cols) { return `<tr><td colspan='${cols}'>—</td></tr>`; }
+
+    async function postControl(id, body) {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        let msg = "HTTP " + res.status;
+        try {
+          const j = await res.json();
+          if (j && j.error) msg = j.error;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+      await tick();
+    }
+
+    function renderDetail(s) {
+      const box = document.getElementById("session-detail");
+      if (!s) {
+        box.hidden = true;
+        return;
+      }
+      box.hidden = false;
+      document.getElementById("detail-id").textContent = s.id;
+      const runtime = s.runtime || {};
+      document.getElementById("detail-pre").textContent = JSON.stringify({
+        id: s.id,
+        kind: s.kind,
+        status: s.status,
+        runtime,
+        can_control: s.can_control,
+        control_connected: s.control_connected,
+      }, null, 2);
+      const controls = document.getElementById("detail-controls");
+      if (s.can_control) {
+        controls.innerHTML = `
+          <div class="control-form">
+            <button type="button" id="ctl-start">Start</button>
+            <button type="button" id="ctl-stop">Stop</button>
+            <input type="text" id="ctl-data" placeholder="input text" />
+            <button type="button" id="ctl-send">Send</button>
+            <button type="button" id="ctl-enter">Enter</button>
+            <button type="button" id="ctl-ctrlc">Ctrl-C</button>
+          </div>
+          <p id="ctl-err" class="failed" hidden></p>`;
+        const showErr = (e) => {
+          const el = document.getElementById("ctl-err");
+          el.hidden = false;
+          el.textContent = String(e);
+        };
+        document.getElementById("ctl-start").onclick = () =>
+          postControl(s.id, { action: "start", payload: {} }).catch(showErr);
+        document.getElementById("ctl-stop").onclick = () =>
+          postControl(s.id, { action: "stop", payload: {} }).catch(showErr);
+        document.getElementById("ctl-send").onclick = () => {
+          const data = document.getElementById("ctl-data").value;
+          postControl(s.id, { action: "input", payload: { data } }).catch(showErr);
+        };
+        document.getElementById("ctl-enter").onclick = () =>
+          postControl(s.id, { action: "input", payload: { key: "enter" } }).catch(showErr);
+        document.getElementById("ctl-ctrlc").onclick = () =>
+          postControl(s.id, { action: "input", payload: { key: "ctrl-c" } }).catch(showErr);
+      } else {
+        controls.innerHTML = `<p class="watch-note">Watching — this session is on another device.</p>`;
+      }
+    }
+
+    function selectSession(id) {
+      selectedSessionId = id;
+      document.querySelectorAll("tr.session-row").forEach(tr => {
+        tr.classList.toggle("selected", tr.dataset.id === id);
+      });
+      renderDetail(sessionsById[id] || null);
+    }
+
     async function tick() {
       const err = document.getElementById("err");
       try {
@@ -62,9 +158,24 @@
         document.getElementById("dev").textContent = data.device_id;
         document.getElementById("login").textContent = data.login || "not paired";
 
-        document.querySelector("#sessions tbody").innerHTML = (data.sessions || []).map(s =>
-          `<tr><td>${esc(s.id)}</td><td>${esc(s.kind)}</td><td class="${esc(s.status)}">${esc(s.status)}</td><td>${esc(s.last_seen_at)}</td><td>${esc(s._origin_device_id)}</td></tr>`
-        ).join("") || empty(5);
+        sessionsById = {};
+        (data.sessions || []).forEach(s => { sessionsById[s.id] = s; });
+
+        document.querySelector("#sessions tbody").innerHTML = (data.sessions || []).map(s => {
+          const mode = s.can_control ? "control" : "watch";
+          return `<tr class="session-row${selectedSessionId === s.id ? " selected" : ""}" data-id="${esc(s.id)}">
+            <td>${esc(s.id)}</td><td>${esc(s.kind)}</td><td class="${esc(s.status)}">${esc(s.status)}</td>
+            <td>${esc(mode)}</td><td>${esc(s.last_seen_at)}</td><td>${esc(s._origin_device_id)}</td></tr>`;
+        }).join("") || empty(6);
+
+        document.querySelectorAll("tr.session-row").forEach(tr => {
+          tr.onclick = () => selectSession(tr.dataset.id);
+        });
+
+        if (selectedSessionId) {
+          renderDetail(sessionsById[selectedSessionId] || null);
+          if (!sessionsById[selectedSessionId]) selectedSessionId = null;
+        }
 
         document.querySelector("#tasks tbody").innerHTML = (data.tasks || []).map(t =>
           `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td>${esc(t.workflow)}</td><td class="${esc(t.state)}">${esc(t.state)}</td><td>r${esc(t.current_round)}</td><td>${esc(t._origin_device_id)}</td></tr>`
