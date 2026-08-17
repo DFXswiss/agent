@@ -5,10 +5,17 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from .store import StoreError
+
+GROK_DEFAULT_MODEL = "grok-4.6"
+GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 
 @dataclass
@@ -23,6 +30,38 @@ def tmux_name(session_id: str) -> str:
     if cleaned == "":
         raise StoreError("session id produces empty tmux name")
     return f"agent-{cleaned}"
+
+
+def grok_new_session_id() -> str:
+    """Grok `--session-id` rejects a ULID. Always mint a UUID."""
+    return str(uuid.uuid4())
+
+
+def grok_model(raw: str | None) -> str:
+    if raw is None:
+        return GROK_DEFAULT_MODEL
+    stripped = raw.strip()
+    if stripped == "":
+        return GROK_DEFAULT_MODEL
+    return stripped
+
+
+def grok_launch_argv(*, existing: str, model: str, new_id: str) -> list[str]:
+    resolved = grok_model(model)
+    if existing:
+        return ["grok", "--resume", existing, "--model", resolved]
+    if not _UUID_RE.match(new_id):
+        raise SystemExit("grok --session-id requires a UUID")
+    return ["grok", "--session-id", new_id, "--model", resolved]
+
+
+def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[str]:
+    """Prefix that drops Claude credentials from the pane environment."""
+    argv: list[str] = ["env"]
+    for key in GROK_STRIP_ENV:
+        argv.extend(["-u", key])
+    argv.extend(grok_launch_argv(existing=existing, model=model, new_id=new_id))
+    return argv
 
 
 def _default_runner(argv: list[str]) -> Completed:
@@ -57,6 +96,7 @@ class Runtime:
         command: str | None,
         cols: int | None,
         rows: int | None,
+        command_argv: list[str] | None = None,
     ) -> None:
         if not self.available():
             raise SystemExit("tmux is not installed")
@@ -70,7 +110,10 @@ class Runtime:
             argv.extend(["-x", str(cols)])
         if rows is not None:
             argv.extend(["-y", str(rows)])
-        if command is not None and command != "":
+        if command_argv:
+            argv.append("--")
+            argv.extend(command_argv)
+        elif command is not None and command != "":
             argv.append("--")
             try:
                 argv.extend(shlex.split(command))

@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from agent_cli.runtime import Completed, Runtime, tmux_name
+from agent_cli.runtime import (
+    Completed,
+    Runtime,
+    grok_launch_argv,
+    grok_model,
+    grok_new_session_id,
+    grok_tmux_command_argv,
+    tmux_name,
+)
 from agent_cli.store import StoreError
 
 
@@ -96,6 +106,73 @@ def test_start_stop_input_argv() -> None:
 
     with pytest.raises(SystemExit, match="unknown key"):
         rt.input_key("sess-1", "escape")
+
+
+def test_grok_session_id_is_uuid_not_ulid() -> None:
+    gid = grok_new_session_id()
+    assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", gid)
+    assert "_" not in gid
+
+
+def test_grok_empty_model_is_grok_46() -> None:
+    assert grok_model(None) == "grok-4.6"
+    assert grok_model("") == "grok-4.6"
+    assert grok_model("  ") == "grok-4.6"
+    assert grok_model("opus") == "opus"
+    assert grok_model("grok-4.5") == "grok-4.5"
+
+
+def test_grok_first_start_uses_session_id() -> None:
+    argv = grok_launch_argv(existing="", model="", new_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert argv == [
+        "grok",
+        "--session-id",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "--model",
+        "grok-4.6",
+    ]
+
+
+def test_grok_resume_does_not_use_session_id() -> None:
+    argv = grok_launch_argv(
+        existing="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        model="grok-4.5",
+        new_id="should-not-appear",
+    )
+    assert argv == [
+        "grok",
+        "--resume",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "--model",
+        "grok-4.5",
+    ]
+    assert "--session-id" not in argv
+    assert "should-not-appear" not in argv
+
+
+def test_grok_tmux_argv_unsets_claude_env() -> None:
+    argv = grok_tmux_command_argv(existing="", model="", new_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert argv[:7] == [
+        "env",
+        "-u",
+        "ANTHROPIC_API_KEY",
+        "-u",
+        "CLAUDECODE",
+        "-u",
+        "CLAUDE_CODE_ENTRYPOINT",
+    ]
+    assert argv[7:] == [
+        "grok",
+        "--session-id",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "--model",
+        "grok-4.6",
+    ]
+
+
+def test_grok_rejects_non_uuid_session_id() -> None:
+    with pytest.raises(SystemExit, match="UUID"):
+        grok_launch_argv(existing="", model="", new_id="01ARZ3NDEKTSV4RRFFQ69G5FAV")
 
 
 def test_start_invalid_quoting_dies() -> None:

@@ -221,7 +221,7 @@ Evidence and command output travel with the replica. They are team-visible. Secr
 ```text
 agent init
 agent session register|heartbeat|list|close|start|stop|input
-agent session start --id ID [--cmd TEXT] [--cols N] [--rows N]
+agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID
 agent session input --id ID --data TEXT
 agent session input --id ID --key enter|ctrl-c|tab
@@ -273,16 +273,21 @@ Owned-row runtime fields (updated on start/stop only; not a new vendor):
   "tmux_session": "agent-…",
   "control": "attached" | "stopped",
   "cols": 80,
-  "rows": 24
+  "rows": 24,
+  "provider": "grok",
+  "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "model": "grok-4.6"
 }
 ```
 
 Start sets `control=attached` and the tmux name. Stop sets `control=stopped` and keeps the name. Ledger session `status` (`active` / `closed`) is separate; `session close` stays as it is.
 
-**Vendors remain `grok` | `codex`.** A process running inside a tmux pane is not a ledger vendor. There is no `vendor=claude` and no shell-string tmux driver: the runtime invokes `tmux` with argv lists only.
+**Grok Build launch** (`--provider grok` or control `{provider: "grok"}`) is not the ledger session id. The Grok CLI `--session-id` flag accepts only a UUID (`8-4-4-4-12`). A caller-chosen ledger id (including a ULID) is never passed through. First start mints `runtime.grok_session_id` and runs `grok --session-id <uuid> --model grok-4.6`. Later starts, if that field is set, run `grok --resume <uuid>`. An empty model becomes `grok-4.6`; it must not inherit a Claude default. The pane is started with `env -u ANTHROPIC_API_KEY -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT` so Claude credentials do not leak into the Grok process. `--provider` and `--cmd` cannot be combined.
+
+**Vendors remain `grok` | `codex`.** A process running inside a tmux pane is not a ledger vendor. There is no `vendor=claude` and no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
 Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub.
 
 ## 17. Document history
 
-Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, required full bidirectional sync and restore, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes.
+Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, required full bidirectional sync and restore, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, default model `grok-4.6`, no Claude environment in the pane.

@@ -17,7 +17,13 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .hub import Hub, HubError
-from .runtime import Runtime, tmux_name
+from .runtime import (
+    Runtime,
+    grok_model,
+    grok_new_session_id,
+    grok_tmux_command_argv,
+    tmux_name,
+)
 from .store import Store, StoreError, utcnow
 
 CHECKLIST = {
@@ -230,11 +236,24 @@ def cmd_session(args: list[str]) -> None:
         if sub == "start":
             sid = require_flag(rest, "--id")
             cmd = flag(rest, "--cmd")
+            provider = flag(rest, "--provider")
+            model = flag(rest, "--model")
             cols = _dim_flag(rest, "--cols")
             rows = _dim_flag(rest, "--rows")
             runtime = Runtime()
-            name = _session_start(store, runtime, sid, cmd, cols, rows)
-            print(f"started {sid} tmux={name}")
+            name = _session_start(
+                store, runtime, sid, cmd, cols, rows, provider=provider, model=model
+            )
+            row = store.row("session", sid)
+            grok_id = ""
+            if isinstance(row, dict):
+                meta = row.get("runtime")
+                if isinstance(meta, dict) and isinstance(meta.get("grok_session_id"), str):
+                    grok_id = meta["grok_session_id"]
+            if grok_id:
+                print(f"started {sid} tmux={name} grok={grok_id}")
+            else:
+                print(f"started {sid} tmux={name}")
             return
         if sub == "stop":
             sid = require_flag(rest, "--id")
@@ -1206,6 +1225,8 @@ def _session_start(
     command: str | None,
     cols: int | None,
     rows: int | None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> str:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
@@ -1213,10 +1234,29 @@ def _session_start(
         die(f"session {sid} is not active")
     if not runtime.available():
         die("tmux is not installed")
+    if provider is not None and provider != "grok":
+        die("provider must be grok")
+    if provider == "grok" and command:
+        die("provider and --cmd cannot be used together")
+    if model is not None and provider != "grok":
+        die("--model requires --provider grok")
     name = tmux_name(sid)
-    runtime.start(sid, command, cols, rows)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
+    command_argv: list[str] | None = None
+    start_command = command
+    if provider == "grok":
+        existing = meta.get("grok_session_id")
+        existing_s = existing if isinstance(existing, str) and existing else ""
+        new_id = grok_new_session_id() if not existing_s else ""
+        resolved = grok_model(model)
+        command_argv = grok_tmux_command_argv(existing=existing_s, model=resolved, new_id=new_id)
+        start_command = None
+        if not existing_s:
+            meta["grok_session_id"] = new_id
+        meta["provider"] = "grok"
+        meta["model"] = resolved
+    runtime.start(sid, start_command, cols, rows, command_argv=command_argv)
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
@@ -1287,11 +1327,26 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
                 command = payload.get("cmd")
             if command is not None and not isinstance(command, str):
                 die("command must be a string")
+            provider = payload.get("provider")
+            if provider is not None and not isinstance(provider, str):
+                die("provider must be a string")
+            model = payload.get("model")
+            if model is not None and not isinstance(model, str):
+                die("model must be a string")
             cols = payload.get("cols")
             rows = payload.get("rows")
             cols_i = _dim_value(cols, "cols") if cols is not None else None
             rows_i = _dim_value(rows, "rows") if rows is not None else None
-            _session_start(store, runtime, sid, command, cols_i, rows_i)
+            _session_start(
+                store,
+                runtime,
+                sid,
+                command,
+                cols_i,
+                rows_i,
+                provider=provider,
+                model=model,
+            )
         elif action == "stop":
             _session_stop(store, runtime, sid)
         elif action == "input":

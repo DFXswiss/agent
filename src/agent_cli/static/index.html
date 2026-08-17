@@ -114,6 +114,7 @@
         controls.innerHTML = `
           <div class="control-form">
             <button type="button" id="ctl-start">Start</button>
+            <button type="button" id="ctl-start-grok">Start Grok</button>
             <button type="button" id="ctl-stop">Stop</button>
             <input type="text" id="ctl-data" placeholder="input text" />
             <button type="button" id="ctl-send">Send</button>
@@ -128,6 +129,8 @@
         };
         document.getElementById("ctl-start").onclick = () =>
           postControl(s.id, { action: "start", payload: {} }).catch(showErr);
+        document.getElementById("ctl-start-grok").onclick = () =>
+          postControl(s.id, { action: "start", payload: { provider: "grok" } }).catch(showErr);
         document.getElementById("ctl-stop").onclick = () =>
           postControl(s.id, { action: "stop", payload: {} }).catch(showErr);
         document.getElementById("ctl-send").onclick = () => {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,69 @@ def _fake_runtime_factory(calls: list[list[str]] | None = None):
         return Runtime(runner=runner)
 
     return factory, log
+
+
+def test_cli_start_provider_grok_mints_uuid_and_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            if any(c[:2] == ["tmux", "new-session"] for c in calls[:-1]) and not any(
+                c[:2] == ["tmux", "kill-session"] for c in calls[:-1]
+            ):
+                return Completed(0, "", "")
+            return Completed(1, "", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "start", "--id", "sess-1", "--provider", "grok"])
+    out = capsys.readouterr().out
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        row = store.row("session", "sess-1")
+        assert row is not None
+        gid = row["runtime"]["grok_session_id"]
+        assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", gid)
+        assert f"grok={gid}" in out
+        first = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
+        assert "env" in first
+        assert "ANTHROPIC_API_KEY" in first
+        assert "--session-id" in first
+        assert gid in first
+        assert "--model" in first and "grok-4.6" in first
+        assert first[first.index("--session-id") + 1] != "sess-1"
+    finally:
+        store.close()
+
+    run(tmp_path, ["session", "stop", "--id", "sess-1"])
+    calls.clear()
+    run(tmp_path, ["session", "start", "--id", "sess-1", "--provider", "grok"])
+    resume = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
+    assert "--resume" in resume
+    assert "--session-id" not in resume
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        row = store.row("session", "sess-1")
+        assert row is not None
+        assert resume[resume.index("--resume") + 1] == row["runtime"]["grok_session_id"]
+    finally:
+        store.close()
+
+
+def test_cli_provider_and_cmd_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    factory, _ = _fake_runtime_factory()
+    monkeypatch.setattr(main_mod, "Runtime", factory)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    with pytest.raises(SystemExit, match="cannot be used together"):
+        run(tmp_path, ["session", "start", "--id", "sess-1", "--provider", "grok", "--cmd", "bash"])
 
 
 def test_cli_start_owned_writes_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,6 +168,28 @@ def test_apply_control_start_stop_input(tmp_path: Path) -> None:
         ack = apply_control(
             store,
             runtime,
+            {
+                "type": "control",
+                "session_id": "s1",
+                "action": "start",
+                "payload": {"provider": "grok", "cols": 80, "rows": 24},
+            },
+        )
+        assert ack["ok"] is True
+        row = store.row("session", "s1")
+        assert row is not None
+        assert row["runtime"]["provider"] == "grok"
+        assert re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            row["runtime"]["grok_session_id"],
+        )
+        grok_new = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
+        assert "--session-id" in grok_new
+        assert "grok-4.6" in grok_new
+
+        ack = apply_control(
+            store,
+            runtime,
             {"type": "control", "session_id": "s1", "action": "start", "payload": {"cols": 80, "rows": 24}},
         )
         assert ack["ok"] is True
@@ -132,6 +218,28 @@ def test_apply_control_start_stop_input(tmp_path: Path) -> None:
         assert row is not None
         assert row["runtime"]["control"] == "stopped"
         assert row["runtime"]["tmux_session"] == "agent-s1"
+    finally:
+        store.close()
+
+
+def test_apply_control_provider_and_command_not_ok(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s1", "--kind", "human"])
+    store = Store(tmp_path / "ledger.sqlite")
+    runtime = Runtime(runner=lambda argv: Completed(0, "tmux 3.3a", "") if argv[:2] == ["tmux", "-V"] else Completed(1, "", ""))
+    try:
+        ack = apply_control(
+            store,
+            runtime,
+            {
+                "type": "control",
+                "session_id": "s1",
+                "action": "start",
+                "payload": {"provider": "grok", "command": "bash"},
+            },
+        )
+        assert ack["ok"] is False
+        assert "together" in (ack.get("error") or "")
     finally:
         store.close()
 

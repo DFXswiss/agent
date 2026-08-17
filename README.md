@@ -33,7 +33,7 @@ agent restore   # after a wiped laptop
 
 ```bash
 agent session register --id <session-id> --kind human
-agent session start --id <session-id> [--cmd TEXT] [--cols N] [--rows N]
+agent session start --id <session-id> [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session input --id <session-id> --data TEXT
 agent session input --id <session-id> --key enter|ctrl-c|tab
 agent session stop --id <session-id>
@@ -63,7 +63,9 @@ This device is the only place that starts, stops, or types into a live terminal.
 
 ```bash
 agent session start --id <session-id> [--cmd "bash -l"] [--cols 80] [--rows 24]
-# → started <id> tmux=agent-…
+agent session start --id <session-id> --provider grok
+# → started <id> tmux=agent-… grok=<uuid>
+# later starts resume that uuid; they do not reuse the ledger session id
 agent session input --id <session-id> --data "ls\n"
 agent session input --id <session-id> --key enter
 agent session stop --id <session-id>
