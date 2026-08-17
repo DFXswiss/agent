@@ -93,6 +93,38 @@ def test_cli_start_provider_grok_mints_uuid_and_resumes(
         store.close()
 
 
+def test_cli_start_grok_replaces_bare_tmux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            created = [c for c in calls[:-1] if c[:2] == ["tmux", "new-session"]]
+            killed = [c for c in calls[:-1] if c[:2] == ["tmux", "kill-session"]]
+            return Completed(0, "", "") if len(created) > len(killed) else Completed(1, "", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "start", "--id", "sess-1"])
+    run(tmp_path, ["session", "start", "--id", "sess-1", "--provider", "grok"])
+    assert any(c[:2] == ["tmux", "kill-session"] for c in calls)
+    grok_news = [c for c in calls if c[:2] == ["tmux", "new-session"] and "grok" in c]
+    assert len(grok_news) == 1
+    assert "--session-id" in grok_news[0]
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        gid = store.row("session", "sess-1")["runtime"]["grok_session_id"]
+        assert gid in grok_news[0]
+    finally:
+        store.close()
+
+
 def test_cli_provider_and_cmd_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     factory, _ = _fake_runtime_factory()
     monkeypatch.setattr(main_mod, "Runtime", factory)

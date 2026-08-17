@@ -1248,6 +1248,8 @@ def _session_start(
     if provider == "grok":
         existing = meta.get("grok_session_id")
         existing_s = existing if isinstance(existing, str) and existing else ""
+        if runtime.exists(sid) and not existing_s:
+            runtime.stop(sid)
         new_id = grok_new_session_id() if not existing_s else ""
         resolved = grok_model(model)
         command_argv = grok_tmux_command_argv(existing=existing_s, model=resolved, new_id=new_id)
