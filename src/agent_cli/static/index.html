@@ -88,14 +88,7 @@
       await tick();
     }
 
-    function renderDetail(s) {
-      const box = document.getElementById("session-detail");
-      if (!s) {
-        box.hidden = true;
-        return;
-      }
-      box.hidden = false;
-      document.getElementById("detail-id").textContent = s.id;
+    function fillDetailPre(s) {
       const runtime = s.runtime || {};
       document.getElementById("detail-pre").textContent = JSON.stringify({
         id: s.id,
@@ -105,6 +98,17 @@
         can_control: s.can_control,
         control_connected: s.control_connected,
       }, null, 2);
+    }
+
+    function renderDetail(s) {
+      const box = document.getElementById("session-detail");
+      if (!s) {
+        box.hidden = true;
+        return;
+      }
+      box.hidden = false;
+      document.getElementById("detail-id").textContent = s.id;
+      fillDetailPre(s);
       const controls = document.getElementById("detail-controls");
       if (s.can_control) {
         controls.innerHTML = `
@@ -173,8 +177,17 @@
         });
 
         if (selectedSessionId) {
-          renderDetail(sessionsById[selectedSessionId] || null);
-          if (!sessionsById[selectedSessionId]) selectedSessionId = null;
+          const selected = sessionsById[selectedSessionId];
+          if (!selected) {
+            selectedSessionId = null;
+            renderDetail(null);
+          } else if (document.getElementById("session-detail").hidden) {
+            renderDetail(selected);
+          } else {
+            fillDetailPre(selected);
+            const hasForm = !!document.getElementById("ctl-start");
+            if (!!selected.can_control !== hasForm) renderDetail(selected);
+          }
         }
 
         document.querySelector("#tasks tbody").innerHTML = (data.tasks || []).map(t =>

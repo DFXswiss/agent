@@ -1215,9 +1215,8 @@ def _session_start(
         die("tmux is not installed")
     name = tmux_name(sid)
     runtime.start(sid, command, cols, rows)
-    meta: dict = dict(row.get("runtime") or {})
-    if not isinstance(meta, dict):
-        meta = {}
+    raw = row.get("runtime")
+    meta = dict(raw) if isinstance(raw, dict) else {}
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
@@ -1233,9 +1232,8 @@ def _session_stop(store: Store, runtime: Runtime, sid: str) -> None:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
     runtime.stop(sid)
-    meta: dict = dict(row.get("runtime") or {})
-    if not isinstance(meta, dict):
-        meta = {}
+    raw = row.get("runtime")
+    meta = dict(raw) if isinstance(raw, dict) else {}
     meta["tmux_session"] = meta.get("tmux_session") or tmux_name(sid)
     meta["control"] = "stopped"
     row["runtime"] = meta
