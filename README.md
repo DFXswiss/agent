@@ -33,6 +33,10 @@ agent restore   # after a wiped laptop
 
 ```bash
 agent session register --id <session-id> --kind human
+agent session start --id <session-id> [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
+agent session input --id <session-id> --data TEXT
+agent session input --id <session-id> --key enter|ctrl-c|tab
+agent session stop --id <session-id>
 agent task create --session <session-id> --workflow implement --title "…"
 agent round start --task <uuid>
 agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok --round 1
@@ -52,6 +56,24 @@ agent dashboard
 ```
 
 Kind is `human`, `runner`, or `other`.
+
+### Session terminal control
+
+This device is the only place that starts, stops, or types into a live terminal. Control mutates the owned session row’s `runtime` fields (`tmux_session`, `control`, optional `cols`/`rows`). Foreign sessions stay read-only.
+
+```bash
+agent session start --id <session-id> [--cmd "bash -l"] [--cols 80] [--rows 24]
+agent session start --id <session-id> --provider grok
+# → started <id> tmux=agent-… grok=<uuid>
+# later starts resume that uuid; they do not reuse the ledger session id
+agent session input --id <session-id> --data "ls\n"
+agent session input --id <session-id> --key enter
+agent session stop --id <session-id>
+# → stopped <id>
+```
+
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not ledger events.
+
 
 ## Tests
 
