@@ -42,8 +42,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Repos | Public MIT: `DFXswiss/agent` (client), `DFXswiss/agent-core` (hub). |
 | Website host | `agent.dfx.swiss` (development: `dev.agent.dfx.swiss`). Singular product name. |
 | License | MIT. |
-| Neutral product | This client is a general session store and bus. It does not encode a particular organisation’s house process. |
-| Not in the existing public API service | The customer API keeps its own auth, process and blast radius. |
+| Product scope | General session store and bus. Rules in this document are the client contract. |
 
 ## 3. Rejected alternatives
 
@@ -59,7 +58,7 @@ Serial IDs collide across machines. Laptops sleep and sit behind NAT. There is n
 Even a single permissioned node in this organisation needed a public relay because inbound ports are not freely available. N laptops on hotel Wi‑Fi is worse. Local Postgres must never be exposed.
 
 **Put the hub inside the existing public API service.**  
-That service is the customer API: wallet/account JWT, staff mail + TOTP + KYC, a saturated event loop, crown-jewel data, 100 % coverage rules. GitHub-org membership is not a staff user. A leak or stall in sync would take payments and KYC with it. The only WebSocket there is checkout-device delivery. Patterns may be copied; the process must not be shared.
+Separate auth and blast radius. Patterns may be copied; the process must not be shared.
 
 **Plane (or any issue tracker) as the store.**  
 Planning is not session / activity / skill. A second truth would appear.
@@ -111,7 +110,7 @@ A runner on an already paired machine inherits that device’s login. No second 
 
 The hub binds `origin_device_id` to the GitHub login of the session that **confirmed** pairing. The client cannot choose that login.
 
-A Grok (or other TUI) runtime UUID is **not** the session id. See §16.
+A Grok (or other TUI) runtime UUID is **not** the session id. See §17.
 
 ## 6. Visibility and teams
 
@@ -181,7 +180,7 @@ Each device is the write owner of its own events. The hub keeps a **complete** c
 | Direction | What moves |
 |---|---|
 | Device → hub | Every **own** event, in `origin_seq` order, no gaps. |
-| Hub → device | Own catch-up (gapless events). Inbox **snapshots** for `activity.type=message` whose `to_session` this device owns (plus the parent `session` snapshot). Rows matching this device’s subscriptions (snapshots). Query answers are one-shot and are not a pull. |
+| Hub → device | Own catch-up (gapless events). Inbox **snapshots** for `activity.type=message` whose `payload.to_session` this device owns (plus the parent `session` snapshot). Person-ping rows visible to this login (snapshots; same as session mail: not a gapless foreign replay). Rows matching this device’s subscriptions (snapshots). Query answers are one-shot and are not a pull. |
 | Wiped device | Restore: `{own_events, inbox}`. Inbox is snapshots, not a holey event stream. |
 | Hub behind the device | The device pushes the missing **own** seqs. |
 
@@ -191,8 +190,9 @@ Rules:
 - Foreign `origin_device_id` on push is 403.
 - A push must not steal a replica row owned by another device (same `table`+`row_id`).
 - **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin.
-- Implicit mail does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `to_session`.
-- `GET /sync/restore` returns `own_events` plus `inbox` (message + parent-session snapshots for sessions this device owns).
+- Implicit mail does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
+- Person pings visible to this login are delivered the same way (snapshots on pull / WebSocket), independent of a subscription.
+- `GET /sync/restore` returns `own_events` plus `inbox` (message + parent-session snapshots for sessions this device owns, and person-ping snapshots visible to this login).
 - `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dead socket is a visible failure, not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.
 
@@ -213,6 +213,8 @@ agent ping ack --id <uuid>
 - Target is a **person** (GitHub login), not a session.
 - Target must be visible to the sender.
 - Ack is only allowed for the recipient.
+- A ping is owned by the **sender’s** device. The recipient must **not** update that row locally. Ack goes to `POST /api/pings/{id}/ack` with the device token (or the website cookie). The hub records a recipient-side event and does not transfer ownership of the ping.
+- Website-created pings are real store events (synthetic origin `web:<login>`), so pull delivers them. A replica-only write is not enough.
 
 ### Session mail
 
