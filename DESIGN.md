@@ -24,13 +24,13 @@ The AI session talks **only** to the local database. Scripts perform every actio
 
 | Topic | Decision |
 |---|---|
-| Write owner | The device that created a row. The hub never becomes the author of that row. |
+| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings, which use the named origin `web:<login>`. |
 | Hub role | Full replica + fan-out + always-on website. Not a shared write database. |
 | Login | Any GitHub account may sign in. Membership is *not* the GitHub org. |
 | Authorization | Hardcoded teams in git. Change members with a pull request. |
 | Visibility | Self always. A team only if the GitHub login is listed on that team. Several teams → union. |
 | Sync (this device) | Always: own events, gapless. Also: implicit **inbox** snapshots (session mail to a session this device owns), **pings** snapshots (person pings this login sent or received), plus optional table subscriptions and one-shot queries. Not a default full pull of every visible origin. |
-| Inbound apply | Own origin stays gapless (`last+1`). Foreign inbound is **row snapshots**, not gapless replay of the sender’s `origin_seq`. |
+| Inbound apply | Own origin stays gapless (`last+1`). Foreign inbound is **row snapshots**, not gapless replay of the sender’s `origin_seq`. Same-device session mail (own origin, other session) is already in the event log; apply is idempotent on `row_id` and still `NOTIFY`s the knock. |
 | Restore | Required. A wiped device comes back from the hub: own events, inbox snapshots (session mail), and pings snapshots (person pings this login sent or received). |
 | Identity | GitHub login, lowercase. Device = stable UUID, not the hostname. |
 | Session | No work without a `session` row. The start hook inserts it. |
@@ -180,8 +180,8 @@ Each device is the write owner of its own events. The hub keeps a **complete** c
 | Direction | What moves |
 |---|---|
 | Device → hub | Every **own** event, in `origin_seq` order, no gaps. |
-| Hub → device | Own catch-up (gapless events). Inbox **snapshots**: each `activity.type=message` whose `payload.to_session` this device owns, plus that message’s parent `session` row (usually the sender session). Pings **snapshots**: person-ping rows this login sent or received (not every team-visible ping). Subscription snapshots. Query answers are one-shot and are not a pull. |
-| Wiped device | Restore: `{own_events, inbox, pings}`. `inbox` = session-mail snapshots to sessions this device owns, each plus that message’s parent `session` snapshot. `pings` = person-ping snapshots this login sent or received. Snapshots, not a holey event stream. |
+| Hub → device | Own catch-up (gapless events). Inbox **snapshots**: each `activity.type=message` whose `payload.to_session` this device owns, plus the parent `session` row for that activity’s `session_id`. Pings **snapshots**: person-ping rows this login sent or received (not every team-visible ping). Subscription snapshots, only for origins this login may see under §6. Query answers are one-shot, also §6-filtered, and are not a pull. |
+| Wiped device | Restore: `{own_events, inbox, pings}`. `inbox` = session-mail snapshots to sessions this device owns, each plus the parent `session` snapshot for that activity’s `session_id`. `pings` = person-ping snapshots this login sent or received. Snapshots, not a holey event stream. |
 | Hub behind the device | The device pushes the missing **own** seqs. |
 
 Rules:
@@ -189,10 +189,10 @@ Rules:
 - Own `origin_seq` is per device, strictly `last+1`. A gap is 409 / a hard local error. The exact same event is idempotent. The same seq with different content (including `occurred_at`) is a conflict.
 - Foreign `origin_device_id` on push is 403.
 - A push must not steal a replica row owned by another device (same `table`+`row_id`).
-- **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin.
+- **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin. The matcher runs only inside origins this login may see under §6.
 - Implicit **session mail** does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
 - Person pings this login **sent or received** are delivered the same way (snapshots on pull / WebSocket), independent of a subscription. Team-visible pings this login is not a party to stay on the website and on query; they are not laptop pull.
-- `GET /sync/restore` returns `own_events`, `inbox` (each session-mail snapshot addressed to a session this device owns, plus that message’s parent `session` snapshot), and `pings` (person-ping snapshots this login sent or received).
+- `GET /sync/restore` returns `own_events`, `inbox` (each session-mail snapshot addressed to a session this device owns, plus the parent `session` snapshot for that activity’s `session_id`), and `pings` (person-ping snapshots this login sent or received).
 - `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dead socket is a visible failure, not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.
 
@@ -218,7 +218,7 @@ agent ping ack --id <uuid>
 
 ### Session mail
 
-A session writes an `activity` row `type=message` with `payload.to_session` set to the **session id** of the recipient (not a login, not a device). The sender may write that row only if it is allowed to **see** the owning login of the target session under §6; otherwise the hub returns 403.
+A session writes an `activity` row `type=message` with `payload.to_session` set to the **session id** of the recipient (not a login, not a device). Open session ids are unique on the hub; a colliding `session register` is 409. The hub resolves the id against the replica. The sender may write that row only if it is allowed to **see** the owning login of the target session under §6; otherwise the hub returns 403.
 
 The hub delivers a snapshot to the device that owns that session. The local daemon `NOTIFY`s. The TUI knock is exactly:
 
@@ -247,7 +247,7 @@ Ack of session mail is a **recipient-owned** `message.read` activity, not a muta
 | Local dashboard | Materialized rows after each local write. A short UI refresh is display only. |
 | Website (browser cookie) | SSE (`/api/stream`): full replica **filtered by visibility** only. Not the laptop pull set. |
 | This device (token) | WebSocket (`/sync/ws?token=…`): own events, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
-| Local knock | `LISTEN` on channel `agent_mail` after an inbox `activity` insert (including replica apply). Payload = session id. |
+| Local knock | `LISTEN` on channel `agent_inbox` after an inbox `activity` insert (including replica apply). Payload = session id. |
 | Scripts | `LISTEN` on `agent_work` (or poll `execution_status=pending`). |
 | Offline | Own events queue locally. On reconnect: own catch-up, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
 
@@ -280,6 +280,8 @@ Session **tags** are the distinct `type` values (or the skill-facing tag the typ
 
 The AI inserts intent (`execution_status=pending`). Scripts set result columns (`done` / `error`, external id, url). Unknown `type` → `execution_status=error`.
 
+`mail.*` is the external mailbox. `message` / `message.read` is session-addressed mail on the bus (§10). The knock channel is `agent_inbox`.
+
 v1 types (mechanism only):
 
 | Type | Tag | Who writes | Who executes |
@@ -288,9 +290,9 @@ v1 types (mechanism only):
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `comment.post` | — | AI (target + body) | script |
-| `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script |
+| `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
-| `message` | — | AI | hub + daemon + knock |
+| `message` | — | AI | hub + daemon + knock (session mail, §10) |
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
