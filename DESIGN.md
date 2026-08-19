@@ -39,6 +39,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Skills | Optional, requested. A review loop, gates, and the task/round/checklist spine exist as skills. They are **not** on by default. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
+| Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | Repos | Public MIT: `DFXswiss/agent` (client), `DFXswiss/agent-core` (hub). |
 | Website host | `agent.dfx.swiss` (development: `dev.agent.dfx.swiss`). Singular product name. |
 | License | MIT. |
@@ -77,6 +78,9 @@ The knock is only the id. The agent selects the row.
 
 **`/loop` inside the agent as the inbox.**  
 A device daemon `LISTEN`s on Postgres. The agent does not poll.
+
+**The human (or the agent) polls GitHub to learn a PR merged.**  
+A script watches `pr.open` rows and writes `pr.merged`, then knocks. The agent reads the row.
 
 **Expose local ports or the local database.**  
 They stay on `127.0.0.1` / a Unix socket. Nobody reads a teammate by opening their Postgres.
@@ -247,7 +251,7 @@ Ack of session mail is a **recipient-owned** `message.read` activity, not a muta
 | Local dashboard | Materialized rows after each local write. A short UI refresh is display only. |
 | Website (browser cookie) | SSE (`/api/stream`): full replica **filtered by visibility** only. Not the laptop pull set. |
 | This device (token) | WebSocket (`/sync/ws?token=…`): own events, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
-| Local knock | `LISTEN` on channel `agent_inbox` after an inbox `activity` insert (including replica apply). Payload = session id. |
+| Local knock | `LISTEN` on channel `agent_inbox` after an activity insert that should wake a session (session-mail inbox, `pr.merged`, …), including replica apply. Payload = activity id (the uuid in `da ist Post id <uuid>`). |
 | Scripts | `LISTEN` on `agent_work` (or poll `execution_status=pending`). |
 | Offline | Own events queue locally. On reconnect: own catch-up, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
 
@@ -289,6 +293,7 @@ v1 types (mechanism only):
 | `session.register` | — | script (session start) | — |
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
+| `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
 | `comment.post` | — | AI (target + body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
@@ -298,6 +303,14 @@ v1 types (mechanism only):
 | `subscription.set` | — | AI or script | script |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
+
+### Outside facts (example: PR merged)
+
+The agent never learns a merge from a human prompt and never calls GitHub to ask “is it merged?”.
+
+When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The **existing** knock daemon and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
+
+The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 
 `wake` (if stored) is a local queue row for the knock; it is not a hub event.
 
