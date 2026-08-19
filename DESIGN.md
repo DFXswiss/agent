@@ -29,9 +29,9 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Login | Any GitHub account may sign in. Membership is *not* the GitHub org. |
 | Authorization | Hardcoded teams in git. Change members with a pull request. |
 | Visibility | Self always. A team only if the GitHub login is listed on that team. Several teams → union. |
-| Sync (this device) | Always: own events, gapless. Also: implicit inbox snapshots for mail addressed to a session this device owns, plus optional table subscriptions and one-shot queries. Not a default full pull of every visible origin. |
+| Sync (this device) | Always: own events, gapless. Also: implicit **inbox** snapshots (session mail to a session this device owns), person-ping snapshots visible to this login, plus optional table subscriptions and one-shot queries. Not a default full pull of every visible origin. |
 | Inbound apply | Own origin stays gapless (`last+1`). Foreign inbound is **row snapshots**, not gapless replay of the sender’s `origin_seq`. |
-| Restore | Required. A wiped device comes back from the hub: own events plus inbox snapshots for sessions this device owns. |
+| Restore | Required. A wiped device comes back from the hub: own events, inbox snapshots (session mail), and person-ping snapshots visible to this login. |
 | Identity | GitHub login, lowercase. Device = stable UUID, not the hostname. |
 | Session | No work without a `session` row. The start hook inserts it. |
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
@@ -181,7 +181,7 @@ Each device is the write owner of its own events. The hub keeps a **complete** c
 |---|---|
 | Device → hub | Every **own** event, in `origin_seq` order, no gaps. |
 | Hub → device | Own catch-up (gapless events). Inbox **snapshots** for `activity.type=message` whose `payload.to_session` this device owns (plus the parent `session` snapshot). Person-ping rows visible to this login (snapshots; same as session mail: not a gapless foreign replay). Rows matching this device’s subscriptions (snapshots). Query answers are one-shot and are not a pull. |
-| Wiped device | Restore: `{own_events, inbox}`. Inbox is snapshots, not a holey event stream. |
+| Wiped device | Restore: `{own_events, inbox, pings}`. `inbox` is session-mail snapshots only (plus parent `session`). `pings` is person-ping snapshots visible to this login. Snapshots, not a holey event stream. |
 | Hub behind the device | The device pushes the missing **own** seqs. |
 
 Rules:
@@ -192,7 +192,7 @@ Rules:
 - **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin.
 - Implicit mail does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
 - Person pings visible to this login are delivered the same way (snapshots on pull / WebSocket), independent of a subscription.
-- `GET /sync/restore` returns `own_events` plus `inbox` (message + parent-session snapshots for sessions this device owns, and person-ping snapshots visible to this login).
+- `GET /sync/restore` returns `own_events`, `inbox` (session-mail + parent-session snapshots for sessions this device owns), and `pings` (person-ping snapshots visible to this login).
 - `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dead socket is a visible failure, not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.
 
@@ -245,10 +245,11 @@ Ack of session mail is a **recipient-owned** `message.read` activity, not a muta
 | Place | Mechanism |
 |---|---|
 | Local dashboard | Materialized rows after each local write. A short UI refresh is display only. |
-| Across people | The hub publishes to SSE (`/api/stream`) and WebSocket (`/sync/ws?token=…`) **filtered by visibility**, then by own / inbox / subscription. |
+| Website (browser cookie) | SSE (`/api/stream`): full replica **filtered by visibility** only. Not the laptop pull set. |
+| This device (token) | WebSocket (`/sync/ws?token=…`): own events, session-mail inbox, person-ping snapshots, and subscriptions. |
 | Local knock | `LISTEN` on channel `agent_mail` after an inbox `activity` insert (including replica apply). Payload = session id. |
 | Scripts | `LISTEN` on `agent_work` (or poll `execution_status=pending`). |
-| Offline | Own events queue locally. On reconnect, own catch-up plus inbox / subscription snapshots. |
+| Offline | Own events queue locally. On reconnect: own catch-up, session-mail inbox, person-ping snapshots, and subscriptions. |
 
 `agent sync --follow` stays on `/sync/ws?token=…` after one push+pull; a dead or failed socket is a loud error (no silent poll fallback).
 
