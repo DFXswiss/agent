@@ -251,7 +251,7 @@ Ack of session mail is a **recipient-owned** `message.read` activity, not a muta
 | Local dashboard | Materialized rows after each local write. A short UI refresh is display only. |
 | Website (browser cookie) | SSE (`/api/stream`): full replica **filtered by visibility** only. Not the laptop pull set. |
 | This device (token) | WebSocket (`/sync/ws?token=…`): own events, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
-| Local knock | `LISTEN` on channel `agent_inbox` after an inbox `activity` insert (including replica apply). Payload = session id. |
+| Local knock | `LISTEN` on channel `agent_inbox` after an activity insert that should wake a session (session-mail inbox, `pr.merged`, …), including replica apply. Payload = activity id (the uuid in `da ist Post id <uuid>`). |
 | Scripts | `LISTEN` on `agent_work` (or poll `execution_status=pending`). |
 | Offline | Own events queue locally. On reconnect: own catch-up, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
 
@@ -293,7 +293,7 @@ v1 types (mechanism only):
 | `session.register` | — | script (session start) | — |
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
-| `pr.merged` | `pr` | script | — (knock the session) |
+| `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
 | `comment.post` | — | AI (target + body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
@@ -308,7 +308,7 @@ v1 types (mechanism only):
 
 The agent never learns a merge from a human prompt and never calls GitHub to ask “is it merged?”.
 
-When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at), then knocks that session with `da ist Post id <uuid>`. The agent `SELECT`s the row and decides what to do.
+When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The **existing** knock daemon and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
 
 The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 
