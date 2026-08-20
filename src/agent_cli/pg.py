@@ -22,20 +22,24 @@ _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 def require_loopback_dsn(dsn: str) -> None:
     """Reject a DSN that is not bound to loopback or a local unix socket."""
-    host = ""
-    hostaddr = ""
-    for part in dsn.split():
-        if part.startswith("host="):
-            host = part[5:]
-        elif part.startswith("hostaddr="):
-            hostaddr = part[9:]
-    if host.startswith("/"):
+    from psycopg.conninfo import conninfo_to_dict
+
+    try:
+        info = conninfo_to_dict(dsn)
+    except Exception as exc:  # noqa: BLE001
+        raise PgError(f"invalid postgres DSN: {exc}") from exc
+    hosts: list[str] = []
+    for key in ("host", "hostaddr"):
+        raw = info.get(key)
+        if isinstance(raw, str) and raw:
+            hosts.extend(part.strip() for part in raw.split(",") if part.strip())
+    if not hosts:
         return
-    target = hostaddr or host
-    if target == "":
-        return
-    if target not in _LOOPBACK:
-        raise PgError("postgres DSN must use 127.0.0.1, ::1, localhost, or a unix socket")
+    for host in hosts:
+        if host.startswith("/"):
+            continue
+        if host not in _LOOPBACK:
+            raise PgError("postgres DSN must use 127.0.0.1, ::1, localhost, or a unix socket")
 
 
 def _bin(name: str) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_cli.knock import deliver, drain, knock_text
+from agent_cli.knock import deliver, drain, knock_text, listen_once
 from agent_cli.runtime import Completed, Runtime
 from agent_cli.store import Store
 
@@ -115,3 +115,9 @@ def test_drain_sends_queued_when_idle(tmp_path: Path) -> None:
     assert again == "sent"
     send = [c for c in calls if c[:2] == ["tmux", "send-keys"]]
     assert len(send) == 2
+
+
+def test_listen_once_times_out_without_notify(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    got = listen_once(store, _runtime([]), timeout=0.2)
+    assert got is None

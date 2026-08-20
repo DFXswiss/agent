@@ -14,6 +14,8 @@ def test_require_loopback_dsn() -> None:
     require_loopback_dsn("host=localhost port=5432 user=agent dbname=postgres")
     with pytest.raises(PgError, match="127.0.0.1"):
         require_loopback_dsn("host=8.8.8.8 port=5432 user=agent dbname=postgres")
+    with pytest.raises(PgError, match="127.0.0.1"):
+        require_loopback_dsn("postgresql://agent@8.8.8.8/postgres")
 
 
 def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
