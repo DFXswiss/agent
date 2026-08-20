@@ -64,9 +64,12 @@ def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[st
     return argv
 
 
-def _default_runner(argv: list[str]) -> Completed:
+def run_argv(argv: list[str]) -> Completed:
     proc = subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
     return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+
+
+_default_runner = run_argv
 
 
 _KEY_MAP = {
@@ -86,9 +89,12 @@ class Runtime:
     def available(self) -> bool:
         return self._run(["tmux", "-V"]).returncode == 0
 
-    def exists(self, session_id: str) -> bool:
-        name = tmux_name(session_id)
+    def exists(self, session_id: str, *, target: str | None = None) -> bool:
+        name = target or tmux_name(session_id)
         return self._run(["tmux", "has-session", "-t", name]).returncode == 0
+
+    def is_busy(self, session_id: str) -> bool:
+        return False
 
     def start(
         self,
@@ -133,18 +139,18 @@ class Runtime:
             detail = (completed.stderr or completed.stdout or "tmux kill-session failed").strip()
             raise SystemExit(detail)
 
-    def input_text(self, session_id: str, data: str) -> None:
-        name = tmux_name(session_id)
+    def input_text(self, session_id: str, data: str, *, target: str | None = None) -> None:
+        name = target or tmux_name(session_id)
         completed = self._run(["tmux", "send-keys", "-t", name, "-l", "--", data])
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "tmux send-keys failed").strip()
             raise SystemExit(detail)
 
-    def input_key(self, session_id: str, key: str) -> None:
+    def input_key(self, session_id: str, key: str, *, target: str | None = None) -> None:
         mapped = _KEY_MAP.get(key)
         if mapped is None:
             raise SystemExit(f"unknown key: {key}")
-        name = tmux_name(session_id)
+        name = target or tmux_name(session_id)
         completed = self._run(["tmux", "send-keys", "-t", name, mapped])
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "tmux send-keys failed").strip()

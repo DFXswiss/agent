@@ -17,6 +17,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .hub import Hub, HubError
+from .knock import drain as knock_drain
+from .knock import listen_once as knock_listen
+from .pg import PgError, ensure_cluster, require_loopback_dsn
 from .runtime import (
     Runtime,
     grok_model,
@@ -24,7 +27,9 @@ from .runtime import (
     grok_tmux_command_argv,
     tmux_name,
 )
+from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreError, utcnow
+from .watch import scan_merged
 
 CHECKLIST = {
     "implement": (
@@ -79,6 +84,27 @@ TASK_STATES = (
     "failed",
 )
 PING_KINDS = ("review-request", "ping", "question")
+ACTIVITY_TYPES = frozenset(
+    {
+        "session.register",
+        "issue.write",
+        "pr.open",
+        "pr.merged",
+        "comment.post",
+        "mail.ingest",
+        "mail.seen",
+        "mail.reply",
+        "investigate.step",
+        "message",
+        "message.read",
+        "query.request",
+        "query.result",
+        "subscription.set",
+    }
+)
+SCRIPT_ONLY_ACTIVITY = frozenset(
+    {"pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"}
+)
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 VENDORS = ("grok", "codex")
 N_A_ALLOWED = frozenset(
@@ -113,8 +139,24 @@ def home() -> Path:
     return Path.home() / ".local" / "share" / "agent"
 
 
-def open_store() -> Store:
-    return Store(home() / "ledger.sqlite")
+def open_store(*, allow_legacy_sqlite: bool = False) -> Store:
+    h = home()
+    sqlite_legacy = h / "ledger.sqlite"
+    if sqlite_legacy.is_file() and not allow_legacy_sqlite:
+        die("found ledger.sqlite; move it aside then run agent restore")
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn == "":
+        die("AGENT_PG_DSN is set but empty")
+    if not dsn:
+        try:
+            dsn = ensure_cluster(h / "pg")
+        except PgError as exc:
+            die(str(exc))
+    try:
+        require_loopback_dsn(dsn)
+    except PgError as exc:
+        die(str(exc))
+    return Store(h, dsn)
 
 
 def flag(args: list[str], name: str) -> str | None:
@@ -124,6 +166,20 @@ def flag(args: list[str], name: str) -> str | None:
     if idx + 1 >= len(args):
         die(f"{name} needs a value")
     return args[idx + 1]
+
+
+def flags_all(args: list[str], name: str) -> list[str]:
+    out: list[str] = []
+    idx = 0
+    while idx < len(args):
+        if args[idx] == name:
+            if idx + 1 >= len(args):
+                die(f"{name} needs a value")
+            out.append(args[idx + 1])
+            idx += 2
+            continue
+        idx += 1
+    return out
 
 
 def require_flag(args: list[str], name: str) -> str:
@@ -159,13 +215,13 @@ def should_sync_on_ws(message: dict) -> bool:
 
 def cmd_init(_: list[str]) -> None:
     store = open_store()
-    print(f"ok  device={store.device_id()} db={store.path}")
+    print(f"ok  device={store.device_id()} home={store.home}")
     store.close()
 
 
 def cmd_session(args: list[str]) -> None:
     if not args:
-        die("Usage: agent session register|heartbeat|list|close|start|stop|input")
+        die("Usage: agent session register|heartbeat|list|close|start|stop|input|skill")
     store = open_store()
     try:
         sub, rest = args[0], args[1:]
@@ -174,6 +230,10 @@ def cmd_session(args: list[str]) -> None:
             kind = require_flag(rest, "--kind")
             if kind not in ("human", "runner", "other"):
                 die("kind must be human|runner|other")
+            requested = flags_all(rest, "--skill")
+            for name in requested:
+                if name not in SKILL_NAMES:
+                    die(f"skill must be {'|'.join(SKILL_NAMES)}")
             existing = store.row("session", sid)
             if existing is not None:
                 if existing.get("kind") != kind:
@@ -183,6 +243,11 @@ def cmd_session(args: list[str]) -> None:
                 existing["last_seen_at"] = utcnow()
                 existing["status"] = "active"
                 existing["host"] = socket.gethostname()
+                skills = list(existing.get("skills") or [])
+                for name in requested:
+                    if name not in skills:
+                        skills.append(name)
+                existing["skills"] = skills
                 store.write("session", "update", sid, _strip(existing))
             else:
                 store.write(
@@ -196,6 +261,7 @@ def cmd_session(args: list[str]) -> None:
                         "last_seen_at": utcnow(),
                         "host": socket.gethostname(),
                         "status": "active",
+                        "skills": list(requested),
                     },
                 )
             print(f"registered {sid} kind={kind}")
@@ -269,6 +335,36 @@ def cmd_session(args: list[str]) -> None:
             _session_input(store, runtime, sid, data, key)
             print(f"input {sid}")
             return
+        if sub == "skill":
+            if not rest:
+                die("Usage: agent session skill attach|list …")
+            action, skill_rest = rest[0], rest[1:]
+            if action == "attach":
+                sid = require_flag(skill_rest, "--id")
+                name = require_flag(skill_rest, "--skill")
+                if name not in SKILL_NAMES:
+                    die(f"skill must be {'|'.join(SKILL_NAMES)}")
+                row = _need(store, "session", sid)
+                _require_owned(store, row, "session")
+                if row.get("status") != "active":
+                    die(f"session {sid} is not active")
+                skills = list(row.get("skills") or [])
+                if name not in skills:
+                    skills.append(name)
+                row["skills"] = skills
+                store.write("session", "update", sid, _strip(row))
+                print(f"skill {name} attached to {sid}")
+                return
+            if action == "list":
+                sid = require_flag(skill_rest, "--id")
+                row = _need(store, "session", sid)
+                skills = row.get("skills") or []
+                if not skills:
+                    print(f"{sid}  (none)")
+                    return
+                print(f"{sid}  {' '.join(str(s) for s in skills)}")
+                return
+            die(f"unknown session skill command: {action}")
         die(f"unknown session command: {sub}")
     finally:
         store.close()
@@ -294,6 +390,9 @@ def cmd_activity(args: list[str]) -> None:
         _require_owned(store, session, "session")
         if session.get("status") != "active":
             die(f"session {sid} is not active")
+        if typ in SCRIPT_ONLY_ACTIVITY:
+            die(f"{typ} is written by a script, not agent activity add")
+        status = "pending" if typ in ACTIVITY_TYPES else "error"
         activity_id = str(uuid.uuid4())
         store.write(
             "activity",
@@ -304,7 +403,7 @@ def cmd_activity(args: list[str]) -> None:
                 "session_id": sid,
                 "type": typ,
                 "payload": raw,
-                "execution_status": "pending",
+                "execution_status": status,
             },
         )
         print(f"activity {activity_id} type={typ}")
@@ -327,6 +426,8 @@ def cmd_task(args: list[str]) -> None:
             session = _need(store, "session", session_id)
             if session.get("status") != "active":
                 die(f"session {session_id} is not active")
+            _require_owned(store, session, "session")
+            _require_skill(session, "spine")
             tid = str(uuid.uuid4())
             store.write(
                 "task",
@@ -371,15 +472,23 @@ def cmd_task(args: list[str]) -> None:
             return
         if sub == "list":
             sid = flag(rest, "--session")
+            if sid:
+                _require_skill(_need(store, "session", sid), "spine")
             for row in store.rows("task"):
                 if sid and row.get("session_id") != sid:
                     continue
+                if not sid:
+                    sess = store.row("session", str(row.get("session_id") or ""))
+                    if sess is None or not has_skill(sess, "spine"):
+                        continue
                 print(f"{row['id']}  {row['workflow']}  {row['state']}  r{row['current_round']}  {row['title']}")
             return
         if sub == "show":
             if len(rest) != 1:
                 die("Usage: agent task show <id>")
-            print(json.dumps(_need(store, "task", rest[0]), indent=2))
+            task = _need(store, "task", rest[0])
+            _require_skill(_need(store, "session", task["session_id"]), "spine")
+            print(json.dumps(task, indent=2))
             return
         if sub == "state":
             if len(rest) != 2:
@@ -388,6 +497,8 @@ def cmd_task(args: list[str]) -> None:
             if state not in TASK_STATES:
                 die("unknown state")
             row = _need(store, "task", tid)
+            _require_owned(store, row, "task")
+            _require_skill(_need(store, "session", row["session_id"]), "spine")
             if state == "done":
                 _assert_ready(store, row)
             row["state"] = state
@@ -402,6 +513,8 @@ def cmd_task(args: list[str]) -> None:
             if "\n" in en or "\n" in de:
                 die("summary must be one line per language")
             row = _need(store, "task", tid)
+            _require_owned(store, row, "task")
+            _require_skill(_need(store, "session", row["session_id"]), "spine")
             row["change_summary_en"] = en
             row["change_summary_de"] = de
             row["updated_at"] = utcnow()
@@ -458,6 +571,9 @@ def cmd_checklist(args: list[str]) -> None:
                 die("deviation_granted=ja requires --deviation-granted true")
             if not granted_by:
                 die("deviation_granted=ja requires --granted-by")
+        task = _need(store, "task", tid)
+        _require_owned(store, task, "task")
+        _require_skill(_need(store, "session", task["session_id"]), "spine")
         items = [r for r in store.rows("checklist_item") if r.get("task_id") == tid and r.get("key") == key]
         if len(items) != 1:
             die(f"checklist {key} for task {tid} not found")
@@ -489,6 +605,8 @@ def cmd_round(args: list[str]) -> None:
         session = _need(store, "session", task["session_id"])
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
+        _require_owned(store, task, "task")
+        _require_skill(session, "spine")
         workflow = task.get("workflow")
         if workflow not in ("implement", "resolve-conflicts"):
             die("round start requires workflow implement|resolve-conflicts")
@@ -498,7 +616,6 @@ def cmd_round(args: list[str]) -> None:
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
                 die("round still has a working agent")
-        _require_owned(store, task, "task")
         n = current + 1
         task["current_round"] = n
         task["state"] = "implementing"
@@ -553,6 +670,11 @@ def cmd_agent(args: list[str]) -> None:
             session = _need(store, "session", session_id)
             if session.get("status") != "active":
                 die(f"session {session_id} is not active")
+            _require_owned(store, session, "session")
+            try:
+                _require_skill(session, skill_for_agent_role(role))
+            except ValueError:
+                die(f"unknown agent role: {role}")
             task = _need(store, "task", tid)
             if task.get("session_id") != session_id:
                 die("session does not own this task")
@@ -585,7 +707,6 @@ def cmd_agent(args: list[str]) -> None:
                     die("task state must be reviewing")
                 if tr is None or tr.get("implementer_verdict") != "done":
                     die("implementer_verdict must be done before reviewer start")
-            _require_owned(store, session, "session")
             _require_owned(store, task, "task")
             if tr is not None:
                 _require_owned(store, tr, "task_round")
@@ -622,6 +743,12 @@ def cmd_agent(args: list[str]) -> None:
             session = _need(store, "session", task["session_id"])
             if session.get("status") != "active":
                 die("session is not active")
+            _require_owned(store, session, "session")
+            _require_owned(store, task, "task")
+            try:
+                _require_skill(session, skill_for_agent_role(str(role)))
+            except ValueError:
+                die(f"unknown agent role: {role}")
             if role == "implementer":
                 if verdict not in ("done", "blocked"):
                     die("implementer verdict must be done|blocked")
@@ -701,6 +828,7 @@ def cmd_check(args: list[str]) -> None:
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
         _require_owned(store, task, "task")
+        _require_skill(session, "spine")
         cid = str(uuid.uuid4())
         store.write(
             "local_check",
@@ -760,6 +888,9 @@ def cmd_gate(args: list[str]) -> None:
         session = _need(store, "session", task["session_id"])
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
+        _require_owned(store, session, "session")
+        _require_owned(store, task, "task")
+        _require_skill(session, "pr-review")
         if stage == "codex-pr":
             latest = _latest_gates(store, tid)
             gq = latest.get(("grok-pr", "quality"))
@@ -829,6 +960,7 @@ def cmd_work(args: list[str]) -> None:
             if session.get("status") != "active":
                 die(f"session {session_id} is not active")
             _require_owned(store, session, "session")
+            _require_skill(session, "spine")
             for row in store.rows("open_work"):
                 if row.get("session_id") == session_id and row.get("key") == key:
                     die(f"work {key} already exists for session {session_id}")
@@ -863,6 +995,7 @@ def cmd_work(args: list[str]) -> None:
             if session.get("status") != "active":
                 die(f"session {session_id} is not active")
             _require_owned(store, session, "session")
+            _require_skill(session, "spine")
             matches = [
                 r
                 for r in store.rows("open_work")
@@ -886,9 +1019,15 @@ def cmd_work(args: list[str]) -> None:
             return
         if sub == "list":
             sid = flag(rest, "--session")
+            if sid:
+                _require_skill(_need(store, "session", sid), "spine")
             for row in store.rows("open_work"):
                 if sid and row.get("session_id") != sid:
                     continue
+                if not sid:
+                    sess = store.row("session", str(row.get("session_id") or ""))
+                    if sess is None or not has_skill(sess, "spine"):
+                        continue
                 print(f"{row['session_id']}  {row['key']}  {row['status']}  {row['closable_by']}")
             return
         die(f"unknown work command: {sub}")
@@ -997,7 +1136,7 @@ def cmd_sync(args: list[str]) -> None:
 
 
 def cmd_restore(_: list[str]) -> None:
-    store = open_store()
+    store = open_store(allow_legacy_sqlite=True)
     try:
         hub = _hub_from_store(store)
         try:
@@ -1013,13 +1152,13 @@ def cmd_restore(_: list[str]) -> None:
         if not isinstance(events, list):
             die("restore response missing own_events")
         for event in events:
-            store.apply_remote(event)
+            store.apply_remote(event, wake=False)
             store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
         snapshots = list(body.get("inbox") or []) + list(body.get("pings") or [])
         for row in snapshots:
             if not isinstance(row, dict):
                 die("restore snapshot is not an object")
-            store.apply_replica_row(row)
+            store.apply_replica_row(row, wake=False)
         print(f"restored events={len(events)} snapshots={len(snapshots)}")
     finally:
         store.close()
@@ -1073,12 +1212,13 @@ def cmd_ping(args: list[str]) -> None:
             finally:
                 hub.close()
             payload = result.get("payload")
-            if isinstance(payload, dict):
+            origin = row.get("_origin_device_id") if row is not None else None
+            if isinstance(payload, dict) and isinstance(origin, str) and origin:
                 store.apply_replica_row(
                     {
                         "table": "ping",
                         "row_id": pid,
-                        "origin_device_id": row["_origin_device_id"] if row else "web",
+                        "origin_device_id": origin,
                         "payload": payload,
                         "updated_at": payload.get("acked_at") or utcnow(),
                     }
@@ -1215,6 +1355,9 @@ def _sync_once(store: Store) -> None:
         for row in snapshots:
             if not isinstance(row, dict):
                 die("pull snapshot is not an object")
+        sessions = [r for r in snapshots if isinstance(r, dict) and r.get("table") == "session"]
+        rest = [r for r in snapshots if not (isinstance(r, dict) and r.get("table") == "session")]
+        for row in sessions + rest:
             store.apply_replica_row(row)
         print(f"sync pushed={len(pending)} pulled={len(events)} snapshots={len(snapshots)}")
     finally:
@@ -1239,6 +1382,11 @@ def _need(store: Store, table: str, row_id: str) -> dict:
 def _require_owned(store: Store, row: dict, what: str) -> None:
     if row.get("_origin_device_id") != store.device_id():
         die(f"cannot mutate {what} owned by another device")
+
+
+def _require_skill(session: dict, name: str) -> None:
+    if not has_skill(session, name):
+        die(f"session {session.get('id')} does not have skill {name}")
 
 
 def _strip(row: dict) -> dict:
@@ -1560,6 +1708,41 @@ def _assert_ready(store: Store, task: dict) -> None:
         die("task is not done: gate heads must match")
 
 
+def cmd_knock(args: list[str]) -> None:
+    once = "--once" in args
+    store = open_store()
+    try:
+        runtime = Runtime()
+        if once:
+            for activity_id, status in knock_drain(store, runtime):
+                print(f"knock {activity_id} {status}")
+            return
+        while True:
+            activity_id = knock_listen(store, runtime, timeout=30.0)
+            if activity_id:
+                print(f"knock {activity_id}")
+    finally:
+        store.close()
+
+
+def cmd_watch(args: list[str]) -> None:
+    if not args or args[0] != "pr-merged":
+        die("Usage: agent watch pr-merged")
+    store = open_store()
+    try:
+        from .runtime import run_argv
+
+        created, skipped = scan_merged(store, run_argv)
+        for activity_id in created:
+            print(f"pr.merged {activity_id}")
+        if skipped:
+            die(f"watch skipped {skipped} pr.open rows")
+        if not created:
+            print("pr.merged none")
+    finally:
+        store.close()
+
+
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
@@ -1577,6 +1760,8 @@ COMMANDS = {
     "ping": cmd_ping,
     "status": cmd_status,
     "dashboard": cmd_dashboard,
+    "knock": cmd_knock,
+    "watch": cmd_watch,
 }
 
 
@@ -1585,7 +1770,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|activity|task|checklist|round|agent|check|gate|work|"
-            "pair|sync|restore|ping|status|dashboard> …"
+            "pair|sync|restore|ping|status|dashboard|knock|watch> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

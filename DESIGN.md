@@ -175,7 +175,7 @@ The website is the full-replica view (summaries first; thick logs on demand). La
 - Session kinds: `human` | `runner` | `other`.
 - Reachability for the TUI knock (tmux pane, ACP endpoint, or `none`) is stored locally. It is not a hub event on every keystroke.
 
-Two database roles on the device: one for the AI (`INSERT` intent rows, `SELECT`), one for scripts (full DML, `LISTEN`/`NOTIFY`, result columns). Both use password auth on the local socket. This is footgun-defense on a single-user machine, not a hostile-TUI boundary.
+v1 uses a single Postgres role `agent` on `127.0.0.1` (managed cluster: trust auth, no unix socket). Two roles with password auth on a local socket (AI `INSERT`/`SELECT` vs scripts full DML + `LISTEN`/`NOTIFY`) remain later footgun-defense, not a hostile-TUI boundary.
 
 ## 9. Sync and restore
 
@@ -242,6 +242,8 @@ Knock state machine (observable states only):
 | Session not running | Unread until the next start; the agent `SELECT`s unread ids |
 | No tmux and no ACP | No knock; unread until the next human turn |
 
+v1: `Runtime.is_busy` is always false, so “Model running” is treated as idle until a stop-hook path exists. The queue branch still runs when a runtime reports busy.
+
 Ack of session mail is a **recipient-owned** `message.read` activity, not a mutation of the sender’s row.
 
 ## 11. Realtime
@@ -290,7 +292,7 @@ v1 types (mechanism only):
 
 | Type | Tag | Who writes | Who executes |
 |---|---|---|---|
-| `session.register` | — | script (session start) | — |
+| `session.register` | — | later (v1 register is the `session` row) | — |
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
@@ -334,18 +336,19 @@ Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` w
 
 ```text
 agent init
-agent session register|heartbeat|list|close|start|stop|input
+agent session register|heartbeat|list|close|start|stop|input|skill
+agent session register --id ID --kind human|runner|other [--skill NAME]…
+agent session skill attach --id ID --skill spine|review-loop|pr-review
+agent session skill list --id ID
 agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID
 agent session input --id ID --data TEXT
 agent session input --id ID --key enter|ctrl-c|tab
 agent activity add --session ID --type TYPE --payload-file FILE
-agent query --q NAME [--arg KEY=VAL]…
-agent subscribe --table activity [--filter FILE]
 agent task create|list|show|state|summary          # spine skill
 agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
-agent agent start|finish …                        # review-loop skill
+agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
 agent check record …                              # spine skill
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
@@ -353,6 +356,8 @@ agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
+agent knock [--once]
+agent watch pr-merged                          # one scan; schedule if you need a loop
 agent status
 agent dashboard [--port 7845]
 ```
@@ -401,7 +406,13 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
+
+Later product work (not required to operate v1 after merge):
+
+- Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts).
+- `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
+- `activity` type `session.register` (v1 records the `session` row only).
 
 ## 19. Document history
 

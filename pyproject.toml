@@ -13,6 +13,7 @@ authors = [{ name = "DFX" }]
 dependencies = [
   "httpx>=0.27.0",
   "websockets>=13",
+  "psycopg[binary]>=3.2.0",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +26,7 @@ agent = "agent_cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_cli = ["static/*", "schema.sql"]
+agent_cli = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

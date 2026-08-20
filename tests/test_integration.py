@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from agent_core.config import Config
 from agent_core.db import Store as HubStore
 from agent_core.github import FakeGitHub
 from agent_cli.hub import Hub
+from agent_cli.pg import create_database
 from agent_cli.store import Store
 
 
@@ -71,14 +73,14 @@ def _pair(client: TestClient, store: Store, code: str, name: str) -> None:
     store.set_meta("hub_url", "http://hub")
 
 
-def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
+def test_two_devices_team_sync_and_restore(tmp_path: Path, pg_admin_dsn: str) -> None:
     cfg = _cfg(tmp_path)
     app = create_app(cfg, github=FakeGitHub({"code-alice": "alice", "code-bob": "bob"}), store=HubStore(cfg.database))
     alice_http = TestClient(app)
     bob_http = TestClient(app)
 
-    alice = Store(tmp_path / "alice" / "ledger.sqlite")
-    bob = Store(tmp_path / "bob" / "ledger.sqlite")
+    alice = Store(tmp_path / "alice", dsn=create_database(pg_admin_dsn, "ta" + uuid.uuid4().hex[:14]))
+    bob = Store(tmp_path / "bob", dsn=create_database(pg_admin_dsn, "tb" + uuid.uuid4().hex[:14]))
     _pair(alice_http, alice, "code-alice", "alice-box")
     _pair(bob_http, bob, "code-bob", "bob-box")
 
@@ -98,7 +100,7 @@ def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
     assert "Alice work" not in titles
     assert pulled.get("inbox") == []
 
-    wiped = Store(tmp_path / "alice-wiped" / "ledger.sqlite")
+    wiped = Store(tmp_path / "alice-wiped", dsn=create_database(pg_admin_dsn, "tw" + uuid.uuid4().hex[:14]))
     wiped.set_meta("device_id", alice.device_id())
     wiped.set_meta("device_token", alice.meta("device_token"))
     wiped.set_meta("github_login", "alice")

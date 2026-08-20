@@ -1,14 +1,18 @@
-"""Local SQLite session store. This device is the write owner of its own rows."""
+"""Local PostgreSQL session store. This device is the write owner of its own rows."""
 
 from __future__ import annotations
 
 import json
 import os
-import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -40,6 +44,13 @@ CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS wake_queue (
+  activity_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  delivered_at TEXT
+);
 """
 
 OWNED_TABLES = frozenset(
@@ -56,6 +67,8 @@ OWNED_TABLES = frozenset(
         "ping",
     }
 )
+
+WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged"})
 
 
 def utcnow() -> str:
@@ -75,19 +88,33 @@ class StoreError(SystemExit):
 
 
 class Store:
-    def __init__(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(path.parent, 0o700)
-        self.path = path
-        self.identity_path = path.parent / "device.json"
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
-        self.conn.execute("PRAGMA journal_mode = WAL")
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
-        os.chmod(path, 0o600)
+    def __init__(self, home: Path, dsn: str | None = None) -> None:
+        self.home = Path(home)
+        self.home.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.home, 0o700)
+        self.identity_path = self.home / "device.json"
+        self.path = self.home
+        resolved = dsn if dsn not in (None, "") else os.environ.get("AGENT_PG_DSN")
+        if not resolved:
+            raise StoreError("postgres DSN is missing")
+        from .pg import require_loopback_dsn
+
+        require_loopback_dsn(resolved)
+        self.dsn = resolved
+        try:
+            self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+            self.conn.execute("SET timezone TO 'UTC'")
+        except psycopg.Error as exc:
+            raise StoreError(f"cannot connect to postgres: {exc}") from exc
+        self._lock = threading.RLock()
+        self._init_schema()
         self._load_identity()
+
+    def _init_schema(self) -> None:
+        for stmt in SCHEMA.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                self.conn.execute(stmt)
 
     def _load_identity(self) -> None:
         if self.identity_path.is_file():
@@ -95,6 +122,9 @@ class Store:
             device_id = data.get("device_id")
             if not isinstance(device_id, str) or device_id == "":
                 raise StoreError("device.json is missing device_id")
+            existing = self.meta("device_id")
+            if existing is not None and existing != device_id:
+                raise StoreError("device.json does not match this database")
             self.set_meta("device_id", device_id)
             for key in ("device_token", "github_login", "hub_url", "pair_challenge"):
                 value = data.get(key)
@@ -128,47 +158,69 @@ class Store:
         return value
 
     def meta(self, key: str) -> str | None:
-        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-        return None if row is None else row["value"]
+        with self._lock:
+            row = self.conn.execute("SELECT value FROM meta WHERE key = %s", (key,)).fetchone()
+            return None if row is None else row["value"]
 
     def set_meta(self, key: str, value: str) -> None:
-        self.conn.execute(
-            "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO meta (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
         if key in ("device_token", "github_login", "hub_url", "pair_challenge"):
             self.save_identity()
 
     def sync_get(self, key: str, default: str | None = None) -> str | None:
-        row = self.conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
+        row = self.conn.execute("SELECT value FROM sync_state WHERE key = %s", (key,)).fetchone()
         if row is None:
             return default
         return row["value"]
 
     def sync_set(self, key: str, value: str) -> None:
         self.conn.execute(
-            "INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            "INSERT INTO sync_state (key, value) VALUES (%s, %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
-        self.conn.commit()
 
     def next_seq(self) -> int:
-        self.conn.execute("BEGIN IMMEDIATE")
+        origin = self.device_id()
+        self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (origin,))
         row = self.conn.execute(
-            "SELECT COALESCE(MAX(origin_seq), 0) AS m FROM ledger_event WHERE origin_device_id = ?",
-            (self.device_id(),),
+            "SELECT COALESCE(MAX(origin_seq), 0) AS m FROM ledger_event WHERE origin_device_id = %s",
+            (origin,),
         ).fetchone()
         return int(row["m"]) + 1
 
     def write(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._lock, self.conn.transaction():
+            return self._write_in_txn(table, op, row_id, payload)
+
+    def write_with_advisory(
+        self,
+        table: str,
+        op: str,
+        row_id: str,
+        payload: dict[str, Any],
+        *,
+        lock_key: str,
+        skip: Callable[[], bool] | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock, self.conn.transaction():
+            self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+            if skip is not None and skip():
+                return None
+            return self._write_in_txn(table, op, row_id, payload)
+
+    def _write_in_txn(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if table not in OWNED_TABLES:
             raise StoreError(f"unknown table: {table}")
         if op not in ("insert", "update", "delete"):
             raise StoreError(f"unknown op: {op}")
         origin = self.device_id()
         existing = self.conn.execute(
-            "SELECT origin_device_id FROM row_data WHERE table_name = ? AND row_id = ?",
+            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
             (table, row_id),
         ).fetchone()
         if existing is not None and existing["origin_device_id"] != origin:
@@ -182,21 +234,20 @@ class Store:
         encoded = dumps(payload)
         self.conn.execute(
             "INSERT INTO ledger_event (origin_device_id, origin_seq, table_name, op, row_id, payload, occurred_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (origin, seq, table, op, row_id, encoded, occurred),
         )
         if op == "delete":
-            self.conn.execute("DELETE FROM row_data WHERE table_name = ? AND row_id = ?", (table, row_id))
+            deleted = self.conn.execute(
+                "DELETE FROM row_data WHERE table_name = %s AND row_id = %s AND origin_device_id = %s "
+                "RETURNING row_id",
+                (table, row_id, origin),
+            ).fetchone()
+            if deleted is None:
+                raise StoreError("cannot steal a row owned by another device")
         else:
-            self.conn.execute(
-                "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(table_name, row_id) DO UPDATE SET payload = excluded.payload, "
-                "origin_device_id = excluded.origin_device_id, updated_at = excluded.updated_at",
-                (table, row_id, origin, encoded, occurred),
-            )
-        self.conn.commit()
-        return {
+            self._upsert_row(table, row_id, origin, encoded, occurred, require_newer=False)
+        event = {
             "origin_device_id": origin,
             "origin_seq": seq,
             "table": table,
@@ -205,20 +256,30 @@ class Store:
             "payload": payload,
             "occurred_at": occurred,
         }
+        self._maybe_wake(event)
+        return event
 
-    def apply_remote(self, event: dict[str, Any]) -> None:
-        origin = event["origin_device_id"]
-        if origin == self.device_id():
-            self._insert_event_idempotent(event)
-            self._materialize(event)
-            return
-        self._insert_event_idempotent(event)
-        self._materialize(event)
+    def apply_remote(self, event: dict[str, Any], *, wake: bool = True) -> None:
+        with self._lock, self.conn.transaction():
+            inserted = self._insert_event_idempotent(event)
+            if inserted:
+                self._materialize(event)
+            if wake:
+                self._maybe_wake(event)
+            elif inserted:
+                payload = event.get("payload")
+                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                    target = self._inbox_target(payload)
+                    if target is not None and self._owns_session(target):
+                        self.enqueue_wake(event["row_id"], target)
+                        self.claim_wake(event["row_id"])
 
-    def _insert_event_idempotent(self, event: dict[str, Any]) -> None:
+    def _insert_event_idempotent(self, event: dict[str, Any]) -> bool:
         encoded = dumps(event["payload"])
+        self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (event["origin_device_id"],))
         existing = self.conn.execute(
-            "SELECT payload, table_name, op, row_id FROM ledger_event WHERE origin_device_id = ? AND origin_seq = ?",
+            "SELECT payload, table_name, op, row_id, occurred_at FROM ledger_event "
+            "WHERE origin_device_id = %s AND origin_seq = %s",
             (event["origin_device_id"], event["origin_seq"]),
         ).fetchone()
         if existing is not None:
@@ -227,13 +288,14 @@ class Store:
                 or existing["table_name"] != event["table"]
                 or existing["op"] != event["op"]
                 or existing["row_id"] != event["row_id"]
+                or existing["occurred_at"] != event["occurred_at"]
             ):
                 raise StoreError(
                     f"conflicting event {event['origin_device_id']} seq {event['origin_seq']}"
                 )
-            return
+            return False
         last = self.conn.execute(
-            "SELECT COALESCE(MAX(origin_seq), 0) AS m FROM ledger_event WHERE origin_device_id = ?",
+            "SELECT COALESCE(MAX(origin_seq), 0) AS m FROM ledger_event WHERE origin_device_id = %s",
             (event["origin_device_id"],),
         ).fetchone()
         last_seq = int(last["m"])
@@ -243,7 +305,7 @@ class Store:
             )
         self.conn.execute(
             "INSERT INTO ledger_event (origin_device_id, origin_seq, table_name, op, row_id, payload, occurred_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
                 event["origin_device_id"],
                 event["origin_seq"],
@@ -254,54 +316,106 @@ class Store:
                 event["occurred_at"],
             ),
         )
-        self.conn.commit()
+        return True
+
+    def _upsert_row(
+        self,
+        table: str,
+        row_id: str,
+        origin: str,
+        encoded: str,
+        updated_at: str,
+        *,
+        require_newer: bool = False,
+    ) -> None:
+        newer = (
+            " AND excluded.updated_at::timestamptz >= row_data.updated_at::timestamptz"
+            if require_newer
+            else ""
+        )
+        found = self.conn.execute(
+            "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (table_name, row_id) DO UPDATE SET payload = excluded.payload, "
+            "updated_at = excluded.updated_at "
+            "WHERE row_data.origin_device_id = excluded.origin_device_id"
+            f"{newer} "
+            "RETURNING row_id",
+            (table, row_id, origin, encoded, updated_at),
+        ).fetchone()
+        if found is not None:
+            return
+        current = self.conn.execute(
+            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+            (table, row_id),
+        ).fetchone()
+        if current is not None and current["origin_device_id"] != origin:
+            raise StoreError("cannot steal a row owned by another device")
 
     def _materialize(self, event: dict[str, Any]) -> None:
         if event["op"] == "delete":
-            self.conn.execute(
-                "DELETE FROM row_data WHERE table_name = ? AND row_id = ?",
-                (event["table"], event["row_id"]),
-            )
-        else:
-            self.conn.execute(
-                "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(table_name, row_id) DO UPDATE SET payload = excluded.payload, "
-                "origin_device_id = excluded.origin_device_id, updated_at = excluded.updated_at",
-                (
-                    event["table"],
-                    event["row_id"],
-                    event["origin_device_id"],
-                    dumps(event["payload"]),
-                    event["occurred_at"],
-                ),
-            )
-        self.conn.commit()
+            deleted = self.conn.execute(
+                "DELETE FROM row_data WHERE table_name = %s AND row_id = %s AND origin_device_id = %s "
+                "RETURNING row_id",
+                (event["table"], event["row_id"], event["origin_device_id"]),
+            ).fetchone()
+            if deleted is None:
+                current = self.conn.execute(
+                    "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+                    (event["table"], event["row_id"]),
+                ).fetchone()
+                if current is not None and current["origin_device_id"] != event["origin_device_id"]:
+                    raise StoreError("cannot steal a row owned by another device")
+            return
+        self._upsert_row(
+            event["table"],
+            event["row_id"],
+            event["origin_device_id"],
+            dumps(event["payload"]),
+            event["occurred_at"],
+            require_newer=False,
+        )
 
-    def apply_replica_row(self, row: dict[str, Any]) -> None:
+    def apply_replica_row(self, row: dict[str, Any], *, wake: bool = True) -> None:
         if row.get("table") is None:
             raise StoreError("replica row missing table")
         if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
             return
-        self.conn.execute(
-            "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(table_name, row_id) DO UPDATE SET payload = excluded.payload, "
-            "origin_device_id = excluded.origin_device_id, updated_at = excluded.updated_at",
-            (
+        payload = row["payload"]
+        if row.get("table") == "ping" and isinstance(payload, dict):
+            current = self.row("ping", row["row_id"])
+            if isinstance(current, dict) and current.get("acked_at") and not payload.get("acked_at"):
+                payload = {**payload, "acked_at": current["acked_at"]}
+        with self._lock, self.conn.transaction():
+            self._upsert_row(
                 row["table"],
                 row["row_id"],
                 row["origin_device_id"],
-                dumps(row["payload"]),
+                dumps(payload),
                 row["updated_at"],
-            ),
-        )
-        self.conn.commit()
+                require_newer=row.get("table") != "ping",
+            )
+            event = {
+                "origin_device_id": row["origin_device_id"],
+                "table": row["table"],
+                "op": "insert",
+                "row_id": row["row_id"],
+                "payload": payload,
+            }
+            if wake:
+                self._maybe_wake(event)
+            else:
+                payload = event.get("payload")
+                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                    target = self._inbox_target(payload)
+                    if target is not None and self._owns_session(target):
+                        self.enqueue_wake(event["row_id"], target)
+                        self.claim_wake(event["row_id"])
 
     def pending_events(self) -> list[dict[str, Any]]:
         after = int(self.sync_get("pushed_origin_seq", "0") or "0")
         rows = self.conn.execute(
-            "SELECT * FROM ledger_event WHERE origin_device_id = ? AND origin_seq > ? ORDER BY origin_seq ASC",
+            "SELECT * FROM ledger_event WHERE origin_device_id = %s AND origin_seq > %s ORDER BY origin_seq ASC",
             (self.device_id(), after),
         ).fetchall()
         return [
@@ -334,8 +448,9 @@ class Store:
         return {r["key"][7:]: int(r["value"]) for r in rows}
 
     def rows(self, table: str) -> list[dict[str, Any]]:
-        found = self.conn.execute(
-            "SELECT row_id, origin_device_id, payload FROM row_data WHERE table_name = ? ORDER BY updated_at DESC",
+        with self._lock:
+            found = self.conn.execute(
+            "SELECT row_id, origin_device_id, payload FROM row_data WHERE table_name = %s ORDER BY updated_at DESC",
             (table,),
         ).fetchall()
         out: list[dict[str, Any]] = []
@@ -348,8 +463,9 @@ class Store:
         return out
 
     def row(self, table: str, row_id: str) -> dict[str, Any] | None:
-        found = self.conn.execute(
-            "SELECT origin_device_id, payload FROM row_data WHERE table_name = ? AND row_id = ?",
+        with self._lock:
+            found = self.conn.execute(
+            "SELECT origin_device_id, payload FROM row_data WHERE table_name = %s AND row_id = %s",
             (table, row_id),
         ).fetchone()
         if found is None:
@@ -361,18 +477,114 @@ class Store:
         return payload
 
     def snapshot(self) -> dict[str, Any]:
-        return {
-            "generated_at": utcnow(),
-            "device_id": self.device_id(),
-            "login": self.meta("github_login"),
-            "sessions": self.rows("session"),
-            "activity": self.rows("activity"),
-            "tasks": self.rows("task"),
-            "rounds": self.rows("task_round"),
-            "agents": self.rows("agent"),
-            "checklist": self.rows("checklist_item"),
-            "checks": self.rows("local_check"),
-            "gates": self.rows("review_gate"),
-            "work": self.rows("open_work"),
-            "pings": self.rows("ping"),
-        }
+        with self._lock:
+            return {
+                "generated_at": utcnow(),
+                "device_id": self.device_id(),
+                "login": self.meta("github_login"),
+                "sessions": self.rows("session"),
+                "activity": self.rows("activity"),
+                "tasks": self.rows("task"),
+                "rounds": self.rows("task_round"),
+                "agents": self.rows("agent"),
+                "checklist": self.rows("checklist_item"),
+                "checks": self.rows("local_check"),
+                "gates": self.rows("review_gate"),
+                "work": self.rows("open_work"),
+                "pings": self.rows("ping"),
+            }
+
+    def enqueue_wake(self, activity_id: str, session_id: str) -> bool:
+        with self._lock:
+            found = self.conn.execute(
+                "INSERT INTO wake_queue (activity_id, session_id, created_at, delivered_at) "
+                "VALUES (%s, %s, %s, NULL) "
+                "ON CONFLICT (activity_id) DO NOTHING "
+                "RETURNING activity_id",
+                (activity_id, session_id, utcnow()),
+            ).fetchone()
+            return found is not None
+
+    def wake_delivered(self, activity_id: str) -> bool:
+        with self._lock:
+            found = self.conn.execute(
+                "SELECT delivered_at FROM wake_queue WHERE activity_id = %s",
+                (activity_id,),
+            ).fetchone()
+            return found is not None and found["delivered_at"] is not None
+
+    def pending_wakes(self) -> list[dict[str, str]]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT activity_id, session_id FROM wake_queue WHERE delivered_at IS NULL ORDER BY created_at ASC"
+            ).fetchall()
+            return [{"activity_id": r["activity_id"], "session_id": r["session_id"]} for r in rows]
+
+    def claim_wake(self, activity_id: str) -> bool:
+        with self._lock:
+            found = self.conn.execute(
+                "UPDATE wake_queue SET delivered_at = %s "
+                "WHERE activity_id = %s AND delivered_at IS NULL "
+                "RETURNING activity_id",
+                (utcnow(), activity_id),
+            ).fetchone()
+            if found is not None:
+                return True
+            existing = self.conn.execute(
+                "SELECT delivered_at FROM wake_queue WHERE activity_id = %s",
+                (activity_id,),
+            ).fetchone()
+            if existing is None:
+                self.conn.execute(
+                    "INSERT INTO wake_queue (activity_id, session_id, created_at, delivered_at) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (activity_id, "", utcnow(), utcnow()),
+                )
+                return True
+            return False
+
+    def unclaim_wake(self, activity_id: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "UPDATE wake_queue SET delivered_at = NULL WHERE activity_id = %s",
+                (activity_id,),
+            )
+
+    def _inbox_target(self, payload: dict[str, Any]) -> str | None:
+        typ = payload.get("type")
+        if typ == "pr.merged":
+            sid = payload.get("session_id")
+            return sid if isinstance(sid, str) and sid else None
+        if typ == "message":
+            inner = payload.get("payload")
+            if isinstance(inner, dict):
+                to_s = inner.get("to_session")
+                if isinstance(to_s, str) and to_s:
+                    return to_s
+        return None
+
+    def _owns_session(self, session_id: str) -> bool:
+        found = self.conn.execute(
+            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+            ("session", session_id),
+        ).fetchone()
+        return found is not None and found["origin_device_id"] == self.device_id()
+
+    def _maybe_wake(self, event: dict[str, Any]) -> None:
+        if event.get("table") != "activity" or event.get("op") == "delete":
+            return
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if payload.get("type") not in WAKE_ACTIVITY_TYPES:
+            return
+        if payload.get("type") == "pr.merged" and payload.get("execution_status") != "done":
+            return
+        target = self._inbox_target(payload)
+        if target is None:
+            return
+        if not self._owns_session(target):
+            return
+        row_id = event["row_id"]
+        if self.enqueue_wake(row_id, target):
+            self.conn.execute("SELECT pg_notify(%s, %s)", ("agent_inbox", row_id))

@@ -29,7 +29,7 @@ def _last_agent_id(out: str) -> str:
 
 def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "sess-1", "--workflow", "implement", "--title", "Ship sync"])
     out = capsys.readouterr().out
     tid = _last_task_id(out)
@@ -46,7 +46,7 @@ def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFix
 
 def test_cannot_close_with_open_task(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "review", "--title", "Look"])
     with pytest.raises(SystemExit, match="open tasks"):
         run(tmp_path, ["session", "close", "--id", "s"])
@@ -54,7 +54,7 @@ def test_cannot_close_with_open_task(tmp_path: Path) -> None:
 
 def test_happy_path_round_agent_check_work(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "sess-1", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
 
@@ -150,7 +150,7 @@ def test_happy_path_round_agent_check_work(tmp_path: Path, capsys: pytest.Captur
 
 def test_n_a_without_evidence_dies(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "review", "--title", "R"])
     tid = _last_task_id(capsys.readouterr().out)
     with pytest.raises(SystemExit, match="n_a requires --evidence"):
@@ -173,7 +173,7 @@ def test_n_a_without_evidence_dies(tmp_path: Path, capsys: pytest.CaptureFixture
 
 def test_check_fail_sets_task_failed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "T"])
     tid = _last_task_id(capsys.readouterr().out)
     run(
@@ -201,7 +201,7 @@ def test_work_set_human_closable_rejects_runner_source(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(
         tmp_path,
         ["work", "add", "--session", "s", "--key", "mandate", "--closable-by", "human"],
@@ -227,7 +227,7 @@ def test_work_set_human_closable_rejects_runner_source(
 
 def test_round_start_on_review_workflow_dies(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "review", "--title", "Look"])
     tid = _last_task_id(capsys.readouterr().out)
     with pytest.raises(SystemExit, match="round start requires workflow"):
@@ -238,7 +238,7 @@ def test_done_requires_gates_after_summaries_and_checklist(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
 
@@ -260,7 +260,7 @@ def test_done_requires_gates_after_summaries_and_checklist(
     )
     capsys.readouterr()
 
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         keys = [
             r["key"]
@@ -319,7 +319,7 @@ def test_done_requires_gates_after_summaries_and_checklist(
 
 def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
 
@@ -370,7 +370,7 @@ def test_gate_record_codex_before_grok_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
 
@@ -421,7 +421,7 @@ def test_reviewer_start_before_implementer_done_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -468,7 +468,7 @@ def test_implementer_finish_blocked_sets_failed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -502,7 +502,7 @@ def test_implementer_finish_blocked_sets_failed(
 
 def _seed_foreign_implement_task(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         store.apply_remote(
             {
@@ -596,7 +596,7 @@ def test_check_record_on_foreign_task_dies(tmp_path: Path) -> None:
 
 def test_work_add_on_foreign_session_dies(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         store.apply_remote(
             {
@@ -631,7 +631,7 @@ def test_implementer_blocked_sets_round_finished_at(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -658,7 +658,7 @@ def test_implementer_blocked_sets_round_finished_at(
     run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "blocked"])
     capsys.readouterr()
 
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         rounds = [
             r
@@ -675,7 +675,7 @@ def test_reviewer_finish_rejected_sets_implementing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -732,7 +732,7 @@ def test_implementer_finish_on_pr_review_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -767,7 +767,7 @@ def test_second_implementer_finish_same_round_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -797,7 +797,7 @@ def test_second_implementer_finish_same_round_dies(
     # First finish left state reviewing + implementer_verdict set. Force a second
     # working implementer on the same round so finish hits the double-finish guard.
     second_id = str(uuid.uuid4())
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         task = store.row("task", tid)
         assert task is not None
@@ -836,7 +836,7 @@ def test_round_start_with_working_agent_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -869,7 +869,7 @@ def test_round_start_with_working_pr_reviewer_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -900,7 +900,7 @@ def test_implementer_finish_after_session_closed_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
@@ -925,7 +925,7 @@ def test_implementer_finish_after_session_closed_dies(
     )
     impl_id = _last_agent_id(capsys.readouterr().out)
 
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         session = store.row("session", "s")
         assert session is not None
@@ -947,14 +947,14 @@ def test_agent_finish_on_foreign_agent_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
     capsys.readouterr()
 
     foreign_agent_id = str(uuid.uuid4())
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         store.apply_remote(
             {
@@ -993,7 +993,7 @@ def test_work_set_done_happy_path(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(
         tmp_path,
         ["work", "add", "--session", "s", "--key", "standing", "--closable-by", "agent"],
@@ -1024,7 +1024,7 @@ def test_checklist_deviation_flags_persist(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
     run(
@@ -1052,7 +1052,7 @@ def test_checklist_deviation_flags_persist(
     )
     capsys.readouterr()
 
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         items = [
             r
@@ -1071,7 +1071,7 @@ def test_checklist_deviation_flags_persist(
 
 def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     payload = tmp_path / "mail.json"
     payload.write_text('{"to_session": "sess-2", "body": "hello"}', encoding="utf-8")
     run(
@@ -1090,7 +1090,7 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
     out = capsys.readouterr().out
     assert "activity " in out
     assert "type=message" in out
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         rows = store.rows("activity")
         assert len(rows) == 1
@@ -1102,9 +1102,66 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
+@pytest.mark.parametrize(
+    "typ", ["pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"]
+)
+def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    payload = tmp_path / "script.json"
+    payload.write_text('{"repo": "o/r", "number": 1}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="written by a script"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "sess-1",
+                "--type",
+                typ,
+                "--payload-file",
+                str(payload),
+            ],
+        )
+
+
+def test_open_store_dies_on_legacy_sqlite(tmp_path: Path) -> None:
+    (tmp_path / "ledger.sqlite").write_bytes(b"")
+    with pytest.raises(SystemExit, match="move it aside"):
+        run(tmp_path, ["init"])
+
+
+def test_activity_add_unknown_type_is_error(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    payload = tmp_path / "x.json"
+    payload.write_text('{"k": "v"}', encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "activity",
+            "add",
+            "--session",
+            "sess-1",
+            "--type",
+            "not-a-catalog-type",
+            "--payload-file",
+            str(payload),
+        ],
+    )
+    store = Store(tmp_path)
+    try:
+        rows = store.rows("activity")
+        assert len(rows) == 1
+        assert rows[0]["execution_status"] == "error"
+    finally:
+        store.close()
+
+
 def test_activity_add_rejects_foreign_session(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         store.apply_replica_row(
             {
@@ -1137,7 +1194,7 @@ def test_activity_add_rejects_foreign_session(tmp_path: Path) -> None:
 
 def test_activity_add_rejects_closed_session(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     run(tmp_path, ["session", "close", "--id", "sess-1"])
     payload = tmp_path / "mail.json"
     payload.write_text('{"to_session": "x", "body": "hello"}', encoding="utf-8")
@@ -1155,3 +1212,93 @@ def test_activity_add_rejects_closed_session(tmp_path: Path) -> None:
                 str(payload),
             ],
         )
+
+
+def test_spine_skill_required_for_task(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "bare", "--kind", "human"])
+    with pytest.raises(SystemExit, match="does not have skill spine"):
+        run(tmp_path, ["task", "create", "--session", "bare", "--workflow", "implement", "--title", "Nope"])
+    run(tmp_path, ["session", "skill", "list", "--id", "bare"])
+    listed = capsys.readouterr().out
+    assert "(none)" in listed
+    run(tmp_path, ["session", "skill", "attach", "--id", "bare", "--skill", "spine"])
+    run(tmp_path, ["session", "skill", "list", "--id", "bare"])
+    assert "spine" in capsys.readouterr().out
+    run(tmp_path, ["task", "create", "--session", "bare", "--workflow", "implement", "--title", "Yes"])
+
+
+def test_review_loop_and_pr_review_skills_required(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "T"])
+    tid = _last_task_id(capsys.readouterr().out)
+    with pytest.raises(SystemExit, match="does not have skill review-loop"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "s",
+                "--task",
+                tid,
+                "--role",
+                "implementer",
+                "--vendor",
+                "grok",
+                "--round",
+                "1",
+            ],
+        )
+    with pytest.raises(SystemExit, match="does not have skill pr-review"):
+        run(
+            tmp_path,
+            [
+                "gate",
+                "record",
+                "--task",
+                tid,
+                "--stage",
+                "grok-pr",
+                "--dimension",
+                "quality",
+                "--vendor",
+                "grok",
+                "--verdict",
+                "approved",
+                "--head",
+                "abc1234",
+                "--agent",
+                str(uuid.uuid4()),
+            ],
+        )
+    with pytest.raises(SystemExit, match="does not have skill pr-review"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "s",
+                "--task",
+                tid,
+                "--role",
+                "pr-reviewer-quality",
+                "--vendor",
+                "grok",
+            ],
+        )
+    run(tmp_path, ["session", "skill", "attach", "--id", "s", "--skill", "review-loop"])
+    run(tmp_path, ["session", "skill", "attach", "--id", "s", "--skill", "pr-review"])
+
+
+def test_knock_and_watch_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    run(tmp_path, ["knock", "--once"])
+    run(tmp_path, ["watch", "pr-merged"])
+    out = capsys.readouterr().out
+    assert "pr.merged none" in out
