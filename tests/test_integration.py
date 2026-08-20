@@ -95,10 +95,8 @@ def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
     alice_hub.push(alice.pending_events())
     pulled = bob_hub.pull({})
     titles = [e["payload"].get("title") for e in pulled["events"]]
-    assert "Alice work" in titles
-    for event in pulled["events"]:
-        bob.apply_remote(event)
-    assert bob.row("task", "task-a")["title"] == "Alice work"
+    assert "Alice work" not in titles
+    assert pulled.get("inbox") == []
 
     wiped = Store(tmp_path / "alice-wiped" / "ledger.sqlite")
     wiped.set_meta("device_id", alice.device_id())
@@ -106,6 +104,8 @@ def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
     wiped.set_meta("github_login", "alice")
     restore = alice_hub.restore()
     assert restore["device_id"] == alice.device_id()
-    for event in restore.get("events") or restore.get("own_events") or []:
+    for event in restore.get("own_events") or restore.get("events") or []:
         wiped.apply_remote(event)
+    for row in list(restore.get("inbox") or []) + list(restore.get("pings") or []):
+        wiped.apply_replica_row(row)
     assert wiped.row("task", "task-a")["title"] == "Alice work"

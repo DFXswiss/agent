@@ -1067,3 +1067,36 @@ def test_checklist_deviation_flags_persist(
         assert item["granted_by"] == "reviewer"
     finally:
         store.close()
+
+
+def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    payload = tmp_path / "mail.json"
+    payload.write_text('{"to_session": "sess-2", "body": "hello"}', encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "activity",
+            "add",
+            "--session",
+            "sess-1",
+            "--type",
+            "message",
+            "--payload-file",
+            str(payload),
+        ],
+    )
+    out = capsys.readouterr().out
+    assert "activity " in out
+    assert "type=message" in out
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        rows = store.rows("activity")
+        assert len(rows) == 1
+        assert rows[0]["type"] == "message"
+        assert rows[0]["session_id"] == "sess-1"
+        assert rows[0]["payload"]["to_session"] == "sess-2"
+        assert rows[0]["execution_status"] == "pending"
+    finally:
+        store.close()

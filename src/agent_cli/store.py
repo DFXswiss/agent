@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
 OWNED_TABLES = frozenset(
     {
         "session",
+        "activity",
         "task",
         "task_round",
         "agent",
@@ -365,6 +366,7 @@ class Store:
             "device_id": self.device_id(),
             "login": self.meta("github_login"),
             "sessions": self.rows("session"),
+            "activity": self.rows("activity"),
             "tasks": self.rows("task"),
             "rounds": self.rows("task_round"),
             "agents": self.rows("agent"),
