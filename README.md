@@ -24,7 +24,8 @@ agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
 agent sync --follow   # stay on the hub WebSocket; a dead socket is a loud error
-agent restore   # after a wiped laptop
+agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is present
+# other commands refuse until you move ledger.sqlite aside
 ```
 
 `AGENT_HUB` may replace `--hub`. There is no default hub URL.

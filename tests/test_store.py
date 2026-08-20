@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
@@ -176,6 +177,16 @@ def test_identity_survives_database_wipe(tmp_path: Path, pg_admin_dsn: str) -> N
     assert wiped.device_id() == device_id
     assert wiped.meta("github_login") == "alice"
     assert wiped.row("session", "s1") is None
+
+
+def test_store_rejects_mismatched_device_json(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.close()
+    ident = json.loads((tmp_path / "device.json").read_text(encoding="utf-8"))
+    ident["device_id"] = "00000000-0000-0000-0000-000000000000"
+    (tmp_path / "device.json").write_text(json.dumps(ident) + "\n", encoding="utf-8")
+    with pytest.raises(StoreError, match="does not match this database"):
+        Store(tmp_path)
 
 
 def test_notify_on_owned_message_and_pr_merged(tmp_path: Path) -> None:
