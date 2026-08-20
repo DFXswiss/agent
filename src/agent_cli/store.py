@@ -101,8 +101,11 @@ class Store:
 
         require_loopback_dsn(resolved)
         self.dsn = resolved
-        self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
-        self.conn.execute("SET timezone TO 'UTC'")
+        try:
+            self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+            self.conn.execute("SET timezone TO 'UTC'")
+        except psycopg.Error as exc:
+            raise StoreError(f"cannot connect to postgres: {exc}") from exc
         self._lock = threading.RLock()
         self._init_schema()
         self._load_identity()

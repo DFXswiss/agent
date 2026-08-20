@@ -130,3 +130,28 @@ def test_scan_merged_counts_merged_without_sha(tmp_path: Path) -> None:
     created, skipped = scan_merged(store, runner)
     assert created == []
     assert skipped == 1
+
+
+def test_scan_merged_counts_missing_gh(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    store.write(
+        "activity",
+        "insert",
+        "open-1",
+        {
+            "id": "open-1",
+            "session_id": "s1",
+            "type": "pr.open",
+            "payload": {},
+            "result": {"repo": "dfxswiss/agent", "number": 8, "url": "https://github.com/dfxswiss/agent/pull/8"},
+            "execution_status": "done",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        raise FileNotFoundError("gh")
+
+    created, skipped = scan_merged(store, runner)
+    assert created == []
+    assert skipped == 1

@@ -12,7 +12,10 @@ from .store import Store, StoreError, utcnow
 
 
 def _gh(argv: list[str], runner: Callable[[list[str]], Completed]) -> dict[str, Any]:
-    completed = runner(argv)
+    try:
+        completed = runner(argv)
+    except OSError as exc:
+        raise StoreError(f"gh is not available: {exc}") from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "gh failed").strip()
         raise StoreError(detail)

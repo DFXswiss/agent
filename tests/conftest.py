@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from agent_cli.pg import create_database, ensure_cluster, stop_cluster
+from agent_cli.pg import create_database, drop_database, ensure_cluster, stop_cluster
 
 
 @pytest.fixture(scope="session")
@@ -22,7 +22,10 @@ def pg_admin_dsn(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 @pytest.fixture
 def pg_dsn(pg_admin_dsn: str) -> str:
-    return create_database(pg_admin_dsn, "t" + uuid.uuid4().hex[:16])
+    name = "t" + uuid.uuid4().hex[:16]
+    dsn = create_database(pg_admin_dsn, name)
+    yield dsn
+    drop_database(pg_admin_dsn, name)
 
 
 @pytest.fixture(autouse=True)

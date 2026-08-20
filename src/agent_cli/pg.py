@@ -97,6 +97,20 @@ def create_database(admin_dsn: str, name: str) -> str:
     return dsn_with_db(admin_dsn, name)
 
 
+def drop_database(admin_dsn: str, name: str) -> None:
+    import psycopg
+
+    if not _DBNAME_RE.match(name):
+        raise PgError(f"invalid database name: {name}")
+    with psycopg.connect(admin_dsn, autocommit=True) as conn:
+        conn.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE datname = %s AND pid <> pg_backend_pid()",
+            (name,),
+        )
+        conn.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(name)))
+
+
 def cluster_dsn(data_dir: Path) -> str | None:
     port_file = data_dir / "port"
     if not port_file.is_file():
