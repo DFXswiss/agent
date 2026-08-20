@@ -96,6 +96,9 @@ class Store:
         resolved = dsn if dsn not in (None, "") else os.environ.get("AGENT_PG_DSN")
         if not resolved:
             raise StoreError("postgres DSN is missing")
+        from .pg import require_loopback_dsn
+
+        require_loopback_dsn(resolved)
         self.dsn = resolved
         self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
         self.conn.execute("SET timezone TO 'UTC'")
@@ -345,6 +348,13 @@ class Store:
             }
             if wake:
                 self._maybe_wake(event)
+            else:
+                payload = event.get("payload")
+                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                    target = self._inbox_target(payload)
+                    if target is not None and self._owns_session(target):
+                        self.enqueue_wake(event["row_id"], target)
+                        self.claim_wake(event["row_id"])
 
     def pending_events(self) -> list[dict[str, Any]]:
         after = int(self.sync_get("pushed_origin_seq", "0") or "0")

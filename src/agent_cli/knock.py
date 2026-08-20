@@ -70,10 +70,10 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     text = knock_text(activity_id)
     try:
         runtime.input_text(sid, text, target=target)
+        runtime.input_key(sid, "enter", target=target)
     except BaseException:
         store.unclaim_wake(activity_id)
         raise
-    runtime.input_key(sid, "enter", target=target)
     return "sent"
 
 
