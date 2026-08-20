@@ -334,7 +334,10 @@ Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` w
 
 ```text
 agent init
-agent session register|heartbeat|list|close|start|stop|input
+agent session register|heartbeat|list|close|start|stop|input|skill
+agent session register --id ID --kind human|runner|other [--skill NAME]…
+agent session skill attach --id ID --skill spine|review-loop|pr-review
+agent session skill list --id ID
 agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID
 agent session input --id ID --data TEXT
@@ -345,7 +348,7 @@ agent subscribe --table activity [--filter FILE]
 agent task create|list|show|state|summary          # spine skill
 agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
-agent agent start|finish …                        # review-loop skill
+agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
 agent check record …                              # spine skill
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
@@ -353,6 +356,8 @@ agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
+agent knock [--once]
+agent watch pr-merged
 agent status
 agent dashboard [--port 7845]
 ```
@@ -401,7 +406,8 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
+6. Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts). The engine cutover in this revision binds Postgres to `127.0.0.1` with a single role.
 
 ## 19. Document history
 

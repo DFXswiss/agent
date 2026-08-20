@@ -61,7 +61,7 @@ def test_cli_start_provider_grok_mints_uuid_and_resumes(
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
     run(tmp_path, ["session", "start", "--id", "sess-1", "--provider", "grok"])
     out = capsys.readouterr().out
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         row = store.row("session", "sess-1")
         assert row is not None
@@ -84,7 +84,7 @@ def test_cli_start_provider_grok_mints_uuid_and_resumes(
     resume = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
     assert "--resume" in resume
     assert "--session-id" not in resume
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         row = store.row("session", "sess-1")
         assert row is not None
@@ -117,7 +117,7 @@ def test_cli_start_grok_replaces_bare_tmux(
     grok_news = [c for c in calls if c[:2] == ["tmux", "new-session"] and "grok" in c]
     assert len(grok_news) == 1
     assert "--session-id" in grok_news[0]
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         gid = store.row("session", "sess-1")["runtime"]["grok_session_id"]
         assert gid in grok_news[0]
@@ -140,7 +140,7 @@ def test_cli_start_owned_writes_runtime(tmp_path: Path, monkeypatch: pytest.Monk
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
     run(tmp_path, ["session", "start", "--id", "sess-1", "--cols", "80", "--rows", "24"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         row = store.row("session", "sess-1")
         assert row is not None
@@ -158,7 +158,7 @@ def test_cli_start_foreign_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     factory, _ = _fake_runtime_factory()
     monkeypatch.setattr(main_mod, "Runtime", factory)
     run(tmp_path, ["init"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         store.apply_remote(
             {
@@ -180,7 +180,7 @@ def test_cli_start_foreign_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 def test_apply_control_start_stop_input(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s1", "--kind", "human"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     calls: list[list[str]] = []
 
     def runner(argv: list[str]) -> Completed:
@@ -257,7 +257,7 @@ def test_apply_control_start_stop_input(tmp_path: Path) -> None:
 def test_apply_control_provider_and_command_not_ok(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s1", "--kind", "human"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     runtime = Runtime(runner=lambda argv: Completed(0, "tmux 3.3a", "") if argv[:2] == ["tmux", "-V"] else Completed(1, "", ""))
     try:
         ack = apply_control(
@@ -278,7 +278,7 @@ def test_apply_control_provider_and_command_not_ok(tmp_path: Path) -> None:
 
 def test_apply_control_foreign_not_ok(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     try:
         store.apply_remote(
             {
@@ -306,7 +306,7 @@ def test_apply_control_foreign_not_ok(tmp_path: Path) -> None:
 def test_apply_control_bad_quoting_acks_false(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s1", "--kind", "human"])
-    store = Store(tmp_path / "ledger.sqlite")
+    store = Store(tmp_path)
     runtime = Runtime(runner=lambda argv: Completed(0, "tmux 3.3a", "") if argv[:2] == ["tmux", "-V"] else Completed(1, "", ""))
     try:
         ack = apply_control(
