@@ -104,7 +104,8 @@ def test_two_devices_team_sync_and_restore(tmp_path: Path) -> None:
     wiped.set_meta("github_login", "alice")
     restore = alice_hub.restore()
     assert restore["device_id"] == alice.device_id()
-    for event in restore.get("own_events") or restore.get("events") or []:
+    own = restore["own_events"] if "own_events" in restore else restore.get("events") or []
+    for event in own:
         wiped.apply_remote(event)
     for row in list(restore.get("inbox") or []) + list(restore.get("pings") or []):
         wiped.apply_replica_row(row)

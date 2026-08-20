@@ -290,7 +290,9 @@ def cmd_activity(args: list[str]) -> None:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             die("payload file must contain a JSON object")
-        _need(store, "session", sid)
+        session = _need(store, "session", sid)
+        if session.get("status") != "active":
+            die(f"session {sid} is not active")
         activity_id = str(uuid.uuid4())
         store.write(
             "activity",
@@ -1003,7 +1005,12 @@ def cmd_restore(_: list[str]) -> None:
             hub.close()
         if body.get("device_id") != store.device_id():
             die("restore device_id does not match this device")
-        events = body.get("own_events") or body.get("events") or []
+        if "own_events" in body:
+            events = body.get("own_events")
+        else:
+            events = body.get("events")
+        if not isinstance(events, list):
+            die("restore response missing own_events")
         for event in events:
             store.apply_remote(event)
             store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))

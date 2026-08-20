@@ -1100,3 +1100,25 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         assert rows[0]["execution_status"] == "pending"
     finally:
         store.close()
+
+
+def test_activity_add_rejects_closed_session(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    run(tmp_path, ["session", "close", "--id", "sess-1"])
+    payload = tmp_path / "mail.json"
+    payload.write_text('{"to_session": "x", "body": "hello"}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="not active"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "sess-1",
+                "--type",
+                "message",
+                "--payload-file",
+                str(payload),
+            ],
+        )
