@@ -292,7 +292,7 @@ v1 types (mechanism only):
 
 | Type | Tag | Who writes | Who executes |
 |---|---|---|---|
-| `session.register` | — | script (session start) | — |
+| `session.register` | — | later (v1 register is the `session` row) | — |
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
@@ -412,6 +412,7 @@ Later product work (not required to operate v1 after merge):
 
 - Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts).
 - `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
+- `activity` type `session.register` (v1 records the `session` row only).
 
 ## 19. Document history
 
