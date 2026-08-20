@@ -37,6 +37,7 @@ agent session start --id <session-id> [--provider grok] [--model TEXT] [--cmd TE
 agent session input --id <session-id> --data TEXT
 agent session input --id <session-id> --key enter|ctrl-c|tab
 agent session stop --id <session-id>
+agent activity add --session <session-id> --type message --payload-file ./mail.json
 agent task create --session <session-id> --workflow implement --title "…"
 agent round start --task <uuid>
 agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok --round 1

@@ -274,6 +274,44 @@ def cmd_session(args: list[str]) -> None:
         store.close()
 
 
+def cmd_activity(args: list[str]) -> None:
+    if not args:
+        die("Usage: agent activity add --session ID --type TYPE --payload-file FILE")
+    store = open_store()
+    try:
+        sub, rest = args[0], args[1:]
+        if sub != "add":
+            die(f"unknown activity command: {sub}")
+        sid = require_flag(rest, "--session")
+        typ = require_flag(rest, "--type")
+        path = Path(require_flag(rest, "--payload-file"))
+        if not path.is_file():
+            die(f"payload file not found: {path}")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            die("payload file must contain a JSON object")
+        session = _need(store, "session", sid)
+        _require_owned(store, session, "session")
+        if session.get("status") != "active":
+            die(f"session {sid} is not active")
+        activity_id = str(uuid.uuid4())
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": sid,
+                "type": typ,
+                "payload": raw,
+                "execution_status": "pending",
+            },
+        )
+        print(f"activity {activity_id} type={typ}")
+    finally:
+        store.close()
+
+
 def cmd_task(args: list[str]) -> None:
     if not args:
         die("Usage: agent task create|list|show|state|summary")
@@ -968,11 +1006,21 @@ def cmd_restore(_: list[str]) -> None:
             hub.close()
         if body.get("device_id") != store.device_id():
             die("restore device_id does not match this device")
-        events = body.get("events") or body.get("own_events") or []
+        if "own_events" in body:
+            events = body.get("own_events")
+        else:
+            events = body.get("events")
+        if not isinstance(events, list):
+            die("restore response missing own_events")
         for event in events:
             store.apply_remote(event)
             store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        print(f"restored events={len(events)}")
+        snapshots = list(body.get("inbox") or []) + list(body.get("pings") or [])
+        for row in snapshots:
+            if not isinstance(row, dict):
+                die("restore snapshot is not an object")
+            store.apply_replica_row(row)
+        print(f"restored events={len(events)} snapshots={len(snapshots)}")
     finally:
         store.close()
 
@@ -1163,7 +1211,12 @@ def _sync_once(store: Store) -> None:
         for event in events:
             store.apply_remote(event)
             store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        print(f"sync pushed={len(pending)} pulled={len(events)}")
+        snapshots = list(pulled.get("inbox") or []) + list(pulled.get("pings") or [])
+        for row in snapshots:
+            if not isinstance(row, dict):
+                die("pull snapshot is not an object")
+            store.apply_replica_row(row)
+        print(f"sync pushed={len(pending)} pulled={len(events)} snapshots={len(snapshots)}")
     finally:
         hub.close()
 
@@ -1510,6 +1563,7 @@ def _assert_ready(store: Store, task: dict) -> None:
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
+    "activity": cmd_activity,
     "task": cmd_task,
     "checklist": cmd_checklist,
     "round": cmd_round,
@@ -1530,7 +1584,7 @@ def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         die(
-            "Usage: agent <init|session|task|checklist|round|agent|check|gate|work|"
+            "Usage: agent <init|session|activity|task|checklist|round|agent|check|gate|work|"
             "pair|sync|restore|ping|status|dashboard> …"
         )
     cmd = args[0]
