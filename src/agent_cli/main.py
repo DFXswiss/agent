@@ -291,6 +291,7 @@ def cmd_activity(args: list[str]) -> None:
         if not isinstance(raw, dict):
             die("payload file must contain a JSON object")
         session = _need(store, "session", sid)
+        _require_owned(store, session, "session")
         if session.get("status") != "active":
             die(f"session {sid} is not active")
         activity_id = str(uuid.uuid4())

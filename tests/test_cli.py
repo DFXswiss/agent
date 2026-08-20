@@ -1102,6 +1102,39 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
+def test_activity_add_rejects_foreign_session(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    store = Store(tmp_path / "ledger.sqlite")
+    try:
+        store.apply_replica_row(
+            {
+                "table": "session",
+                "row_id": "foreign",
+                "origin_device_id": "other-device",
+                "payload": {"id": "foreign", "kind": "human", "status": "active"},
+                "updated_at": "2026-08-13T12:00:00Z",
+            }
+        )
+    finally:
+        store.close()
+    payload = tmp_path / "mail.json"
+    payload.write_text('{"to_session": "x", "body": "hello"}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="another device"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "foreign",
+                "--type",
+                "message",
+                "--payload-file",
+                str(payload),
+            ],
+        )
+
+
 def test_activity_add_rejects_closed_session(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])

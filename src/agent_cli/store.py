@@ -279,10 +279,10 @@ class Store:
         self.conn.commit()
 
     def apply_replica_row(self, row: dict[str, Any]) -> None:
-        if row["origin_device_id"] == self.device_id():
-            return
         if row.get("table") is None:
             raise StoreError("replica row missing table")
+        if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
+            return
         self.conn.execute(
             "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
             "VALUES (?, ?, ?, ?, ?) "
