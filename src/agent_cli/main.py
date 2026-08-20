@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
-from .pg import PgError, ensure_cluster
+from .pg import PgError, ensure_cluster, require_loopback_dsn
 from .runtime import (
     Runtime,
     grok_model,
@@ -128,6 +128,10 @@ def open_store() -> Store:
             dsn = ensure_cluster(h / "pg")
         except PgError as exc:
             die(str(exc))
+    try:
+        require_loopback_dsn(dsn)
+    except PgError as exc:
+        die(str(exc))
     return Store(h, dsn)
 
 
@@ -441,15 +445,23 @@ def cmd_task(args: list[str]) -> None:
             return
         if sub == "list":
             sid = flag(rest, "--session")
+            if sid:
+                _require_skill(_need(store, "session", sid), "spine")
             for row in store.rows("task"):
                 if sid and row.get("session_id") != sid:
                     continue
+                if not sid:
+                    sess = store.row("session", str(row.get("session_id") or ""))
+                    if sess is None or not has_skill(sess, "spine"):
+                        continue
                 print(f"{row['id']}  {row['workflow']}  {row['state']}  r{row['current_round']}  {row['title']}")
             return
         if sub == "show":
             if len(rest) != 1:
                 die("Usage: agent task show <id>")
-            print(json.dumps(_need(store, "task", rest[0]), indent=2))
+            task = _need(store, "task", rest[0])
+            _require_skill(_need(store, "session", task["session_id"]), "spine")
+            print(json.dumps(task, indent=2))
             return
         if sub == "state":
             if len(rest) != 2:
@@ -704,6 +716,8 @@ def cmd_agent(args: list[str]) -> None:
             session = _need(store, "session", task["session_id"])
             if session.get("status") != "active":
                 die("session is not active")
+            _require_owned(store, session, "session")
+            _require_owned(store, task, "task")
             try:
                 _require_skill(session, skill_for_agent_role(str(role)))
             except ValueError:
@@ -847,6 +861,7 @@ def cmd_gate(args: list[str]) -> None:
         session = _need(store, "session", task["session_id"])
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
+        _require_owned(store, session, "session")
         _require_owned(store, task, "task")
         _require_skill(session, "pr-review")
         if stage == "codex-pr":
@@ -977,9 +992,15 @@ def cmd_work(args: list[str]) -> None:
             return
         if sub == "list":
             sid = flag(rest, "--session")
+            if sid:
+                _require_skill(_need(store, "session", sid), "spine")
             for row in store.rows("open_work"):
                 if sid and row.get("session_id") != sid:
                     continue
+                if not sid:
+                    sess = store.row("session", str(row.get("session_id") or ""))
+                    if sess is None or not has_skill(sess, "spine"):
+                        continue
                 print(f"{row['session_id']}  {row['key']}  {row['status']}  {row['closable_by']}")
             return
         die(f"unknown work command: {sub}")

@@ -242,8 +242,9 @@ class Store:
 
     def _insert_event_idempotent(self, event: dict[str, Any]) -> bool:
         encoded = dumps(event["payload"])
+        self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (event["origin_device_id"],))
         existing = self.conn.execute(
-            "SELECT payload, table_name, op, row_id FROM ledger_event "
+            "SELECT payload, table_name, op, row_id, occurred_at FROM ledger_event "
             "WHERE origin_device_id = %s AND origin_seq = %s",
             (event["origin_device_id"], event["origin_seq"]),
         ).fetchone()
@@ -253,6 +254,7 @@ class Store:
                 or existing["table_name"] != event["table"]
                 or existing["op"] != event["op"]
                 or existing["row_id"] != event["row_id"]
+                or existing["occurred_at"] != event["occurred_at"]
             ):
                 raise StoreError(
                     f"conflicting event {event['origin_device_id']} seq {event['origin_seq']}"
@@ -283,6 +285,12 @@ class Store:
         return True
 
     def _materialize(self, event: dict[str, Any]) -> None:
+        current = self.conn.execute(
+            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+            (event["table"], event["row_id"]),
+        ).fetchone()
+        if current is not None and current["origin_device_id"] != event["origin_device_id"]:
+            raise StoreError("cannot steal a row owned by another device")
         if event["op"] == "delete":
             self.conn.execute(
                 "DELETE FROM row_data WHERE table_name = %s AND row_id = %s",
@@ -309,6 +317,12 @@ class Store:
         if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
             return
         with self._lock, self.conn.transaction():
+            current = self.conn.execute(
+                "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+                (row["table"], row["row_id"]),
+            ).fetchone()
+            if current is not None and current["origin_device_id"] != row["origin_device_id"]:
+                raise StoreError("cannot steal a row owned by another device")
             self.conn.execute(
                 "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
                 "VALUES (%s, %s, %s, %s, %s) "

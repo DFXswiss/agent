@@ -17,6 +17,25 @@ class PgError(SystemExit):
 
 
 _DBNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def require_loopback_dsn(dsn: str) -> None:
+    """Reject a DSN that is not bound to loopback or a local unix socket."""
+    host = ""
+    hostaddr = ""
+    for part in dsn.split():
+        if part.startswith("host="):
+            host = part[5:]
+        elif part.startswith("hostaddr="):
+            hostaddr = part[9:]
+    if host.startswith("/"):
+        return
+    target = hostaddr or host
+    if target == "":
+        return
+    if target not in _LOOPBACK:
+        raise PgError("postgres DSN must use 127.0.0.1, ::1, localhost, or a unix socket")
 
 
 def _bin(name: str) -> str:
