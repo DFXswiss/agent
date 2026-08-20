@@ -239,9 +239,17 @@ class Store:
     def apply_remote(self, event: dict[str, Any], *, wake: bool = True) -> None:
         with self._lock, self.conn.transaction():
             inserted = self._insert_event_idempotent(event)
-            self._materialize(event)
-            if wake and inserted:
+            if inserted:
+                self._materialize(event)
+            if wake:
                 self._maybe_wake(event)
+            elif inserted:
+                payload = event.get("payload")
+                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                    target = self._inbox_target(payload)
+                    if target is not None and self._owns_session(target):
+                        self.enqueue_wake(event["row_id"], target)
+                        self.claim_wake(event["row_id"])
 
     def _insert_event_idempotent(self, event: dict[str, Any]) -> bool:
         encoded = dumps(event["payload"])

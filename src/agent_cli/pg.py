@@ -28,13 +28,15 @@ def require_loopback_dsn(dsn: str) -> None:
         info = conninfo_to_dict(dsn)
     except Exception as exc:  # noqa: BLE001
         raise PgError(f"invalid postgres DSN: {exc}") from exc
+    if info.get("service") or info.get("servicefile"):
+        raise PgError("postgres DSN must not use a service file")
     hosts: list[str] = []
     for key in ("host", "hostaddr"):
         raw = info.get(key)
         if isinstance(raw, str) and raw:
             hosts.extend(part.strip() for part in raw.split(",") if part.strip())
     if not hosts:
-        return
+        raise PgError("postgres DSN must set host, hostaddr, or a unix socket path")
     for host in hosts:
         if host.startswith("/"):
             continue
