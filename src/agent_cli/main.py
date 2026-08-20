@@ -102,7 +102,9 @@ ACTIVITY_TYPES = frozenset(
         "subscription.set",
     }
 )
-SCRIPT_ONLY_ACTIVITY = frozenset({"pr.merged", "mail.ingest", "mail.seen", "query.result"})
+SCRIPT_ONLY_ACTIVITY = frozenset(
+    {"pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"}
+)
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 VENDORS = ("grok", "codex")
 N_A_ALLOWED = frozenset(
@@ -1210,12 +1212,13 @@ def cmd_ping(args: list[str]) -> None:
             finally:
                 hub.close()
             payload = result.get("payload")
-            if isinstance(payload, dict):
+            origin = row.get("_origin_device_id") if row is not None else None
+            if isinstance(payload, dict) and isinstance(origin, str) and origin:
                 store.apply_replica_row(
                     {
                         "table": "ping",
                         "row_id": pid,
-                        "origin_device_id": row["_origin_device_id"] if row else "web",
+                        "origin_device_id": origin,
                         "payload": payload,
                         "updated_at": payload.get("acked_at") or utcnow(),
                     }

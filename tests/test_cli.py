@@ -1102,7 +1102,9 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
-@pytest.mark.parametrize("typ", ["pr.merged", "mail.ingest", "mail.seen", "query.result"])
+@pytest.mark.parametrize(
+    "typ", ["pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"]
+)
 def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])

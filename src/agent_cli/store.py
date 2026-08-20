@@ -8,6 +8,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import psycopg
@@ -187,50 +188,69 @@ class Store:
         return int(row["m"]) + 1
 
     def write(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._lock, self.conn.transaction():
+            return self._write_in_txn(table, op, row_id, payload)
+
+    def write_with_advisory(
+        self,
+        table: str,
+        op: str,
+        row_id: str,
+        payload: dict[str, Any],
+        *,
+        lock_key: str,
+        skip: Callable[[], bool] | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock, self.conn.transaction():
+            self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+            if skip is not None and skip():
+                return None
+            return self._write_in_txn(table, op, row_id, payload)
+
+    def _write_in_txn(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if table not in OWNED_TABLES:
             raise StoreError(f"unknown table: {table}")
         if op not in ("insert", "update", "delete"):
             raise StoreError(f"unknown op: {op}")
-        with self._lock, self.conn.transaction():
-            origin = self.device_id()
-            existing = self.conn.execute(
-                "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
-                (table, row_id),
+        origin = self.device_id()
+        existing = self.conn.execute(
+            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+            (table, row_id),
+        ).fetchone()
+        if existing is not None and existing["origin_device_id"] != origin:
+            raise StoreError("cannot mutate a row owned by another device")
+        if op == "insert" and existing is not None:
+            raise StoreError(f"{table} {row_id} already exists")
+        if op in ("update", "delete") and existing is None:
+            raise StoreError(f"{table} {row_id} does not exist")
+        seq = self.next_seq()
+        occurred = utcnow()
+        encoded = dumps(payload)
+        self.conn.execute(
+            "INSERT INTO ledger_event (origin_device_id, origin_seq, table_name, op, row_id, payload, occurred_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (origin, seq, table, op, row_id, encoded, occurred),
+        )
+        if op == "delete":
+            deleted = self.conn.execute(
+                "DELETE FROM row_data WHERE table_name = %s AND row_id = %s AND origin_device_id = %s "
+                "RETURNING row_id",
+                (table, row_id, origin),
             ).fetchone()
-            if existing is not None and existing["origin_device_id"] != origin:
-                raise StoreError("cannot mutate a row owned by another device")
-            if op == "insert" and existing is not None:
-                raise StoreError(f"{table} {row_id} already exists")
-            if op in ("update", "delete") and existing is None:
-                raise StoreError(f"{table} {row_id} does not exist")
-            seq = self.next_seq()
-            occurred = utcnow()
-            encoded = dumps(payload)
-            self.conn.execute(
-                "INSERT INTO ledger_event (origin_device_id, origin_seq, table_name, op, row_id, payload, occurred_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (origin, seq, table, op, row_id, encoded, occurred),
-            )
-            if op == "delete":
-                deleted = self.conn.execute(
-                    "DELETE FROM row_data WHERE table_name = %s AND row_id = %s AND origin_device_id = %s "
-                    "RETURNING row_id",
-                    (table, row_id, origin),
-                ).fetchone()
-                if deleted is None:
-                    raise StoreError("cannot steal a row owned by another device")
-            else:
-                self._upsert_row(table, row_id, origin, encoded, occurred, require_newer=False)
-            event = {
-                "origin_device_id": origin,
-                "origin_seq": seq,
-                "table": table,
-                "op": op,
-                "row_id": row_id,
-                "payload": payload,
-                "occurred_at": occurred,
-            }
-            self._maybe_wake(event)
+            if deleted is None:
+                raise StoreError("cannot steal a row owned by another device")
+        else:
+            self._upsert_row(table, row_id, origin, encoded, occurred, require_newer=False)
+        event = {
+            "origin_device_id": origin,
+            "origin_seq": seq,
+            "table": table,
+            "op": op,
+            "row_id": row_id,
+            "payload": payload,
+            "occurred_at": occurred,
+        }
+        self._maybe_wake(event)
         return event
 
     def apply_remote(self, event: dict[str, Any], *, wake: bool = True) -> None:

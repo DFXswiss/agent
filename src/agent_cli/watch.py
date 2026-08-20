@@ -121,29 +121,28 @@ def scan_merged(
         if isinstance(seen_url, str) and seen_url:
             url = seen_url
         lock_key = f"{session_id}:{repo}:{number}"
-        with store._lock, store.conn.transaction():
-            store.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
-            if _already_merged(store, session_id, repo, number):
-                continue
-            activity_id = str(uuid.uuid4())
-            store.write(
-                "activity",
-                "insert",
-                activity_id,
-                {
-                    "id": activity_id,
-                    "session_id": session_id,
-                    "type": "pr.merged",
-                    "payload": {
-                        "repo": repo,
-                        "number": number,
-                        "url": url,
-                        "merge_sha": sha,
-                        "merged_at": merged_at,
-                        "pr_open_id": row.get("id"),
-                    },
-                    "execution_status": "done",
+        activity_id = str(uuid.uuid4())
+        event = store.write_with_advisory(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": session_id,
+                "type": "pr.merged",
+                "payload": {
+                    "repo": repo,
+                    "number": number,
+                    "url": url,
+                    "merge_sha": sha,
+                    "merged_at": merged_at,
+                    "pr_open_id": row.get("id"),
                 },
-            )
+                "execution_status": "done",
+            },
+            lock_key=lock_key,
+            skip=lambda: _already_merged(store, session_id, repo, number),
+        )
+        if event is not None:
             created.append(activity_id)
     return created, skipped

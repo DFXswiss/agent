@@ -132,6 +132,30 @@ def test_apply_replica_row_compares_updated_at_as_timestamptz(tmp_path: Path) ->
     assert store.row("task", "t1")["title"] == "new"
 
 
+def test_apply_replica_row_rejects_invented_web_origin(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    pid = "ping-1"
+    store.apply_replica_row(
+        {
+            "table": "ping",
+            "row_id": pid,
+            "origin_device_id": "web",
+            "payload": {"id": pid, "from_login": "alice", "to_login": "bob", "acked_at": "2026-08-13T12:00:01Z"},
+            "updated_at": "2026-08-13T12:00:01Z",
+        }
+    )
+    with pytest.raises(StoreError, match="cannot steal"):
+        store.apply_replica_row(
+            {
+                "table": "ping",
+                "row_id": pid,
+                "origin_device_id": "sender-device",
+                "payload": {"id": pid, "from_login": "alice", "to_login": "bob", "acked_at": "2026-08-13T12:00:01Z"},
+                "updated_at": "2026-08-13T12:00:02Z",
+            }
+        )
+
+
 def test_identity_survives_database_wipe(tmp_path: Path, pg_admin_dsn: str) -> None:
     store = Store(tmp_path)
     device_id = store.device_id()
