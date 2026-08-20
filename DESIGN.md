@@ -175,7 +175,7 @@ The website is the full-replica view (summaries first; thick logs on demand). La
 - Session kinds: `human` | `runner` | `other`.
 - Reachability for the TUI knock (tmux pane, ACP endpoint, or `none`) is stored locally. It is not a hub event on every keystroke.
 
-Two database roles on the device: one for the AI (`INSERT` intent rows, `SELECT`), one for scripts (full DML, `LISTEN`/`NOTIFY`, result columns). Both use password auth on the local socket. This is footgun-defense on a single-user machine, not a hostile-TUI boundary.
+v1 uses a single Postgres role `agent` on `127.0.0.1` (managed cluster: trust auth, no unix socket). Two roles with password auth on a local socket (AI `INSERT`/`SELECT` vs scripts full DML + `LISTEN`/`NOTIFY`) remain later footgun-defense, not a hostile-TUI boundary.
 
 ## 9. Sync and restore
 
@@ -407,8 +407,11 @@ These are not silent defaults in code; they are human steps after merge:
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
 5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
-6. Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts). The engine cutover in this revision binds Postgres to `127.0.0.1` with a single role.
-7. `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
+
+Later product work (not required to operate v1 after merge):
+
+- Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts).
+- `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
 
 ## 19. Document history
 
