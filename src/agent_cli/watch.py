@@ -64,9 +64,10 @@ def _open_target(row: dict[str, Any]) -> tuple[str, int, str] | None:
 def scan_merged(
     store: Store,
     runner: Callable[[list[str]], Completed],
-) -> list[str]:
-    """Insert pr.merged for owned pr.open rows whose GitHub PR is merged. Returns new ids."""
+) -> tuple[list[str], int]:
+    """Insert pr.merged for owned pr.open rows whose GitHub PR is merged."""
     created: list[str] = []
+    skipped = 0
     for row in store.rows("activity"):
         if row.get("type") != "pr.open":
             continue
@@ -96,6 +97,7 @@ def scan_merged(
                 runner,
             )
         except (StoreError, json.JSONDecodeError):
+            skipped += 1
             continue
         state = str(info.get("state") or "").upper()
         if state != "MERGED":
@@ -142,4 +144,4 @@ def scan_merged(
                 },
             )
             created.append(activity_id)
-    return created
+    return created, skipped

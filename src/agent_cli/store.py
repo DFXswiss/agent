@@ -220,7 +220,7 @@ class Store:
                 if deleted is None:
                     raise StoreError("cannot steal a row owned by another device")
             else:
-                self._upsert_row(table, row_id, origin, encoded, occurred)
+                self._upsert_row(table, row_id, origin, encoded, occurred, require_newer=False)
             event = {
                 "origin_device_id": origin,
                 "origin_seq": seq,
@@ -292,14 +292,24 @@ class Store:
         )
         return True
 
-    def _upsert_row(self, table: str, row_id: str, origin: str, encoded: str, updated_at: str) -> None:
+    def _upsert_row(
+        self,
+        table: str,
+        row_id: str,
+        origin: str,
+        encoded: str,
+        updated_at: str,
+        *,
+        require_newer: bool = False,
+    ) -> None:
+        newer = " AND excluded.updated_at >= row_data.updated_at" if require_newer else ""
         found = self.conn.execute(
             "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (table_name, row_id) DO UPDATE SET payload = excluded.payload, "
             "updated_at = excluded.updated_at "
-            "WHERE row_data.origin_device_id = excluded.origin_device_id "
-            "AND excluded.updated_at >= row_data.updated_at "
+            "WHERE row_data.origin_device_id = excluded.origin_device_id"
+            f"{newer} "
             "RETURNING row_id",
             (table, row_id, origin, encoded, updated_at),
         ).fetchone()
@@ -333,6 +343,7 @@ class Store:
             event["origin_device_id"],
             dumps(event["payload"]),
             event["occurred_at"],
+            require_newer=False,
         )
 
     def apply_replica_row(self, row: dict[str, Any], *, wake: bool = True) -> None:
@@ -347,6 +358,7 @@ class Store:
                 row["origin_device_id"],
                 dumps(row["payload"]),
                 row["updated_at"],
+                require_newer=row.get("table") != "ping",
             )
             event = {
                 "origin_device_id": row["origin_device_id"],

@@ -102,7 +102,7 @@ ACTIVITY_TYPES = frozenset(
         "subscription.set",
     }
 )
-SCRIPT_ONLY_ACTIVITY = frozenset({"pr.merged"})
+SCRIPT_ONLY_ACTIVITY = frozenset({"pr.merged", "mail.ingest", "mail.seen", "query.result"})
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 VENDORS = ("grok", "codex")
 N_A_ALLOWED = frozenset(
@@ -139,6 +139,9 @@ def home() -> Path:
 
 def open_store() -> Store:
     h = home()
+    sqlite_legacy = h / "ledger.sqlite"
+    if sqlite_legacy.is_file():
+        die("found ledger.sqlite; restore from the hub instead of opening an empty postgres cluster")
     dsn = os.environ.get("AGENT_PG_DSN")
     if dsn == "":
         die("AGENT_PG_DSN is set but empty")
@@ -1726,12 +1729,13 @@ def cmd_watch(args: list[str]) -> None:
     try:
         from .runtime import run_argv
 
-        created = scan_merged(store, run_argv)
-        if not created:
-            print("pr.merged none")
-            return
+        created, skipped = scan_merged(store, run_argv)
         for activity_id in created:
             print(f"pr.merged {activity_id}")
+        if skipped:
+            die(f"watch skipped {skipped} pr.open rows")
+        if not created:
+            print("pr.merged none")
     finally:
         store.close()
 

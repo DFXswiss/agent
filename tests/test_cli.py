@@ -1102,10 +1102,11 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
-def test_activity_add_rejects_pr_merged(tmp_path: Path) -> None:
+@pytest.mark.parametrize("typ", ["pr.merged", "mail.ingest", "mail.seen", "query.result"])
+def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
-    payload = tmp_path / "pr.json"
+    payload = tmp_path / "script.json"
     payload.write_text('{"repo": "o/r", "number": 1}', encoding="utf-8")
     with pytest.raises(SystemExit, match="written by a script"):
         run(
@@ -1116,11 +1117,17 @@ def test_activity_add_rejects_pr_merged(tmp_path: Path) -> None:
                 "--session",
                 "sess-1",
                 "--type",
-                "pr.merged",
+                typ,
                 "--payload-file",
                 str(payload),
             ],
         )
+
+
+def test_open_store_dies_on_legacy_sqlite(tmp_path: Path) -> None:
+    (tmp_path / "ledger.sqlite").write_bytes(b"")
+    with pytest.raises(SystemExit, match="found ledger.sqlite"):
+        run(tmp_path, ["init"])
 
 
 def test_activity_add_unknown_type_is_error(tmp_path: Path) -> None:

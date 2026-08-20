@@ -36,7 +36,8 @@ def test_scan_merged_inserts_once(tmp_path: Path) -> None:
         }
         return Completed(0, json.dumps(body), "")
 
-    created = scan_merged(store, runner)
+    created, skipped = scan_merged(store, runner)
+    assert skipped == 0
     assert len(created) == 1
     row = store.row("activity", created[0])
     assert row is not None
@@ -44,7 +45,8 @@ def test_scan_merged_inserts_once(tmp_path: Path) -> None:
     assert row["session_id"] == "s1"
     assert row["payload"]["number"] == 8
     assert row["payload"]["merge_sha"] == "abc1234"
-    again = scan_merged(store, runner)
+    again, skipped_again = scan_merged(store, runner)
+    assert skipped_again == 0
     assert again == []
 
 
@@ -90,7 +92,8 @@ def test_scan_merged_skips_gh_failure(tmp_path: Path) -> None:
         }
         return Completed(0, json.dumps(body), "")
 
-    created = scan_merged(store, runner)
+    created, skipped = scan_merged(store, runner)
+    assert skipped == 1
     assert len(created) == 1
     row = store.row("activity", created[0])
     assert row is not None
