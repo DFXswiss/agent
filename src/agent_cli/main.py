@@ -84,6 +84,25 @@ TASK_STATES = (
     "failed",
 )
 PING_KINDS = ("review-request", "ping", "question")
+ACTIVITY_TYPES = frozenset(
+    {
+        "session.register",
+        "issue.write",
+        "pr.open",
+        "pr.merged",
+        "comment.post",
+        "mail.ingest",
+        "mail.seen",
+        "mail.reply",
+        "investigate.step",
+        "message",
+        "message.read",
+        "query.request",
+        "query.result",
+        "subscription.set",
+    }
+)
+SCRIPT_ONLY_ACTIVITY = frozenset({"pr.merged"})
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 VENDORS = ("grok", "codex")
 N_A_ALLOWED = frozenset(
@@ -366,6 +385,9 @@ def cmd_activity(args: list[str]) -> None:
         _require_owned(store, session, "session")
         if session.get("status") != "active":
             die(f"session {sid} is not active")
+        if typ in SCRIPT_ONLY_ACTIVITY:
+            die(f"{typ} is written by a script, not agent activity add")
+        status = "pending" if typ in ACTIVITY_TYPES else "error"
         activity_id = str(uuid.uuid4())
         store.write(
             "activity",
@@ -376,7 +398,7 @@ def cmd_activity(args: list[str]) -> None:
                 "session_id": sid,
                 "type": typ,
                 "payload": raw,
-                "execution_status": "pending",
+                "execution_status": status,
             },
         )
         print(f"activity {activity_id} type={typ}")

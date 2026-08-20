@@ -9,7 +9,7 @@ from agent_cli.store import Store
 
 def _runtime(log: list[list[str]], *, exists: bool = True, busy: bool = False) -> Runtime:
     class Fake(Runtime):
-        def exists(self, session_id: str) -> bool:
+        def exists(self, session_id: str, *, target: str | None = None) -> bool:
             return exists
 
         def is_busy(self, session_id: str) -> bool:

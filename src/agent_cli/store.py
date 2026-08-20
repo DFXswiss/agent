@@ -212,18 +212,15 @@ class Store:
                 (origin, seq, table, op, row_id, encoded, occurred),
             )
             if op == "delete":
-                self.conn.execute(
-                    "DELETE FROM row_data WHERE table_name = %s AND row_id = %s",
-                    (table, row_id),
-                )
+                deleted = self.conn.execute(
+                    "DELETE FROM row_data WHERE table_name = %s AND row_id = %s AND origin_device_id = %s "
+                    "RETURNING row_id",
+                    (table, row_id, origin),
+                ).fetchone()
+                if deleted is None:
+                    raise StoreError("cannot steal a row owned by another device")
             else:
-                self.conn.execute(
-                    "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
-                    "VALUES (%s, %s, %s, %s, %s) "
-                    "ON CONFLICT (table_name, row_id) DO UPDATE SET payload = excluded.payload, "
-                    "origin_device_id = excluded.origin_device_id, updated_at = excluded.updated_at",
-                    (table, row_id, origin, encoded, occurred),
-                )
+                self._upsert_row(table, row_id, origin, encoded, occurred)
             event = {
                 "origin_device_id": origin,
                 "origin_seq": seq,
@@ -295,31 +292,47 @@ class Store:
         )
         return True
 
-    def _materialize(self, event: dict[str, Any]) -> None:
-        current = self.conn.execute(
-            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
-            (event["table"], event["row_id"]),
-        ).fetchone()
-        if current is not None and current["origin_device_id"] != event["origin_device_id"]:
-            raise StoreError("cannot steal a row owned by another device")
-        if event["op"] == "delete":
-            self.conn.execute(
-                "DELETE FROM row_data WHERE table_name = %s AND row_id = %s",
-                (event["table"], event["row_id"]),
-            )
-            return
-        self.conn.execute(
+    def _upsert_row(self, table: str, row_id: str, origin: str, encoded: str, updated_at: str) -> None:
+        found = self.conn.execute(
             "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT (table_name, row_id) DO UPDATE SET payload = excluded.payload, "
-            "origin_device_id = excluded.origin_device_id, updated_at = excluded.updated_at",
-            (
-                event["table"],
-                event["row_id"],
-                event["origin_device_id"],
-                dumps(event["payload"]),
-                event["occurred_at"],
-            ),
+            "updated_at = excluded.updated_at "
+            "WHERE row_data.origin_device_id = excluded.origin_device_id "
+            "AND excluded.updated_at >= row_data.updated_at "
+            "RETURNING row_id",
+            (table, row_id, origin, encoded, updated_at),
+        ).fetchone()
+        if found is not None:
+            return
+        current = self.conn.execute(
+            "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+            (table, row_id),
+        ).fetchone()
+        if current is not None and current["origin_device_id"] != origin:
+            raise StoreError("cannot steal a row owned by another device")
+
+    def _materialize(self, event: dict[str, Any]) -> None:
+        if event["op"] == "delete":
+            deleted = self.conn.execute(
+                "DELETE FROM row_data WHERE table_name = %s AND row_id = %s AND origin_device_id = %s "
+                "RETURNING row_id",
+                (event["table"], event["row_id"], event["origin_device_id"]),
+            ).fetchone()
+            if deleted is None:
+                current = self.conn.execute(
+                    "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
+                    (event["table"], event["row_id"]),
+                ).fetchone()
+                if current is not None and current["origin_device_id"] != event["origin_device_id"]:
+                    raise StoreError("cannot steal a row owned by another device")
+            return
+        self._upsert_row(
+            event["table"],
+            event["row_id"],
+            event["origin_device_id"],
+            dumps(event["payload"]),
+            event["occurred_at"],
         )
 
     def apply_replica_row(self, row: dict[str, Any], *, wake: bool = True) -> None:
@@ -328,24 +341,12 @@ class Store:
         if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
             return
         with self._lock, self.conn.transaction():
-            current = self.conn.execute(
-                "SELECT origin_device_id FROM row_data WHERE table_name = %s AND row_id = %s",
-                (row["table"], row["row_id"]),
-            ).fetchone()
-            if current is not None and current["origin_device_id"] != row["origin_device_id"]:
-                raise StoreError("cannot steal a row owned by another device")
-            self.conn.execute(
-                "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s) "
-                "ON CONFLICT (table_name, row_id) DO UPDATE SET payload = excluded.payload, "
-                "origin_device_id = excluded.origin_device_id, updated_at = excluded.updated_at",
-                (
-                    row["table"],
-                    row["row_id"],
-                    row["origin_device_id"],
-                    dumps(row["payload"]),
-                    row["updated_at"],
-                ),
+            self._upsert_row(
+                row["table"],
+                row["row_id"],
+                row["origin_device_id"],
+                dumps(row["payload"]),
+                row["updated_at"],
             )
             event = {
                 "origin_device_id": row["origin_device_id"],
@@ -529,6 +530,8 @@ class Store:
         if not isinstance(payload, dict):
             return
         if payload.get("type") not in WAKE_ACTIVITY_TYPES:
+            return
+        if payload.get("type") == "pr.merged" and payload.get("execution_status") != "done":
             return
         target = self._inbox_target(payload)
         if target is None:

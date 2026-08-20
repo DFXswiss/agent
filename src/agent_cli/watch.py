@@ -19,7 +19,10 @@ def _gh(argv: list[str], runner: Callable[[list[str]], Completed]) -> dict[str, 
     raw = completed.stdout.strip()
     if raw == "":
         raise StoreError("gh returned empty output")
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise StoreError("gh returned invalid JSON") from exc
     if not isinstance(data, dict):
         raise StoreError("gh output is not an object")
     return data
@@ -78,19 +81,22 @@ def scan_merged(
             continue
         if _already_merged(store, session_id, repo, number):
             continue
-        info = _gh(
-            [
-                "gh",
-                "pr",
-                "view",
-                str(number),
-                "--repo",
-                repo,
-                "--json",
-                "state,mergedAt,mergeCommit,url,number",
-            ],
-            runner,
-        )
+        try:
+            info = _gh(
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    str(number),
+                    "--repo",
+                    repo,
+                    "--json",
+                    "state,mergedAt,mergeCommit,url,number",
+                ],
+                runner,
+            )
+        except (StoreError, json.JSONDecodeError):
+            continue
         state = str(info.get("state") or "").upper()
         if state != "MERGED":
             continue
@@ -104,7 +110,9 @@ def scan_merged(
             sha = merge_commit
         merged_at = info.get("mergedAt")
         if not isinstance(merged_at, str) or merged_at == "":
-            merged_at = utcnow()
+            continue
+        if sha == "":
+            continue
         seen_url = info.get("url")
         if isinstance(seen_url, str) and seen_url:
             url = seen_url

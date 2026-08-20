@@ -75,17 +75,14 @@ def _free_port() -> int:
 def dsn_with_db(dsn: str, dbname: str) -> str:
     if not _DBNAME_RE.match(dbname):
         raise PgError(f"invalid database name: {dbname}")
-    parts: list[str] = []
-    replaced = False
-    for part in dsn.split():
-        if part.startswith("dbname="):
-            parts.append(f"dbname={dbname}")
-            replaced = True
-        else:
-            parts.append(part)
-    if not replaced:
-        parts.append(f"dbname={dbname}")
-    return " ".join(parts)
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    try:
+        info = conninfo_to_dict(dsn)
+    except Exception as exc:  # noqa: BLE001
+        raise PgError(f"invalid postgres DSN: {exc}") from exc
+    info["dbname"] = dbname
+    return make_conninfo(**info)
 
 
 def create_database(admin_dsn: str, name: str) -> str:
@@ -141,6 +138,7 @@ def start_cluster(data_dir: Path) -> str:
             if started.returncode != 0:
                 raise PgError((started.stderr or started.stdout or log.read_text(encoding="utf-8")).strip())
             return existing
+        raise PgError("postgres data directory exists but port file is missing")
     completed = subprocess.run(  # noqa: S603
         [_bin("initdb"), "-D", str(pgdata), "--auth=trust", "-U", "agent", "--no-instructions"],
         check=False,

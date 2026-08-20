@@ -52,7 +52,12 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     raw = session.get("runtime")
     meta = raw if isinstance(raw, dict) else {}
     control = meta.get("control")
-    if control != "attached" or not runtime.exists(sid):
+    pane = meta.get("tmux_pane")
+    target = pane if isinstance(pane, str) and pane else None
+    if target is None:
+        stored = meta.get("tmux_session")
+        target = stored if isinstance(stored, str) and stored else None
+    if control != "attached" or not runtime.exists(sid, target=target):
         store.enqueue_wake(activity_id, sid)
         store.conn.commit()
         return "unread"
@@ -60,11 +65,6 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
         store.enqueue_wake(activity_id, sid)
         store.conn.commit()
         return "queued"
-    pane = meta.get("tmux_pane")
-    target = pane if isinstance(pane, str) and pane else None
-    if target is None:
-        stored = meta.get("tmux_session")
-        target = stored if isinstance(stored, str) and stored else None
     if not store.claim_wake(activity_id):
         return "sent"
     text = knock_text(activity_id)

@@ -1102,6 +1102,54 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
+def test_activity_add_rejects_pr_merged(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    payload = tmp_path / "pr.json"
+    payload.write_text('{"repo": "o/r", "number": 1}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="written by a script"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "sess-1",
+                "--type",
+                "pr.merged",
+                "--payload-file",
+                str(payload),
+            ],
+        )
+
+
+def test_activity_add_unknown_type_is_error(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human"])
+    payload = tmp_path / "x.json"
+    payload.write_text('{"k": "v"}', encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "activity",
+            "add",
+            "--session",
+            "sess-1",
+            "--type",
+            "not-a-catalog-type",
+            "--payload-file",
+            str(payload),
+        ],
+    )
+    store = Store(tmp_path)
+    try:
+        rows = store.rows("activity")
+        assert len(rows) == 1
+        assert rows[0]["execution_status"] == "error"
+    finally:
+        store.close()
+
+
 def test_activity_add_rejects_foreign_session(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     store = Store(tmp_path)

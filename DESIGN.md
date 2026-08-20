@@ -343,8 +343,6 @@ agent session stop --id ID
 agent session input --id ID --data TEXT
 agent session input --id ID --key enter|ctrl-c|tab
 agent activity add --session ID --type TYPE --payload-file FILE
-agent query --q NAME [--arg KEY=VAL]…
-agent subscribe --table activity [--filter FILE]
 agent task create|list|show|state|summary          # spine skill
 agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
@@ -357,7 +355,7 @@ agent sync [--follow]
 agent restore
 agent ping send|list|ack
 agent knock [--once]
-agent watch pr-merged
+agent watch pr-merged                          # one scan; schedule if you need a loop
 agent status
 agent dashboard [--port 7845]
 ```
@@ -408,6 +406,7 @@ These are not silent defaults in code; they are human steps after merge:
 4. Add GitHub logins to `teams.yaml` via pull request.
 5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
 6. Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts). The engine cutover in this revision binds Postgres to `127.0.0.1` with a single role.
+7. `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
 
 ## 19. Document history
 

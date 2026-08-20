@@ -89,8 +89,8 @@ class Runtime:
     def available(self) -> bool:
         return self._run(["tmux", "-V"]).returncode == 0
 
-    def exists(self, session_id: str) -> bool:
-        name = tmux_name(session_id)
+    def exists(self, session_id: str, *, target: str | None = None) -> bool:
+        name = target or tmux_name(session_id)
         return self._run(["tmux", "has-session", "-t", name]).returncode == 0
 
     def is_busy(self, session_id: str) -> bool:
