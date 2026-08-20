@@ -98,3 +98,35 @@ def test_scan_merged_skips_gh_failure(tmp_path: Path) -> None:
     row = store.row("activity", created[0])
     assert row is not None
     assert row["payload"]["number"] == 8
+
+
+def test_scan_merged_counts_merged_without_sha(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    store.write(
+        "activity",
+        "insert",
+        "open-1",
+        {
+            "id": "open-1",
+            "session_id": "s1",
+            "type": "pr.open",
+            "payload": {},
+            "result": {"repo": "dfxswiss/agent", "number": 8, "url": "https://github.com/dfxswiss/agent/pull/8"},
+            "execution_status": "done",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        body = {
+            "state": "MERGED",
+            "mergedAt": "2026-08-13T12:00:00Z",
+            "mergeCommit": None,
+            "url": "https://github.com/dfxswiss/agent/pull/8",
+            "number": 8,
+        }
+        return Completed(0, json.dumps(body), "")
+
+    created, skipped = scan_merged(store, runner)
+    assert created == []
+    assert skipped == 1

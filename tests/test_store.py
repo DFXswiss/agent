@@ -109,6 +109,29 @@ def test_apply_replica_row_updates_own_ping_ack(tmp_path: Path) -> None:
     assert store.row("ping", pid)["acked_at"] == "2026-08-13T12:00:01Z"
 
 
+def test_apply_replica_row_compares_updated_at_as_timestamptz(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.apply_replica_row(
+        {
+            "table": "task",
+            "row_id": "t1",
+            "origin_device_id": "teammate",
+            "payload": {"id": "t1", "title": "old"},
+            "updated_at": "2026-08-13T12:00:00Z",
+        }
+    )
+    store.apply_replica_row(
+        {
+            "table": "task",
+            "row_id": "t1",
+            "origin_device_id": "teammate",
+            "payload": {"id": "t1", "title": "new"},
+            "updated_at": "2026-08-13T12:00:00.5Z",
+        }
+    )
+    assert store.row("task", "t1")["title"] == "new"
+
+
 def test_identity_survives_database_wipe(tmp_path: Path, pg_admin_dsn: str) -> None:
     store = Store(tmp_path)
     device_id = store.device_id()

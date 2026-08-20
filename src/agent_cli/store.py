@@ -302,7 +302,11 @@ class Store:
         *,
         require_newer: bool = False,
     ) -> None:
-        newer = " AND excluded.updated_at >= row_data.updated_at" if require_newer else ""
+        newer = (
+            " AND excluded.updated_at::timestamptz >= row_data.updated_at::timestamptz"
+            if require_newer
+            else ""
+        )
         found = self.conn.execute(
             "INSERT INTO row_data (table_name, row_id, origin_device_id, payload, updated_at) "
             "VALUES (%s, %s, %s, %s, %s) "

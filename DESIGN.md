@@ -242,6 +242,8 @@ Knock state machine (observable states only):
 | Session not running | Unread until the next start; the agent `SELECT`s unread ids |
 | No tmux and no ACP | No knock; unread until the next human turn |
 
+v1: `Runtime.is_busy` is always false, so “Model running” is treated as idle until a stop-hook path exists. The queue branch still runs when a runtime reports busy.
+
 Ack of session mail is a **recipient-owned** `message.read` activity, not a mutation of the sender’s row.
 
 ## 11. Realtime

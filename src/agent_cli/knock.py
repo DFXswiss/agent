@@ -43,11 +43,9 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     session = store.row("session", sid)
     if session is None or session.get("_origin_device_id") != store.device_id():
         store.enqueue_wake(activity_id, sid)
-        store.conn.commit()
         return "unread"
     if session.get("status") != "active":
         store.enqueue_wake(activity_id, sid)
-        store.conn.commit()
         return "unread"
     raw = session.get("runtime")
     meta = raw if isinstance(raw, dict) else {}
@@ -59,11 +57,9 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
         target = stored if isinstance(stored, str) and stored else None
     if control != "attached" or not runtime.exists(sid, target=target):
         store.enqueue_wake(activity_id, sid)
-        store.conn.commit()
         return "unread"
     if runtime.is_busy(sid):
         store.enqueue_wake(activity_id, sid)
-        store.conn.commit()
         return "queued"
     if not store.claim_wake(activity_id):
         return "sent"

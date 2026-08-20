@@ -112,8 +112,10 @@ def scan_merged(
             sha = merge_commit
         merged_at = info.get("mergedAt")
         if not isinstance(merged_at, str) or merged_at == "":
+            skipped += 1
             continue
         if sha == "":
+            skipped += 1
             continue
         seen_url = info.get("url")
         if isinstance(seen_url, str) and seen_url:
