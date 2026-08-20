@@ -40,7 +40,13 @@ def _already_merged(store: Store, session_id: str, repo: str, number: int) -> bo
         payload = row.get("payload")
         if not isinstance(payload, dict):
             continue
-        if payload.get("repo") == repo and int(payload.get("number") or 0) == number:
+        raw_n = payload.get("number")
+        if isinstance(raw_n, bool) or not isinstance(raw_n, int):
+            if isinstance(raw_n, str) and raw_n.isdigit():
+                raw_n = int(raw_n)
+            else:
+                continue
+        if payload.get("repo") == repo and raw_n == number:
             return True
     return False
 

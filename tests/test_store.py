@@ -107,6 +107,16 @@ def test_apply_replica_row_updates_own_ping_ack(tmp_path: Path) -> None:
         }
     )
     assert store.row("ping", pid)["acked_at"] == "2026-08-13T12:00:01Z"
+    store.apply_replica_row(
+        {
+            "table": "ping",
+            "row_id": pid,
+            "origin_device_id": store.device_id(),
+            "payload": {"id": pid, "from_login": "alice", "to_login": "bob", "acked_at": None},
+            "updated_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    assert store.row("ping", pid)["acked_at"] == "2026-08-13T12:00:01Z"
 
 
 def test_apply_replica_row_compares_updated_at_as_timestamptz(tmp_path: Path) -> None:

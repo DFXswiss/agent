@@ -1128,7 +1128,7 @@ def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
 
 def test_open_store_dies_on_legacy_sqlite(tmp_path: Path) -> None:
     (tmp_path / "ledger.sqlite").write_bytes(b"")
-    with pytest.raises(SystemExit, match="found ledger.sqlite"):
+    with pytest.raises(SystemExit, match="move it aside"):
         run(tmp_path, ["init"])
 
 

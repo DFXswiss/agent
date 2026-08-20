@@ -139,11 +139,11 @@ def home() -> Path:
     return Path.home() / ".local" / "share" / "agent"
 
 
-def open_store() -> Store:
+def open_store(*, allow_legacy_sqlite: bool = False) -> Store:
     h = home()
     sqlite_legacy = h / "ledger.sqlite"
-    if sqlite_legacy.is_file():
-        die("found ledger.sqlite; restore from the hub instead of opening an empty postgres cluster")
+    if sqlite_legacy.is_file() and not allow_legacy_sqlite:
+        die("found ledger.sqlite; move it aside then run agent restore")
     dsn = os.environ.get("AGENT_PG_DSN")
     if dsn == "":
         die("AGENT_PG_DSN is set but empty")
@@ -1136,7 +1136,7 @@ def cmd_sync(args: list[str]) -> None:
 
 
 def cmd_restore(_: list[str]) -> None:
-    store = open_store()
+    store = open_store(allow_legacy_sqlite=True)
     try:
         hub = _hub_from_store(store)
         try:

@@ -122,6 +122,9 @@ class Store:
             device_id = data.get("device_id")
             if not isinstance(device_id, str) or device_id == "":
                 raise StoreError("device.json is missing device_id")
+            existing = self.meta("device_id")
+            if existing is not None and existing != device_id:
+                raise StoreError("device.json does not match this database")
             self.set_meta("device_id", device_id)
             for key in ("device_token", "github_login", "hub_url", "pair_challenge"):
                 value = data.get(key)
@@ -378,12 +381,17 @@ class Store:
             raise StoreError("replica row missing table")
         if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
             return
+        payload = row["payload"]
+        if row.get("table") == "ping" and isinstance(payload, dict):
+            current = self.row("ping", row["row_id"])
+            if isinstance(current, dict) and current.get("acked_at") and not payload.get("acked_at"):
+                payload = {**payload, "acked_at": current["acked_at"]}
         with self._lock, self.conn.transaction():
             self._upsert_row(
                 row["table"],
                 row["row_id"],
                 row["origin_device_id"],
-                dumps(row["payload"]),
+                dumps(payload),
                 row["updated_at"],
                 require_newer=row.get("table") != "ping",
             )
@@ -392,7 +400,7 @@ class Store:
                 "table": row["table"],
                 "op": "insert",
                 "row_id": row["row_id"],
-                "payload": row["payload"],
+                "payload": payload,
             }
             if wake:
                 self._maybe_wake(event)
