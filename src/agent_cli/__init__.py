@@ -1,3 +1,3 @@
-"""Local agent ledger client."""
+"""Local session-store client."""
 
 __version__ = "0.1.0"

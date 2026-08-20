@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dfx-agent"
 version = "0.1.0"
-description = "Local agent ledger: record work, pair a device, sync bidirectionally with the hub."
+description = "Local session store: record work, pair a device, sync bidirectionally with the hub."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
