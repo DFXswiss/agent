@@ -253,9 +253,9 @@ def test_done_requires_gates_after_summaries_and_checklist(
             "--id",
             tid,
             "--en",
-            "Adds complete ledger CLI.",
+            "Adds complete session-store CLI.",
             "--de",
-            "Ergaenzt die vollstaendige Ledger-CLI.",
+            "Ergaenzt die vollstaendige Session-Store-CLI.",
         ],
     )
     capsys.readouterr()

@@ -1,4 +1,4 @@
-"""CLI for the local agent ledger."""
+"""CLI for the local session store."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # agent
 
-Local ledger client. Record sessions, tasks, checklists and review pings on this machine, then pair the device to the [agent-core](https://github.com/DFXswiss/agent-core) hub with GitHub.
+Local session-store client. Record sessions, tasks, checklists and review pings on this machine, then pair the device to the [agent-core](https://github.com/DFXswiss/agent-core) hub with GitHub.
 
 Product decisions (visibility, pairing, sync, restore, what we will not build) are in [DESIGN.md](DESIGN.md).
 
@@ -65,14 +65,14 @@ This device is the only place that starts, stops, or types into a live terminal.
 agent session start --id <session-id> [--cmd "bash -l"] [--cols 80] [--rows 24]
 agent session start --id <session-id> --provider grok
 # → started <id> tmux=agent-… grok=<uuid>
-# later starts resume that uuid; they do not reuse the ledger session id
+# later starts resume that uuid; they do not reuse the store session id
 agent session input --id <session-id> --data "ls\n"
 agent session input --id <session-id> --key enter
 agent session stop --id <session-id>
 # → stopped <id>
 ```
 
-`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not ledger events.
+`agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
 
 
 ## Tests

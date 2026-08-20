@@ -1,4 +1,4 @@
-"""Local SQLite ledger. This device is the write owner of its own rows."""
+"""Local SQLite session store. This device is the write owner of its own rows."""
 
 from __future__ import annotations
 
