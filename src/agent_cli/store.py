@@ -70,6 +70,19 @@ OWNED_TABLES = frozenset(
 
 WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged"})
 
+EXECUTABLE_ACTIVITY_TYPES = frozenset(
+    {
+        "issue.write",
+        "pr.open",
+        "comment.post",
+        "mail.ingest",
+        "mail.seen",
+        "mail.reply",
+        "query.request",
+        "subscription.set",
+    }
+)
+
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -257,6 +270,7 @@ class Store:
             "occurred_at": occurred,
         }
         self._maybe_wake(event)
+        self._maybe_work(event)
         return event
 
     def apply_remote(self, event: dict[str, Any], *, wake: bool = True) -> None:
@@ -520,6 +534,27 @@ class Store:
             ).fetchall()
             return [{"activity_id": r["activity_id"], "session_id": r["session_id"]} for r in rows]
 
+    def pending_work(self) -> list[dict[str, Any]]:
+        with self._lock:
+            found = self.conn.execute(
+                "SELECT row_id, origin_device_id, payload FROM row_data "
+                "WHERE table_name = %s AND origin_device_id = %s "
+                "ORDER BY updated_at ASC, row_id ASC",
+                ("activity", self.device_id()),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in found:
+            payload = loads(row["payload"])
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("execution_status") != "pending":
+                continue
+            if payload.get("type") not in EXECUTABLE_ACTIVITY_TYPES:
+                continue
+            payload["_origin_device_id"] = row["origin_device_id"]
+            out.append(payload)
+        return out
+
     def claim_wake(self, activity_id: str) -> bool:
         with self._lock:
             found = self.conn.execute(
@@ -588,3 +623,20 @@ class Store:
         row_id = event["row_id"]
         if self.enqueue_wake(row_id, target):
             self.conn.execute("SELECT pg_notify(%s, %s)", ("agent_inbox", row_id))
+
+    def _maybe_work(self, event: dict[str, Any]) -> None:
+        if event.get("table") != "activity" or event.get("op") == "delete":
+            return
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            return
+        if payload.get("execution_status") != "pending":
+            return
+        if payload.get("type") not in EXECUTABLE_ACTIVITY_TYPES:
+            return
+        sid = payload.get("session_id")
+        if not isinstance(sid, str) or sid == "":
+            return
+        if not self._owns_session(sid):
+            return
+        self.conn.execute("SELECT pg_notify(%s, %s)", ("agent_work", event["row_id"]))

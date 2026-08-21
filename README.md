@@ -67,6 +67,7 @@ Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon send
 ```bash
 agent knock --once
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); run from cron if you need a loop
+agent watch pending     # one scan; runs subscription.set and query.request against the hub
 ```
 
 ### Session terminal control
