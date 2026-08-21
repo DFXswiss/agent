@@ -16,6 +16,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .allow import ACTIONS, evaluate_allow, ready_for_done_blocking
+from .chain import (
+    NO_AUTO_CLOSE,
+    close_allowed,
+    handoff_prompt,
+    next_steps,
+    required_source,
+    to_json as step_to_json,
+)
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
@@ -1664,12 +1673,117 @@ def _latest_checks(store: Store, task_id: str) -> dict[str, dict]:
     return latest
 
 
+def load_task_dict(store: Store, tid: str) -> dict:
+    """Task snapshot for evaluate_allow / ready_for_done_blocking / chain."""
+    task = store.row("task", tid)
+    if task is None:
+        die(f"unknown task: {tid}")
+    checklist = {
+        str(r["key"]): str(r["status"])
+        for r in store.rows("checklist_item")
+        if r.get("task_id") == tid
+    }
+    checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
+    ordered_checks = list(reversed(checks))
+    ordered_checks.sort(key=lambda c: c.get("ran_at") or "")
+    latest_by_name: dict[str, dict] = {}
+    for c in ordered_checks:
+        name = c.get("name")
+        if name is None:
+            continue
+        latest_by_name[str(name)] = c
+    local_checks = [
+        {"name": name, "result": c.get("result")} for name, c in latest_by_name.items()
+    ]
+    gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
+    ordered_gates = list(reversed(gates_raw))
+    ordered_gates.sort(key=lambda g: g.get("recorded_at") or "")
+    gates = [
+        {
+            "stage": g.get("stage"),
+            "dimension": g.get("dimension"),
+            "vendor": g.get("vendor"),
+            "verdict": g.get("verdict"),
+            "head_sha": g.get("head_sha") or "",
+        }
+        for g in ordered_gates
+    ]
+    return {
+        "id": task["id"],
+        "session_id": task.get("session_id"),
+        "workflow": task.get("workflow"),
+        "state": task.get("state"),
+        "checklist": checklist,
+        "summaries": {
+            "en": task.get("change_summary_en") or "",
+            "de": task.get("change_summary_de") or "",
+        },
+        "gates": gates,
+        "local_checks": local_checks,
+    }
+
+
+def load_session_tasks(store: Store, session_id: str) -> list[dict]:
+    tasks = [t for t in store.rows("task") if t.get("session_id") == session_id]
+    tasks.sort(key=lambda t: str(t.get("id") or ""))
+    return [load_task_dict(store, str(t["id"])) for t in tasks]
+
+
+def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> dict:
+    task = load_task_dict(store, tid)
+    sid = str(task.get("session_id") or "")
+    session = store.row("session", sid) if sid else None
+    agents_raw = [a for a in store.rows("agent") if a.get("task_id") == tid]
+    agents_ordered = list(reversed(agents_raw))
+    agents_ordered.sort(key=lambda a: (a.get("started_at") or "", str(a.get("id") or "")))
+    agents = [
+        {
+            "role": a.get("role"),
+            "vendor": a.get("vendor"),
+            "status": a.get("status"),
+            "note": a.get("note") or "",
+        }
+        for a in agents_ordered
+    ]
+    rounds = [r for r in store.rows("task_round") if r.get("task_id") == tid]
+    rounds_ordered = list(reversed(rounds))
+    rounds_ordered.sort(key=lambda r: (r.get("round") or 0, str(r.get("id") or "")))
+    last_round = rounds_ordered[-1] if rounds_ordered else {}
+    head = extra_head or ""
+    if not head:
+        for g in task.get("gates") or []:
+            if g.get("head_sha"):
+                head = str(g["head_sha"])
+    return {
+        "session_active": bool(session is not None and session.get("status") == "active"),
+        "agents": agents,
+        "gates": task.get("gates") or [],
+        "local_checks": task.get("local_checks") or [],
+        "head_sha": head,
+        "implementer_verdict": last_round.get("implementer_verdict") or "",
+        "reviewer_verdict": last_round.get("reviewer_verdict") or "",
+        "workflow": task.get("workflow"),
+        "checklist": task.get("checklist") or {},
+        "session_id": sid,
+    }
+
+
+def _require_task_session_active(store: Store, tid: str) -> dict:
+    task = _need(store, "task", tid)
+    session = _need(store, "session", str(task.get("session_id") or ""))
+    _require_owned(store, session, "session")
+    _require_owned(store, task, "task")
+    if session.get("status") != "active":
+        die(f"session {session.get('id')} is not active")
+    _require_skill(session, "spine")
+    return task
+
+
 def _assert_ready(store: Store, task: dict) -> None:
     workflow = task.get("workflow")
     if workflow not in CHECKLIST:
         die("unknown workflow")
-    if not task.get("change_summary_en") or not task.get("change_summary_de"):
-        die("task is not done: summaries missing")
+    tid = str(task["id"])
     items = {
         r["key"]: r
         for r in store.rows("checklist_item")
@@ -1678,11 +1792,9 @@ def _assert_ready(store: Store, task: dict) -> None:
     for key in CHECKLIST[workflow]:
         item = items.get(key)
         status = item["status"] if item else None
-        if status not in ("ja", "n_a"):
-            die(f"task is not done: checklist {key}={status}")
-        if status == "n_a" and key not in N_A_ALLOWED:
-            die(f"task is not done: checklist {key}=n_a is not allowed")
         if status == "n_a":
+            if key not in N_A_ALLOWED:
+                die(f"task is not done: checklist {key}=n_a is not allowed")
             evidence = item.get("evidence") if item else None
             if not isinstance(evidence, str) or evidence == "":
                 die(f"task is not done: checklist {key}=n_a requires evidence")
@@ -1690,36 +1802,318 @@ def _assert_ready(store: Store, task: dict) -> None:
             evidence = item.get("evidence") if item else None
             if not isinstance(evidence, str) or evidence == "":
                 die("task is not done: checklist mergeable=ja requires evidence")
-    declared = items.get("deviation_declared")
-    granted = items.get("deviation_granted")
-    if declared is not None and declared.get("status") == "ja":
-        if granted is None or granted.get("status") != "ja":
-            die("task is not done: deviation_declared=ja requires deviation_granted=ja")
-    latest_checks = _latest_checks(store, task["id"])
-    for name, check in latest_checks.items():
-        if check.get("result") == "fail":
+    snap = load_task_dict(store, tid)
+    blocking = ready_for_done_blocking(snap)
+    if not blocking:
+        return
+    if any(":summary=missing" in b for b in blocking):
+        die("task is not done: summaries missing")
+    for b in blocking:
+        if ":gate:" in b and b.endswith("=missing"):
+            # "{tid}:gate:{stage}/{dim}=missing"
+            rest = b.split(":gate:", 1)[1]
+            pair = rest.rsplit("=", 1)[0]
+            die(f"task is not done: missing gate {pair}")
+        if ":gate:" in b and "=no_head" in b:
+            rest = b.split(":gate:", 1)[1]
+            pair = rest.rsplit("=", 1)[0]
+            die(f"task is not done: gate {pair} missing head_sha")
+        if ":gate:head_sha=mismatch" in b:
+            die("task is not done: gate heads must match")
+        if ":gate:" in b:
+            rest = b.split(":gate:", 1)[1]
+            pair, _, detail = rest.partition("=")
+            if "/" in detail:
+                die(f"task is not done: gate {pair} vendor mismatch")
+            die(f"task is not done: gate {pair} not approved")
+        if ":local_check:" in b and b.endswith("=fail"):
+            name = b.split(":local_check:", 1)[1].rsplit("=", 1)[0]
             die(f"task is not done: local_check {name}=fail")
-    local_pass = items.get("local_check_pass")
-    if local_pass is not None and local_pass.get("status") == "ja":
-        ok = any(c.get("result") in ("pass", "skip") for c in latest_checks.values())
-        if not ok:
+        if b.endswith(":local_check_pass=ja_without_pass_skip"):
             die("task is not done: local_check_pass=ja requires a pass or skip check")
-    latest_gates = _latest_gates(store, task["id"])
-    heads: set[str] = set()
-    for stage, dimension, vendor in GATE_PAIRS:
-        g = latest_gates.get((stage, dimension))
-        if g is None:
-            die(f"task is not done: missing gate {stage}/{dimension}")
-        if g.get("vendor") != vendor:
-            die(f"task is not done: gate {stage}/{dimension} vendor mismatch")
-        if g.get("verdict") != "approved":
-            die(f"task is not done: gate {stage}/{dimension} not approved")
-        head = g.get("head_sha") or ""
-        if not head:
-            die(f"task is not done: gate {stage}/{dimension} missing head_sha")
-        heads.add(head)
-    if len(heads) != 1:
-        die("task is not done: gate heads must match")
+        if ":deviation_granted=" in b:
+            die("task is not done: deviation_declared=ja requires deviation_granted=ja")
+        prefix = f"{tid}:"
+        if b.startswith(prefix):
+            body = b[len(prefix) :]
+            if body.startswith("workflow="):
+                die("unknown workflow")
+            if "=" in body and not body.startswith("gate:") and not body.startswith("local_check"):
+                key, _, status = body.partition("=")
+                if key not in ("summary",):
+                    die(f"task is not done: checklist {key}={status}")
+    die(f"task is not done: {', '.join(blocking)}")
+
+
+def cmd_allow(args: list[str]) -> None:
+    """Done-gate: exit 0 allow, exit 2 deny, exit 1 usage."""
+    action = flag(args, "--action")
+    session_id = flag(args, "--session") or os.environ.get("GROK_SESSION_ID")
+    task_id = flag(args, "--task")
+    draft = flag(args, "--draft")
+    as_json = "--json" in args
+    if action is None or action == "":
+        die(
+            "Usage: agent allow --action claim-done|pr-ready|pr-create|task-done "
+            "[--session ID] [--task ID] [--draft true|false] [--json]"
+        )
+    if action not in ACTIONS:
+        die(f"action must be {'|'.join(ACTIONS)}")
+    if draft is not None and draft not in ("true", "false"):
+        die("--draft must be true|false")
+    create_has_draft = draft == "true"
+
+    store = open_store()
+    try:
+        session_tasks: list[dict] = []
+        if action == "task-done":
+            if not task_id:
+                die("Usage: agent allow --action task-done --task ID")
+            else:
+                snap = load_task_dict(store, task_id)
+                session = _need(store, "session", str(snap.get("session_id") or ""))
+                _require_skill(session, "spine")
+                session_tasks = [snap]
+                if session_id is None:
+                    session_id = str(snap.get("session_id") or "") or None
+                result = evaluate_allow(
+                    action,
+                    session_id=session_id,
+                    task_id=str(task_id),
+                    session_tasks=session_tasks,
+                    create_has_draft=create_has_draft,
+                )
+        elif action == "pr-create":
+            result = evaluate_allow(
+                action,
+                session_id=session_id,
+                task_id=task_id,
+                session_tasks=[],
+                create_has_draft=create_has_draft,
+            )
+        else:
+            if session_id:
+                session = _need(store, "session", session_id)
+                _require_skill(session, "spine")
+                session_tasks = load_session_tasks(store, session_id)
+            result = evaluate_allow(
+                action,
+                session_id=session_id,
+                task_id=task_id,
+                session_tasks=session_tasks,
+                create_has_draft=create_has_draft,
+            )
+    finally:
+        store.close()
+
+    if as_json:
+        print(json.dumps(result.to_json(), ensure_ascii=False))
+        if not result.allowed:
+            extra = result.reason
+            if result.blocking:
+                extra = f"{result.reason} [{'; '.join(result.blocking)}]"
+            print(extra, file=sys.stderr)
+            raise SystemExit(2)
+        return
+
+    if result.allowed:
+        sess = result.session or "-"
+        print(f"allow action={result.action} session={sess}")
+        return
+    print(f"deny action={result.action} reason={result.reason}")
+    if result.blocking:
+        print(f"  blocking: {', '.join(result.blocking)}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def cmd_next(args: list[str]) -> None:
+    tid = flag(args, "--task")
+    as_json = "--json" in args
+    if tid is None or tid == "":
+        die("Usage: agent next --task ID [--json]")
+    store = open_store()
+    try:
+        _require_task_session_active(store, tid)
+        snap = _chain_snapshot(store, tid)
+        wf = str(snap["workflow"])
+        ready = next_steps(wf, snap["checklist"], spine_only=True)
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "task": tid,
+                        "workflow": wf,
+                        "next": [step_to_json(s) for s in ready],
+                        "handoff": (
+                            handoff_prompt(
+                                ready[0],
+                                task_id=str(tid),
+                                session_id=str(snap.get("session_id")),
+                            )
+                            if len(ready) == 1 and ready[0].kind == "agent"
+                            else None
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return
+        if not ready:
+            print(f"next task={tid} (no open spine steps)")
+            return
+        for s in ready:
+            line = (
+                f"next task={tid} {s.key} kind={s.kind} source={required_source(s)}"
+            )
+            if s.role:
+                line += f" role={s.role} vendor={s.vendor}"
+            print(line)
+        if len(ready) == 1 and ready[0].kind == "agent":
+            sys.stdout.write(
+                handoff_prompt(
+                    ready[0],
+                    task_id=str(tid),
+                    session_id=str(snap.get("session_id")),
+                )
+            )
+    finally:
+        store.close()
+
+
+def cmd_close_step(args: list[str]) -> None:
+    tid = flag(args, "--task")
+    key = flag(args, "--key")
+    source = flag(args, "--source")
+    evidence = flag(args, "--evidence")
+    status = flag(args, "--status") or "ja"
+    head = flag(args, "--head")
+    if not tid or not key or not source or evidence is None or evidence == "":
+        die(
+            "Usage: agent close-step --task ID --key KEY --source script|human|runner "
+            "--evidence TEXT [--status ja|n_a] [--head SHA]"
+        )
+    if status not in ("ja", "n_a"):
+        die("close-step --status must be ja|n_a")
+    if status == "n_a" and key not in N_A_ALLOWED:
+        die(f"n_a is not allowed for {key}")
+    if source not in ("script", "human", "runner"):
+        die("source must be script|human|runner")
+    chain_source = "script" if source == "runner" else source
+    store = open_store()
+    try:
+        _require_task_session_active(store, tid)
+        snap = _chain_snapshot(store, tid, extra_head=head)
+        wf = str(snap["workflow"])
+        verdict = close_allowed(
+            wf,
+            key,
+            checklist=snap["checklist"],
+            source=chain_source,
+            evidence=evidence,
+            snapshot=snap,
+        )
+        if not verdict.allowed:
+            die(verdict.reason)
+    finally:
+        store.close()
+    set_args = [
+        "set",
+        "--task",
+        tid,
+        "--key",
+        key,
+        "--status",
+        status,
+        "--source",
+        source,
+        "--evidence",
+        evidence,
+    ]
+    cmd_checklist(set_args)
+
+
+def cmd_run(args: list[str]) -> None:
+    tid = flag(args, "--task")
+    head = flag(args, "--head")
+    dry = "--dry-run" in args
+    # v1: always one spine step (--once implied).
+    if tid is None or tid == "":
+        die("Usage: agent run --task ID [--dry-run] [--head SHA]")
+    store = open_store()
+    try:
+        _require_task_session_active(store, tid)
+        snap = _chain_snapshot(store, tid, extra_head=head)
+        wf = str(snap["workflow"])
+        ready = next_steps(wf, snap["checklist"], spine_only=True)
+        if not ready:
+            print(f"run task={tid} idle")
+            return
+        step = ready[0]
+        print(
+            f"run task={tid} {step.key} kind={step.kind} source={required_source(step)}"
+        )
+        if dry:
+            if step.kind == "agent":
+                sys.stdout.write(
+                    handoff_prompt(
+                        step, task_id=str(tid), session_id=str(snap.get("session_id"))
+                    )
+                )
+            return
+        if step.kind == "human":
+            print(
+                f"agent: human must close {step.key} (close-step --source human)",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        if step.kind == "agent":
+            sys.stdout.write(
+                handoff_prompt(
+                    step, task_id=str(tid), session_id=str(snap.get("session_id"))
+                )
+            )
+            print(
+                f"agent: agent step. After the lane: close-step --task {tid} "
+                f"--key {step.key} --source script --evidence …",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        if step.key in NO_AUTO_CLOSE:
+            print(
+                f"agent: {step.key} is not auto-closable — "
+                "close-step --source script --evidence …",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        verdict = close_allowed(
+            wf,
+            step.key,
+            checklist=snap["checklist"],
+            source="script",
+            evidence="run auto",
+            snapshot=snap,
+        )
+        if not verdict.allowed:
+            print(
+                f"agent: script step {step.key} not closable: {verdict.reason}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    finally:
+        store.close()
+    close_args = [
+        "--task",
+        tid,
+        "--key",
+        step.key,
+        "--source",
+        "script",
+        "--evidence",
+        f"run auto:{verdict.reason}",
+    ]
+    if head:
+        close_args.extend(["--head", head])
+    cmd_close_step(close_args)
 
 
 def cmd_knock(args: list[str]) -> None:
@@ -1782,6 +2176,10 @@ COMMANDS = {
     "check": cmd_check,
     "gate": cmd_gate,
     "work": cmd_work,
+    "allow": cmd_allow,
+    "next": cmd_next,
+    "close-step": cmd_close_step,
+    "run": cmd_run,
     "pair": cmd_pair,
     "sync": cmd_sync,
     "restore": cmd_restore,
@@ -1798,7 +2196,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|activity|task|checklist|round|agent|check|gate|work|"
-            "pair|sync|restore|ping|status|dashboard|knock|watch> …"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|watch> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

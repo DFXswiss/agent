@@ -1302,3 +1302,50 @@ def test_knock_and_watch_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     run(tmp_path, ["watch", "pr-merged"])
     out = capsys.readouterr().out
     assert "pr.merged none" in out
+
+
+def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "sess-1",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+        ],
+    )
+    capsys.readouterr()
+    run(tmp_path, ["allow", "--action", "claim-done", "--session", "sess-1"])
+    assert "allow action=claim-done" in capsys.readouterr().out
+    run(tmp_path, ["task", "create", "--session", "sess-1", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["next", "--task", tid])
+    assert "session_registered" in capsys.readouterr().out
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        run(tmp_path, ["allow", "--action", "pr-ready", "--session", "sess-1"])
+    run(tmp_path, ["allow", "--action", "pr-create", "--draft", "true"])
+    assert "allow action=pr-create" in capsys.readouterr().out
+    capsys.readouterr()
+    run(tmp_path, ["run", "--task", tid, "--dry-run"])
+    dry = capsys.readouterr().out
+    assert f"run task={tid}" in dry
+    assert "spec_written" in dry

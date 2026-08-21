@@ -37,6 +37,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
 | Skills | Optional, requested. A review loop, gates, and the task/round/checklist spine exist as skills. They are **not** on by default. |
+| Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
@@ -324,7 +325,7 @@ Examples of skills this client ships:
 
 - **review-loop** — run implement / review rounds until the catalog shows zero open findings
 - **pr-review** — record quality/logic gates on a head SHA
-- **spine** — task, round, checklist, `open_work` (the existing CLI surface)
+- **spine** — task, round, checklist, `open_work`, plus `allow` / `next` / `close-step` / `run`
 
 Without the skill, those tables and loops do not run. The session can still register, write `activity`, send session mail, and investigate.
 
@@ -352,6 +353,7 @@ agent agent start|finish …                        # review-loop (implementer|r
 agent check record …                              # spine skill
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
+agent allow|next|close-step|run …                 # spine skill
 agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
