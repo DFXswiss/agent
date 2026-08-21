@@ -55,9 +55,9 @@ agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>
 agent work list --session <session-id>
 agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
-agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false]
+agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>
-agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT
+agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT [--status ja|n_a]
 agent run --task <uuid> [--dry-run]
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
 agent status
@@ -66,7 +66,7 @@ agent dashboard
 
 This package **is** the runtime: install it locally and run `agent`. Team-specific review rules live in a separate plugin and must not ship a second store binary.
 
-Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`allow`/`next`/`close-step`/`run` commands refuse. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse.
+Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse.
 
 Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
 

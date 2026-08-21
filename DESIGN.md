@@ -325,7 +325,7 @@ Examples of skills this client ships:
 
 - **review-loop** — run implement / review rounds until the catalog shows zero open findings
 - **pr-review** — record quality/logic gates on a head SHA
-- **spine** — task, round, checklist, `open_work` (the existing CLI surface)
+- **spine** — task, round, checklist, `open_work`, plus `allow` / `next` / `close-step` / `run`
 
 Without the skill, those tables and loops do not run. The session can still register, write `activity`, send session mail, and investigate.
 
@@ -353,6 +353,7 @@ agent agent start|finish …                        # review-loop (implementer|r
 agent check record …                              # spine skill
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
+agent allow|next|close-step|run …                 # spine skill
 agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore

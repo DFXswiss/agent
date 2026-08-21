@@ -1868,13 +1868,7 @@ def cmd_allow(args: list[str]) -> None:
         session_tasks: list[dict] = []
         if action == "task-done":
             if not task_id:
-                result = evaluate_allow(
-                    action,
-                    session_id=session_id,
-                    task_id=None,
-                    session_tasks=[],
-                    create_has_draft=create_has_draft,
-                )
+                die("Usage: agent allow --action task-done --task ID")
             else:
                 snap = load_task_dict(store, task_id)
                 session = _need(store, "session", str(snap.get("session_id") or ""))

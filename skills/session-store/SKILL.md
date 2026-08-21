@@ -27,7 +27,7 @@ agent session skill attach --id <session-id> --skill spine
 agent task create --session <session-id> --workflow implement --title "…"
 agent next --task <uuid>
 agent close-step --task <uuid> --key session_registered --source script --evidence "session register"
-agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--json]
+agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent run --task <uuid> [--dry-run]
 ```
 
@@ -37,4 +37,5 @@ with no session and no open tasks allows (nothing to block). `next` /
 `close-step` / `run` are the spine: one open step at a time; `close-step`
 applies chain guards, then writes via `checklist set`.
 
-Without `spine`, task/checklist/round/work/check/`allow`/`next`/`close-step`/`run` refuse.
+Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` refuse.
+`allow` uses `spine` when it loads a session or task.
