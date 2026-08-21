@@ -66,6 +66,20 @@ class Hub:
     def ack(self, ping_id: str) -> dict[str, Any]:
         return self.request("POST", f"/api/pings/{ping_id}/ack", headers=self._headers())
 
+    def put_subscriptions(self, subscriptions: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.request(
+            "PUT",
+            "/sync/subscriptions",
+            headers=self._headers(),
+            json={"subscriptions": subscriptions},
+        )
+
+    def get_subscriptions(self) -> dict[str, Any]:
+        return self.request("GET", "/sync/subscriptions", headers=self._headers())
+
+    def query(self, match: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/sync/query", headers=self._headers(), json={"match": match})
+
     def sync_ws_url(self) -> str:
         if self.token is None or self.token == "":
             raise HubError("device token is not set; run agent pair")

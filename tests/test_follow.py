@@ -17,3 +17,9 @@ def test_events_triggers_sync() -> None:
 
 def test_ping_with_id_triggers_sync() -> None:
     assert should_sync_on_ws({"type": "ping", "id": "x"}) is True
+
+
+def test_subscription_does_not_full_sync() -> None:
+    assert should_sync_on_ws({"type": "subscription"}) is False
+    assert should_sync_on_ws({"type": "subscription", "rows": []}) is False
+    assert should_sync_on_ws({"type": "events"}) is True

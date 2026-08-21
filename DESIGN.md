@@ -358,6 +358,7 @@ agent restore
 agent ping send|list|ack
 agent knock [--once]
 agent watch pr-merged                          # one scan; schedule if you need a loop
+agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent status
 agent dashboard [--port 7845]
 ```

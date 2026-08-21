@@ -204,7 +204,7 @@ def _bool_flag(args: list[str], name: str) -> bool | None:
 def should_sync_on_ws(message: dict) -> bool:
     """Whether a hub WebSocket message should trigger push+pull."""
     msg_type = message.get("type")
-    if msg_type in ("control", "terminal", "control-ack", "control-ready"):
+    if msg_type in ("control", "terminal", "control-ack", "control-ready", "subscription"):
         return False
     if msg_type == "events":
         return True
@@ -1116,6 +1116,16 @@ def cmd_sync(args: list[str]) -> None:
                             ws.send(json.dumps(ack))
                         except Exception as exc:
                             die(f"control-ack send failed: {exc}")
+                    if message.get("type") == "subscription":
+                        rows = message.get("rows")
+                        if isinstance(rows, list):
+                            for row in rows:
+                                if not isinstance(row, dict) or not row.get("table"):
+                                    continue
+                                try:
+                                    store.apply_replica_row(row)
+                                except (StoreError, KeyError, TypeError):
+                                    continue
                     if should_sync_on_ws(message):
                         _sync_once(store)
                     _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
@@ -1351,7 +1361,11 @@ def _sync_once(store: Store) -> None:
         for event in events:
             store.apply_remote(event)
             store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        snapshots = list(pulled.get("inbox") or []) + list(pulled.get("pings") or [])
+        snapshots = (
+            list(pulled.get("inbox") or [])
+            + list(pulled.get("pings") or [])
+            + list(pulled.get("subscriptions") or [])
+        )
         for row in snapshots:
             if not isinstance(row, dict):
                 die("pull snapshot is not an object")
@@ -1726,19 +1740,33 @@ def cmd_knock(args: list[str]) -> None:
 
 
 def cmd_watch(args: list[str]) -> None:
-    if not args or args[0] != "pr-merged":
-        die("Usage: agent watch pr-merged")
+    if not args or args[0] not in ("pr-merged", "pending"):
+        die("Usage: agent watch pr-merged|pending")
     store = open_store()
     try:
-        from .runtime import run_argv
+        if args[0] == "pr-merged":
+            from .runtime import run_argv
 
-        created, skipped = scan_merged(store, run_argv)
-        for activity_id in created:
-            print(f"pr.merged {activity_id}")
-        if skipped:
-            die(f"watch skipped {skipped} pr.open rows")
-        if not created:
-            print("pr.merged none")
+            created, skipped = scan_merged(store, run_argv)
+            for activity_id in created:
+                print(f"pr.merged {activity_id}")
+            if skipped:
+                die(f"watch skipped {skipped} pr.open rows")
+            if not created:
+                print("pr.merged none")
+            return
+        from .pending import scan_pending
+
+        hub = _hub_from_store(store)
+        try:
+            lines = scan_pending(store, hub)
+        finally:
+            hub.close()
+        if not lines:
+            print("pending none")
+            return
+        for line in lines:
+            print(line)
     finally:
         store.close()
 

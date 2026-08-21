@@ -281,3 +281,53 @@ def test_apply_remote_idempotent_does_not_renotify(tmp_path: Path) -> None:
         conn.execute("LISTEN agent_inbox")
         store.apply_remote(event)
         assert next(conn.notifies(timeout=0.4), None) is None
+
+
+def test_notify_agent_work_on_owned_pending_subscription_set(tmp_path: Path) -> None:
+    import psycopg
+
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    with psycopg.connect(store.dsn, autocommit=True) as conn:
+        conn.execute("LISTEN agent_work")
+        act_id = "act-sub"
+        store.write(
+            "activity",
+            "insert",
+            act_id,
+            {
+                "id": act_id,
+                "session_id": "s1",
+                "type": "subscription.set",
+                "payload": {"subscriptions": [{"match": {"type": "message"}}]},
+                "execution_status": "pending",
+            },
+        )
+        got = next(conn.notifies(timeout=2.0), None)
+        assert got is not None
+        assert got.payload == act_id
+
+
+def test_no_agent_work_notify_for_foreign_replica_pending(tmp_path: Path) -> None:
+    import psycopg
+
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+    with psycopg.connect(store.dsn, autocommit=True) as conn:
+        conn.execute("LISTEN agent_work")
+        store.apply_replica_row(
+            {
+                "table": "activity",
+                "row_id": "foreign-sub",
+                "origin_device_id": "other-device",
+                "payload": {
+                    "id": "foreign-sub",
+                    "session_id": "s1",
+                    "type": "subscription.set",
+                    "payload": {"subscriptions": [{"match": {"type": "message"}}]},
+                    "execution_status": "pending",
+                },
+                "updated_at": "2026-08-13T12:00:00Z",
+            }
+        )
+        assert next(conn.notifies(timeout=0.4), None) is None
