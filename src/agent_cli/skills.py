@@ -6,7 +6,17 @@ SKILLS = {
     "spine": {
         "version": "1",
         "tables": ("task", "task_round", "checklist_item", "local_check", "open_work"),
-        "commands": ("task", "checklist", "round", "check", "work"),
+        "commands": (
+            "task",
+            "checklist",
+            "round",
+            "check",
+            "work",
+            "allow",
+            "next",
+            "close-step",
+            "run",
+        ),
     },
     "review-loop": {
         "version": "1",

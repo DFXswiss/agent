@@ -37,6 +37,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
 | Skills | Optional, requested. A review loop, gates, and the task/round/checklist spine exist as skills. They are **not** on by default. |
+| Runtime | This public client. Team-specific rules live elsewhere and must not ship a second ledger binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
