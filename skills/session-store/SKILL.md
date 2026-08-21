@@ -32,8 +32,9 @@ agent run --task <uuid> [--dry-run]
 ```
 
 `allow` exits 0 when permitted, 2 when denied, 1 on usage errors. Session
-defaults to `GROK_SESSION_ID`. `next` / `close-step` / `run` are the spine:
-one open step at a time; `ja` only through `close-step` (or `checklist set`
-with the same guards).
+defaults to `GROK_SESSION_ID`. `pr-create` only checks `--draft`. `claim-done`
+with no session and no open tasks allows (nothing to block). `next` /
+`close-step` / `run` are the spine: one open step at a time; `close-step`
+applies chain guards, then writes via `checklist set`.
 
 Without `spine`, task/checklist/round/work/check/`allow`/`next`/`close-step`/`run` refuse.

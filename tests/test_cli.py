@@ -1344,3 +1344,8 @@ def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str
         run(tmp_path, ["allow", "--action", "pr-ready", "--session", "sess-1"])
     run(tmp_path, ["allow", "--action", "pr-create", "--draft", "true"])
     assert "allow action=pr-create" in capsys.readouterr().out
+    capsys.readouterr()
+    run(tmp_path, ["run", "--task", tid, "--dry-run"])
+    dry = capsys.readouterr().out
+    assert f"run task={tid}" in dry
+    assert "spec_written" in dry

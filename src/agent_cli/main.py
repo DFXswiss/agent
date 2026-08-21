@@ -2000,8 +2000,8 @@ def cmd_close_step(args: list[str]) -> None:
         )
     if status not in ("ja", "n_a"):
         die("close-step --status must be ja|n_a")
-    if source == "mara":
-        source = "runner"
+    if status == "n_a" and key not in N_A_ALLOWED:
+        die(f"n_a is not allowed for {key}")
     if source not in ("script", "human", "runner"):
         die("source must be script|human|runner")
     chain_source = "script" if source == "runner" else source
@@ -2044,7 +2044,7 @@ def cmd_run(args: list[str]) -> None:
     dry = "--dry-run" in args
     # v1: always one spine step (--once implied).
     if tid is None or tid == "":
-        die("Usage: agent run --task ID [--once] [--dry-run] [--head SHA]")
+        die("Usage: agent run --task ID [--dry-run] [--head SHA]")
     store = open_store()
     try:
         _require_task_session_active(store, tid)

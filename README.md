@@ -64,7 +64,7 @@ agent status
 agent dashboard
 ```
 
-This package **is** the runtime: install it locally and run `agent`. Team-specific review rules live in a separate plugin and must not ship a second store.
+This package **is** the runtime: install it locally and run `agent`. Team-specific review rules live in a separate plugin and must not ship a second store binary.
 
 Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`allow`/`next`/`close-step`/`run` commands refuse. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse.
 
