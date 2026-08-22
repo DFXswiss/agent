@@ -222,6 +222,33 @@ def should_sync_on_ws(message: dict) -> bool:
     return False
 
 
+def packaged_skills_dir() -> Path:
+    import agent_cli
+
+    return Path(agent_cli.__file__).resolve().parent / "skills"
+
+
+def resolve_skills_dir() -> Path | None:
+    override = os.environ.get("AGENT_SKILLS_DIR")
+    if override:
+        candidate = Path(override)
+        if (candidate / "spine" / "SKILL.md").is_file():
+            return candidate.resolve()
+    packaged = packaged_skills_dir()
+    if (packaged / "spine" / "SKILL.md").is_file():
+        return packaged.resolve()
+    return None
+
+
+def cmd_skills(args: list[str]) -> None:
+    if len(args) != 1 or args[0] != "path":
+        die("Usage: agent skills path")
+    found = resolve_skills_dir()
+    if found is None:
+        die("skill docs are not installed")
+    print(found)
+
+
 def cmd_init(_: list[str]) -> None:
     store = open_store()
     print(f"ok  device={store.device_id()} home={store.home}")
@@ -2168,6 +2195,7 @@ def cmd_watch(args: list[str]) -> None:
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
+    "skills": cmd_skills,
     "activity": cmd_activity,
     "task": cmd_task,
     "checklist": cmd_checklist,
@@ -2195,7 +2223,7 @@ def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         die(
-            "Usage: agent <init|session|activity|task|checklist|round|agent|check|gate|work|"
+            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|watch> …"
         )
     cmd = args[0]
