@@ -327,6 +327,8 @@ Examples of skills this client ships:
 - **pr-review** — record quality/logic gates on a head SHA
 - **spine** — task, round, checklist, `open_work`, plus `allow` / `next` / `close-step` / `run`
 
+The packaged `SKILL.md` files next to the client **are** the review contract; `agent skills path` prints their directory.
+
 Without the skill, those tables and loops do not run. The session can still register, write `activity`, send session mail, and investigate.
 
 Person-facing CLI for the spine stays `agent work` / table `open_work`. Catalog rows are `activity` / `agent activity`. The website key `work` remains `open_work`. Do not collapse those names.
@@ -338,6 +340,7 @@ Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` w
 ```text
 agent init
 agent session register|heartbeat|list|close|start|stop|input|skill
+agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
 agent session skill attach --id ID --skill spine|review-loop|pr-review
 agent session skill list --id ID

@@ -29,6 +29,9 @@ def pg_dsn(pg_admin_dsn: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _agent_pg(monkeypatch: pytest.MonkeyPatch, pg_dsn: str) -> str:
-    monkeypatch.setenv("AGENT_PG_DSN", pg_dsn)
-    return pg_dsn
+def _agent_pg(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str | None:
+    if request.node.get_closest_marker("no_pg") is not None:
+        return None
+    dsn = request.getfixturevalue("pg_dsn")
+    monkeypatch.setenv("AGENT_PG_DSN", dsn)
+    return dsn

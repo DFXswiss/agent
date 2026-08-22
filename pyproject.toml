@@ -26,8 +26,9 @@ agent = "agent_cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_cli = ["static/*"]
+agent_cli = ["static/*", "skills/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["no_pg: tests that must not start a PostgreSQL cluster"]
