@@ -228,14 +228,19 @@ def packaged_skills_dir() -> Path:
     return Path(agent_cli.__file__).resolve().parent / "skills"
 
 
+def _skills_dir_complete(root: Path) -> bool:
+    return all((root / name / "SKILL.md").is_file() for name in ("spine", "review-loop", "pr-review"))
+
+
 def resolve_skills_dir() -> Path | None:
     override = os.environ.get("AGENT_SKILLS_DIR")
     if override:
         candidate = Path(override)
-        if (candidate / "spine" / "SKILL.md").is_file():
+        if _skills_dir_complete(candidate):
             return candidate.resolve()
+        die("AGENT_SKILLS_DIR does not contain spine, review-loop, and pr-review SKILL.md")
     packaged = packaged_skills_dir()
-    if (packaged / "spine" / "SKILL.md").is_file():
+    if _skills_dir_complete(packaged):
         return packaged.resolve()
     return None
 

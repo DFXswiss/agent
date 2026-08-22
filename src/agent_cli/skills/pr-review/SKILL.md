@@ -23,9 +23,9 @@ Two dimensions (quality, logic) and two vendor stages (`grok-pr`, then
 ```bash
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
-agent agent finish --id <uuid> --verdict approved|rejected|unavailable
+agent agent finish --id <uuid> --verdict approved|rejected
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
-  --verdict approved|rejected|unavailable --head <sha> --agent <reviewer-uuid>
+  --verdict approved|rejected --head <sha> --agent <reviewer-uuid>
 ```
 
 Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
@@ -35,14 +35,14 @@ Review lanes execute no software (no tests, builds, or servers).
 ## Verdicts
 
 - `approved` → close the matching checklist key with evidence.
-- `rejected` → checklist `nein`. On implement / resolve-conflicts, return to
-  `implementing` and open a new inner round. On workflow `review`, the task
-  stays in pr-review and is not `done`.
-- `unavailable` → checklist `unavailable` with evidence; task `gate-blocked`;
-  no silent vendor substitute; no new round.
+- `rejected` → do not treat the stage as passed. On implement /
+  resolve-conflicts, `agent gate record` returns the task to `implementing`.
+  On workflow `review`, the task stays in pr-review and is not `done`.
+- If a vendor cannot run, abort loudly. Do not record `approved`. Do not
+  silently substitute another vendor.
 
-Zero findings only after an explicit complete pass. Empty, partial, timeout,
-or unavailable output is not zero findings.
+Zero findings only after an explicit complete pass. Empty, partial, or
+timeout output is not zero findings.
 
 A reported point that contradicts a verified repo rule or fact may be
 dismissed with that evidence; it is not a defect.

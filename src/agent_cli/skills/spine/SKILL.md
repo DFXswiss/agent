@@ -20,9 +20,9 @@ Without spine, `task`, `checklist`, `round`, `check`, `work`, `allow`, `next`,
 
 ## One open step
 
-`agent next`, `agent close-step`, and `agent run` are the spine. Exactly one
-step is open. Do not skip keys. `close-step` applies chain guards, then writes
-via `checklist set`.
+`agent next`, `agent close-step`, and `agent run` are the spine. Do not skip
+keys. Quality and logic of the same vendor stage may be open together.
+`close-step` applies chain guards, then writes via `checklist set`.
 
 ```bash
 agent task create --session <session-id> --workflow implement|review|resolve-conflicts --title "…"
@@ -37,7 +37,6 @@ agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--t
 ## Checklist values
 
 Keys are `pending`, `ja`, `nein`, or `n_a`. `ja` and `n_a` need `--evidence`.
-`unavailable` is not `n_a`; it blocks `done`.
 
 ## Workflow keys
 
