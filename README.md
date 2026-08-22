@@ -67,7 +67,7 @@ agent dashboard
 
 This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the review contract (`spine`, `review-loop`, `pr-review`). `agent skills path` prints that directory. Operator-specific git or deploy rules stay outside this package.
 
-Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. `AGENT_SKILLS_DIR` may override the packaged skill directory when `$AGENT_SKILLS_DIR/spine/SKILL.md` exists.
+Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails.
 
 Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
 

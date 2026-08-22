@@ -56,6 +56,14 @@ def test_skills_path_invalid_env_errors(tmp_path: Path, monkeypatch: pytest.Monk
         run(["skills", "path"])
 
 
+def test_skills_path_incomplete_override_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "spine").mkdir()
+    (tmp_path / "spine" / "SKILL.md").write_text("# spine\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_SKILLS_DIR", str(tmp_path))
+    with pytest.raises(SystemExit, match="AGENT_SKILLS_DIR does not contain"):
+        run(["skills", "path"])
+
+
 def test_skills_path_missing_docs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_SKILLS_DIR", raising=False)
     monkeypatch.setattr("agent_cli.main.packaged_skills_dir", lambda: tmp_path / "missing")
