@@ -41,6 +41,9 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
+| AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
+| Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
+| Merge | The client never merges. A human merges. |
 | Repos | Public MIT: `DFXswiss/agent` (client), `DFXswiss/agent-core` (hub). |
 | Website host | `agent.dfx.swiss` (development: `dev.agent.dfx.swiss`). Singular product name. |
 | License | MIT. |
@@ -88,6 +91,21 @@ They stay on `127.0.0.1` / a Unix socket. Nobody reads a teammate by opening the
 
 **Hostname `ledger.*`.**  
 Collides with an unrelated public ledger product. The name is **agent**. The product language is **session store** / **session bus**, not “ledger”.
+
+**Hub-owned task lifecycle and leases.**  
+The hub does not assign work, grant leases, or move authorship when a laptop disappears. Write ownership stays on the origin device. A crashed session restarts on **that** device, or the work stays unread. Restore rebuilds a wiped device; it does not transfer authorship.
+
+**Task as the product center.**  
+A task exists only when the spine skill is attached. The durable unit is the session and its activity log.
+
+**Error-to-PR as the default platform workflow.**  
+Production-error ingestion, fingerprinting, and assisted patching are not core catalog types and not a default skill. A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
+
+**Worker capability ontology / scheduler.**  
+Vendors remain `grok` | `codex`. Scripts are not store workers. Do not add capability tables until two real workflows share them.
+
+**A second event envelope beside `activity`.**  
+Outside facts enter as scripts writing catalog rows. Do not add a parallel `external_events` store.
 
 ## 4. Two repositories
 
@@ -422,8 +440,91 @@ Later product work (not required to operate v1 after merge):
 - `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
 - `activity` type `session.register` (v1 records the `session` row only).
 
-## 19. Document history
+## 19. Deterministic core
+
+This client is a session store that may employ AI. It is not an AI agent with scripts attached.
+
+The rules below were already implied by §§1–17. They are now explicit so a later coding-automation draft cannot invert them.
+
+**Scripts execute. Checks measure. Gates decide. This device owns its rows. AI reasons and proposes. Humans retain every authority this client has not delegated — and this client delegates merge to no one.**
+
+### 19.1 Responsibility split
+
+| Work | Who | Store mechanism |
+|---|---|---|
+| Semantic diagnosis, hypothesis, patch text, review findings, PR title/body draft | AI | `activity` intent (`investigate.step`, …); implementer/reviewer rows when those skills are on |
+| Auth, Git, GitHub HTTP, CI status, mail, hub HTTP, tmux knock, retries | Script | Result columns on the intent row; `pr.merged` and other watch types; `LISTEN agent_work` |
+| Spine task state | Spine CLI + local constraints | `task` state, checklist keys, `close-step` / `run` |
+| Whether a head is reviewed | Gate after the two vendor stages | `agent gate record` |
+| Whether a command ran and what it returned | The process that ran it | `agent check record` (name, command, `pass`/`fail`/`skip`, output) |
+| Merge | Human | Never a client command |
+
+A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition.
+
+No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, or timeout review output is not zero findings). A patch that does not apply is a failed check, not a debate.
+
+### 19.2 Untrusted inputs
+
+Treat as **data**, never as control messages:
+
+- Model output, including “I am done”, confidence scores, and tool-shaped JSON the model invented
+- Issue titles and bodies, pull-request text, review comments
+- Repository files
+- Log lines and production error messages
+- Session-mail bodies
+
+An outside issue is untrusted spec, not a mandate. Scripts that watch GitHub still record rows; they do not start work because a title asked them to.
+
+Secrets stay out of `evidence` (§13). Context given to a model is deliberate, minimal, and observable — not “all logs and the whole repo”.
+
+### 19.3 Idempotency for outside-fact scripts
+
+Delivery from GitHub and from monitoring is at-least-once. Each `agent watch` (and any later adapter) must define:
+
+- Source identity (repository + number, external event id, merge SHA, …)
+- Whether a new observation **enriches** an existing row or inserts a new type on the **same session**
+- Idempotency of each side effect (a second scan must not open a second pull request and must not emit a second `pr.merged` for the same merge)
+
+The goal is explainable behavior, not globally perfect deduplication.
+
+Partial multi-step actions (push, then open a pull request) record each completed step on the intent row and resume. A retry discovers an existing branch or pull request instead of creating a duplicate.
+
+### 19.4 Isolation and least privilege
+
+- Implementation runs in an isolated worktree. The model does not receive production credentials.
+- Scripts retrieve secrets at the last moment and pass them only to the tool that needs them.
+- Analysis that only needs to read must not require write access to the origin branch.
+- Live terminal bytes stay ephemeral (§17). Audit means operationally meaningful rows (intent, result, check, gate, actor), not every chain-of-thought.
+
+### 19.5 What this does not change
+
+Write owner, hub role, opt-in skills, required session row, and the generic `activity` catalog stay as in §2. Spine task states stay the spine skill’s states. They are not replaced by a hub machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
+
+## 20. Refused: hub as a coding control plane
+
+An external architecture draft proposed turning the hub into an authoritative Error-to-PR control plane: hub-owned Task objects, leases, a worker scheduler, production-error ingestion as the first workflow, and `READY_FOR_PR` then deterministic pull-request creation.
+
+That draft is **not** this product. Hub authorship, hub leases, a hub task machine, a parallel `external_events` store, autonomous merge, and a capability scheduler stay refused even as a skill.
+
+| Draft idea | Why refused |
+|---|---|
+| Task as the durable center; sessions are operational | Product center is the session store. Tasks are spine, opt-in. |
+| Hub assigns, leases, and reassigns work | Hub is replica + fan-out, not author. A disappeared laptop is restore or unread, not a lease expiry that moves authorship. |
+| Formal `CREATED` → `READY_FOR_PR` machine as platform | Spine already has a local task machine. A second hub machine would be a second truth. |
+| Normalized `external_events` table + fingerprint service | Outside facts are script-written `activity` rows (`pr.merged`, …). |
+| Worker capability ontology and scheduler | Vendors are `grok` \| `codex`. Scripts are not store workers. |
+| Policy language (allowed repos, forbidden paths, cost budgets) as core | Team-specific rules stay outside this public client (§2 Runtime). |
+| Website as an operations console for leases, token cost, stuck coding tasks | Website is the visibility replica (§7). |
+| Autonomous merge | Already forbidden. Stays forbidden. |
+| Model-created state machine | Transitions are code and constraints, not prompt output. |
+| Universal workflow DSL or a distributed queue in front of Postgres | The catalog and local Postgres until a real load proves otherwise. |
+
+A future opt-in skill “production error → draft pull request” would still mean: this device writes `activity`, scripts ingest / dedup / validate / open a **draft** pull request, a human merges. It must not move write ownership to the hub.
+
+## 21. Document history
 
 Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, default model `grok-4.6`, no Claude environment in the pane.
 
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
+
+Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; a device-owned opt-in skill remains allowed only under the last paragraph of §20.
