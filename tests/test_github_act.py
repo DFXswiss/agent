@@ -234,6 +234,36 @@ def test_pr_open_base_wrong_type_no_gh(tmp_path: Path) -> None:
     assert row["execution_status"] == "error"
 
 
+def test_pr_open_base_empty_string_no_gh(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-empty"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "T",
+            "head": "feat",
+            "base": "",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "{}", "")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} error"]
+    assert calls == []
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "base must be a non-empty string" in (row.get("execution_error") or "")
+
+
 def test_pr_open_missing_title_errors(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

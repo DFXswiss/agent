@@ -28,7 +28,7 @@ keys. Quality and logic of the same vendor stage may be open together.
 agent task create --session <session-id> --workflow implement|review|resolve-conflicts --title "…"
 agent next --task <uuid>
 agent close-step --task <uuid> --key session_registered --source script --evidence "session register"
-agent run --task <uuid> [--dry-run]
+agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 ```
 

@@ -71,13 +71,17 @@ def _nonempty_str(raw: Any) -> str | None:
     return None
 
 
-def _optional_str_field(payload: dict[str, Any], key: str) -> str | None:
+def _optional_str_field(
+    payload: dict[str, Any], key: str, *, nonempty: bool = False
+) -> str | None:
     """Return str value, None if missing/null; raise _GhError if present but not str."""
     if key not in payload or payload[key] is None:
         return None
     raw = payload[key]
     if not isinstance(raw, str):
         raise _GhError(f"{key} must be a string")
+    if nonempty and raw == "":
+        raise _GhError(f"{key} must be a non-empty string")
     return raw
 
 
@@ -183,8 +187,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     try:
         body_opt = _optional_str_field(payload, "body")
         body = "" if body_opt is None else body_opt
-        base_opt = _optional_str_field(payload, "base")
-        base = base_opt if base_opt else None
+        base = _optional_str_field(payload, "base", nonempty=True)
     except _GhError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"pr.open {rid} error"
