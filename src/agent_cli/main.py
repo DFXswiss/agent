@@ -2224,7 +2224,7 @@ def cmd_knock(args: list[str]) -> None:
 
 def cmd_watch(args: list[str]) -> None:
     if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage"):
-        die("Usage: agent watch pr-merged|pending|assigned|grok-usage [--follow]")
+        die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage")
     store = open_store()
     try:
         if args[0] == "pr-merged":

@@ -218,11 +218,6 @@ def load_watch_config(home: Path) -> tuple[list[str], str]:
     return list(repos), session_id
 
 
-def assigned_repos(home: Path) -> list[str]:
-    repos, _sid = load_watch_config(home)
-    return repos
-
-
 def assigned_session_id(home: Path) -> str:
     _repos, sid = load_watch_config(home)
     return sid
