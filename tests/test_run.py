@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from agent_cli.lane import LaneResult
-from agent_cli.main import main
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_cli import _last_agent_id, _last_task_id, run

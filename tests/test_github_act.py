@@ -549,6 +549,76 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     assert row["result"]["url"] == "https://github.com/dfxswiss/agent/issues/3#issuecomment-31"
 
 
+def test_comment_post_target_pr_posts(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-pr"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    comment_url = "https://github.com/dfxswiss/agent/pull/8#issuecomment-12"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 8,
+            "body": "on the pr",
+            "target": "pr",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[1] == "api":
+            assert argv[-1] == "repos/dfxswiss/agent/issues/8/comments"
+            return Completed(0, json.dumps([]), "")
+        if argv[:3] == ["gh", "pr", "comment"]:
+            body = argv[argv.index("--body") + 1]
+            assert marker in body
+            assert "8" in argv
+            return Completed(0, f"{comment_url}\n", "")
+        raise AssertionError(argv)
+
+    lines = scan_github(store, runner)
+    assert lines == [f"comment.post {act_id} done"]
+    assert any(c[:3] == ["gh", "pr", "comment"] for c in calls)
+    assert not any(c[:3] == ["gh", "issue", "comment"] for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["url"] == comment_url
+
+
+def test_comment_post_invalid_target_errors(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-bad"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "x",
+            "target": "commit",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "{}", "")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"comment.post {act_id} error"]
+    assert calls == []
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+
+
 def test_subscription_set_ignored(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
