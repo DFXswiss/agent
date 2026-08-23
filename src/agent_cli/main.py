@@ -2162,7 +2162,7 @@ def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
             "Usage: agent lane run --role ROLE --vendor grok|codex "
-            "--spec-file PATH [--cwd PATH] [--dry-run]"
+            "--spec-file PATH [--cwd PATH] [--dry-run] [--no-tmux]"
         )
     rest = args[1:]
     role = require_flag(rest, "--role")
@@ -2170,11 +2170,19 @@ def cmd_lane(args: list[str]) -> None:
     spec_file = require_flag(rest, "--spec-file")
     cwd = flag(rest, "--cwd") or os.getcwd()
     dry_run = "--dry-run" in rest
+    tmux = "--no-tmux" not in rest
     if role not in LANE_ROLES:
         die(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
         die("vendor must be grok|codex")
-    result = launch(role=role, vendor=vendor, spec_file=spec_file, cwd=cwd, dry_run=dry_run)
+    result = launch(
+        role=role,
+        vendor=vendor,
+        spec_file=spec_file,
+        cwd=cwd,
+        dry_run=dry_run,
+        tmux=tmux,
+    )
     if dry_run:
         print(" ".join(result.argv))
         return
