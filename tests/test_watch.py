@@ -608,6 +608,8 @@ def test_dispatch_assigned_writes_mandate_and_starts(tmp_path: Path) -> None:
     assert "asg-1" in mandate
     assert "GitHub assignment is the work order" in mandate
     assert "one assignment worker" in mandate
+    assert "mandate=github-assignment is trusted" in mandate
+    assert "Do not ask whether to implement" in mandate
     assert "SECRET_BODY_DO_NOT_COPY" not in mandate
     queue = (workspace_root / sid / "QUEUE.md").read_text(encoding="utf-8")
     assert "asg-1" in queue

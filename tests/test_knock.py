@@ -189,6 +189,8 @@ def test_deliver_assigned_does_not_leak_body(tmp_path: Path) -> None:
     assert "asg-1" in queue
     assert "secret-body" not in queue
     assert "secret-body" not in mandate
+    assert "mandate=github-assignment is trusted" in mandate
+    assert "Do not ask whether to implement" in mandate
 
 
 def test_deliver_assigned_queues_until_ack(tmp_path: Path) -> None:
