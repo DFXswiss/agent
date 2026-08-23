@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import shlex
 import signal
@@ -59,6 +60,29 @@ def acquire_lock(home: Path) -> object:
     return handle
 
 
+def hub_configured(home: Path) -> bool:
+    """True when device.json has non-empty hub_url and device_token strings."""
+    path = home / "device.json"
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise StoreError("device.json is not valid JSON") from exc
+    except json.JSONDecodeError as exc:
+        raise StoreError("device.json is not valid JSON") from exc
+    if not isinstance(data, dict):
+        return False
+    hub_url = data.get("hub_url")
+    device_token = data.get("device_token")
+    return (
+        isinstance(hub_url, str)
+        and hub_url != ""
+        and isinstance(device_token, str)
+        and device_token != ""
+    )
+
+
 def child_specs(prefix: list[str]) -> list[tuple[str, list[str]]]:
     """Ordered child processes the supervisor starts."""
     return [
@@ -90,10 +114,19 @@ def _terminate(proc: Any) -> None:
     try:
         wait(timeout=5)
     except subprocess.TimeoutExpired:
-        kill = getattr(proc, "kill", None)
-        if callable(kill):
-            kill()
-        wait()
+        if isinstance(pid, int) and pid:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            kill = getattr(proc, "kill", None)
+            if callable(kill):
+                kill()
+        try:
+            wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return
 
 
 def run_supervisor(
@@ -107,7 +140,8 @@ def run_supervisor(
     """
     Hold the daemon lock and supervise knock, sync --follow, and dashboard.
 
-    Sync deaths restart with a limit of SYNC_RESTART_LIMIT in SYNC_RESTART_WINDOW_S.
+    Sync starts only once device.json has hub_url and device_token. Sync deaths
+    restart with a limit of SYNC_RESTART_LIMIT in SYNC_RESTART_WINDOW_S.
     knock/dashboard deaths end the supervisor. SIGTERM/SIGINT terminate children and exit 0.
     """
     start = popen or subprocess.Popen
@@ -118,6 +152,7 @@ def run_supervisor(
     children: dict[str, Any] = {}
     sync_deaths: list[float] = []
     stopping = False
+    specs = dict(child_specs(argv_prefix))
 
     def terminate_remaining() -> None:
         for proc in children.values():
@@ -133,8 +168,10 @@ def run_supervisor(
     previous_int = signal.signal(signal.SIGINT, on_signal)
     try:
         try:
-            for name, argv in child_specs(argv_prefix):
-                children[name] = start(argv, start_new_session=True)
+            children["knock"] = start(specs["knock"], start_new_session=True)
+            children["dashboard"] = start(specs["dashboard"], start_new_session=True)
+            if hub_configured(home):
+                children["sync"] = start(specs["sync"], start_new_session=True)
         except SystemExit:
             raise
         except Exception as exc:
@@ -152,7 +189,11 @@ def run_supervisor(
                     for other in others.values():
                         _terminate(other)
                     raise SystemExit(f"daemon child {name} exited {code}")
-            sync = children["sync"]
+            sync = children.get("sync")
+            if sync is None:
+                if hub_configured(home):
+                    children["sync"] = start(specs["sync"], start_new_session=True)
+                continue
             code = sync.poll()
             if code is None:
                 continue
@@ -164,8 +205,7 @@ def run_supervisor(
             if n >= SYNC_RESTART_LIMIT:
                 terminate_remaining()
                 raise SystemExit("daemon sync restart limit")
-            sync_argv = dict(child_specs(argv_prefix))["sync"]
-            children["sync"] = start(sync_argv, start_new_session=True)
+            children["sync"] = start(specs["sync"], start_new_session=True)
     finally:
         signal.signal(signal.SIGTERM, previous_term)
         signal.signal(signal.SIGINT, previous_int)
