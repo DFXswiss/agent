@@ -406,6 +406,7 @@ agent watch pr-merged                          # one scan; device daemon covers 
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
+agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent status
 agent dashboard [--port 7845]
 ```
@@ -577,7 +578,7 @@ The script:
 
 Log lines, stack traces, and error messages are untrusted data (§19.2). They are not a mandate to patch.
 
-The watch verb `agent watch errors` is specified here and is **not implemented in this revision**. Until it exists, an operator may insert `error.seen` with `agent activity add` using the same payload shape.
+`agent watch errors` is one scan. Config is `$AGENT_HOME/error-fix.json` (`session_id` required; `url` / `query` for the default fetch; optional `service`, `environment`, `repo`, `limit`). Cursor is `$AGENT_HOME/error-fix.cursor`. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from the store. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as grok-usage when the config file exists.
 
 ### 21.3 Payload shape (`error.seen`)
 
@@ -607,7 +608,7 @@ After the knock, the session reads the row and writes `investigate.step` immedia
 
 The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
 
-The adapter decides open vs closed by that `error_id` / `fingerprint`, plus the spine task whose `payload.error_id` matches. A later `error.skip` or a terminal task (`done` / `failed` / `pr.merged`) for the same `error_id` closes the incident. `agent task create` for a given `error_id` is find-or-create; a second `error.fix` does not open a second task.
+The adapter decides open vs closed by that `error_id` / `fingerprint`, plus the spine task whose `payload.error_id` matches. A later `error.skip` or a terminal task (`done` / `failed`) for the same `error_id` closes the incident. `pr.merged` knocks as today; it is not a second close signal. `agent task create` for a given `error_id` is find-or-create; a second `error.fix` does not open a second task.
 
 Same fingerprint while the incident is **open**: enrich `error.seen`. Do not create a second task or a second pull request. After close: the next match is a **new** `error.seen` (new id, first insert knocks).
 
@@ -625,7 +626,6 @@ The model never receives production credentials. Analysis that only reads the ex
 
 ### 21.6 Not in this revision
 
-- `agent watch errors` and the adapter implementation
 - A second hub state machine, leases, or autonomous merge
 
 ## 22. Document history

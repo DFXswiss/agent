@@ -59,6 +59,38 @@ def test_deliver_sends_keys_when_attached(tmp_path: Path) -> None:
     assert all("secret" not in " ".join(c) for c in calls)
 
 
+def test_deliver_error_seen_sends_id_not_excerpt(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "runner",
+            "status": "active",
+            "runtime": {"control": "attached", "tmux_session": "agent-s1", "tmux_pane": "agent-s1:0.0"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "err-1",
+        {
+            "id": "err-1",
+            "session_id": "s1",
+            "type": "error.seen",
+            "payload": {"excerpt": "TimeoutError secret-body", "fingerprint": "a|b|c|d"},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    status = deliver(store, _runtime(calls), "err-1")
+    assert status == "sent"
+    assert ["tmux", "send-keys", "-t", "agent-s1:0.0", "-l", "--", "da ist Post id err-1"] in calls
+    assert all("secret-body" not in " ".join(c) for c in calls)
+
+
 def test_deliver_usage_snapshot_is_missing_without_send_keys(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.write(

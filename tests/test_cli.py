@@ -1028,6 +1028,24 @@ def test_watch_grok_usage_prints_snapshot_or_none(
     assert "usage.snapshot none" in capsys.readouterr().out
 
 
+def test_watch_errors_prints_none_and_ids(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    monkeypatch.setattr("agent_cli.errors.scan_errors", lambda store, fetch: ([], []))
+    run(tmp_path, ["watch", "errors"])
+    assert "error.seen none" in capsys.readouterr().out
+    monkeypatch.setattr(
+        "agent_cli.errors.scan_errors",
+        lambda store, fetch: (["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"], ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]),
+    )
+    run(tmp_path, ["watch", "errors"])
+    out = capsys.readouterr().out
+    assert "error.seen aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in out
+    assert "error.seen enrich bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in out
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1073,6 +1091,85 @@ def test_knock_daemon_polls_usage(
     captured = capsys.readouterr()
     assert "usage.snapshot error: boom" in captured.err
     assert "usage.snapshot 11111111-1111-1111-1111-111111111111" in captured.out
+
+
+def test_knock_once_does_not_poll_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    (tmp_path / "error-fix.json").write_text('{"session_id":"s"}', encoding="utf-8")
+    calls: list[object] = []
+
+    def fake_scan(store: object, fetch: object) -> tuple[list[str], list[str]]:
+        calls.append(store)
+        return ([], [])
+
+    monkeypatch.setattr("agent_cli.errors.scan_errors", fake_scan)
+    run(tmp_path, ["knock", "--once"])
+    assert calls == []
+
+
+def test_knock_daemon_polls_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    (tmp_path / "error-fix.json").write_text('{"session_id":"s"}', encoding="utf-8")
+    capsys.readouterr()
+    scan_calls = {"n": 0}
+    listen_calls = {"n": 0}
+
+    def fake_poll_due(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    def fake_scan(_store: object, _fetch: object) -> tuple[list[str], list[str]]:
+        scan_calls["n"] += 1
+        if scan_calls["n"] == 1:
+            raise StoreError("nope")
+        return (
+            ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+            ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"],
+        )
+
+    def fake_listen(*_args: object, **_kwargs: object) -> None:
+        listen_calls["n"] += 1
+        if listen_calls["n"] == 2:
+            raise SystemExit("stop")
+        return None
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.errors.scan_errors", fake_scan)
+    monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+    captured = capsys.readouterr()
+    assert "error.seen error: nope" in captured.err
+    assert "error.seen aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in captured.out
+    assert "error.seen enrich bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in captured.out
+
+
+def test_knock_daemon_skips_errors_without_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    calls: list[object] = []
+    listen_calls = {"n": 0}
+
+    def fake_scan(store: object, fetch: object) -> tuple[list[str], list[str]]:
+        calls.append(store)
+        return ([], [])
+
+    def fake_listen(*_args: object, **_kwargs: object) -> None:
+        listen_calls["n"] += 1
+        raise SystemExit("stop")
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.errors.scan_errors", fake_scan)
+    monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+    assert calls == []
 
 
 def test_work_set_done_happy_path(
@@ -1491,6 +1588,11 @@ def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     with pytest.raises(SystemExit, match=r"assigned \[--follow\]\|grok-usage"):
         run(tmp_path, ["watch"])
+
+
+def test_watch_usage_mentions_errors() -> None:
+    with pytest.raises(SystemExit, match="errors"):
+        main(["watch"])
 
 
 def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

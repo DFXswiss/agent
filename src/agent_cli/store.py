@@ -68,7 +68,7 @@ OWNED_TABLES = frozenset(
     }
 )
 
-WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged"})
+WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged", "error.seen"})
 DONE_WAKE_ACTIVITY_TYPES = frozenset({"pr.merged"})
 
 EXECUTABLE_ACTIVITY_TYPES = frozenset(
@@ -610,7 +610,7 @@ class Store:
 
     def _inbox_target(self, payload: dict[str, Any]) -> str | None:
         typ = payload.get("type")
-        if typ == "pr.merged":
+        if typ in ("pr.merged", "error.seen"):
             sid = payload.get("session_id")
             return sid if isinstance(sid, str) and sid else None
         if typ == "message":
@@ -635,6 +635,8 @@ class Store:
         if not isinstance(payload, dict):
             return
         if payload.get("type") not in WAKE_ACTIVITY_TYPES:
+            return
+        if event.get("op") == "update" and payload.get("type") == "error.seen":
             return
         if (
             payload.get("type") in DONE_WAKE_ACTIVITY_TYPES

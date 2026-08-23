@@ -2441,6 +2441,17 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"pending error: {exc}", file=sys.stderr)
                     finally:
                         hub.close()
+                from .errors import config_path, default_fetch, scan_errors
+
+                if config_path(store.home).is_file():
+                    try:
+                        created, enriched = scan_errors(store, default_fetch)
+                        for activity_id in created:
+                            print(f"error.seen {activity_id}")
+                        for activity_id in enriched:
+                            print(f"error.seen enrich {activity_id}")
+                    except StoreError as exc:
+                        print(f"error.seen error: {exc}", file=sys.stderr)
                 last_poll = time.monotonic()
             activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:
@@ -2474,8 +2485,8 @@ def cmd_daemon(args: list[str]) -> None:
 
 
 def cmd_watch(args: list[str]) -> None:
-    if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage"):
-        die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage")
+    if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage", "errors"):
+        die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage|errors")
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -2502,7 +2513,7 @@ def cmd_watch(args: list[str]) -> None:
 
             extra = args[1:]
             if extra not in ([], ["--follow"]):
-                die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage")
+                die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage|errors")
             follow = extra == ["--follow"]
             while True:
                 created, skipped = scan_assigned(store, run_argv, now=utcnow())
@@ -2543,6 +2554,17 @@ def cmd_watch(args: list[str]) -> None:
                 if not follow:
                     return
                 time.sleep(30)
+        if args[0] == "errors":
+            from .errors import default_fetch, scan_errors
+
+            created, enriched = scan_errors(store, default_fetch)
+            for activity_id in created:
+                print(f"error.seen {activity_id}")
+            for activity_id in enriched:
+                print(f"error.seen enrich {activity_id}")
+            if not created and not enriched:
+                print("error.seen none")
+            return
         from .pending import scan_pending
 
         hub = _hub_from_store(store)
