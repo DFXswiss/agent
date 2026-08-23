@@ -1102,6 +1102,73 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
+def test_activity_add_assigned_ack_requires_queue_head(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "assigned", "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "asg-1",
+            {
+                "id": "asg-1",
+                "session_id": "assigned",
+                "type": "issue.assigned",
+                "payload": {"assigned_at": "2026-01-01T00:00:00Z"},
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "asg-2",
+            {
+                "id": "asg-2",
+                "session_id": "assigned",
+                "type": "issue.assigned",
+                "payload": {"assigned_at": "2026-02-01T00:00:00Z"},
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+    bad = tmp_path / "ack-bad.json"
+    bad.write_text('{"assigned_id": "asg-2"}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="queue head"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "assigned",
+                "--type",
+                "issue.assigned.ack",
+                "--payload-file",
+                str(bad),
+            ],
+        )
+    good = tmp_path / "ack-good.json"
+    good.write_text('{"assigned_id": "asg-1"}', encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "activity",
+            "add",
+            "--session",
+            "assigned",
+            "--type",
+            "issue.assigned.ack",
+            "--payload-file",
+            str(good),
+        ],
+    )
+    assert "type=issue.assigned.ack" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "typ",
     ["pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register", "issue.assigned"],
