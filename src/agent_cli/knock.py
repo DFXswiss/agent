@@ -6,6 +6,7 @@ from typing import Any
 
 from .runtime import Runtime
 from .store import Store, StoreError
+from .watch import pending_assigned
 
 KNOCK_PREFIX = "da ist Post id "
 
@@ -88,6 +89,11 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
         store.enqueue_wake(activity_id, sid)
         return "queued"
     if activity.get("type") == "issue.assigned":
+        pending = pending_assigned(store, sid)
+        head = pending[0].get("id") if pending else None
+        if isinstance(head, str) and head != activity_id:
+            store.enqueue_wake(activity_id, sid)
+            return "queued"
         inflight = assigned_inflight_id(store, sid)
         if inflight is not None and inflight != activity_id:
             store.enqueue_wake(activity_id, sid)

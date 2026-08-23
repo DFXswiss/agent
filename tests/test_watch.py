@@ -232,7 +232,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
                 ),
                 "",
             )
-        if argv[:2] == ["gh", "api"] and "events" in argv[2]:
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
             return Completed(
                 0,
                 json.dumps(
@@ -290,7 +290,7 @@ def test_scan_assigned_equal_cursor_skips(tmp_path: Path) -> None:
                 ),
                 "",
             )
-        if argv[:2] == ["gh", "api"] and "events" in argv[2]:
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
             return Completed(
                 0,
                 json.dumps(
@@ -343,9 +343,9 @@ def test_scan_assigned_gh_failure_skips_other_inserts(tmp_path: Path) -> None:
                 ),
                 "",
             )
-        if argv[:2] == ["gh", "api"] and argv[2].endswith("/issues/1/events"):
+        if argv[:2] == ["gh", "api"] and any(part.endswith("/issues/1/events") for part in argv):
             return Completed(1, "", "boom")
-        if argv[:2] == ["gh", "api"] and argv[2].endswith("/issues/8/events"):
+        if argv[:2] == ["gh", "api"] and any(part.endswith("/issues/8/events") for part in argv):
             return Completed(
                 0,
                 json.dumps(
@@ -560,7 +560,7 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
                 ),
                 "",
             )
-        if argv[:2] == ["gh", "api"] and "events" in argv[2]:
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
             return Completed(
                 0,
                 json.dumps(
@@ -642,3 +642,82 @@ def test_dispatch_assigned_second_does_not_start_another_terminal(tmp_path: Path
     assert second == "kicked"
     assert start_log == [(sid, workspace_root / sid)]
     assert knock_log == ["asg-1", "asg-2"]
+
+
+def test_scan_assigned_after_ack_allows_new_assignment(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "old-1",
+        {
+            "id": "old-1",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {"repo": "Owner/repo", "number": 8, "assigned_at": "2021-01-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "ack-old",
+        {
+            "id": "ack-old",
+            "session_id": "assigned",
+            "type": "issue.assigned.ack",
+            "payload": {"assigned_id": "old-1"},
+            "execution_status": "done",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Again",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-06-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["number"] == 8
+    assert row["id"] != "old-1"

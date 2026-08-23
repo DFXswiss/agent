@@ -40,7 +40,7 @@ from .runtime import (
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreError, utcnow
 from .usage import scan_usage, usage_poll_due
-from .watch import dispatch_assigned, scan_assigned, scan_merged
+from .watch import assigned_session_id, dispatch_assigned, pending_assigned, scan_assigned, scan_merged
 
 CHECKLIST = {
     "implement": (
@@ -2218,7 +2218,7 @@ def cmd_knock(args: list[str]) -> None:
 
 def cmd_watch(args: list[str]) -> None:
     if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage"):
-        die("Usage: agent watch pr-merged|pending|assigned|grok-usage")
+        die("Usage: agent watch pr-merged|pending|assigned|grok-usage [--follow]")
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -2251,50 +2251,28 @@ def cmd_watch(args: list[str]) -> None:
                     workspace_root = Path(root_env)
                 else:
                     workspace_root = store.home / "sessions"
-                targets: list[str] = []
-                seen: set[str] = set()
-                for activity_id in created:
-                    if activity_id not in seen:
-                        targets.append(activity_id)
-                        seen.add(activity_id)
-                for row in store.rows("activity"):
-                    if row.get("type") != "issue.assigned":
-                        continue
-                    if row.get("_origin_device_id") != store.device_id():
-                        continue
-                    aid = row.get("id")
-                    if not isinstance(aid, str) or aid in seen:
-                        continue
-                    sid = row.get("session_id")
-                    if not isinstance(sid, str) or sid == "":
-                        continue
-                    session = store.row("session", sid)
-                    if session is None:
-                        continue
-                    runtime_meta = session.get("runtime")
-                    control = runtime_meta.get("control") if isinstance(runtime_meta, dict) else None
-                    if control == "attached":
-                        continue
-                    targets.append(aid)
-                    seen.add(aid)
-                for aid in targets:
-                    dispatch_assigned(
-                        store,
-                        aid,
-                        sync=lambda: _sync_once(store),
-                        start=lambda sid, cwd: _session_start(
+                sid = assigned_session_id(store.home)
+                pending = pending_assigned(store, sid)
+                if pending:
+                    head_id = pending[0].get("id")
+                    if isinstance(head_id, str) and head_id:
+                        dispatch_assigned(
                             store,
-                            Runtime(),
-                            sid,
-                            None,
-                            None,
-                            None,
-                            provider="grok",
-                            cwd=str(cwd),
-                        ),
-                        knock=lambda activity_id: deliver(store, Runtime(), activity_id),
-                        workspace_root=workspace_root,
-                    )
+                            head_id,
+                            sync=lambda: _sync_once(store),
+                            start=lambda session_id, cwd: _session_start(
+                                store,
+                                Runtime(),
+                                session_id,
+                                None,
+                                None,
+                                None,
+                                provider="grok",
+                                cwd=str(cwd),
+                            ),
+                            knock=lambda activity_id: deliver(store, Runtime(), activity_id),
+                            workspace_root=workspace_root,
+                        )
                 for activity_id in created:
                     print(f"issue.assigned {activity_id}")
                 if not created:
