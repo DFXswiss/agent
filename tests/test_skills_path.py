@@ -6,12 +6,17 @@ from pathlib import Path
 import pytest
 
 from agent_cli.main import main, packaged_skills_dir
+from agent_cli.skills import SKILL_NAMES
 
 pytestmark = pytest.mark.no_pg
 
 
 def run(argv: list[str]) -> None:
     main(argv)
+
+
+def test_error_fix_is_a_named_skill() -> None:
+    assert "error-fix" in SKILL_NAMES
 
 
 def test_skills_path_packaged(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,6 +31,7 @@ def test_skills_path_packaged(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert (root / "spine" / "SKILL.md").is_file()
     assert (root / "review-loop" / "SKILL.md").is_file()
     assert (root / "pr-review" / "SKILL.md").is_file()
+    assert (root / "error-fix" / "SKILL.md").is_file()
 
 
 def test_skills_path_with_agent_home(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
