@@ -68,7 +68,7 @@ OWNED_TABLES = frozenset(
     }
 )
 
-WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged", "issue.assigned"})
+WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged"})
 DONE_WAKE_ACTIVITY_TYPES = frozenset({"pr.merged"})
 
 EXECUTABLE_ACTIVITY_TYPES = frozenset(
@@ -283,11 +283,7 @@ class Store:
                 self._maybe_wake(event)
             elif inserted:
                 payload = event.get("payload")
-                if (
-                    isinstance(payload, dict)
-                    and payload.get("type") in WAKE_ACTIVITY_TYPES
-                    and payload.get("type") != "issue.assigned"
-                ):
+                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
                     target = self._inbox_target(payload)
                     if target is not None and self._owns_session(target):
                         self.enqueue_wake(event["row_id"], target)
@@ -425,11 +421,7 @@ class Store:
                 self._maybe_wake(event)
             else:
                 payload = event.get("payload")
-                if (
-                    isinstance(payload, dict)
-                    and payload.get("type") in WAKE_ACTIVITY_TYPES
-                    and payload.get("type") != "issue.assigned"
-                ):
+                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
                     target = self._inbox_target(payload)
                     if target is not None and self._owns_session(target):
                         self.enqueue_wake(event["row_id"], target)
@@ -612,7 +604,7 @@ class Store:
 
     def _inbox_target(self, payload: dict[str, Any]) -> str | None:
         typ = payload.get("type")
-        if typ in ("pr.merged", "issue.assigned"):
+        if typ == "pr.merged":
             sid = payload.get("session_id")
             return sid if isinstance(sid, str) and sid else None
         if typ == "message":
@@ -637,8 +629,6 @@ class Store:
         if not isinstance(payload, dict):
             return
         if payload.get("type") not in WAKE_ACTIVITY_TYPES:
-            return
-        if payload.get("type") == "issue.assigned":
             return
         if (
             payload.get("type") in DONE_WAKE_ACTIVITY_TYPES

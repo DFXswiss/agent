@@ -76,8 +76,8 @@ agent knock --once
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); run from cron if you need a loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
+# agent knock (daemon, no --once) also polls grok-usage every 60s
 agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
-# agent knock (daemon, no --once) polls that every 60s
 ```
 
 `agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. The knock daemon (`agent knock` without `--once`) records those snapshots in the background on the same interval.

@@ -526,7 +526,14 @@ def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
             assigned_at = payload["assigned_at"]
         ranked.append((assigned_at, aid, row))
     ranked.sort()
-    return [item[2] for item in ranked]
+    inflight: list[dict[str, Any]] = []
+    rest: list[dict[str, Any]] = []
+    for _assigned_at, aid, row in ranked:
+        if store.wake_delivered(aid):
+            inflight.append(row)
+        else:
+            rest.append(row)
+    return inflight + rest
 
 
 def _write_assigned_queue_files(

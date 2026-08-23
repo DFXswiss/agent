@@ -11,6 +11,7 @@ from agent_cli.watch import (
     ISSUE_LIST_LIMIT,
     dispatch_assigned,
     load_watch_config,
+    pending_assigned,
     scan_assigned,
     scan_merged,
 )
@@ -787,6 +788,57 @@ def test_dispatch_assigned_second_does_not_start_another_terminal(tmp_path: Path
     assert second == "kicked"
     assert start_log == [(sid, workspace_root / sid)]
     assert knock_log == ["asg-1", "asg-1"]
+
+
+def test_pending_assigned_keeps_delivered_inflight_as_head(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-new",
+        {
+            "id": "asg-new",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {"repo": "Owner/repo", "number": 9, "assigned_at": "2026-06-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    assert store.claim_wake("asg-new") is True
+    store.write(
+        "activity",
+        "insert",
+        "asg-old",
+        {
+            "id": "asg-old",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {"repo": "Owner/repo", "number": 8, "assigned_at": "2021-01-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    pending = pending_assigned(store, "assigned")
+    assert [row["id"] for row in pending] == ["asg-new", "asg-old"]
+    store.write(
+        "activity",
+        "insert",
+        "ack-new",
+        {
+            "id": "ack-new",
+            "session_id": "assigned",
+            "type": "issue.assigned.ack",
+            "payload": {"assigned_id": "asg-new"},
+            "execution_status": "done",
+        },
+    )
+    pending = pending_assigned(store, "assigned")
+    assert [row["id"] for row in pending] == ["asg-old"]
 
 
 def test_scan_assigned_reassignment_while_pending_enqueues(tmp_path: Path) -> None:
