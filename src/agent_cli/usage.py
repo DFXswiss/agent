@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import uuid
 from collections.abc import Callable
@@ -12,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from .store import Store, StoreError, utcnow
+from .store import Store, StoreError, loads, utcnow
 
 # format=credits is required: the weekly SuperGrok pool lives only on that view;
 # the default monthly billing body has no currentPeriod.
@@ -105,7 +106,7 @@ def _get_json(
         raise StoreError(f"{name} returned HTTP {response.status_code}")
     try:
         data = response.json()
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise StoreError(f"{name} returned invalid JSON") from exc
     if not isinstance(data, dict):
         raise StoreError(f"{name} response is not an object")
@@ -139,7 +140,10 @@ def _require_nonempty_str(value: Any, field: str) -> str:
 def _require_float(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise StoreError(f"{field} must be a number")
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number):
+        raise StoreError(f"{field} must be a finite number")
+    return number
 
 
 def _require_val_int(obj: Any, field: str) -> int:
@@ -267,13 +271,21 @@ def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -
 
 def last_usage_snapshot(store: Store, vendor: str = VENDOR) -> dict[str, Any] | None:
     """Newest owned activity with type=='usage.snapshot' and payload.vendor==vendor; return its payload dict or None."""
-    origin = store.device_id()
-    for row in store.rows("activity"):
-        if row.get("_origin_device_id") != origin:
+    # origin_seq is monotonic per device; updated_at is second-resolution without a tiebreaker
+    with store._lock:
+        rows = store.conn.execute(
+            "SELECT payload FROM ledger_event "
+            "WHERE origin_device_id = %s AND table_name = %s AND op = %s "
+            "ORDER BY origin_seq DESC",
+            (store.device_id(), "activity", "insert"),
+        ).fetchall()
+    for row in rows:
+        event = loads(row["payload"])
+        if not isinstance(event, dict):
             continue
-        if row.get("type") != "usage.snapshot":
+        if event.get("type") != "usage.snapshot":
             continue
-        payload = row.get("payload")
+        payload = event.get("payload")
         if not isinstance(payload, dict):
             continue
         if payload.get("vendor") != vendor:

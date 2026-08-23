@@ -137,6 +137,53 @@ def test_scan_usage_inserts_on_used_percent_change(tmp_path: Path) -> None:
     assert len(rows) == 2
 
 
+def test_scan_usage_dedups_against_latest_snapshot(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    used = {"v": 11.0}
+
+    def fetch(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        return _credits(used=used["v"]), SETTINGS
+
+    first = scan_usage(store, fetch=fetch, auth_path=auth, now=lambda: "2026-08-20T12:00:00Z")
+    used["v"] = 12.0
+    second = scan_usage(store, fetch=fetch, auth_path=auth, now=lambda: "2026-08-20T12:01:00Z")
+    third = scan_usage(store, fetch=fetch, auth_path=auth, now=lambda: "2026-08-20T12:02:00Z")
+    assert isinstance(first, str)
+    assert isinstance(second, str)
+    assert third is None
+    assert len([r for r in store.rows("activity") if r.get("type") == "usage.snapshot"]) == 2
+
+
+def test_scan_usage_rejects_nan_credit_usage_percent(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    credits = _credits()
+    credits["config"]["creditUsagePercent"] = float("nan")
+
+    def fetch(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        return credits, SETTINGS
+
+    with pytest.raises(StoreError, match="finite"):
+        scan_usage(store, fetch=fetch, auth_path=auth)
+
+
+def test_scan_usage_rejects_inf_credit_usage_percent(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    credits = _credits()
+    credits["config"]["creditUsagePercent"] = float("inf")
+
+    def fetch(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        return credits, SETTINGS
+
+    with pytest.raises(StoreError, match="finite"):
+        scan_usage(store, fetch=fetch, auth_path=auth)
+
+
 def test_scan_usage_missing_auth_file(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_grok_session(store)

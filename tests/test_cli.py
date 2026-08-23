@@ -989,6 +989,36 @@ def test_agent_finish_on_foreign_agent_dies(
     assert task["state"] == "implementing"
 
 
+def test_watch_grok_usage_prints_snapshot_or_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    monkeypatch.setattr(
+        "agent_cli.main.scan_usage",
+        lambda store: "11111111-1111-1111-1111-111111111111",
+    )
+    run(tmp_path, ["watch", "grok-usage"])
+    assert "usage.snapshot 11111111-1111-1111-1111-111111111111" in capsys.readouterr().out
+
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda store: None)
+    run(tmp_path, ["watch", "grok-usage"])
+    assert "usage.snapshot none" in capsys.readouterr().out
+
+
+def test_knock_once_does_not_poll_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    calls: list[object] = []
+
+    def fake_scan(store: object) -> None:
+        calls.append(store)
+
+    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
+    run(tmp_path, ["knock", "--once"])
+    assert calls == []
+
+
 def test_work_set_done_happy_path(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
