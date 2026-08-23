@@ -2,7 +2,7 @@
 
 Local session-store client. Record sessions, activities and (when a skill is attached) tasks on this machine, then pair the device to the [agent-core](https://github.com/DFXswiss/agent-core) hub with GitHub.
 
-Product decisions (visibility, pairing, sync, restore, what we will not build) are in [DESIGN.md](DESIGN.md). That file also locks the deterministic core: scripts execute, checks measure, gates decide, model text is never a transition, and the hub is not a coding control plane.
+Product decisions (visibility, pairing, sync, restore, what we will not build) are in [DESIGN.md](DESIGN.md). That file also locks the deterministic core: scripts execute, checks measure, gates decide, model text is never a transition, and the hub is not a coding control plane. Production-error → draft pull request is the opt-in **error-fix** skill on this device, not the hub.
 
 This device is the write owner of its own rows. The local store is PostgreSQL on `127.0.0.1`. `device.json` next to it is the device identity: wiping only the database must not mint a new device. The hub holds a full copy. `agent sync` pushes own events and pulls own catch-up, session-mail inbox snapshots, and person-ping snapshots. `agent restore` rebuilds a wiped database from the hub.
 
@@ -38,6 +38,7 @@ agent skills path
 agent session skill attach --id <session-id> --skill spine
 agent session skill attach --id <session-id> --skill review-loop
 agent session skill attach --id <session-id> --skill pr-review
+agent session skill attach --id <session-id> --skill error-fix
 agent session start --id <session-id> [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session input --id <session-id> --data TEXT
 agent session input --id <session-id> --key enter|ctrl-c|tab
@@ -65,9 +66,9 @@ agent status
 agent dashboard
 ```
 
-This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the review contract (`spine`, `review-loop`, `pr-review`). `agent skills path` prints that directory. Operator-specific git or deploy rules stay outside this package.
+This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the skill contracts (`spine`, `review-loop`, `pr-review`, `error-fix`). `agent skills path` prints that directory. Operator-specific git or deploy rules stay outside this package.
 
-Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails.
+Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`, `error-fix`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. Without `error-fix` the production-error loop does not run. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails. `error-fix` ships in the packaged tree; an override need not copy it.
 
 Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
 

@@ -30,6 +30,11 @@ SKILLS = {
         "commands": ("gate",),
         "roles": ("pr-reviewer-quality", "pr-reviewer-logic"),
     },
+    "error-fix": {
+        "version": "1",
+        "tables": (),
+        "commands": (),
+    },
 }
 
 SKILL_NAMES = tuple(SKILLS)

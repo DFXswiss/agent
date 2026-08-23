@@ -99,7 +99,7 @@ The hub does not assign work, grant leases, or move authorship when a laptop dis
 A task exists only when the spine skill is attached. The durable unit is the session and its activity log.
 
 **Error-to-PR as the default platform workflow.**  
-Production-error ingestion, fingerprinting, and assisted patching are not core catalog types and not a default skill. A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
+Production-error ingestion is not the product core and not a default skill. The `error.*` spellings in §14 belong to the opt-in **error-fix** skill (§21). A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
 
 **Worker capability ontology / scheduler.**  
 Vendors remain `grok` | `codex`. Scripts are not store workers. Do not add capability tables until two real workflows share them.
@@ -323,6 +323,9 @@ v1 types (mechanism only):
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
 | `usage.snapshot` | — | script | — (Grok billing GET on this device; no TUI knock; payload includes account email, provider, and subscription tier) |
+| `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
+| `error.skip` | `error` | AI | — |
+| `error.fix` | `error` | AI | script + spine implement (draft pull request) |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
 
@@ -338,15 +341,16 @@ The watcher runs on this device (write owner). It is a script, not the model. Th
 
 ## 15. Skills (opt-in)
 
-A **skill** is a named, versioned bundle of catalog types plus loop rules. A session attaches zero or more skills. None are default.
+A **skill** is a named, versioned bundle of catalog types plus loop rules. A session attaches zero or more skills. None are default. This client is a **skill host**: the session store, knock, and scripts stay; a skill adds a loop. Error-to-draft-PR is one such loop, not the product.
 
-Examples of skills this client ships:
+Skills this client ships:
 
+- **spine** — task, round, checklist, `open_work`, plus `allow` / `next` / `close-step` / `run`
 - **review-loop** — run implement / review rounds until the catalog shows zero open findings
 - **pr-review** — record quality/logic gates on a head SHA
-- **spine** — task, round, checklist, `open_work`, plus `allow` / `next` / `close-step` / `run`
+- **error-fix** — production log errors on this device → analysis → optional draft pull request (§21)
 
-The packaged `SKILL.md` files next to the client **are** the review contract; `agent skills path` prints their directory.
+The packaged `SKILL.md` files next to the client **are** the skill contracts; `agent skills path` prints their directory.
 
 Without the skill, those tables and loops do not run. The session can still register, write `activity`, send session mail, and investigate.
 
@@ -361,7 +365,7 @@ agent init
 agent session register|heartbeat|list|close|start|stop|input|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
-agent session skill attach --id ID --skill spine|review-loop|pr-review
+agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix
 agent session skill list --id ID
 agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session stop --id ID
@@ -519,12 +523,95 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 | Model-created state machine | Transitions are code and constraints, not prompt output. |
 | Universal workflow DSL or a distributed queue in front of Postgres | The catalog and local Postgres until a real load proves otherwise. |
 
-A future opt-in skill “production error → draft pull request” would still mean: this device writes `activity`, scripts ingest / dedup / validate / open a **draft** pull request, a human merges. It must not move write ownership to the hub.
+The wanted loop “production error → draft pull request” is the **error-fix** skill (§21). It still means: this device writes `activity`, a script on this device queries logs, the session analyses, scripts validate and open a **draft** pull request, a human merges. It must not move write ownership to the hub.
 
-## 21. Document history
+## 21. Skill: error-fix
+
+Wanted. Opt-in. Runs on **this device** (a laptop that has the client, log credentials, a runner session, and git). It is one skill among many. It is not the session bus, and it is not a hub workflow.
+
+Attach `error-fix` together with `spine`, `review-loop`, and `pr-review` on the runner session that owns the work. Without `error-fix` the session does not run this loop. The `error.*` catalog names in §14 exist so adapters and later code share a spelling; this revision does not add a type allowlist.
+
+### 21.1 Laptop as execution plane
+
+| Piece | Where |
+|---|---|
+| Log credentials and adapter config | `$AGENT_HOME` on this device, not git, not the hub |
+| Watcher process | This device. Script, not the model. |
+| Analysis and “fix or skip” | The attached runner session on this device |
+| Isolated worktree, checks, draft pull request | This device |
+| Merge | A human |
+| Hub | Replica + fan-out of the rows this device already wrote |
+
+A crashed laptop does not transfer the task to another machine. Restart the session on **this** device, or the `error.seen` rows stay unread.
+
+### 21.2 Log adapter
+
+A script queries a configured log source on a schedule (same shape as `agent watch pr-merged`: one scan; the knock daemon may poll). This package does not name the log host. Mapping from stream → repository, query window, and redaction live in `$AGENT_HOME`.
+
+The script:
+
+1. Authenticates with credentials that never enter the store or `evidence`.
+2. Pulls new lines since the last cursor (persisted next to the config).
+3. Redacts secrets and obvious personal data **before** any row is written.
+4. Computes a fingerprint: service + error class + normalized stack signature + environment.
+5. Inserts `error.seen` or **enriches** an existing row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks.
+6. Payload holds a **sanitized** excerpt plus an optional pointer to raw evidence on this disk. It does not hold the full log dump.
+
+Log lines, stack traces, and error messages are untrusted data (§19.2). They are not a mandate to patch.
+
+The watch verb `agent watch errors` is specified here and is **not implemented in this revision**. Until it exists, an operator may insert `error.seen` with `agent activity add` using the same payload shape.
+
+### 21.3 Payload shape (`error.seen`)
+
+```json
+{
+  "fingerprint": "service|class|stack-sig|env",
+  "service": "api",
+  "environment": "prod",
+  "class": "TimeoutError",
+  "repo": "org/app",
+  "count": 1,
+  "first_seen": "2026-08-23T16:00:00Z",
+  "last_seen": "2026-08-23T16:00:00Z",
+  "excerpt": "sanitized log line…",
+  "evidence": null
+}
+```
+
+`repo` may be omitted when the adapter cannot map the stream; the session then `error.skip`s with reason `unmapped-repo`.
+
+### 21.4 Analysis and eligibility
+
+After the knock, the session reads the row and writes `investigate.step` immediately (hypothesis, check, ruled out — each a new row). Then it inserts **one** typed conclusion:
+
+- `error.skip` — not a code fix (infra, noisy duplicate, unmapped repo, forbidden path, already an open draft for this fingerprint). Payload `reason` is a short token plus optional note.
+- `error.fix` — `execution_status=pending`. Local intent only.
+
+The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
+
+Same fingerprint while an `error.fix` or a spine implement task is open: enrich `error.seen`, do not create a second task.
+
+### 21.5 Patch and draft pull request
+
+On `error.fix`:
+
+1. `agent task create --workflow implement` on this session. Copy `error_id` (the `error.seen` id) and `repo` from that `error.seen` row into the task payload.
+2. Isolated worktree of that task `payload.repo` at the allowed base revision. Git operations are scripts. Missing `repo` is `error.skip` / `unmapped-repo`, not a worktree of the origin checkout.
+3. Spine + review-loop + pr-review as already specified. Mandatory checks must `pass` before `pr.open`.
+4. `pr.open` opens a **draft**. Title/body may be model-drafted; the GitHub API call is a script. A retry finds an existing draft for this fingerprint instead of opening a second one.
+5. A human merges. `pr.merged` knocks as today.
+
+The model never receives production credentials. Analysis that only reads the excerpt does not need write access to the origin branch.
+
+### 21.6 Not in this revision
+
+- `agent watch errors` and the adapter implementation
+- A second hub state machine, leases, or autonomous merge
+
+## 22. Document history
 
 Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, default model `grok-4.6`, no Claude environment in the pane.
 
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
 
-Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; a device-owned opt-in skill remains allowed only under the last paragraph of §20.
+Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; it is the opt-in **error-fix** skill on this device (§21).
