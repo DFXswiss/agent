@@ -453,6 +453,8 @@ def scan_assigned(
                 }
             )
     found.sort(key=lambda item: (str(item["assigned_at"]), str(item["repo"]).lower(), int(item["number"])))
+    if skipped > 0:
+        return [], skipped
     if found:
         _ensure_assigned_session(store, sid, now)
     for item in found:
@@ -602,14 +604,20 @@ def dispatch_assigned(
     if attached and pane_up is not None and not pane_up(sid):
         attached = False
     sync()
+    pending = pending_assigned(store, sid)
+    if not pending:
+        return "skipped"
+    head = pending[0]
+    head_id = head.get("id")
+    if not isinstance(head_id, str) or head_id == "":
+        raise StoreError(f"session {sid} queue head is missing an id")
     cwd = workspace_root / sid
     cwd.mkdir(parents=True, exist_ok=True)
-    pending = pending_assigned(store, sid)
-    _write_assigned_queue_files(cwd, sid, activity, pending)
+    _write_assigned_queue_files(cwd, sid, head, pending)
     if not attached:
-        store.unclaim_wake(activity_id)
+        store.unclaim_wake(head_id)
         start(sid, cwd)
-        knock(activity_id)
+        knock(head_id)
         return "started"
-    knock(activity_id)
+    knock(head_id)
     return "kicked"

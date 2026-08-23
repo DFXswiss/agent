@@ -437,10 +437,7 @@ def test_scan_assigned_gh_failure_skips_other_inserts(tmp_path: Path) -> None:
 
     created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
     assert skipped == 1
-    assert len(created) == 1
-    row = store.row("activity", created[0])
-    assert row is not None
-    assert row["payload"]["number"] == 8
+    assert created == []
     assert store.sync_get("assigned_watch_since") == before
 
 
@@ -732,7 +729,7 @@ def test_dispatch_assigned_second_does_not_start_another_terminal(tmp_path: Path
     assert first == "started"
     assert second == "kicked"
     assert start_log == [(sid, workspace_root / sid)]
-    assert knock_log == ["asg-1", "asg-2"]
+    assert knock_log == ["asg-1", "asg-1"]
 
 
 def test_scan_assigned_after_ack_allows_new_assignment(tmp_path: Path) -> None:
