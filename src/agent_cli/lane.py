@@ -182,7 +182,8 @@ def _run_in_tmux(
         _tmux_call(["tmux", "kill-session", "-t", name])
         return remain
     if stdin_text:
-        typed = _tmux_call(["tmux", "send-keys", "-t", name, "-l", "--", stdin_text])
+        payload = stdin_text if stdin_text.endswith("\n") else stdin_text + "\n"
+        typed = _tmux_call(["tmux", "send-keys", "-t", name, "-l", "--", payload])
         if typed.returncode != 0:
             _tmux_call(["tmux", "kill-session", "-t", name])
             return typed
@@ -237,6 +238,7 @@ def launch(
     spec_text = path.read_text(encoding="utf-8")
     if not spec_text.strip():
         raise SystemExit(f"spec-file is empty: {spec_file}")
+    spec_file = str(path.resolve())
 
     write = role in WRITE_ROLES
     codex_output_file: str | None = None

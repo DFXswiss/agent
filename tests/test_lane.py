@@ -447,6 +447,45 @@ def test_run_in_tmux_kills_on_pane_dead_query_fail(monkeypatch: pytest.MonkeyPat
     assert any("kill-session" in c for c in calls)
 
 
+def test_run_in_tmux_send_keys_adds_trailing_newline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, "STATUS: complete\n", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="no-newline")
+    typed = [c for c in calls if "send-keys" in c and "-l" in c]
+    assert typed
+    assert typed[0][-1].endswith("\n")
+
+
+def test_launch_tmux_passes_absolute_spec_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file="spec.md",
+        cwd=str(work),
+        dry_run=True,
+    )
+    inner = result.argv[result.argv.index("--") + 1 :]
+    prompt = inner[inner.index("--prompt-file") + 1]
+    assert Path(prompt).is_absolute()
+    assert Path(prompt) == spec.resolve()
+
+
 def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
         if "send-keys" in argv and "-l" in argv:
