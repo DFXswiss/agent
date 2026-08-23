@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -10,22 +12,28 @@ import pytest
 
 from agent_cli.daemon import (
     SERVICE_LABEL,
+    _terminate,
     acquire_lock,
     child_specs,
+    hub_configured,
     run_supervisor,
     service_unit_text,
 )
 from agent_cli.main import main
 from agent_cli.store import Store, StoreError
 
+_next_fake_pid = 4242
+
 
 class _FakeProc:
     def __init__(self, argv: list[str]) -> None:
+        global _next_fake_pid
         self.argv = list(argv)
         self.returncode: int | None = None
         self.terminated = False
         self.killed = False
-        self.pid = None
+        self.pid = _next_fake_pid
+        _next_fake_pid += 1
 
     def poll(self) -> int | None:
         return self.returncode
@@ -61,6 +69,29 @@ def _child_name(argv: list[str]) -> str:
     if "sync" in argv:
         return "sync"
     return "other"
+
+
+def _write_hub_config(home: Path) -> None:
+    (home / "device.json").write_text(
+        json.dumps({"hub_url": "https://hub.example", "device_token": "tok"}),
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _block_real_killpg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never deliver FakeProc pids to the real process table."""
+    monkeypatch.setattr("agent_cli.daemon.os.killpg", lambda *_a, **_k: None)
+
+
+def _patch_killpg(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int]]:
+    calls: list[tuple[int, int]] = []
+
+    def fake_killpg(pid: int, sig: int) -> None:
+        calls.append((pid, sig))
+
+    monkeypatch.setattr("agent_cli.daemon.os.killpg", fake_killpg)
+    return calls
 
 
 @pytest.mark.no_pg
@@ -132,9 +163,47 @@ def test_service_unit_text_win32_raises() -> None:
 
 
 @pytest.mark.no_pg
+def test_hub_configured_missing_file(tmp_path: Path) -> None:
+    assert hub_configured(tmp_path) is False
+
+
+@pytest.mark.no_pg
+def test_hub_configured_incomplete_object(tmp_path: Path) -> None:
+    (tmp_path / "device.json").write_text(
+        json.dumps({"device_id": "dev-1", "hub_url": "https://hub.example"}),
+        encoding="utf-8",
+    )
+    assert hub_configured(tmp_path) is False
+    (tmp_path / "device.json").write_text(
+        json.dumps({"device_token": "tok"}),
+        encoding="utf-8",
+    )
+    assert hub_configured(tmp_path) is False
+    (tmp_path / "device.json").write_text(
+        json.dumps({"hub_url": "", "device_token": "tok"}),
+        encoding="utf-8",
+    )
+    assert hub_configured(tmp_path) is False
+
+
+@pytest.mark.no_pg
+def test_hub_configured_both_keys(tmp_path: Path) -> None:
+    _write_hub_config(tmp_path)
+    assert hub_configured(tmp_path) is True
+
+
+@pytest.mark.no_pg
+def test_hub_configured_broken_json(tmp_path: Path) -> None:
+    (tmp_path / "device.json").write_text("{not-json", encoding="utf-8")
+    with pytest.raises(StoreError, match="device.json"):
+        hub_configured(tmp_path)
+
+
+@pytest.mark.no_pg
 def test_run_supervisor_restarts_sync_twice(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    _write_hub_config(tmp_path)
     procs: dict[str, _FakeProc] = {}
     sync_starts = {"n": 0}
     ticks = {"n": 0}
@@ -171,7 +240,11 @@ def test_run_supervisor_restarts_sync_twice(
 
 
 @pytest.mark.no_pg
-def test_run_supervisor_sync_restart_limit(tmp_path: Path) -> None:
+def test_run_supervisor_sync_restart_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_hub_config(tmp_path)
+    killpg_calls = _patch_killpg(monkeypatch)
     procs: dict[str, _FakeProc] = {}
     sync_starts = {"n": 0}
     clock = {"t": 0.0}
@@ -196,13 +269,19 @@ def test_run_supervisor_sync_restart_limit(tmp_path: Path) -> None:
             monotonic=lambda: clock["t"],
             sleep=fake_sleep,
         )
-    assert procs["knock"].terminated is True
-    assert procs["dashboard"].terminated is True
+    knock_pid = procs["knock"].pid
+    dash_pid = procs["dashboard"].pid
+    assert (knock_pid, signal.SIGTERM) in killpg_calls
+    assert (dash_pid, signal.SIGTERM) in killpg_calls
     assert sync_starts["n"] == 10
 
 
 @pytest.mark.no_pg
-def test_run_supervisor_knock_exit_terminates_others(tmp_path: Path) -> None:
+def test_run_supervisor_knock_exit_terminates_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_hub_config(tmp_path)
+    killpg_calls = _patch_killpg(monkeypatch)
     procs: dict[str, _FakeProc] = {}
     ticks = {"n": 0}
 
@@ -225,8 +304,119 @@ def test_run_supervisor_knock_exit_terminates_others(tmp_path: Path) -> None:
             monotonic=lambda: float(ticks["n"]),
             sleep=fake_sleep,
         )
-    assert procs["sync"].terminated is True
-    assert procs["dashboard"].terminated is True
+    sync_pid = procs["sync"].pid
+    dash_pid = procs["dashboard"].pid
+    assert (sync_pid, signal.SIGTERM) in killpg_calls
+    assert (dash_pid, signal.SIGTERM) in killpg_calls
+
+
+@pytest.mark.no_pg
+def test_terminate_escalates_sigterm_to_sigkill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    killpg_calls = _patch_killpg(monkeypatch)
+    proc = _FakeProc(["agent", "sync", "--follow"])
+    assert proc.returncode is None
+    _terminate(proc)
+    assert killpg_calls == [
+        (proc.pid, signal.SIGTERM),
+        (proc.pid, signal.SIGKILL),
+    ]
+
+
+@pytest.mark.no_pg
+def test_run_supervisor_unpaired_starts_knock_dashboard_only(tmp_path: Path) -> None:
+    procs: dict[str, _FakeProc] = {}
+    started: list[list[str]] = []
+    ticks = {"n": 0}
+
+    def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
+        started.append(list(argv))
+        name = _child_name(argv)
+        proc = _FakeProc(argv)
+        procs[name] = proc
+        return proc
+
+    def fake_sleep(_seconds: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] >= 1:
+            raise _StopLoop()
+
+    with pytest.raises(_StopLoop):
+        run_supervisor(
+            home=tmp_path,
+            argv_prefix=["agent"],
+            popen=fake_popen,
+            monotonic=lambda: float(ticks["n"]),
+            sleep=fake_sleep,
+        )
+    assert "sync" not in procs
+    assert all("sync" not in argv for argv in started)
+    assert procs["knock"].returncode is None
+    assert procs["dashboard"].returncode is None
+    expected = [argv for name, argv in child_specs(["agent"]) if name != "sync"]
+    assert started == expected
+
+
+@pytest.mark.no_pg
+def test_run_supervisor_paired_starts_sync(tmp_path: Path) -> None:
+    _write_hub_config(tmp_path)
+    started: list[list[str]] = []
+    ticks = {"n": 0}
+
+    def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
+        started.append(list(argv))
+        return _FakeProc(argv)
+
+    def fake_sleep(_seconds: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] >= 1:
+            raise _StopLoop()
+
+    with pytest.raises(_StopLoop):
+        run_supervisor(
+            home=tmp_path,
+            argv_prefix=["agent"],
+            popen=fake_popen,
+            monotonic=lambda: float(ticks["n"]),
+            sleep=fake_sleep,
+        )
+    specs = dict(child_specs(["agent"]))
+    assert started == [specs["knock"], specs["dashboard"], specs["sync"]]
+    assert any("sync" in argv and "--follow" in argv for argv in started)
+
+
+@pytest.mark.no_pg
+def test_run_supervisor_starts_sync_after_pair(tmp_path: Path) -> None:
+    procs: dict[str, _FakeProc] = {}
+    started: list[list[str]] = []
+    ticks = {"n": 0}
+
+    def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
+        started.append(list(argv))
+        name = _child_name(argv)
+        proc = _FakeProc(argv)
+        procs[name] = proc
+        return proc
+
+    def fake_sleep(_seconds: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            assert "sync" not in procs
+            _write_hub_config(tmp_path)
+        if ticks["n"] >= 3 and "sync" in procs:
+            raise _StopLoop()
+
+    with pytest.raises(_StopLoop):
+        run_supervisor(
+            home=tmp_path,
+            argv_prefix=["agent"],
+            popen=fake_popen,
+            monotonic=lambda: float(ticks["n"]),
+            sleep=fake_sleep,
+        )
+    assert "sync" in procs
+    assert any("sync" in argv and "--follow" in argv for argv in started)
 
 
 @pytest.mark.no_pg
@@ -369,7 +559,10 @@ def test_knock_tick_with_hub_url_and_device_token(
 
 
 @pytest.mark.no_pg
-def test_run_supervisor_popen_fails_on_dashboard(tmp_path: Path) -> None:
+def test_run_supervisor_popen_fails_on_dashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killpg_calls = _patch_killpg(monkeypatch)
     procs: dict[str, _FakeProc] = {}
 
     def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
@@ -388,8 +581,8 @@ def test_run_supervisor_popen_fails_on_dashboard(tmp_path: Path) -> None:
             monotonic=lambda: 0.0,
             sleep=lambda _s: None,
         )
-    assert procs["knock"].terminated is True
-    assert procs["sync"].terminated is True
+    assert "sync" not in procs
+    assert (procs["knock"].pid, signal.SIGTERM) in killpg_calls
     second = acquire_lock(tmp_path)
     second.close()  # type: ignore[attr-defined]
 
@@ -416,5 +609,5 @@ def test_run_supervisor_child_specs_argv(tmp_path: Path) -> None:
             monotonic=lambda: float(ticks["n"]),
             sleep=fake_sleep,
         )
-    expected = [argv for _name, argv in child_specs(["agent"])]
+    expected = [argv for name, argv in child_specs(["agent"]) if name != "sync"]
     assert started == expected

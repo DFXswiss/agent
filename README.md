@@ -15,7 +15,7 @@ pip install -e ".[test]"
 agent init
 ```
 
-`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which keeps knock, usage / pending / `pr.merged` polls, `sync --follow`, and the local dashboard running.
+`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock and the local dashboard immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid).
 
 ## Pair and sync
 
@@ -28,7 +28,7 @@ agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is 
 # other commands refuse until you move ledger.sqlite aside
 ```
 
-`AGENT_HUB` may replace `--hub`. There is no default hub URL. After `agent init`, the user-service daemon already runs `sync --follow`; a one-shot `agent sync` after pairing is enough for catch-up.
+`AGENT_HUB` may replace `--hub`. There is no default hub URL. After `agent pair`, once `device.json` has token and hub URL, the user-service daemon starts `sync --follow`; a one-shot `agent sync` after pairing is enough for catch-up.
 
 ## Record work
 
