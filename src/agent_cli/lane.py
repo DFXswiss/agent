@@ -1,4 +1,4 @@
-"""Headless vendor-lane launcher (argv builders + subprocess runner)."""
+"""Vendor-lane launcher (argv builders + subprocess or tmux holder)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import re
 import resource
 import subprocess
 import tempfile
+import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +37,7 @@ class LaneResult:
     returncode: int
     stdout: str
     stderr: str
+    tmux_session: str | None = None
 
 
 # runner(argv, stdin_text) -> object with returncode, stdout, stderr
@@ -116,6 +119,20 @@ def codex_argv(*, cwd: str, write: bool, output_file: str) -> list[str]:
     return argv
 
 
+def lane_tmux_name(*, vendor: str, role: str, unique: str = "") -> str:
+    base = f"agent-lane-{vendor}-{role}"
+    if unique:
+        base = f"{base}-{unique}"
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", base)[:50]
+    if cleaned == "":
+        raise SystemExit("lane tmux name is empty")
+    return cleaned
+
+
+def tmux_wrap_argv(inner: list[str], *, name: str, cwd: str) -> list[str]:
+    return ["tmux", "new-session", "-d", "-s", name, "-c", cwd, "--", *inner]
+
+
 def parse_status(output: str, returncode: int) -> str:
     matches = list(_STATUS_RE.finditer(output))
     if matches:
@@ -144,6 +161,62 @@ def _default_runner(argv: list[str], stdin_text: str | None) -> subprocess.Compl
     )
 
 
+def _tmux_call(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+
+def _run_in_tmux(
+    inner: list[str],
+    *,
+    name: str,
+    cwd: str,
+    stdin_text: str | None,
+) -> subprocess.CompletedProcess[str]:
+    """Hold the vendor process in tmux, wait for the pane to die, capture output."""
+    wrap = tmux_wrap_argv(inner, name=name, cwd=cwd)
+    created = _tmux_call(wrap)
+    if created.returncode != 0:
+        return created
+    remain = _tmux_call(["tmux", "set-option", "-t", name, "remain-on-exit", "on"])
+    if remain.returncode != 0:
+        _tmux_call(["tmux", "kill-session", "-t", name])
+        return remain
+    if stdin_text:
+        payload = stdin_text if stdin_text.endswith("\n") else stdin_text + "\n"
+        typed = _tmux_call(["tmux", "send-keys", "-t", name, "-l", "--", payload])
+        if typed.returncode != 0:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return typed
+        eof = _tmux_call(["tmux", "send-keys", "-t", name, "C-d"])
+        if eof.returncode != 0:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return eof
+    while True:
+        dead = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead}"])
+        if dead.returncode != 0:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return subprocess.CompletedProcess(
+                wrap, dead.returncode or 1, "", dead.stderr or ""
+            )
+        if dead.stdout.strip() == "1":
+            break
+        time.sleep(0.2)
+    status = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead_status}"])
+    returncode = 1
+    if status.returncode == 0:
+        raw = status.stdout.strip()
+        if raw.isdigit():
+            returncode = int(raw)
+    captured = _tmux_call(["tmux", "capture-pane", "-t", name, "-p", "-S", "-"])
+    _tmux_call(["tmux", "kill-session", "-t", name])
+    return subprocess.CompletedProcess(
+        wrap,
+        returncode,
+        captured.stdout or "",
+        captured.stderr or "",
+    )
+
+
 def launch(
     *,
     role: str,
@@ -152,6 +225,7 @@ def launch(
     cwd: str,
     runner: Runner | None = None,
     dry_run: bool = False,
+    tmux: bool = True,
 ) -> LaneResult:
     if role not in LANE_ROLES:
         raise SystemExit(f"role must be {'|'.join(LANE_ROLES)}")
@@ -164,6 +238,8 @@ def launch(
     spec_text = path.read_text(encoding="utf-8")
     if not spec_text.strip():
         raise SystemExit(f"spec-file is empty: {spec_file}")
+    spec_file = str(path.resolve())
+    cwd = str(Path(cwd).resolve())
 
     write = role in WRITE_ROLES
     codex_output_file: str | None = None
@@ -184,6 +260,12 @@ def launch(
             os.close(fd)
             argv = codex_argv(cwd=cwd, write=write, output_file=codex_output_file)
 
+    tmux_session: str | None = None
+    if tmux:
+        unique = "" if dry_run else uuid.uuid4().hex[:8]
+        tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
+        argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
+
     if dry_run:
         return LaneResult(
             role=role,
@@ -193,12 +275,24 @@ def launch(
             returncode=0,
             stdout="",
             stderr="",
+            tmux_session=tmux_session,
         )
 
     stdin_text: str | None = spec_text if vendor == "codex" else None
-    active = runner if runner is not None else _default_runner
     try:
-        completed = active(argv, stdin_text)
+        if runner is not None:
+            completed = runner(argv, None if tmux else stdin_text)
+        elif tmux:
+            if "--" not in argv:
+                raise SystemExit("tmux argv missing command separator")
+            if tmux_session is None:
+                raise SystemExit("tmux session name missing")
+            inner = argv[argv.index("--") + 1 :]
+            completed = _run_in_tmux(
+                inner, name=tmux_session, cwd=cwd, stdin_text=stdin_text
+            )
+        else:
+            completed = _default_runner(argv, stdin_text)
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")
@@ -220,6 +314,7 @@ def launch(
             returncode=returncode,
             stdout=stdout,
             stderr=stderr,
+            tmux_session=tmux_session,
         )
     finally:
         if codex_output_file is not None:

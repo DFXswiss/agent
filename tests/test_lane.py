@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import CompletedProcess
 from types import SimpleNamespace
 
 import pytest
 
 from agent_cli.lane import (
     GROK_STRIP_ENV,
+    _run_in_tmux,
     codex_argv,
     grok_argv,
     launch,
     parse_status,
+    tmux_wrap_argv,
 )
 from agent_cli.main import main
 
@@ -94,6 +97,7 @@ def test_pr_reviewer_quality_uses_readonly_grok_argv(tmp_path: Path) -> None:
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
+        tmux=False,
     )
     assert "--deny" in result.argv
     assert "Write" in result.argv
@@ -166,6 +170,7 @@ def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
         cwd=str(tmp_path),
         runner=boom,
         dry_run=True,
+        tmux=False,
     )
     assert result.status == ""
     assert result.returncode == 0
@@ -188,6 +193,7 @@ def test_launch_codex_dry_run_skips_mkstemp(
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
+        tmux=False,
     )
     assert "--output-last-message" in result.argv
 
@@ -212,6 +218,7 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
+        tmux=False,
     )
     assert len(seen) == 1
     assert seen[0][1] == contents
@@ -240,6 +247,7 @@ def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) ->
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=fake,
+            tmux=False,
         )
     assert out_path is not None
     assert not Path(out_path).exists()
@@ -266,9 +274,232 @@ def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
+        tmux=False,
     )
     assert seen == [None] or seen == [""]
     assert result.status == "complete"
+
+
+def test_tmux_wrap_argv_shape() -> None:
+    inner = ["env", "-u", "ANTHROPIC_API_KEY", "grok", "--prompt-file", "s"]
+    argv = tmux_wrap_argv(inner, name="agent-lane-grok-implementer", cwd="/work")
+    assert argv[:6] == [
+        "tmux",
+        "new-session",
+        "-d",
+        "-s",
+        "agent-lane-grok-implementer",
+        "-c",
+    ]
+    assert argv[6] == "/work"
+    assert argv[7] == "--"
+    assert argv[8:] == inner
+
+
+def test_launch_default_wraps_tmux(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+    )
+    assert result.argv[:3] == ["tmux", "new-session", "-d"]
+    assert "-s" in result.argv
+    assert result.tmux_session is not None
+    assert result.tmux_session.startswith("agent-lane-grok-implementer")
+    assert "--" in result.argv
+    assert "grok-4.5" in result.argv
+    inner = result.argv[result.argv.index("--") + 1 :]
+    assert inner[0] == "env"
+
+
+def test_launch_no_tmux_starts_with_env(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+        tmux=False,
+    )
+    assert result.argv[0] == "env"
+    assert "tmux" not in result.argv
+    assert result.tmux_session is None
+
+
+def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="STATUS: complete\n", stderr="")
+
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+    )
+    assert len(seen) == 1
+    assert seen[0][:3] == ["tmux", "new-session", "-d"]
+    assert result.status == "complete"
+
+
+def _tmux_script(handler):
+    calls: list[list[str]] = []
+
+    def fake(argv: list[str]) -> CompletedProcess[str]:
+        calls.append(list(argv))
+        return handler(argv, calls)
+
+    return fake, calls
+
+
+def test_run_in_tmux_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[:2] == ["tmux", "new-session"]:
+            return CompletedProcess(argv, 0, "", "")
+        if "remain-on-exit" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, "STATUS: complete\n", "")
+        if "kill-session" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok", "--prompt-file", "s"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 0
+    assert "STATUS: complete" in result.stdout
+    assert calls[0][:3] == ["tmux", "new-session", "-d"]
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_pane_dead_status_is_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "42\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, "STATUS: partial\n", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 42
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_empty_pane_dead_status_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, _calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 1
+
+
+def test_run_in_tmux_kills_on_remain_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if "remain-on-exit" in argv:
+            return CompletedProcess(argv, 1, "", "no tmux")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 1
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_kills_on_pane_dead_query_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 2, "", "gone")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 2
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_send_keys_adds_trailing_newline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, "STATUS: complete\n", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="no-newline")
+    typed = [c for c in calls if "send-keys" in c and "-l" in c]
+    assert typed
+    assert typed[0][-1].endswith("\n")
+
+
+def test_launch_tmux_passes_absolute_spec_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file="spec.md",
+        cwd=str(work),
+        dry_run=True,
+    )
+    inner = result.argv[result.argv.index("--") + 1 :]
+    prompt = inner[inner.index("--prompt-file") + 1]
+    assert Path(prompt).is_absolute()
+    assert Path(prompt) == spec.resolve()
+    assert result.argv[result.argv.index("-c") + 1] == str(work.resolve())
+    inner_cwd = inner[inner.index("--cwd") + 1]
+    assert inner_cwd == str(work.resolve())
+
+
+def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if "send-keys" in argv and "-l" in argv:
+            return CompletedProcess(argv, 3, "", "no pane")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
+    assert result.returncode == 3
+    assert any("kill-session" in c for c in calls)
 
 
 def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -290,8 +521,35 @@ def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixt
         ]
     )
     out = capsys.readouterr().out.strip()
+    assert "tmux" in out
+    assert "new-session" in out
     assert "grok-4.5" in out
     assert "STATUS=" not in out
+
+
+def test_cli_no_tmux_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    run(
+        [
+            "lane",
+            "run",
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--spec-file",
+            str(spec),
+            "--cwd",
+            str(tmp_path),
+            "--dry-run",
+            "--no-tmux",
+        ]
+    )
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("env ")
+    assert "new-session" not in out
+    assert "grok-4.5" in out
 
 
 def test_cli_missing_spec_dies(tmp_path: Path) -> None:
