@@ -136,6 +136,10 @@ def test_parse_status_completed_suffix_not_complete() -> None:
     assert parse_status("STATUS: completed\n", 0) == "partial"
 
 
+def test_parse_status_newline_after_colon_not_complete() -> None:
+    assert parse_status("STATUS:\ncomplete\n", 0) == "partial"
+
+
 def test_parse_status_rc_124_timeout() -> None:
     assert parse_status("no status here", 124) == "timeout"
 
@@ -168,6 +172,26 @@ def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
     assert "grok-4.5" in result.argv
 
 
+def test_launch_codex_dry_run_skips_mkstemp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("codex dry run\n", encoding="utf-8")
+
+    def boom_mkstemp(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        raise AssertionError("tempfile.mkstemp must not be called on dry_run")
+
+    monkeypatch.setattr("agent_cli.lane.tempfile.mkstemp", boom_mkstemp)
+    result = launch(
+        role="implementer",
+        vendor="codex",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+    )
+    assert "--output-last-message" in result.argv
+
+
 def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     spec = tmp_path / "spec.md"
     contents = "codex please implement\n"
@@ -196,6 +220,29 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert output_paths
     assert not Path(output_paths[0]).exists()
+
+
+def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("codex please fail\n", encoding="utf-8")
+    out_path: str | None = None
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        nonlocal out_path
+        out_path = argv[argv.index("--output-last-message") + 1]
+        Path(out_path).write_text("STATUS: complete\n", encoding="utf-8")
+        raise RuntimeError("codex runner failed")
+
+    with pytest.raises(RuntimeError, match="codex runner failed"):
+        launch(
+            role="implementer",
+            vendor="codex",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            runner=fake,
+        )
+    assert out_path is not None
+    assert not Path(out_path).exists()
 
 
 def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
 
 _STATUS_RE = re.compile(
-    r"(?m)^STATUS:\s*(complete|partial|timeout|unavailable)\s*$",
+    r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
     re.IGNORECASE,
 )
 
