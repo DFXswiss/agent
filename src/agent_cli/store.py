@@ -69,7 +69,7 @@ OWNED_TABLES = frozenset(
 )
 
 WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged", "issue.assigned"})
-DONE_WAKE_ACTIVITY_TYPES = frozenset({"pr.merged", "issue.assigned"})
+DONE_WAKE_ACTIVITY_TYPES = frozenset({"pr.merged"})
 
 EXECUTABLE_ACTIVITY_TYPES = frozenset(
     {

@@ -1450,6 +1450,14 @@ def test_watch_usage_mentions_grok_usage() -> None:
         main(["watch", "nope"])
 
 
+def test_watch_assigned_rejects_unknown_flag(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match=r"assigned \[--follow\]"):
+        run(tmp_path, ["watch", "assigned", "--folow"])
+    with pytest.raises(SystemExit, match=r"assigned \[--follow\]"):
+        run(tmp_path, ["watch", "assigned", "--follow", "--follow"])
+
+
 def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     with pytest.raises(SystemExit, match="assigned_repos|watch.json"):

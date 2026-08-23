@@ -7,7 +7,13 @@ import pytest
 
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
-from agent_cli.watch import dispatch_assigned, load_watch_config, scan_assigned, scan_merged
+from agent_cli.watch import (
+    ISSUE_LIST_LIMIT,
+    dispatch_assigned,
+    load_watch_config,
+    scan_assigned,
+    scan_merged,
+)
 
 
 def test_scan_merged_inserts_once(tmp_path: Path) -> None:
@@ -221,6 +227,30 @@ def test_scan_assigned_first_scan_sets_cursor_only(tmp_path: Path) -> None:
     assert skipped == 0
     assert not any(r.get("type") == "issue.assigned" for r in store.rows("activity"))
     assert store.sync_get("assigned_watch_since") == "2026-08-23T12:00:00Z"
+
+
+def test_scan_assigned_truncated_issue_list_inserts_nothing(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps([{"number": i + 1} for i in range(ISSUE_LIST_LIMIT)]),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
+    assert skipped == 1
+    assert store.sync_get("assigned_watch_since") == "2020-01-01T00:00:00Z"
+    assert not any(r.get("type") == "issue.assigned" for r in store.rows("activity"))
 
 
 def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:

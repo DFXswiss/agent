@@ -2256,7 +2256,10 @@ def cmd_watch(args: list[str]) -> None:
             from .knock import deliver
             from .runtime import run_argv
 
-            follow = "--follow" in args[1:]
+            extra = args[1:]
+            if extra not in ([], ["--follow"]):
+                die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage")
+            follow = extra == ["--follow"]
             while True:
                 created, skipped = scan_assigned(store, run_argv, now=utcnow())
                 workspace_root = assigned_workspace_root(store)
@@ -2296,7 +2299,6 @@ def cmd_watch(args: list[str]) -> None:
                 if not follow:
                     return
                 time.sleep(30)
-            return
         from .pending import scan_pending
 
         hub = _hub_from_store(store)

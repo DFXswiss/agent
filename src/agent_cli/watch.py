@@ -182,6 +182,7 @@ def scan_merged(
 
 
 DEFAULT_ASSIGNED_SESSION = "assigned"
+ISSUE_LIST_LIMIT = 1000
 
 
 def load_watch_config(home: Path) -> tuple[list[str], str]:
@@ -378,12 +379,15 @@ def scan_assigned(
                 "--state",
                 "open",
                 "--limit",
-                "1000",
+                str(ISSUE_LIST_LIMIT),
                 "--json",
                 "number,title,url,body",
             ],
             runner,
         )
+        if len(issues) >= ISSUE_LIST_LIMIT:
+            skipped += 1
+            continue
         for issue in issues:
             if not isinstance(issue, dict):
                 continue
