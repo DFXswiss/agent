@@ -1458,7 +1458,7 @@ def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
 
 def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
-    with pytest.raises(SystemExit, match="assigned \\[--follow\\]"):
+    with pytest.raises(SystemExit, match=r"assigned\|grok-usage \[--follow\]"):
         run(tmp_path, ["watch"])
 
 

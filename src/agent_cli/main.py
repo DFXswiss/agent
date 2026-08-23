@@ -2293,6 +2293,7 @@ def cmd_watch(args: list[str]) -> None:
                 if not follow:
                     return
                 time.sleep(30)
+            return
         from .pending import scan_pending
 
         hub = _hub_from_store(store)
