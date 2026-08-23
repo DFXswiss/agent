@@ -297,7 +297,8 @@ v1 types (mechanism only):
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
-| `issue.assigned` | `issue` | script | — (`NOTIFY` `agent_inbox` / start Grok / existing knock) |
+| `issue.assigned` | `issue` | script | — (`NOTIFY` `agent_inbox` / one Grok terminal / queue) |
+| `issue.assigned.ack` | `issue` | AI | — (releases the next queued knock) |
 | `comment.post` | — | AI (target + body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
@@ -327,7 +328,7 @@ Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of 
 
 The first scan records `assigned_watch_since` and dispatches nothing. Later scans only consider assignments whose latest matching `assigned` event is strictly after that cursor.
 
-The writer is this device. On a new assignment it inserts a runner session plus `issue.assigned`, pushes own events to the hub in the same process, then `session start --provider grok` with a session working directory, then knocks. Knock text is unchanged (`da ist Post id <uuid>`). The watcher may call the existing knock `deliver` after start because the session did not exist at insert time (unlike `pr.merged`).
+The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`). There is one tmux/Grok terminal, not one per issue. New `issue.assigned` rows enqueue on that session. The script pushes own events, starts Grok only if that session is not already attached, writes `MANDATE.md` / `QUEUE.md` (no issue body), then knocks at most the head of the queue (`da ist Post id <uuid>`). Further knocks stay queued until the session records `issue.assigned.ack` with `payload.assigned_id`.
 
 Payload `mandate=github-assignment` is trusted. Issue title and body in the payload are not.
 

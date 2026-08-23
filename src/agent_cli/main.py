@@ -102,6 +102,7 @@ ACTIVITY_TYPES = frozenset(
         "pr.open",
         "pr.merged",
         "issue.assigned",
+        "issue.assigned.ack",
         "comment.post",
         "mail.ingest",
         "mail.seen",

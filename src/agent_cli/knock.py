@@ -30,6 +30,32 @@ def target_session_id(activity: dict[str, Any]) -> str | None:
     return None
 
 
+def assigned_inflight_id(store: Store, session_id: str) -> str | None:
+    acked: set[str] = set()
+    for row in store.rows("activity"):
+        if row.get("type") != "issue.assigned.ack":
+            continue
+        if row.get("session_id") != session_id:
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        aid = payload.get("assigned_id")
+        if isinstance(aid, str) and aid:
+            acked.add(aid)
+    for row in store.rows("activity"):
+        if row.get("type") != "issue.assigned":
+            continue
+        if row.get("session_id") != session_id:
+            continue
+        aid = row.get("id")
+        if not isinstance(aid, str) or aid in acked:
+            continue
+        if store.wake_delivered(aid):
+            return aid
+    return None
+
+
 def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     """Send the knock or leave it queued. Returns sent|queued|unread|missing."""
     if store.wake_delivered(activity_id):
@@ -61,6 +87,11 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     if runtime.is_busy(sid):
         store.enqueue_wake(activity_id, sid)
         return "queued"
+    if activity.get("type") == "issue.assigned":
+        inflight = assigned_inflight_id(store, sid)
+        if inflight is not None and inflight != activity_id:
+            store.enqueue_wake(activity_id, sid)
+            return "queued"
     if not store.claim_wake(activity_id):
         return "sent"
     text = knock_text(activity_id)
