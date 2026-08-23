@@ -21,7 +21,7 @@ GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
 
 _STATUS_RE = re.compile(
-    r"STATUS:\s*(complete|partial|timeout|unavailable)",
+    r"(?m)^STATUS:\s*(complete|partial|timeout|unavailable)\s*$",
     re.IGNORECASE,
 )
 
@@ -166,13 +166,23 @@ def launch(
         raise SystemExit(f"spec-file is empty: {spec_file}")
 
     write = role in WRITE_ROLES
-    output_file: str | None = None
+    codex_output_file: str | None = None
     if vendor == "grok":
         argv = grok_argv(spec_file=spec_file, cwd=cwd, write=write)
     else:
-        fd, output_file = tempfile.mkstemp(prefix="agent-lane-codex-", suffix=".txt")
-        os.close(fd)
-        argv = codex_argv(cwd=cwd, write=write, output_file=output_file)
+        if dry_run:
+            argv = codex_argv(
+                cwd=cwd,
+                write=write,
+                output_file="/tmp/agent-lane-codex-dry-run.txt",
+            )
+        else:
+            fd, codex_output_file = tempfile.mkstemp(
+                prefix="agent-lane-codex-",
+                suffix=".txt",
+            )
+            os.close(fd)
+            argv = codex_argv(cwd=cwd, write=write, output_file=codex_output_file)
 
     if dry_run:
         return LaneResult(
@@ -187,26 +197,33 @@ def launch(
 
     stdin_text: str | None = spec_text if vendor == "codex" else None
     active = runner if runner is not None else _default_runner
-    completed = active(argv, stdin_text)
-    returncode = int(getattr(completed, "returncode"))
-    stdout = str(getattr(completed, "stdout") or "")
-    stderr = str(getattr(completed, "stderr") or "")
+    try:
+        completed = active(argv, stdin_text)
+        returncode = int(getattr(completed, "returncode"))
+        stdout = str(getattr(completed, "stdout") or "")
+        stderr = str(getattr(completed, "stderr") or "")
 
-    if vendor == "codex" and output_file is not None:
-        try:
-            file_text = Path(output_file).read_text(encoding="utf-8")
-        except OSError:
-            file_text = ""
-        if file_text:
-            stdout = file_text
+        if codex_output_file is not None:
+            try:
+                file_text = Path(codex_output_file).read_text(encoding="utf-8")
+            except OSError:
+                file_text = ""
+            if file_text:
+                stdout = file_text
 
-    status = parse_status(stdout, returncode)
-    return LaneResult(
-        role=role,
-        vendor=vendor,
-        status=status,
-        argv=argv,
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
+        status = parse_status(stdout, returncode)
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status=status,
+            argv=argv,
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+    finally:
+        if codex_output_file is not None:
+            try:
+                os.unlink(codex_output_file)
+            except OSError:
+                pass

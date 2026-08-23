@@ -126,6 +126,16 @@ def test_parse_status_last_line_wins() -> None:
     assert parse_status("STATUS: complete\nSTATUS: partial\n", 0) == "partial"
 
 
+def test_parse_status_schema_line_not_complete() -> None:
+    assert (
+        parse_status("STATUS: complete | partial | timeout | unavailable", 0) == "partial"
+    )
+
+
+def test_parse_status_completed_suffix_not_complete() -> None:
+    assert parse_status("STATUS: completed\n", 0) == "partial"
+
+
 def test_parse_status_rc_124_timeout() -> None:
     assert parse_status("no status here", 124) == "timeout"
 
@@ -163,10 +173,14 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     contents = "codex please implement\n"
     spec.write_text(contents, encoding="utf-8")
     seen: list[tuple[list[str], str | None]] = []
+    output_paths: list[str] = []
 
     def fake(argv: list[str], stdin_text: str | None) -> object:
         seen.append((argv, stdin_text))
-        return SimpleNamespace(returncode=0, stdout="STATUS: complete\n", stderr="")
+        out_path = argv[argv.index("--output-last-message") + 1]
+        output_paths.append(out_path)
+        Path(out_path).write_text("STATUS: complete\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="STATUS: partial\n", stderr="")
 
     result = launch(
         role="implementer",
@@ -180,6 +194,8 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     assert "codex" in seen[0][0]
     assert result.status == "complete"
     assert result.returncode == 0
+    assert output_paths
+    assert not Path(output_paths[0]).exists()
 
 
 def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
