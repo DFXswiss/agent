@@ -181,7 +181,8 @@
         });
         document.querySelector("#usage tbody").innerHTML = usageRows.map(ev => {
           const p = ev.payload || {};
-          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(p.account_email)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(p.used_percent + "%")}</td><td>${esc(p.period_end)}</td><td>${esc(p.fetched_at)}</td></tr>`;
+          const used = typeof p.used_percent === "number" ? p.used_percent + "%" : "";
+          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(p.account_email)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(used)}</td><td>${esc(p.period_end)}</td><td>${esc(p.fetched_at)}</td></tr>`;
         }).join("") || empty(7);
 
         sessionsById = {};
