@@ -484,6 +484,9 @@ def test_launch_tmux_passes_absolute_spec_file(
     prompt = inner[inner.index("--prompt-file") + 1]
     assert Path(prompt).is_absolute()
     assert Path(prompt) == spec.resolve()
+    assert result.argv[result.argv.index("-c") + 1] == str(work.resolve())
+    inner_cwd = inner[inner.index("--cwd") + 1]
+    assert inner_cwd == str(work.resolve())
 
 
 def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) -> None:

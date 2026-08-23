@@ -239,6 +239,7 @@ def launch(
     if not spec_text.strip():
         raise SystemExit(f"spec-file is empty: {spec_file}")
     spec_file = str(path.resolve())
+    cwd = str(Path(cwd).resolve())
 
     write = role in WRITE_ROLES
     codex_output_file: str | None = None
