@@ -165,12 +165,28 @@ def _xml_escape(value: str) -> str:
     )
 
 
-def service_unit_text(*, program: list[str], home: Path, platform: str) -> str:
+def service_unit_text(
+    *,
+    program: list[str],
+    home: Path,
+    platform: str,
+    extra_env: dict[str, str] | None = None,
+) -> str:
     """Render a launchd plist (darwin) or systemd user unit (linux)."""
+    env = extra_env or {}
     if platform == "darwin":
         args_xml = "\n".join(
             f"    <string>{_xml_escape(part)}</string>" for part in program
         )
+        env_xml = (
+            "    <key>AGENT_HOME</key>\n"
+            f"    <string>{_xml_escape(str(home))}</string>\n"
+        )
+        for key, value in env.items():
+            env_xml += (
+                f"    <key>{_xml_escape(key)}</key>\n"
+                f"    <string>{_xml_escape(value)}</string>\n"
+            )
         return (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -189,14 +205,16 @@ def service_unit_text(*, program: list[str], home: Path, platform: str) -> str:
             "  <true/>\n"
             "  <key>EnvironmentVariables</key>\n"
             "  <dict>\n"
-            "    <key>AGENT_HOME</key>\n"
-            f"    <string>{_xml_escape(str(home))}</string>\n"
+            f"{env_xml}"
             "  </dict>\n"
             "</dict>\n"
             "</plist>\n"
         )
     if platform == "linux":
         exec_start = " ".join(shlex.quote(part) for part in program)
+        env_lines = f"Environment=AGENT_HOME={home}\n"
+        for key, value in env.items():
+            env_lines += f"Environment={key}={value}\n"
         return (
             "[Unit]\n"
             "Description=DFX agent device daemon\n"
@@ -204,7 +222,7 @@ def service_unit_text(*, program: list[str], home: Path, platform: str) -> str:
             "[Service]\n"
             f"ExecStart={exec_start}\n"
             "Restart=always\n"
-            f"Environment=AGENT_HOME={home}\n"
+            f"{env_lines}"
             "\n"
             "[Install]\n"
             "WantedBy=default.target\n"
@@ -253,7 +271,12 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
-    text = service_unit_text(program=program, home=home, platform=plat)
+    text = service_unit_text(
+        program=program,
+        home=home,
+        platform=plat,
+        extra_env={"PATH": os.environ.get("PATH") or "/usr/bin:/bin"},
+    )
     path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

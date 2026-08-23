@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 
@@ -177,6 +178,27 @@ def test_identity_survives_database_wipe(tmp_path: Path, pg_admin_dsn: str) -> N
     assert wiped.device_id() == device_id
     assert wiped.meta("github_login") == "alice"
     assert wiped.row("session", "s1") is None
+
+
+def test_save_identity_tmp_uses_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    captured: list[Path] = []
+    original = Path.replace
+
+    def fake_replace(self: Path, target: Path | str) -> Path:
+        captured.append(self)
+        return original(self, target)
+
+    monkeypatch.setattr(Path, "replace", fake_replace)
+    store.save_identity()
+    assert len(captured) == 1
+    tmp = captured[0]
+    assert str(os.getpid()) in tmp.name
+    assert tmp.name == f"device.json.tmp.{os.getpid()}"
+    assert not (tmp_path / "device.json.tmp").exists()
+    assert (tmp_path / "device.json").is_file()
 
 
 def test_store_rejects_mismatched_device_json(tmp_path: Path) -> None:

@@ -2255,11 +2255,7 @@ def cmd_daemon(args: list[str]) -> None:
     )
 
     if args == []:
-        store = open_store()
-        try:
-            run_supervisor(home=store.home, argv_prefix=agent_argv())
-        finally:
-            store.close()
+        run_supervisor(home=home(), argv_prefix=agent_argv())
         return
     if args == ["--install"]:
         store = open_store()
