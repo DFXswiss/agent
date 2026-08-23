@@ -28,6 +28,7 @@ from .chain import (
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
+from .lane import LANE_ROLES, LANE_VENDORS, launch
 from .pg import PgError, ensure_cluster, require_loopback_dsn
 from .runtime import (
     Runtime,
@@ -2148,6 +2149,34 @@ def cmd_run(args: list[str]) -> None:
     cmd_close_step(close_args)
 
 
+def cmd_lane(args: list[str]) -> None:
+    if not args or args[0] != "run":
+        die(
+            "Usage: agent lane run --role ROLE --vendor grok|codex "
+            "--spec-file PATH [--cwd PATH] [--dry-run]"
+        )
+    rest = args[1:]
+    role = require_flag(rest, "--role")
+    vendor = require_flag(rest, "--vendor")
+    spec_file = require_flag(rest, "--spec-file")
+    cwd = flag(rest, "--cwd") or os.getcwd()
+    dry_run = "--dry-run" in rest
+    if role not in LANE_ROLES:
+        die(f"role must be {'|'.join(LANE_ROLES)}")
+    if vendor not in LANE_VENDORS:
+        die("vendor must be grok|codex")
+    result = launch(role=role, vendor=vendor, spec_file=spec_file, cwd=cwd, dry_run=dry_run)
+    if dry_run:
+        print(" ".join(result.argv))
+        return
+    print(
+        f"lane role={result.role} vendor={result.vendor} "
+        f"STATUS={result.status} rc={result.returncode}"
+    )
+    if result.status != "complete":
+        raise SystemExit(2)
+
+
 def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
@@ -2220,6 +2249,7 @@ COMMANDS = {
     "status": cmd_status,
     "dashboard": cmd_dashboard,
     "knock": cmd_knock,
+    "lane": cmd_lane,
     "watch": cmd_watch,
 }
 
@@ -2229,7 +2259,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|watch> …"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|lane|watch> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:
