@@ -310,6 +310,18 @@ def _issue_number(raw: Any) -> int | None:
     return raw
 
 
+def _pinned_assigned_session(store: Store, sid: str) -> str:
+    pinned = store.sync_get("assigned_session_id")
+    if pinned is None:
+        store.sync_set("assigned_session_id", sid)
+        return sid
+    if pinned != sid:
+        raise StoreError(
+            f"watch.json session_id is {sid}, assigned worker is already {pinned}"
+        )
+    return pinned
+
+
 def scan_assigned(
     store: Store,
     runner: Callable[[list[str]], Completed],
@@ -318,6 +330,7 @@ def scan_assigned(
 ) -> tuple[list[str], int]:
     """Insert issue.assigned for allowlisted open issues newly assigned to this login."""
     repos, sid = load_watch_config(store.home)
+    sid = _pinned_assigned_session(store, sid)
     login = _paired_login(store, runner)
     cursor = store.sync_get("assigned_watch_since")
     if cursor is None:
@@ -388,7 +401,7 @@ def scan_assigned(
                     event_dt = _parse_gh_time(created_at)
                 except ValueError:
                     continue
-                if event_dt <= cursor_dt:
+                if event_dt < cursor_dt:
                     continue
                 if newest_dt is None or event_dt > newest_dt:
                     newest_dt = event_dt

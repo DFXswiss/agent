@@ -227,6 +227,7 @@ def test_scan_assigned_first_scan_sets_cursor_only(tmp_path: Path) -> None:
     assert skipped == 0
     assert not any(r.get("type") == "issue.assigned" for r in store.rows("activity"))
     assert store.sync_get("assigned_watch_since") == "2026-08-23T12:00:00Z"
+    assert store.sync_get("assigned_session_id") == "assigned"
 
 
 def test_scan_assigned_truncated_issue_list_inserts_nothing(tmp_path: Path) -> None:
@@ -370,7 +371,7 @@ def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) ->
     assert session["skills"] == ["spine"]
 
 
-def test_scan_assigned_equal_cursor_skips(tmp_path: Path) -> None:
+def test_scan_assigned_equal_cursor_inserts_once(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
     _write_assigned_repos(tmp_path)
@@ -411,9 +412,35 @@ def test_scan_assigned_equal_cursor_skips(tmp_path: Path) -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    again, skipped_again = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
+    assert skipped_again == 0
+    assert again == []
+
+
+def test_scan_assigned_rejects_session_id_change(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    created, skipped = scan_assigned(
+        store,
+        lambda argv: Completed(0, json.dumps({"login": "alice"}), ""),
+        now="2026-08-23T12:00:00Z",
+    )
     assert created == []
     assert skipped == 0
-    assert not any(r.get("type") == "issue.assigned" for r in store.rows("activity"))
+    assert store.sync_get("assigned_session_id") == "assigned"
+    (tmp_path / "watch.json").write_text(
+        json.dumps({"assigned_repos": ["Owner/repo"], "session_id": "other"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="assigned worker is already assigned"):
+        scan_assigned(
+            store,
+            lambda argv: Completed(0, json.dumps({"login": "alice"}), ""),
+            now="2026-08-23T13:00:00Z",
+        )
 
 
 def test_scan_assigned_gh_failure_skips_other_inserts(tmp_path: Path) -> None:
