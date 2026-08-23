@@ -205,6 +205,10 @@ def run_supervisor(
             if n >= SYNC_RESTART_LIMIT:
                 terminate_remaining()
                 raise SystemExit("daemon sync restart limit")
+            if not hub_configured(home):
+                _terminate(sync)
+                children.pop("sync", None)
+                continue
             children["sync"] = start(specs["sync"], start_new_session=True)
     finally:
         signal.signal(signal.SIGTERM, previous_term)
