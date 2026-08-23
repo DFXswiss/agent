@@ -206,8 +206,6 @@ def _run_in_tmux(
         raw = status.stdout.strip()
         if raw.isdigit():
             returncode = int(raw)
-        elif raw == "":
-            returncode = 0
     captured = _tmux_call(["tmux", "capture-pane", "-t", name, "-p", "-S", "-"])
     _tmux_call(["tmux", "kill-session", "-t", name])
     return subprocess.CompletedProcess(
@@ -282,10 +280,13 @@ def launch(
         if runner is not None:
             completed = runner(argv, None if tmux else stdin_text)
         elif tmux:
-            inner = argv[argv.index("--") + 1 :] if "--" in argv else argv
-            name = tmux_session or lane_tmux_name(vendor=vendor, role=role)
+            if "--" not in argv:
+                raise SystemExit("tmux argv missing command separator")
+            if tmux_session is None:
+                raise SystemExit("tmux session name missing")
+            inner = argv[argv.index("--") + 1 :]
             completed = _run_in_tmux(
-                inner, name=name, cwd=cwd, stdin_text=stdin_text
+                inner, name=tmux_session, cwd=cwd, stdin_text=stdin_text
             )
         else:
             completed = _default_runner(argv, stdin_text)
