@@ -256,6 +256,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     assert row["type"] == "issue.assigned"
     assert row["payload"]["number"] == 8
     assert row["payload"]["mandate"] == "github-assignment"
+    assert row["session_id"] == "assigned"
     session = store.row("session", row["session_id"])
     assert session is not None
     assert session["kind"] == "runner"
@@ -385,7 +386,7 @@ def test_scan_assigned_login_mismatch(tmp_path: Path) -> None:
 
 def test_dispatch_assigned_sync_failure_does_not_start(tmp_path: Path) -> None:
     store = Store(tmp_path)
-    sid = "issue-owner-repo-8"
+    sid = "assigned"
     store.write(
         "session",
         "insert",
@@ -432,7 +433,7 @@ def test_dispatch_assigned_sync_failure_does_not_start(tmp_path: Path) -> None:
 
 def test_dispatch_assigned_writes_mandate_and_starts(tmp_path: Path) -> None:
     store = Store(tmp_path)
-    sid = "issue-owner-repo-8"
+    sid = "assigned"
     store.write(
         "session",
         "insert",
@@ -475,12 +476,16 @@ def test_dispatch_assigned_writes_mandate_and_starts(tmp_path: Path) -> None:
     mandate = (workspace_root / sid / "MANDATE.md").read_text(encoding="utf-8")
     assert "asg-1" in mandate
     assert "GitHub assignment is the work order" in mandate
+    assert "one assignment worker" in mandate
     assert "SECRET_BODY_DO_NOT_COPY" not in mandate
+    queue = (workspace_root / sid / "QUEUE.md").read_text(encoding="utf-8")
+    assert "asg-1" in queue
+    assert "SECRET_BODY_DO_NOT_COPY" not in queue
 
 
-def test_dispatch_assigned_skips_when_attached(tmp_path: Path) -> None:
+def test_dispatch_assigned_kicks_when_attached(tmp_path: Path) -> None:
     store = Store(tmp_path)
-    sid = "issue-owner-repo-8"
+    sid = "assigned"
     store.write(
         "session",
         "insert",
@@ -508,14 +513,132 @@ def test_dispatch_assigned_skips_when_attached(tmp_path: Path) -> None:
             "execution_status": "done",
         },
     )
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
     sync_log: list[int] = []
     status = dispatch_assigned(
         store,
         "asg-1",
         sync=lambda: sync_log.append(1),
-        start=lambda s, cwd: None,
-        knock=lambda aid: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
         workspace_root=tmp_path / "sessions",
     )
-    assert status == "skipped"
-    assert sync_log == []
+    assert status == "kicked"
+    assert sync_log == [1]
+    assert start_log == []
+    assert knock_log == ["asg-1"]
+
+
+def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 1,
+                            "title": "One",
+                            "url": "https://github.com/Owner/repo/issues/1",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        },
+                        {
+                            "number": 8,
+                            "title": "Eight",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        },
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and "events" in argv[2]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 2
+    sessions = {store.row("activity", aid)["session_id"] for aid in created}
+    assert sessions == {"assigned"}
+    assert len([r for r in store.rows("session") if r.get("id") == "assigned"]) == 1
+
+
+def test_dispatch_assigned_second_does_not_start_another_terminal(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    sid = "assigned"
+    store.write(
+        "session",
+        "insert",
+        sid,
+        {"id": sid, "kind": "runner", "status": "active"},
+    )
+    for aid, number in (("asg-1", 1), ("asg-2", 8)):
+        store.write(
+            "activity",
+            "insert",
+            aid,
+            {
+                "id": aid,
+                "session_id": sid,
+                "type": "issue.assigned",
+                "payload": {
+                    "repo": "Owner/repo",
+                    "number": number,
+                    "assigned_at": f"2026-01-0{number}T00:00:00Z",
+                    "body": "SECRET_BODY_DO_NOT_COPY",
+                },
+                "execution_status": "done",
+            },
+        )
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+
+    def start(session_id: str, cwd: Path) -> None:
+        start_log.append((session_id, cwd))
+        row = store.row("session", session_id)
+        assert row is not None
+        row["runtime"] = {"control": "attached"}
+        store.write("session", "update", session_id, {k: v for k, v in row.items() if not k.startswith("_")})
+
+    first = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=start,
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    second = dispatch_assigned(
+        store,
+        "asg-2",
+        sync=lambda: None,
+        start=start,
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert first == "started"
+    assert second == "kicked"
+    assert start_log == [(sid, workspace_root / sid)]
+    assert knock_log == ["asg-1", "asg-2"]

@@ -153,3 +153,55 @@ def test_deliver_assigned_does_not_leak_body(tmp_path: Path) -> None:
     assert status == "sent"
     assert any("da ist Post id asg-1" in " ".join(c) for c in calls)
     assert all("secret-body" not in " ".join(c) for c in calls)
+
+
+def test_deliver_assigned_queues_until_ack(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "runner",
+            "status": "active",
+            "runtime": {
+                "control": "attached",
+                "tmux_session": "agent-s1",
+                "tmux_pane": "agent-s1:0.0",
+            },
+        },
+    )
+    for aid in ("asg-1", "asg-2"):
+        store.write(
+            "activity",
+            "insert",
+            aid,
+            {
+                "id": aid,
+                "session_id": "s1",
+                "type": "issue.assigned",
+                "payload": {"body": "secret-body"},
+                "execution_status": "done",
+            },
+        )
+    calls: list[list[str]] = []
+    runtime = _runtime(calls)
+    assert deliver(store, runtime, "asg-1") == "sent"
+    assert deliver(store, runtime, "asg-2") == "queued"
+    assert sum(1 for c in calls if "da ist Post id asg-1" in " ".join(c)) == 1
+    assert all("asg-2" not in " ".join(c) for c in calls)
+    store.write(
+        "activity",
+        "insert",
+        "ack-1",
+        {
+            "id": "ack-1",
+            "session_id": "s1",
+            "type": "issue.assigned.ack",
+            "payload": {"assigned_id": "asg-1"},
+            "execution_status": "done",
+        },
+    )
+    assert deliver(store, runtime, "asg-2") == "sent"
+    assert any("da ist Post id asg-2" in " ".join(c) for c in calls)

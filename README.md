@@ -81,10 +81,10 @@ agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGE
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 
 ```json
-{ "assigned_repos": ["Owner/repo"] }
+{ "assigned_repos": ["Owner/repo"], "session_id": "assigned" }
 ```
 
-Missing or empty `assigned_repos` is an error. The first scan only records the `assigned_watch_since` watermark and creates no activities. Later scans insert a runner session plus `issue.assigned`, push to the hub in the same process, start Grok in a session working directory (writes `MANDATE.md` there; issue body stays out of that file and out of tmux), then knock. Use `--follow` for a 30s loop, or cron for one-shot runs.
+Missing or empty `assigned_repos` is an error. `session_id` is optional and defaults to `assigned`. The first scan only records the `assigned_watch_since` watermark and creates no activities. Later scans enqueue `issue.assigned` on **that one** runner session, push to the hub, and start Grok only if that session is not already attached. There is one terminal; further assignments wait in the knock queue until the session writes `issue.assigned.ack`. `MANDATE.md` and `QUEUE.md` list ids and urls, not issue bodies. Use `--follow` for a 30s loop, or cron for one-shot runs.
 
 ### Session terminal control
 
