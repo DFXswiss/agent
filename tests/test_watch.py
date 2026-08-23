@@ -177,6 +177,21 @@ def test_assigned_repos_missing_file(tmp_path: Path) -> None:
         scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
 
 
+def test_assigned_repos_rejects_non_owner_repo(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    (tmp_path / "watch.json").write_text(
+        json.dumps({"assigned_repos": ["Owner"]}),
+        encoding="utf-8",
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(0, json.dumps({"login": "alice"}), "")
+
+    with pytest.raises(StoreError, match="Owner/repo"):
+        scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+
+
 def test_assigned_repos_empty_list(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
