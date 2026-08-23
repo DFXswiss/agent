@@ -205,9 +205,9 @@ def load_watch_config(home: Path) -> tuple[list[str], str]:
         raw_sid = DEFAULT_ASSIGNED_SESSION
     if not isinstance(raw_sid, str) or raw_sid.strip() == "":
         raise StoreError(f"{path} session_id must be a non-empty string")
-    session_id = re.sub(r"[^A-Za-z0-9_-]", "-", raw_sid.strip())
-    if session_id == "":
-        raise StoreError(f"{path} session_id produces an empty session id")
+    session_id = raw_sid.strip()
+    if re.search(r"[^A-Za-z0-9_-]", session_id) is not None:
+        raise StoreError(f"{path} session_id may contain only A-Za-z0-9_-")
     return list(repos), session_id
 
 
@@ -295,6 +295,23 @@ def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:
         return
     if existing.get("status") == "closed":
         raise StoreError(f"session {sid} is closed")
+    if existing.get("kind") != "runner":
+        raise StoreError(f"session {sid} is kind={existing.get('kind')}, assigned worker must be runner")
+    skills = [item for item in (existing.get("skills") or []) if isinstance(item, str)]
+    changed = False
+    for name in ("spine", "review-loop", "pr-review"):
+        if name not in skills:
+            skills.append(name)
+            changed = True
+    if changed:
+        existing["skills"] = skills
+        existing["last_seen_at"] = now
+        store.write(
+            "session",
+            "update",
+            sid,
+            {k: v for k, v in existing.items() if not str(k).startswith("_")},
+        )
 
 
 def _issue_number(raw: Any) -> int | None:
@@ -528,6 +545,7 @@ def dispatch_assigned(
     start: Callable[[str, Path], None],
     knock: Callable[[str], Any],
     workspace_root: Path,
+    pane_up: Callable[[str], bool] | None = None,
 ) -> str:
     activity = store.row("activity", activity_id)
     if activity is None:
@@ -546,6 +564,8 @@ def dispatch_assigned(
         raise StoreError(f"session {sid} is not owned")
     raw = session.get("runtime")
     attached = isinstance(raw, dict) and raw.get("control") == "attached"
+    if attached and pane_up is not None and not pane_up(sid):
+        attached = False
     sync()
     cwd = workspace_root / sid
     cwd.mkdir(parents=True, exist_ok=True)

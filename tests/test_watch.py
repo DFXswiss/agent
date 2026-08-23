@@ -7,7 +7,7 @@ import pytest
 
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
-from agent_cli.watch import dispatch_assigned, scan_assigned, scan_merged
+from agent_cli.watch import dispatch_assigned, load_watch_config, scan_assigned, scan_merged
 
 
 def test_scan_merged_inserts_once(tmp_path: Path) -> None:
@@ -738,3 +738,102 @@ def test_scan_assigned_after_ack_allows_new_assignment(tmp_path: Path) -> None:
     assert row is not None
     assert row["payload"]["number"] == 8
     assert row["id"] != "old-1"
+
+
+def test_load_watch_config_rejects_invalid_session_id(tmp_path: Path) -> None:
+    (tmp_path / "watch.json").write_text(
+        json.dumps({"assigned_repos": ["Owner/repo"], "session_id": "not/ok"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="session_id"):
+        load_watch_config(tmp_path)
+
+
+def test_scan_assigned_rejects_non_runner_session(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "human", "status": "active"},
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(StoreError, match="runner"):
+        scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+
+
+def test_dispatch_assigned_restarts_when_pane_down(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    sid = "assigned"
+    store.write(
+        "session",
+        "insert",
+        sid,
+        {
+            "id": sid,
+            "kind": "runner",
+            "status": "active",
+            "runtime": {"control": "attached"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": sid,
+            "type": "issue.assigned",
+            "payload": {"repo": "Owner/repo", "number": 8},
+            "execution_status": "done",
+        },
+    )
+    start_log: list[tuple[str, Path]] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: None,
+        workspace_root=tmp_path / "sessions",
+        pane_up=lambda _sid: False,
+    )
+    assert status == "started"
+    assert start_log == [(sid, tmp_path / "sessions" / sid)]
