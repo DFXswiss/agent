@@ -197,9 +197,16 @@ def load_watch_config(home: Path) -> tuple[list[str], str]:
     if (
         not isinstance(repos, list)
         or len(repos) == 0
-        or not all(isinstance(item, str) and item != "" for item in repos)
+        or not all(
+            isinstance(item, str)
+            and item != ""
+            and item.count("/") == 1
+            and not item.startswith("/")
+            and not item.endswith("/")
+            for item in repos
+        )
     ):
-        raise StoreError(f"{path} assigned_repos must be a non-empty list of non-empty strings")
+        raise StoreError(f"{path} assigned_repos must be a non-empty list of Owner/repo strings")
     raw_sid = data.get("session_id", DEFAULT_ASSIGNED_SESSION)
     if raw_sid is None:
         raw_sid = DEFAULT_ASSIGNED_SESSION
@@ -297,21 +304,6 @@ def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:
         raise StoreError(f"session {sid} is closed")
     if existing.get("kind") != "runner":
         raise StoreError(f"session {sid} is kind={existing.get('kind')}, assigned worker must be runner")
-    skills = [item for item in (existing.get("skills") or []) if isinstance(item, str)]
-    changed = False
-    for name in ("spine", "review-loop", "pr-review"):
-        if name not in skills:
-            skills.append(name)
-            changed = True
-    if changed:
-        existing["skills"] = skills
-        existing["last_seen_at"] = now
-        store.write(
-            "session",
-            "update",
-            sid,
-            {k: v for k, v in existing.items() if not str(k).startswith("_")},
-        )
 
 
 def _issue_number(raw: Any) -> int | None:
