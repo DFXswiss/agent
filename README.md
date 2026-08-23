@@ -79,7 +79,7 @@ agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapsh
 # agent knock (daemon, no --once) polls that every 60s
 ```
 
-`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. The knock daemon (`agent knock` without `--once`) records those snapshots in the background on the same interval.
+`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. The knock daemon (`agent knock` without `--once`) records those snapshots in the background on the same interval.
 
 ### Session terminal control
 

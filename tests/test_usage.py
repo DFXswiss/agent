@@ -21,7 +21,12 @@ from agent_cli.usage import (
 SETTINGS = {"subscription_tier_display": "SuperGrok Heavy"}
 
 
-def _auth_file(tmp_path: Path, *, expires_at: str = "2099-01-01T00:00:00Z") -> Path:
+def _auth_file(
+    tmp_path: Path,
+    *,
+    expires_at: str = "2099-01-01T00:00:00Z",
+    email: str = "user@example.com",
+) -> Path:
     path = tmp_path / "auth.json"
     path.write_text(
         json.dumps(
@@ -29,6 +34,7 @@ def _auth_file(tmp_path: Path, *, expires_at: str = "2099-01-01T00:00:00Z") -> P
                 "https://auth.x.ai::test-client": {
                     "key": "test-token",
                     "expires_at": expires_at,
+                    "email": email,
                     "auth_mode": "oidc",
                 }
             }
@@ -97,6 +103,8 @@ def test_scan_usage_inserts_snapshot(tmp_path: Path) -> None:
     assert row["execution_status"] == "done"
     payload = row["payload"]
     assert payload["vendor"] == "grok"
+    assert payload["provider"] == "grok"
+    assert payload["account_email"] == "user@example.com"
     assert payload["tier"] == "SuperGrok Heavy"
     assert payload["used_percent"] == 11.0
     assert payload["period_type"] == "USAGE_PERIOD_TYPE_WEEKLY"
@@ -296,6 +304,39 @@ def test_scan_usage_expired_token(tmp_path: Path) -> None:
             auth_path=auth,
         )
     assert store.rows("activity") == []
+
+
+def test_scan_usage_missing_email(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth = _auth_file(tmp_path, email="")
+    with pytest.raises(StoreError, match="email"):
+        scan_usage(
+            store,
+            fetch=lambda token: (_credits(), SETTINGS),
+            auth_path=auth,
+        )
+    assert store.rows("activity") == []
+
+
+def test_scan_usage_inserts_on_account_email_change(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth_a = _auth_file(tmp_path, email="a@example.com")
+
+    def fetch(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        return _credits(), SETTINGS
+
+    first = scan_usage(store, fetch=fetch, auth_path=auth_a, now=lambda: "2026-08-20T12:00:00Z")
+    auth_b = _auth_file(tmp_path, email="b@example.com")
+    second = scan_usage(store, fetch=fetch, auth_path=auth_b, now=lambda: "2026-08-20T12:01:00Z")
+    assert isinstance(first, str)
+    assert isinstance(second, str)
+    assert first != second
+    rows = [r for r in store.rows("activity") if r.get("type") == "usage.snapshot"]
+    assert len(rows) == 2
+    emails = {r["payload"]["account_email"] for r in rows}
+    assert emails == {"a@example.com", "b@example.com"}
 
 
 def test_scan_usage_rejects_monthly_billing_shape(tmp_path: Path) -> None:

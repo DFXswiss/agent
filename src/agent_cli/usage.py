@@ -24,6 +24,8 @@ VENDOR = "grok"
 
 _COMPARE_KEYS = (
     "vendor",
+    "provider",
+    "account_email",
     "tier",
     "used_percent",
     "period_type",
@@ -44,15 +46,15 @@ def grok_auth_path() -> Path:
     return Path.home() / ".grok" / "auth.json"
 
 
-def load_grok_bearer(auth_path: Path | None = None) -> str:
+def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
     """
     Read the SuperGrok OIDC entry.
     Prefer the first top-level key that starts with 'https://auth.x.ai::'.
-    Required fields: key (non-empty str), expires_at (non-empty str).
+    Required fields: key (non-empty str), expires_at (non-empty str), email (non-empty str).
     expires_at must parse as aware UTC; if now >= expiry → StoreError('grok auth token expired; run grok login').
     Parse ISO-8601; replace trailing Z with +00:00. No other date libraries.
-    Missing file, invalid JSON, no auth.x.ai entry, missing key/expires_at → StoreError with a specific message.
-    Never return or log the token.
+    Missing file, invalid JSON, no auth.x.ai entry, missing key/expires_at/email → StoreError with a specific message.
+    Return (token, account_email). Never log the token.
     Do not refresh tokens. Do not read refresh_token except to ignore it.
     """
     path = auth_path if auth_path is not None else grok_auth_path()
@@ -89,7 +91,10 @@ def load_grok_bearer(auth_path: Path | None = None) -> str:
         raise StoreError("grok auth entry field expires_at is invalid")
     if datetime.now(timezone.utc) >= when:
         raise StoreError("grok auth token expired; run grok login")
-    return token
+    account_email = entry.get("email")
+    if not isinstance(account_email, str) or account_email == "":
+        raise StoreError("grok auth entry field email is missing or invalid")
+    return token, account_email
 
 
 def _get_json(
@@ -169,11 +174,14 @@ def snapshot_from_payloads(
     credits: dict[str, Any],
     settings: dict[str, Any],
     fetched_at: str,
+    account_email: str,
 ) -> dict[str, Any]:
     """
     Return:
     {
       "vendor": "grok",
+      "provider": "grok",
+      "account_email": <account_email str>,
       "tier": <settings.subscription_tier_display str>,
       "used_percent": <float of config.creditUsagePercent>,
       "period_type": <config.currentPeriod.type str>,
@@ -189,6 +197,7 @@ def snapshot_from_payloads(
     val fields: int (not bool, not float).
     productUsage missing → StoreError (do not default to []).
     productUsage must be a list; each item a dict with product str non-empty and usagePercent number.
+    account_email must be a non-empty str.
     Any missing/wrong type → StoreError naming the field. No defaults, no coercion of the monthly shape.
     """
     if not isinstance(credits, dict):
@@ -223,8 +232,11 @@ def snapshot_from_payloads(
     tier = settings.get("subscription_tier_display")
     if not isinstance(tier, str) or tier == "":
         raise StoreError("subscription_tier_display must be a non-empty string")
+    account_email = _require_nonempty_str(account_email, "account_email")
     return {
         "vendor": VENDOR,
+        "provider": VENDOR,
+        "account_email": account_email,
         "tier": tier,
         "used_percent": used_percent,
         "period_type": period_type,
@@ -270,7 +282,7 @@ def pick_session_id(store: Store) -> str:
 
 
 def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
-    """Compare vendor, tier, used_percent, period_type, period_start, period_end, products, prepaid_val, on_demand_cap_val, on_demand_used_val. Ignore fetched_at and any other keys."""
+    """Compare vendor, provider, account_email, tier, used_percent, period_type, period_start, period_end, products, prepaid_val, on_demand_cap_val, on_demand_used_val. Ignore fetched_at and any other keys."""
     if previous is None:
         return False
     for key in _COMPARE_KEYS:
@@ -310,10 +322,10 @@ def scan_usage(
     Raise StoreError on any failure. Never invent 0% on error.
     fetched_at = (now or utcnow)().
     """
-    token = load_grok_bearer(auth_path)
+    token, account_email = load_grok_bearer(auth_path)
     credits, settings = (fetch or fetch_credits_and_settings)(token)
     fetched_at = (now or utcnow)()
-    snapshot = snapshot_from_payloads(credits, settings, fetched_at)
+    snapshot = snapshot_from_payloads(credits, settings, fetched_at, account_email)
     session_id = pick_session_id(store)
     if usage_unchanged(last_usage_snapshot(store), snapshot):
         return None

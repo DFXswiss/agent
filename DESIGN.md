@@ -304,7 +304,7 @@ v1 types (mechanism only):
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
-| `usage.snapshot` | — | script | — (Grok billing GET on this device; no TUI knock) |
+| `usage.snapshot` | — | script | — (Grok billing GET on this device; no TUI knock; payload includes account email, provider, and subscription tier) |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
 
