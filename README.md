@@ -15,7 +15,7 @@ pip install -e ".[test]"
 agent init
 ```
 
-`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster.
+`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which keeps knock, usage / pending / `pr.merged` polls, `sync --follow`, and the local dashboard running.
 
 ## Pair and sync
 
@@ -23,12 +23,12 @@ agent init
 agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
-agent sync --follow   # stay on the hub WebSocket; a dead socket is a loud error
+agent sync --follow   # foreground WebSocket; a dead socket is a loud error
 agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is present
 # other commands refuse until you move ledger.sqlite aside
 ```
 
-`AGENT_HUB` may replace `--hub`. There is no default hub URL.
+`AGENT_HUB` may replace `--hub`. There is no default hub URL. After `agent init`, the user-service daemon already runs `sync --follow`; a one-shot `agent sync` after pairing is enough for catch-up.
 
 ## Record work
 
@@ -69,17 +69,17 @@ This package **is** the runtime: install it locally and run `agent`. There is no
 
 Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails.
 
-Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
+Session mail and `pr.merged` notify channel `agent_inbox`. Knock sends only `da ist Post id <uuid>` to the registered tmux pane:
 
 ```bash
 agent knock --once
-agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); run from cron if you need a loop
+agent knock             # valid foreground loop; the user-service daemon is the supported always-on path
+agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon covers the loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
-# agent knock (daemon, no --once) polls that every 60s
 ```
 
-`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. The knock daemon (`agent knock` without `--once`) records those snapshots in the background on the same interval.
+`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending / `pr.merged`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
 
 ### Session terminal control
 
