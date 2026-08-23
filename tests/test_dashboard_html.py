@@ -17,3 +17,7 @@ def test_dashboard_html_contains_usage_table() -> None:
     ).read_text(encoding="utf-8")
     assert 'id="usage"' in html
     assert "usage.snapshot" in html
+    assert 'typeof p.used_percent === "number"' in html
+    assert 'if (ev.type !== "usage.snapshot") return;' in html
+    assert "if (usageSeen[key]) return;" in html
+    assert ".reverse(" not in html
