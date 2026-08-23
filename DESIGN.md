@@ -315,7 +315,7 @@ v1 types (mechanism only):
 | `session.register` | — | later (v1 register is the `session` row) | — |
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
-| `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
+| `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; device daemon knock child) |
 | `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
 | `issue.assigned.ack` | `issue` | AI | — (releases the next queued knock) |
 | `comment.post` | — | AI (target + body) | script |
@@ -336,7 +336,7 @@ v1 types (mechanism only):
 
 The agent never learns a merge from a human prompt and never calls GitHub to ask “is it merged?”.
 
-When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The **existing** knock daemon and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
+When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The device daemon’s knock child and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
 
 The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 

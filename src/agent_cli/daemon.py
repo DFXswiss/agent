@@ -59,9 +59,8 @@ def acquire_lock(home: Path) -> object:
     return handle
 
 
-def child_specs() -> list[tuple[str, list[str]]]:
+def child_specs(prefix: list[str]) -> list[tuple[str, list[str]]]:
     """Ordered child processes the supervisor starts."""
-    prefix = agent_argv()
     return [
         ("knock", [*prefix, "knock"]),
         ("sync", [*prefix, "sync", "--follow"]),
@@ -75,9 +74,26 @@ def _terminate(proc: Any) -> None:
     poll = getattr(proc, "poll", None)
     if callable(poll) and poll() is not None:
         return
-    terminate = getattr(proc, "terminate", None)
-    if callable(terminate):
-        terminate()
+    pid = getattr(proc, "pid", None)
+    if isinstance(pid, int) and pid:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+    else:
+        terminate = getattr(proc, "terminate", None)
+        if callable(terminate):
+            terminate()
+    wait = getattr(proc, "wait", None)
+    if not callable(wait):
+        return
+    try:
+        wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        kill = getattr(proc, "kill", None)
+        if callable(kill):
+            kill()
+        wait()
 
 
 def run_supervisor(
@@ -116,13 +132,13 @@ def run_supervisor(
     previous_term = signal.signal(signal.SIGTERM, on_signal)
     previous_int = signal.signal(signal.SIGINT, on_signal)
     try:
-        specs = [
-            ("knock", [*argv_prefix, "knock"]),
-            ("sync", [*argv_prefix, "sync", "--follow"]),
-            ("dashboard", [*argv_prefix, "dashboard"]),
-        ]
-        for name, argv in specs:
-            children[name] = start(argv)
+        try:
+            for name, argv in child_specs(argv_prefix):
+                children[name] = start(argv, start_new_session=True)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            raise SystemExit(str(exc) or type(exc).__name__) from exc
 
         while True:
             if stopping:
@@ -148,11 +164,12 @@ def run_supervisor(
             if n >= SYNC_RESTART_LIMIT:
                 terminate_remaining()
                 raise SystemExit("daemon sync restart limit")
-            children["sync"] = start([*argv_prefix, "sync", "--follow"])
+            sync_argv = dict(child_specs(argv_prefix))["sync"]
+            children["sync"] = start(sync_argv, start_new_session=True)
     finally:
         signal.signal(signal.SIGTERM, previous_term)
         signal.signal(signal.SIGINT, previous_int)
-        # Keep lock_handle referenced until supervisor exit so the flock stays held.
+        terminate_remaining()
         lock_handle.close()
 
 
@@ -212,9 +229,9 @@ def service_unit_text(
         )
     if platform == "linux":
         exec_start = " ".join(shlex.quote(part) for part in program)
-        env_lines = f"Environment=AGENT_HOME={home}\n"
+        env_lines = f"Environment=AGENT_HOME={shlex.quote(str(home))}\n"
         for key, value in env.items():
-            env_lines += f"Environment={key}={value}\n"
+            env_lines += f"Environment={key}={shlex.quote(value)}\n"
         return (
             "[Unit]\n"
             "Description=DFX agent device daemon\n"
