@@ -2221,11 +2221,14 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"usage.snapshot {usage_id}")
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
-                created, skipped = scan_merged(store, run_argv)
-                for activity_id in created:
-                    print(f"pr.merged {activity_id}")
-                if skipped:
-                    print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
+                try:
+                    created, skipped = scan_merged(store, run_argv)
+                    for activity_id in created:
+                        print(f"pr.merged {activity_id}")
+                    if skipped:
+                        print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
+                except StoreError as exc:
+                    print(f"pr.merged error: {exc}", file=sys.stderr)
                 hub_url = store.meta("hub_url")
                 hub_token = store.meta("device_token")
                 if hub_url and hub_token:

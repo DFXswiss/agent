@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,15 +11,12 @@ import pytest
 from agent_cli.daemon import (
     SERVICE_LABEL,
     acquire_lock,
-    install_and_start_service,
+    child_specs,
     run_supervisor,
     service_unit_text,
 )
 from agent_cli.main import main
-from agent_cli.store import StoreError
-
-
-pytestmark_no_pg = pytest.mark.no_pg
+from agent_cli.store import Store, StoreError
 
 
 class _FakeProc:
@@ -26,6 +24,8 @@ class _FakeProc:
         self.argv = list(argv)
         self.returncode: int | None = None
         self.terminated = False
+        self.killed = False
+        self.pid = None
 
     def poll(self) -> int | None:
         return self.returncode
@@ -34,6 +34,19 @@ class _FakeProc:
         self.terminated = True
         if self.returncode is None:
             self.returncode = -15
+
+    def kill(self) -> None:
+        self.killed = True
+        if self.returncode is None:
+            self.returncode = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is not None:
+            return self.returncode
+        if timeout is not None:
+            raise subprocess.TimeoutExpired(self.argv, timeout)
+        self.returncode = -15
+        return self.returncode
 
 
 class _StopLoop(Exception):
@@ -139,6 +152,9 @@ def test_run_supervisor_restarts_sync_twice(
     def fake_sleep(_seconds: float) -> None:
         ticks["n"] += 1
         if sync_starts["n"] >= 3 and ticks["n"] >= 3:
+            # Still alive during sync restarts; finally reaps after loop exit.
+            assert procs["knock"].returncode is None
+            assert procs["dashboard"].returncode is None
             raise _StopLoop()
 
     with pytest.raises(_StopLoop):
@@ -152,8 +168,6 @@ def test_run_supervisor_restarts_sync_twice(
     err = capsys.readouterr().err
     assert "daemon sync restart 1" in err
     assert "daemon sync restart 2" in err
-    assert procs["knock"].returncode is None
-    assert procs["dashboard"].returncode is None
 
 
 @pytest.mark.no_pg
@@ -299,3 +313,108 @@ def test_knock_daemon_tick_skips_pr_merged_without_die(
     captured = capsys.readouterr()
     assert "usage.snapshot usage-1" in captured.out
     assert "watch skipped 2 pr.open rows" in captured.err
+
+
+def test_daemon_uninstall_removes_service_under_pytest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert os.environ.get("PYTEST_CURRENT_TEST")
+
+    def boom(_argv: list[str]) -> Any:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+    monkeypatch.setattr("agent_cli.runtime.run_argv", boom)
+    run(tmp_path, ["init"])
+    path = tmp_path / "daemon.service"
+    assert path.is_file()
+    run(tmp_path, ["daemon", "--uninstall"])
+    assert not path.exists()
+
+
+def test_knock_tick_with_hub_url_and_device_token(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    store = Store(tmp_path)
+    store.set_meta("hub_url", "https://hub.example")
+    store.set_meta("device_token", "tok")
+    store.close()
+    capsys.readouterr()
+
+    def fake_poll_due(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    def fake_scan_usage(_store: object) -> str:
+        return "usage-1"
+
+    def fake_scan_merged(_store: object, _runner: object) -> tuple[list[str], int]:
+        return [], 0
+
+    def fake_scan_pending(_store: object, _hub: object) -> list[str]:
+        return ["pending line-1"]
+
+    def fake_listen(*_args: object, **_kwargs: object) -> None:
+        raise SystemExit("stop")
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
+    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan_usage)
+    monkeypatch.setattr("agent_cli.main.scan_merged", fake_scan_merged)
+    monkeypatch.setattr("agent_cli.pending.scan_pending", fake_scan_pending)
+    monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+    captured = capsys.readouterr()
+    assert "pending line-1" in captured.out
+
+
+@pytest.mark.no_pg
+def test_run_supervisor_popen_fails_on_dashboard(tmp_path: Path) -> None:
+    procs: dict[str, _FakeProc] = {}
+
+    def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
+        name = _child_name(argv)
+        if name == "dashboard":
+            raise OSError("dashboard start failed")
+        proc = _FakeProc(argv)
+        procs[name] = proc
+        return proc
+
+    with pytest.raises(SystemExit):
+        run_supervisor(
+            home=tmp_path,
+            argv_prefix=["agent"],
+            popen=fake_popen,
+            monotonic=lambda: 0.0,
+            sleep=lambda _s: None,
+        )
+    assert procs["knock"].terminated is True
+    assert procs["sync"].terminated is True
+    second = acquire_lock(tmp_path)
+    second.close()  # type: ignore[attr-defined]
+
+
+@pytest.mark.no_pg
+def test_run_supervisor_child_specs_argv(tmp_path: Path) -> None:
+    started: list[list[str]] = []
+    ticks = {"n": 0}
+
+    def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
+        started.append(list(argv))
+        return _FakeProc(argv)
+
+    def fake_sleep(_seconds: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] >= 1:
+            raise _StopLoop()
+
+    with pytest.raises(_StopLoop):
+        run_supervisor(
+            home=tmp_path,
+            argv_prefix=["agent"],
+            popen=fake_popen,
+            monotonic=lambda: float(ticks["n"]),
+            sleep=fake_sleep,
+        )
+    expected = [argv for _name, argv in child_specs(["agent"])]
+    assert started == expected

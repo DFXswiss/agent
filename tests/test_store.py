@@ -201,6 +201,21 @@ def test_save_identity_tmp_uses_pid(
     assert (tmp_path / "device.json").is_file()
 
 
+def test_save_identity_unlinks_tmp_when_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    tmp_name = f"device.json.tmp.{os.getpid()}"
+
+    def boom(self: Path, target: Path | str) -> Path:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(Path, "replace", boom)
+    with pytest.raises(OSError, match="replace failed"):
+        store.save_identity()
+    assert not (tmp_path / tmp_name).exists()
+
+
 def test_store_rejects_mismatched_device_json(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.close()
