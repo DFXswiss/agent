@@ -184,6 +184,11 @@ def test_deliver_assigned_does_not_leak_body(tmp_path: Path) -> None:
     assert status == "sent"
     assert any("da ist Post id asg-1" in " ".join(c) for c in calls)
     assert all("secret-body" not in " ".join(c) for c in calls)
+    queue = (tmp_path / "sessions" / "s1" / "QUEUE.md").read_text(encoding="utf-8")
+    mandate = (tmp_path / "sessions" / "s1" / "MANDATE.md").read_text(encoding="utf-8")
+    assert "asg-1" in queue
+    assert "secret-body" not in queue
+    assert "secret-body" not in mandate
 
 
 def test_deliver_assigned_queues_until_ack(tmp_path: Path) -> None:

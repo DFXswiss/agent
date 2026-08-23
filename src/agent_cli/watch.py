@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import uuid
@@ -487,6 +488,20 @@ def scan_assigned(
     if skipped == 0:
         store.sync_set("assigned_watch_since", max(cursor, now))
     return created, skipped
+
+
+def assigned_workspace_root(store: Store) -> Path:
+    root_env = os.environ.get("AGENT_SESSION_ROOT")
+    if isinstance(root_env, str) and root_env != "":
+        return Path(root_env)
+    return store.home / "sessions"
+
+
+def refresh_assigned_queue_files(store: Store, session_id: str, activity: dict[str, Any]) -> None:
+    pending = pending_assigned(store, session_id)
+    cwd = assigned_workspace_root(store) / session_id
+    cwd.mkdir(parents=True, exist_ok=True)
+    _write_assigned_queue_files(cwd, session_id, activity, pending)
 
 
 def acked_assigned_ids(store: Store, session_id: str) -> set[str]:

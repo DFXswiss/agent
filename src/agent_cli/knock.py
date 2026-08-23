@@ -6,7 +6,7 @@ from typing import Any
 
 from .runtime import Runtime
 from .store import Store, StoreError
-from .watch import acked_assigned_ids, pending_assigned
+from .watch import acked_assigned_ids, pending_assigned, refresh_assigned_queue_files
 
 KNOCK_PREFIX = "da ist Post id "
 
@@ -94,6 +94,7 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
         if inflight is not None and inflight != activity_id:
             store.enqueue_wake(activity_id, sid)
             return "queued"
+        refresh_assigned_queue_files(store, sid, activity)
     if not store.claim_wake(activity_id):
         return "sent"
     text = knock_text(activity_id)

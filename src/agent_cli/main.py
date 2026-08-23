@@ -40,7 +40,14 @@ from .runtime import (
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreError, utcnow
 from .usage import scan_usage, usage_poll_due
-from .watch import assigned_session_id, dispatch_assigned, pending_assigned, scan_assigned, scan_merged
+from .watch import (
+    assigned_session_id,
+    assigned_workspace_root,
+    dispatch_assigned,
+    pending_assigned,
+    scan_assigned,
+    scan_merged,
+)
 
 CHECKLIST = {
     "implement": (
@@ -2252,11 +2259,7 @@ def cmd_watch(args: list[str]) -> None:
             follow = "--follow" in args[1:]
             while True:
                 created, skipped = scan_assigned(store, run_argv, now=utcnow())
-                root_env = os.environ.get("AGENT_SESSION_ROOT")
-                if isinstance(root_env, str) and root_env != "":
-                    workspace_root = Path(root_env)
-                else:
-                    workspace_root = store.home / "sessions"
+                workspace_root = assigned_workspace_root(store)
                 sid = assigned_session_id(store.home)
                 pending = pending_assigned(store, sid)
                 if pending:
