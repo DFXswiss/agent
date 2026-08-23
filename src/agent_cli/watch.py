@@ -242,45 +242,6 @@ def _paired_login(store: Store, runner: Callable[[list[str]], Completed]) -> str
     return paired.lower()
 
 
-def _already_assigned(store: Store, repo: str, number: int) -> bool:
-    repo_key = repo.lower()
-    acked: set[str] = set()
-    for row in store.rows("activity"):
-        if row.get("type") != "issue.assigned.ack":
-            continue
-        if row.get("_origin_device_id") != store.device_id():
-            continue
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        aid = payload.get("assigned_id")
-        if isinstance(aid, str) and aid:
-            acked.add(aid)
-    for row in store.rows("activity"):
-        if row.get("type") != "issue.assigned":
-            continue
-        if row.get("_origin_device_id") != store.device_id():
-            continue
-        rid = row.get("id")
-        if isinstance(rid, str) and rid in acked:
-            continue
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        raw_repo = payload.get("repo")
-        if not isinstance(raw_repo, str) or raw_repo.lower() != repo_key:
-            continue
-        raw_n = payload.get("number")
-        if isinstance(raw_n, bool) or not isinstance(raw_n, int):
-            if isinstance(raw_n, str) and raw_n.isdigit():
-                raw_n = int(raw_n)
-            else:
-                continue
-        if raw_n == number:
-            return True
-    return False
-
-
 def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None:
     repo_key = repo.lower()
     latest: datetime | None = None
@@ -394,8 +355,6 @@ def scan_assigned(
             number = _issue_number(issue.get("number"))
             if number is None:
                 continue
-            if _already_assigned(store, repo, number):
-                continue
             try:
                 events = _gh_list(
                     [
@@ -460,10 +419,16 @@ def scan_assigned(
     for item in found:
         repo = str(item["repo"])
         number = int(item["number"])
-        if _already_assigned(store, repo, number):
+        assigned_at = str(item["assigned_at"])
+        try:
+            assigned_dt = _parse_gh_time(assigned_at)
+        except ValueError:
+            continue
+        previous_at = _latest_assigned_at(store, repo, number)
+        if previous_at is not None and assigned_dt <= previous_at:
             continue
         activity_id = str(uuid.uuid4())
-        lock_key = f"assigned:{repo.lower()}:{number}"
+        lock_key = f"assigned:{repo.lower()}:{number}:{assigned_at}"
         event = store.write_with_advisory(
             "activity",
             "insert",
@@ -478,14 +443,17 @@ def scan_assigned(
                     "url": item["url"],
                     "title": item["title"],
                     "body": item["body"],
-                    "assigned_at": item["assigned_at"],
+                    "assigned_at": assigned_at,
                     "assignee": login,
                     "mandate": "github-assignment",
                 },
                 "execution_status": "done",
             },
             lock_key=lock_key,
-            skip=lambda r=repo, n=number: _already_assigned(store, r, n),
+            skip=lambda r=repo, n=number, dt=assigned_dt: (
+                _latest_assigned_at(store, r, n) is not None
+                and _latest_assigned_at(store, r, n) >= dt
+            ),
         )
         if event is not None:
             created.append(activity_id)

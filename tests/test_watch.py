@@ -762,6 +762,77 @@ def test_dispatch_assigned_second_does_not_start_another_terminal(tmp_path: Path
     assert knock_log == ["asg-1", "asg-1"]
 
 
+def test_scan_assigned_reassignment_while_pending_enqueues(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "pending-1",
+        {
+            "id": "pending-1",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "assigned_at": "2021-01-01T00:00:00Z",
+            },
+            "execution_status": "done",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Again",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-06-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["id"] != "pending-1"
+    assert row["payload"]["assigned_at"] == "2026-06-01T00:00:00Z"
+
+
 def test_scan_assigned_after_ack_allows_new_assignment(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
