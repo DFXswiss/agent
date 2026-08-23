@@ -2080,7 +2080,10 @@ def _exec_argv(argv: list[str], *, cwd: str | None = None) -> "Completed":
     from .runtime import Completed
     import subprocess
 
-    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+    try:
+        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+    except OSError as exc:
+        return Completed(127, "", str(exc))
     return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
 
 
@@ -2219,6 +2222,11 @@ def cmd_run(args: list[str]) -> None:
                 close_key = step.key
                 close_evidence = f"run auto:{already.reason}"
             elif spec_file is not None:
+                spec_path = Path(spec_file)
+                if not spec_path.is_file():
+                    die(f"spec-file not found: {spec_file}")
+                if not spec_path.read_text(encoding="utf-8").strip():
+                    die(f"spec-file is empty: {spec_file}")
                 cwd = _resolve_run_cwd(args)
                 tmux = "--no-tmux" not in args
                 role = str(step.role or "")

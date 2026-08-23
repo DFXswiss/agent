@@ -225,6 +225,23 @@ def test_run_local_check_fail(
     assert any(c.get("result") == "fail" for c in _local_checks(tmp_path, tid))
 
 
+def test_run_local_check_missing_command_records_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    monkeypatch.setenv("AGENT_CHECK_COMMAND", "/no/such/agent-check-command")
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
+    assert exc.value.code == 2
+    assert _task_state(tmp_path, tid) == "failed"
+    assert any(c.get("result") == "fail" for c in _local_checks(tmp_path, tid))
+
+
 def test_run_agent_check_command_env(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -308,6 +325,28 @@ def test_run_spec_file_implementer_complete(
         a.get("role") == "implementer" and a.get("status") == "done"
         for a in _agents(tmp_path, tid)
     )
+
+
+def test_run_missing_spec_file_does_not_leave_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(tmp_path / "missing-spec.md"),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert exc.value.code != 0
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 
 def test_run_spec_file_reviewer_complete_no_auto_approve(
