@@ -44,6 +44,29 @@ def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFix
         run(tmp_path, ["task", "state", tid, "done"])
 
 
+def test_cannot_close_with_pending_assigned(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "assigned", "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "asg-1",
+            {
+                "id": "asg-1",
+                "session_id": "assigned",
+                "type": "issue.assigned",
+                "payload": {"assigned_at": "2026-01-01T00:00:00Z"},
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="pending assigned"):
+        run(tmp_path, ["session", "close", "--id", "assigned"])
+
+
 def test_cannot_close_with_open_task(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])

@@ -355,6 +355,8 @@ def cmd_session(args: list[str]) -> None:
             ]
             if open_work:
                 die("session has open work")
+            if pending_assigned(store, sid):
+                die("session has pending assigned issues")
             row["status"] = "closed"
             row["last_seen_at"] = utcnow()
             store.write("session", "update", sid, _strip(row))
