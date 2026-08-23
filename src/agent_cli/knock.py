@@ -6,7 +6,7 @@ from typing import Any
 
 from .runtime import Runtime
 from .store import Store, StoreError
-from .watch import pending_assigned
+from .watch import acked_assigned_ids, pending_assigned
 
 KNOCK_PREFIX = "da ist Post id "
 
@@ -32,18 +32,7 @@ def target_session_id(activity: dict[str, Any]) -> str | None:
 
 
 def assigned_inflight_id(store: Store, session_id: str) -> str | None:
-    acked: set[str] = set()
-    for row in store.rows("activity"):
-        if row.get("type") != "issue.assigned.ack":
-            continue
-        if row.get("session_id") != session_id:
-            continue
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        aid = payload.get("assigned_id")
-        if isinstance(aid, str) and aid:
-            acked.add(aid)
+    acked = acked_assigned_ids(store, session_id)
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
             continue
@@ -89,6 +78,9 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
         store.enqueue_wake(activity_id, sid)
         return "queued"
     if activity.get("type") == "issue.assigned":
+        if activity_id in acked_assigned_ids(store, sid):
+            store.claim_wake(activity_id)
+            return "sent"
         pending = pending_assigned(store, sid)
         head = pending[0].get("id") if pending else None
         if isinstance(head, str) and head != activity_id:
