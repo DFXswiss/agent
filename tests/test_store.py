@@ -260,6 +260,36 @@ def test_no_notify_for_message_to_foreign_session(tmp_path: Path) -> None:
         assert next(conn.notifies(timeout=0.4), None) is None
 
 
+def test_no_notify_for_foreign_issue_assigned(tmp_path: Path) -> None:
+    import psycopg
+
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "runner", "status": "active"},
+    )
+    with psycopg.connect(store.dsn, autocommit=True) as conn:
+        conn.execute("LISTEN agent_inbox")
+        store.apply_replica_row(
+            {
+                "table": "activity",
+                "row_id": "foreign-asg",
+                "origin_device_id": "other-device",
+                "payload": {
+                    "id": "foreign-asg",
+                    "session_id": "assigned",
+                    "type": "issue.assigned",
+                    "payload": {"repo": "Owner/repo", "number": 1},
+                    "execution_status": "done",
+                },
+                "updated_at": "2026-08-13T12:00:00Z",
+            }
+        )
+        assert next(conn.notifies(timeout=0.4), None) is None
+
+
 def test_apply_remote_idempotent_does_not_renotify(tmp_path: Path) -> None:
     import psycopg
 
