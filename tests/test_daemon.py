@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,21 @@ def test_service_unit_text_darwin_contains_label_and_daemon() -> None:
     assert "<string>/tmp/agent-home</string>" in text
     assert "<string>daemon</string>" in text
     assert "ProgramArguments" in text
+    assert "<key>PATH</key>" not in text
+
+
+@pytest.mark.no_pg
+def test_service_unit_text_darwin_extra_env_path() -> None:
+    path_value = "/opt/homebrew/bin:/usr/bin:/bin"
+    text = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": path_value},
+    )
+    assert "<key>PATH</key>" in text
+    assert f"<string>{path_value}</string>" in text
+    assert "<key>AGENT_HOME</key>" in text
 
 
 @pytest.mark.no_pg
@@ -76,6 +92,20 @@ def test_service_unit_text_linux_restart_and_home() -> None:
     assert "Environment=AGENT_HOME=/tmp/agent-home" in text
     assert "ExecStart=" in text
     assert "daemon" in text
+    assert "Environment=PATH=" not in text
+
+
+@pytest.mark.no_pg
+def test_service_unit_text_linux_extra_env_path() -> None:
+    path_value = "/opt/homebrew/bin:/usr/bin:/bin"
+    text = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="linux",
+        extra_env={"PATH": path_value},
+    )
+    assert f"Environment=PATH={path_value}" in text
+    assert "Environment=AGENT_HOME=/tmp/agent-home" in text
 
 
 @pytest.mark.no_pg
@@ -204,6 +234,8 @@ def test_daemon_install_writes_service_under_pytest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert os.environ.get("PYTEST_CURRENT_TEST")
+    path_value = "/opt/homebrew/bin:/usr/bin:/bin"
+    monkeypatch.setenv("PATH", path_value)
 
     def boom(_argv: list[str]) -> Any:
         raise AssertionError("run_argv must not be called under pytest")
@@ -216,6 +248,13 @@ def test_daemon_install_writes_service_under_pytest(
     text = path.read_text(encoding="utf-8")
     assert "daemon" in text
     assert str(tmp_path) in text
+    if sys.platform == "darwin":
+        assert "<key>PATH</key>" in text
+        assert f"<string>{path_value}</string>" in text
+    elif sys.platform.startswith("linux"):
+        assert f"Environment=PATH={path_value}" in text
+    else:
+        assert path_value in text
 
 
 def test_init_writes_daemon_service_under_pytest(
