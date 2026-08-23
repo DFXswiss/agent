@@ -205,3 +205,49 @@ def test_deliver_assigned_queues_until_ack(tmp_path: Path) -> None:
     )
     assert deliver(store, runtime, "asg-2") == "sent"
     assert any("da ist Post id asg-2" in " ".join(c) for c in calls)
+
+
+def test_deliver_assigned_non_head_queues(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "runner",
+            "status": "active",
+            "runtime": {
+                "control": "attached",
+                "tmux_session": "agent-s1",
+                "tmux_pane": "agent-s1:0.0",
+            },
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {"assigned_at": "2026-01-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-2",
+        {
+            "id": "asg-2",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {"assigned_at": "2026-02-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    assert deliver(store, _runtime(calls), "asg-2") == "queued"
+    assert all("asg-2" not in " ".join(c) for c in calls)

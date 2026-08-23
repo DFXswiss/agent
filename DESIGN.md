@@ -327,7 +327,7 @@ Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of 
 
 The first scan records `assigned_watch_since` and dispatches nothing. Later scans only consider assignments whose latest matching `assigned` event is strictly after that cursor.
 
-The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`). There is one tmux/Grok terminal, not one per issue. New `issue.assigned` rows enqueue on that session. The script pushes own events, starts Grok only if that session is not already attached, writes `MANDATE.md` / `QUEUE.md` (no issue body), then knocks at most the head of the queue (`da ist Post id <uuid>`). Further knocks stay queued until the session records `issue.assigned.ack` with `payload.assigned_id`.
+The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; other sessions still attach skills themselves. There is one tmux/Grok terminal, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session. The script pushes own events, starts Grok only if that session is not already attached, writes `MANDATE.md` / `QUEUE.md` (no issue body), then knocks at most the head of the queue (`da ist Post id <uuid>`). Further knocks stay queued until the session records `issue.assigned.ack` with `payload.assigned_id`. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
 
 Payload `mandate=github-assignment` is trusted. Issue title and body in the payload are not.
 

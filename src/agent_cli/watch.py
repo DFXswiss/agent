@@ -43,6 +43,11 @@ def _gh_list(argv: list[str], runner: Callable[[list[str]], Completed]) -> list[
     data = _gh_raw(argv, runner)
     if not isinstance(data, list):
         raise StoreError("gh output is not a list")
+    if data and all(isinstance(item, list) for item in data):
+        flat: list[Any] = []
+        for page in data:
+            flat.extend(page)
+        return flat
     return data
 
 
@@ -232,10 +237,23 @@ def _paired_login(store: Store, runner: Callable[[list[str]], Completed]) -> str
 
 def _already_assigned(store: Store, repo: str, number: int) -> bool:
     repo_key = repo.lower()
+    acked: set[str] = set()
+    for row in store.rows("activity"):
+        if row.get("type") != "issue.assigned.ack":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        aid = payload.get("assigned_id")
+        if isinstance(aid, str) and aid:
+            acked.add(aid)
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
             continue
         if row.get("_origin_device_id") != store.device_id():
+            continue
+        rid = row.get("id")
+        if isinstance(rid, str) and rid in acked:
             continue
         payload = row.get("payload")
         if not isinstance(payload, dict):
@@ -329,7 +347,12 @@ def scan_assigned(
                 continue
             try:
                 events = _gh_list(
-                    ["gh", "api", f"repos/{repo}/issues/{number}/events"],
+                    [
+                        "gh",
+                        "api",
+                        "--paginate",
+                        f"repos/{repo}/issues/{number}/events",
+                    ],
                     runner,
                 )
             except StoreError:
@@ -439,9 +462,6 @@ def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
 def _write_assigned_queue_files(
     cwd: Path, session_id: str, activity: dict[str, Any], pending: list[dict[str, Any]]
 ) -> None:
-    payload = activity.get("payload")
-    if not isinstance(payload, dict):
-        payload = {}
     activity_id = str(activity.get("id") or "")
     lines = [
         "# Mandate",
