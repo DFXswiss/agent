@@ -173,30 +173,46 @@ def _run_in_tmux(
     stdin_text: str | None,
 ) -> subprocess.CompletedProcess[str]:
     """Hold the vendor process in tmux, wait for the pane to die, capture output."""
-    created = _tmux_call(["tmux", "new-session", "-d", "-s", name, "-c", cwd])
+    wrap = tmux_wrap_argv(inner, name=name, cwd=cwd)
+    created = _tmux_call(wrap)
     if created.returncode != 0:
         return created
-    _tmux_call(["tmux", "set-option", "-t", name, "remain-on-exit", "on"])
-    respawn = ["tmux", "respawn-pane", "-k", "-t", name, "--", *inner]
-    started = _tmux_call(respawn)
-    if started.returncode != 0:
+    remain = _tmux_call(["tmux", "set-option", "-t", name, "remain-on-exit", "on"])
+    if remain.returncode != 0:
         _tmux_call(["tmux", "kill-session", "-t", name])
-        return started
+        return remain
     if stdin_text:
-        _tmux_call(["tmux", "send-keys", "-t", name, "-l", "--", stdin_text])
-        _tmux_call(["tmux", "send-keys", "-t", name, "C-d"])
+        typed = _tmux_call(["tmux", "send-keys", "-t", name, "-l", "--", stdin_text])
+        if typed.returncode != 0:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return typed
+        eof = _tmux_call(["tmux", "send-keys", "-t", name, "C-d"])
+        if eof.returncode != 0:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return eof
     while True:
         dead = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead}"])
         if dead.returncode != 0:
-            return subprocess.CompletedProcess(respawn, 0, "", dead.stderr or "")
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return subprocess.CompletedProcess(
+                wrap, dead.returncode or 1, "", dead.stderr or ""
+            )
         if dead.stdout.strip() == "1":
             break
         time.sleep(0.2)
+    status = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead_status}"])
+    returncode = 1
+    if status.returncode == 0:
+        raw = status.stdout.strip()
+        if raw.isdigit():
+            returncode = int(raw)
+        elif raw == "":
+            returncode = 0
     captured = _tmux_call(["tmux", "capture-pane", "-t", name, "-p", "-S", "-"])
     _tmux_call(["tmux", "kill-session", "-t", name])
     return subprocess.CompletedProcess(
-        respawn,
-        0,
+        wrap,
+        returncode,
         captured.stdout or "",
         captured.stderr or "",
     )
@@ -262,22 +278,17 @@ def launch(
         )
 
     stdin_text: str | None = spec_text if vendor == "codex" else None
-    if runner is not None:
-        active: Runner = runner
-        run_stdin = None if tmux else stdin_text
-    elif tmux:
-        inner = argv[argv.index("--") + 1 :] if "--" in argv else argv
-        name = tmux_session or lane_tmux_name(vendor=vendor, role=role)
-
-        def active(a: list[str], s: str | None) -> object:
-            return _run_in_tmux(inner, name=name, cwd=cwd, stdin_text=stdin_text)
-
-        run_stdin = None
-    else:
-        active = _default_runner
-        run_stdin = stdin_text
     try:
-        completed = active(argv, run_stdin)
+        if runner is not None:
+            completed = runner(argv, None if tmux else stdin_text)
+        elif tmux:
+            inner = argv[argv.index("--") + 1 :] if "--" in argv else argv
+            name = tmux_session or lane_tmux_name(vendor=vendor, role=role)
+            completed = _run_in_tmux(
+                inner, name=name, cwd=cwd, stdin_text=stdin_text
+            )
+        else:
+            completed = _default_runner(argv, stdin_text)
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")
