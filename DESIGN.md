@@ -36,7 +36,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Session | No work without a `session` row. The start hook inserts it. |
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
-| Skills | Optional, requested. A review loop, gates, and the task/round/checklist spine exist as skills. They are **not** on by default. |
+| Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, and `error-fix` exist as skills. They are **not** on by default. |
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
@@ -554,7 +554,7 @@ The script:
 2. Pulls new lines since the last cursor (persisted next to the config).
 3. Redacts secrets and obvious personal data **before** any row is written.
 4. Computes a fingerprint: service + error class + normalized stack signature + environment.
-5. Inserts `error.seen` or **enriches** an existing row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks.
+5. Inserts `error.seen` or **enriches** an existing **open** row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks. After skip or a terminal implement task, the next match is a new `error.seen` (new id, knocks).
 6. Payload holds a **sanitized** excerpt plus an optional pointer to raw evidence on this disk. It does not hold the full log dump.
 
 Log lines, stack traces, and error messages are untrusted data (§19.2). They are not a mandate to patch.
@@ -589,16 +589,16 @@ After the knock, the session reads the row and writes `investigate.step` immedia
 
 The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
 
-Same fingerprint while an `error.fix` or a spine implement task is open: enrich `error.seen`, do not create a second task.
+Same fingerprint while the incident is **open** (`error.fix`, a spine implement task, or a draft pull request): enrich `error.seen`. Do not create a second task or a second pull request. After `error.skip` or after the implement task reaches a terminal state (`done` / `failed` / `pr.merged`): the next match is a **new** `error.seen` (new id, first insert knocks).
 
 ### 21.5 Patch and draft pull request
 
 On `error.fix`:
 
 1. `agent task create --workflow implement` on this session. Copy `error_id` (the `error.seen` id) and `repo` from that `error.seen` row into the task payload.
-2. Isolated worktree of that task `payload.repo` at the allowed base revision. Git operations are scripts. Missing `repo` is `error.skip` / `unmapped-repo`, not a worktree of the origin checkout.
-3. Spine + review-loop + pr-review as already specified. Mandatory checks must `pass` before `pr.open`.
-4. `pr.open` opens a **draft**. Title/body may be model-drafted; the GitHub API call is a script. A retry finds an existing draft for this fingerprint instead of opening a second one.
+2. Isolated worktree of that task `payload.repo` at the allowed base revision. Git operations are scripts. `payload.repo` is already on the task because analysis refused `error.fix` when `repo` was missing. Never fall back to the origin checkout.
+3. Spine implement: mandatory checks must `pass`, then `pr.open` opens a **draft** (spine `pushed`). Title/body may be model-drafted; the GitHub API call is a script. A retry finds an existing draft for this fingerprint instead of opening a second one.
+4. pr-review gates run on that head after `pushed`.
 5. A human merges. `pr.merged` knocks as today.
 
 The model never receives production credentials. Analysis that only reads the excerpt does not need write access to the origin branch.
