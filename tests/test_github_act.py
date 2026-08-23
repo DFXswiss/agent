@@ -224,6 +224,42 @@ def test_pr_open_view_generic_http_404_no_create(tmp_path: Path) -> None:
     assert not any("create" in c for c in calls)
 
 
+def test_pr_open_existing_merged_errors(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-merged"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "T",
+            "head": "feat",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "pr", "view"]:
+            body = {
+                "number": 9,
+                "url": "https://github.com/dfxswiss/agent/pull/9",
+                "state": "MERGED",
+                "isDraft": False,
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"create must not run: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} error"]
+    assert not any("create" in c for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert "not open" in (row.get("execution_error") or "")
+
+
 def test_pr_open_existing_not_draft_errors(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
@@ -604,6 +640,37 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     assert row["execution_status"] == "done"
     assert row["result"]["id"] == 31
     assert row["result"]["url"] == "https://github.com/dfxswiss/agent/issues/3#issuecomment-31"
+
+
+def test_comment_post_slurp_non_dict_errors(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "c-shape"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "x",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[1] == "api":
+            return Completed(0, json.dumps([[{"id": 1, "body": "ok"}, None]]), "")
+        raise AssertionError(f"comment must not post: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"comment.post {act_id} error"]
+    assert not any("comment" in c and c[:3] != ["gh", "api"] for c in calls if c)
+    assert not any(c[:3] == ["gh", "issue", "comment"] for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
 
 
 def test_comment_post_target_pr_posts(tmp_path: Path) -> None:

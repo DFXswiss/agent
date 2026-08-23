@@ -165,6 +165,8 @@ def _flatten_comment_pages(data: Any) -> list[Any]:
     if data and all(isinstance(el, list) for el in data):
         flat: list[Any] = []
         for page in data:
+            if not all(isinstance(item, dict) for item in page):
+                raise _GhError("comments api has unexpected shape")
             flat.extend(page)
         return flat
     if all(isinstance(el, dict) for el in data):
@@ -227,16 +229,17 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             viewed = data
         if isinstance(viewed, dict):
             state = str(viewed.get("state") or "").upper()
-            if state == "OPEN":
-                number = _as_int(viewed.get("number"))
-                url = viewed.get("url")
-                if number is None or not isinstance(url, str) or url == "":
-                    raise _GhError("pr view missing number/url")
-                if not _is_draft(viewed.get("isDraft")):
-                    raise _GhError("existing pull request is not a draft")
-                result = {"repo": repo, "number": number, "url": url, "draft": True}
-                _mark(store, row, status="done", result=result)
-                return f"pr.open {rid} done number={number}"
+            number = _as_int(viewed.get("number"))
+            url = viewed.get("url")
+            if number is None or not isinstance(url, str) or url == "":
+                raise _GhError("pr view missing number/url")
+            if state != "OPEN":
+                raise _GhError("existing pull request is not open")
+            if not _is_draft(viewed.get("isDraft")):
+                raise _GhError("existing pull request is not a draft")
+            result = {"repo": repo, "number": number, "url": url, "draft": True}
+            _mark(store, row, status="done", result=result)
+            return f"pr.open {rid} done number={number}"
         create_body = _with_marker(body, rid)
         argv = [
             "gh",
