@@ -420,6 +420,38 @@ def test_run_supervisor_starts_sync_after_pair(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_pg
+def test_run_supervisor_does_not_restart_sync_after_unpair(tmp_path: Path) -> None:
+    _write_hub_config(tmp_path)
+    started: list[list[str]] = []
+    ticks = {"n": 0}
+
+    def fake_popen(argv: list[str], *args: object, **kwargs: object) -> _FakeProc:
+        started.append(list(argv))
+        proc = _FakeProc(argv)
+        if "sync" in argv:
+            proc.returncode = 1
+        return proc
+
+    def fake_sleep(_seconds: float) -> None:
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            (tmp_path / "device.json").write_text("{}", encoding="utf-8")
+        if ticks["n"] >= 4:
+            raise _StopLoop()
+
+    with pytest.raises(_StopLoop):
+        run_supervisor(
+            home=tmp_path,
+            argv_prefix=["agent"],
+            popen=fake_popen,
+            monotonic=lambda: float(ticks["n"]),
+            sleep=fake_sleep,
+        )
+    sync_starts = [argv for argv in started if "sync" in argv]
+    assert len(sync_starts) == 1
+
+
+@pytest.mark.no_pg
 def test_acquire_lock_second_raises(tmp_path: Path) -> None:
     first = acquire_lock(tmp_path)
     try:
