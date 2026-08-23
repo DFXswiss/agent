@@ -1103,7 +1103,15 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
 
 
 @pytest.mark.parametrize(
-    "typ", ["pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"]
+    "typ",
+    [
+        "pr.merged",
+        "mail.ingest",
+        "mail.seen",
+        "query.result",
+        "session.register",
+        "usage.snapshot",
+    ],
 )
 def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
     run(tmp_path, ["init"])
@@ -1302,6 +1310,13 @@ def test_knock_and_watch_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     run(tmp_path, ["watch", "pr-merged"])
     out = capsys.readouterr().out
     assert "pr.merged none" in out
+
+
+def test_watch_usage_mentions_grok_usage() -> None:
+    with pytest.raises(SystemExit, match="grok-usage"):
+        main(["watch"])
+    with pytest.raises(SystemExit, match="grok-usage"):
+        main(["watch", "nope"])
 
 
 def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

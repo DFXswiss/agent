@@ -304,6 +304,7 @@ v1 types (mechanism only):
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
+| `usage.snapshot` | — | script | — (Grok billing GET on this device; no TUI knock) |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
 
@@ -364,6 +365,7 @@ agent ping send|list|ack
 agent knock [--once]
 agent watch pr-merged                          # one scan; schedule if you need a loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
+agent watch grok-usage                         # one scan; knock daemon (no --once) polls every 60s
 agent status
 agent dashboard [--port 7845]
 ```

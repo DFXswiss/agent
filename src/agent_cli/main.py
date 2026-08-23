@@ -38,6 +38,7 @@ from .runtime import (
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreError, utcnow
+from .usage import scan_usage, usage_poll_due
 from .watch import scan_merged
 
 CHECKLIST = {
@@ -109,10 +110,18 @@ ACTIVITY_TYPES = frozenset(
         "query.request",
         "query.result",
         "subscription.set",
+        "usage.snapshot",
     }
 )
 SCRIPT_ONLY_ACTIVITY = frozenset(
-    {"pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"}
+    {
+        "pr.merged",
+        "mail.ingest",
+        "mail.seen",
+        "query.result",
+        "session.register",
+        "usage.snapshot",
+    }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 VENDORS = ("grok", "codex")
@@ -2157,7 +2166,16 @@ def cmd_knock(args: list[str]) -> None:
             for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
             return
+        last_poll: float | None = None
         while True:
+            if usage_poll_due(last_poll, time.monotonic()):
+                try:
+                    usage_id = scan_usage(store)
+                    if usage_id:
+                        print(f"usage.snapshot {usage_id}")
+                except StoreError as exc:
+                    print(f"usage.snapshot error: {exc}", file=sys.stderr)
+                last_poll = time.monotonic()
             activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:
                 print(f"knock {activity_id}")
@@ -2166,8 +2184,8 @@ def cmd_knock(args: list[str]) -> None:
 
 
 def cmd_watch(args: list[str]) -> None:
-    if not args or args[0] not in ("pr-merged", "pending"):
-        die("Usage: agent watch pr-merged|pending")
+    if not args or args[0] not in ("pr-merged", "pending", "grok-usage"):
+        die("Usage: agent watch pr-merged|pending|grok-usage")
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -2180,6 +2198,13 @@ def cmd_watch(args: list[str]) -> None:
                 die(f"watch skipped {skipped} pr.open rows")
             if not created:
                 print("pr.merged none")
+            return
+        if args[0] == "grok-usage":
+            activity_id = scan_usage(store)
+            if activity_id:
+                print(f"usage.snapshot {activity_id}")
+            else:
+                print("usage.snapshot none")
             return
         from .pending import scan_pending
 

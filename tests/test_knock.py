@@ -59,6 +59,37 @@ def test_deliver_sends_keys_when_attached(tmp_path: Path) -> None:
     assert all("secret" not in " ".join(c) for c in calls)
 
 
+def test_deliver_usage_snapshot_is_missing_without_send_keys(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "human",
+            "status": "active",
+            "runtime": {"control": "attached", "tmux_session": "agent-s1", "tmux_pane": "agent-s1:0.0"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "usage-1",
+        {
+            "id": "usage-1",
+            "session_id": "s1",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "grok", "used_percent": 11.0},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    status = deliver(store, _runtime(calls), "usage-1")
+    assert status == "missing"
+    assert not any(c[:2] == ["tmux", "send-keys"] for c in calls)
+
+
 def test_deliver_queues_when_busy_or_missing_tmux(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.write(

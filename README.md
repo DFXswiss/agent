@@ -75,7 +75,11 @@ Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon send
 agent knock --once
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); run from cron if you need a loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
+agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
+# agent knock (daemon, no --once) polls that every 60s
 ```
+
+`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. The knock daemon (`agent knock` without `--once`) records those snapshots in the background on the same interval.
 
 ### Session terminal control
 
