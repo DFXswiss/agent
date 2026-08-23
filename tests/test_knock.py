@@ -152,3 +152,35 @@ def test_listen_once_times_out_without_notify(tmp_path: Path) -> None:
     store = Store(tmp_path)
     got = listen_once(store, _runtime([]), timeout=0.2)
     assert got is None
+
+
+def test_deliver_assigned_does_not_leak_body(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "human",
+            "status": "active",
+            "runtime": {"control": "attached", "tmux_session": "agent-s1", "tmux_pane": "agent-s1:0.0"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {"body": "secret-body"},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    status = deliver(store, _runtime(calls), "asg-1")
+    assert status == "sent"
+    assert any("da ist Post id asg-1" in " ".join(c) for c in calls)
+    assert all("secret-body" not in " ".join(c) for c in calls)

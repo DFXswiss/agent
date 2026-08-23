@@ -103,6 +103,7 @@ class Runtime:
         cols: int | None,
         rows: int | None,
         command_argv: list[str] | None = None,
+        cwd: str | None = None,
     ) -> None:
         if not self.available():
             raise SystemExit("tmux is not installed")
@@ -112,6 +113,8 @@ class Runtime:
                 self.resize(session_id, cols, rows)
             return
         argv: list[str] = ["tmux", "new-session", "-d", "-s", name]
+        if cwd is not None:
+            argv.extend(["-c", cwd])
         if cols is not None:
             argv.extend(["-x", str(cols)])
         if rows is not None:

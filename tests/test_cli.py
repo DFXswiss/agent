@@ -1174,6 +1174,7 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         "query.result",
         "session.register",
         "usage.snapshot",
+        "issue.assigned",
     ],
 )
 def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
@@ -1380,6 +1381,18 @@ def test_watch_usage_mentions_grok_usage() -> None:
         main(["watch"])
     with pytest.raises(SystemExit, match="grok-usage"):
         main(["watch", "nope"])
+
+
+def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="assigned_repos|watch.json"):
+        run(tmp_path, ["watch", "assigned"])
+
+
+def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="assigned"):
+        run(tmp_path, ["watch"])
 
 
 def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

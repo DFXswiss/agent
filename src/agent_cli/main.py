@@ -40,7 +40,7 @@ from .runtime import (
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreError, utcnow
 from .usage import scan_usage, usage_poll_due
-from .watch import scan_merged
+from .watch import dispatch_assigned, scan_assigned, scan_merged
 
 CHECKLIST = {
     "implement": (
@@ -101,6 +101,7 @@ ACTIVITY_TYPES = frozenset(
         "issue.write",
         "pr.open",
         "pr.merged",
+        "issue.assigned",
         "comment.post",
         "mail.ingest",
         "mail.seen",
@@ -117,6 +118,7 @@ ACTIVITY_TYPES = frozenset(
 SCRIPT_ONLY_ACTIVITY = frozenset(
     {
         "pr.merged",
+        "issue.assigned",
         "mail.ingest",
         "mail.seen",
         "query.result",
@@ -1493,6 +1495,7 @@ def _session_start(
     rows: int | None,
     provider: str | None = None,
     model: str | None = None,
+    cwd: str | None = None,
 ) -> str:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
@@ -1524,7 +1527,7 @@ def _session_start(
             meta["grok_session_id"] = new_id
         meta["provider"] = "grok"
         meta["model"] = resolved
-    runtime.start(sid, start_command, cols, rows, command_argv=command_argv)
+    runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
@@ -2213,8 +2216,8 @@ def cmd_knock(args: list[str]) -> None:
 
 
 def cmd_watch(args: list[str]) -> None:
-    if not args or args[0] not in ("pr-merged", "pending", "grok-usage"):
-        die("Usage: agent watch pr-merged|pending|grok-usage")
+    if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage"):
+        die("Usage: agent watch pr-merged|pending|assigned|grok-usage")
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -2234,6 +2237,76 @@ def cmd_watch(args: list[str]) -> None:
                 print(f"usage.snapshot {activity_id}")
             else:
                 print("usage.snapshot none")
+            return
+        if args[0] == "assigned":
+            from .knock import deliver
+            from .runtime import run_argv
+
+            follow = "--follow" in args[1:]
+            while True:
+                created, skipped = scan_assigned(store, run_argv, now=utcnow())
+                root_env = os.environ.get("AGENT_SESSION_ROOT")
+                if isinstance(root_env, str) and root_env != "":
+                    workspace_root = Path(root_env)
+                else:
+                    workspace_root = store.home / "sessions"
+                targets: list[str] = []
+                seen: set[str] = set()
+                for activity_id in created:
+                    if activity_id not in seen:
+                        targets.append(activity_id)
+                        seen.add(activity_id)
+                for row in store.rows("activity"):
+                    if row.get("type") != "issue.assigned":
+                        continue
+                    if row.get("_origin_device_id") != store.device_id():
+                        continue
+                    aid = row.get("id")
+                    if not isinstance(aid, str) or aid in seen:
+                        continue
+                    sid = row.get("session_id")
+                    if not isinstance(sid, str) or sid == "":
+                        continue
+                    session = store.row("session", sid)
+                    if session is None:
+                        continue
+                    runtime_meta = session.get("runtime")
+                    control = runtime_meta.get("control") if isinstance(runtime_meta, dict) else None
+                    if control == "attached":
+                        continue
+                    targets.append(aid)
+                    seen.add(aid)
+                for aid in targets:
+                    dispatch_assigned(
+                        store,
+                        aid,
+                        sync=lambda: _sync_once(store),
+                        start=lambda sid, cwd: _session_start(
+                            store,
+                            Runtime(),
+                            sid,
+                            None,
+                            None,
+                            None,
+                            provider="grok",
+                            cwd=str(cwd),
+                        ),
+                        knock=lambda activity_id: deliver(store, Runtime(), activity_id),
+                        workspace_root=workspace_root,
+                    )
+                for activity_id in created:
+                    print(f"issue.assigned {activity_id}")
+                if not created:
+                    print("assigned none")
+                if skipped > 0:
+                    msg = f"watch skipped {skipped} assigned issues"
+                    if follow:
+                        print(msg, file=sys.stderr)
+                    else:
+                        die(msg)
+                if not follow:
+                    return
+                time.sleep(30)
             return
         from .pending import scan_pending
 

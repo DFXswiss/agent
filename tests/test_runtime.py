@@ -175,6 +175,22 @@ def test_grok_rejects_non_uuid_session_id() -> None:
         grok_launch_argv(existing="", model="", new_id="01ARZ3NDEKTSV4RRFFQ69G5FAV")
 
 
+def test_start_cwd_argv() -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(1, "", "no server")
+        return Completed(0, "", "")
+
+    rt = Runtime(runner=runner)
+    rt.start("sess-1", None, None, None, cwd="/tmp/work")
+    assert ["tmux", "new-session", "-d", "-s", "agent-sess-1", "-c", "/tmp/work"] in calls
+
+
 def test_start_invalid_quoting_dies() -> None:
     rt = Runtime(runner=lambda argv: Completed(0, "tmux 3.3a", "") if argv[:2] == ["tmux", "-V"] else Completed(1, "", ""))
     with pytest.raises(SystemExit, match="invalid command quoting"):

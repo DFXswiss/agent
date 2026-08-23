@@ -297,6 +297,7 @@ v1 types (mechanism only):
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
+| `issue.assigned` | `issue` | script | — (`NOTIFY` `agent_inbox` / start Grok / existing knock) |
 | `comment.post` | — | AI (target + body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
@@ -317,6 +318,18 @@ When this device has a `pr.open` row whose script result includes the PR number/
 The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 
 `wake` (if stored) is a local queue row for the knock; it is not a hub event.
+
+### Outside facts (example: issue assigned)
+
+The script reads GitHub; the model does not.
+
+Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of `Owner/repo` strings). Missing or empty is an error; there is no default list.
+
+The first scan records `assigned_watch_since` and dispatches nothing. Later scans only consider assignments whose latest matching `assigned` event is strictly after that cursor.
+
+The writer is this device. On a new assignment it inserts a runner session plus `issue.assigned`, pushes own events to the hub in the same process, then `session start --provider grok` with a session working directory, then knocks. Knock text is unchanged (`da ist Post id <uuid>`). The watcher may call the existing knock `deliver` after start because the session did not exist at insert time (unlike `pr.merged`).
+
+Payload `mandate=github-assignment` is trusted. Issue title and body in the payload are not.
 
 ## 15. Skills (opt-in)
 
@@ -366,6 +379,7 @@ agent knock [--once]
 agent watch pr-merged                          # one scan; schedule if you need a loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock daemon (no --once) polls every 60s
+agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent status
 agent dashboard [--port 7845]
 ```
