@@ -282,6 +282,40 @@ def _already_assigned(store: Store, repo: str, number: int) -> bool:
     return False
 
 
+def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None:
+    repo_key = repo.lower()
+    latest: datetime | None = None
+    for row in store.rows("activity"):
+        if row.get("type") != "issue.assigned":
+            continue
+        if row.get("_origin_device_id") != store.device_id():
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        raw_repo = payload.get("repo")
+        if not isinstance(raw_repo, str) or raw_repo.lower() != repo_key:
+            continue
+        raw_n = payload.get("number")
+        if isinstance(raw_n, bool) or not isinstance(raw_n, int):
+            if isinstance(raw_n, str) and raw_n.isdigit():
+                raw_n = int(raw_n)
+            else:
+                continue
+        if raw_n != number:
+            continue
+        raw_at = payload.get("assigned_at")
+        if not isinstance(raw_at, str) or raw_at == "":
+            continue
+        try:
+            event_dt = _parse_gh_time(raw_at)
+        except ValueError:
+            continue
+        if latest is None or event_dt > latest:
+            latest = event_dt
+    return latest
+
+
 def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:
     existing = store.row("session", sid)
     if existing is None:
@@ -396,7 +430,10 @@ def scan_assigned(
                 if newest_dt is None or event_dt > newest_dt:
                     newest_dt = event_dt
                     newest_at = created_at
-            if newest_at is None:
+            if newest_at is None or newest_dt is None:
+                continue
+            previous_at = _latest_assigned_at(store, repo, number)
+            if previous_at is not None and newest_dt <= previous_at:
                 continue
             title = issue.get("title")
             body = issue.get("body")
@@ -564,6 +601,7 @@ def dispatch_assigned(
     pending = pending_assigned(store, sid)
     _write_assigned_queue_files(cwd, sid, activity, pending)
     if not attached:
+        store.unclaim_wake(activity_id)
         start(sid, cwd)
         knock(activity_id)
         return "started"
