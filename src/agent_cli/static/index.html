@@ -33,6 +33,9 @@
   <p class="sub">Local replica including teammates after sync. <span id="stamp"></span></p>
   <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
 
+  <h2>Usage</h2>
+  <table id="usage"><thead><tr><th>Owner</th><th>Email</th><th>Provider</th><th>Tier</th><th>Used</th><th>Reset</th><th>Fetched</th></tr></thead><tbody></tbody></table>
+
   <h2>Sessions</h2>
   <table id="sessions"><thead><tr><th>Id</th><th>Kind</th><th>Status</th><th>Control</th><th>Last seen</th><th>Origin</th></tr></thead><tbody></tbody></table>
 
@@ -164,6 +167,22 @@
         document.getElementById("stamp").textContent = data.generated_at;
         document.getElementById("dev").textContent = data.device_id;
         document.getElementById("login").textContent = data.login || "not paired";
+
+        const usageSeen = {};
+        const usageRows = [];
+        (data.activity || []).forEach(ev => {
+          if (ev.type !== "usage.snapshot") return;
+          const p = ev.payload || {};
+          const provider = p.provider || p.vendor;
+          const key = provider + "\0" + p.account_email;
+          if (usageSeen[key]) return;
+          usageSeen[key] = true;
+          usageRows.push(ev);
+        });
+        document.querySelector("#usage tbody").innerHTML = usageRows.map(ev => {
+          const p = ev.payload || {};
+          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(p.account_email)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(p.used_percent + "%")}</td><td>${esc(p.period_end)}</td><td>${esc(p.fetched_at)}</td></tr>`;
+        }).join("") || empty(7);
 
         sessionsById = {};
         (data.sessions || []).forEach(s => { sessionsById[s.id] = s; });
