@@ -582,14 +582,16 @@ The watch verb `agent watch errors` is specified here and is **not implemented i
 
 ### 21.4 Analysis and eligibility
 
-After the knock, the session reads the row and writes `investigate.step` immediately (hypothesis, check, ruled out — each a new row). Then it inserts **one** typed conclusion:
+After the knock, the session reads the row and writes `investigate.step` immediately (hypothesis, check, ruled out — each a new row). Then it inserts **one** typed conclusion. Both conclusion payloads include `error_id` (the `error.seen` id) and `fingerprint`:
 
-- `error.skip` — not a code fix (infra, noisy duplicate, unmapped repo, forbidden path, already an open draft for this fingerprint). Payload `reason` is a short token plus optional note.
+- `error.skip` — not a code fix (infra, noisy duplicate, unmapped repo, forbidden path, already an open draft for this fingerprint). Also `reason` (short token plus optional note).
 - `error.fix` — `execution_status=pending`. Local intent only.
 
 The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
 
-Same fingerprint while the incident is **open** (`error.fix`, a spine implement task, or a draft pull request): enrich `error.seen`. Do not create a second task or a second pull request. After `error.skip` or after the implement task reaches a terminal state (`done` / `failed` / `pr.merged`): the next match is a **new** `error.seen` (new id, first insert knocks).
+The adapter decides open vs closed by that `error_id` / `fingerprint`, plus the spine task whose `payload.error_id` matches. A later `error.skip` or a terminal task (`done` / `failed` / `pr.merged`) for the same `error_id` closes the incident. `agent task create` for a given `error_id` is find-or-create; a second `error.fix` does not open a second task.
+
+Same fingerprint while the incident is **open**: enrich `error.seen`. Do not create a second task or a second pull request. After close: the next match is a **new** `error.seen` (new id, first insert knocks).
 
 ### 21.5 Patch and draft pull request
 
