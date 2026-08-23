@@ -560,7 +560,21 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
                 ),
                 "",
             )
-        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+        if argv[:2] == ["gh", "api"] and any(part.endswith("/issues/1/events") for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-02-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any(part.endswith("/issues/8/events") for part in argv):
             return Completed(
                 0,
                 json.dumps(
@@ -582,6 +596,9 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
     sessions = {store.row("activity", aid)["session_id"] for aid in created}
     assert sessions == {"assigned"}
     assert len([r for r in store.rows("session") if r.get("id") == "assigned"]) == 1
+    first = store.row("activity", created[0])
+    assert first is not None
+    assert first["payload"]["number"] == 8
 
 
 def test_dispatch_assigned_second_does_not_start_another_terminal(tmp_path: Path) -> None:

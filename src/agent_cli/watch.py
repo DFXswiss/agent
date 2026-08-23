@@ -28,8 +28,11 @@ def _gh_raw(argv: list[str], runner: Callable[[list[str]], Completed]) -> Any:
         raise StoreError("gh returned empty output")
     try:
         return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise StoreError("gh returned invalid JSON") from exc
+    except json.JSONDecodeError:
+        try:
+            return json.loads("[" + raw.replace("][", "],[") + "]")
+        except json.JSONDecodeError as exc:
+            raise StoreError("gh returned invalid JSON") from exc
 
 
 def _gh(argv: list[str], runner: Callable[[list[str]], Completed]) -> dict[str, Any]:
@@ -318,6 +321,7 @@ def scan_assigned(
     cursor_dt = _parse_gh_time(cursor)
     created: list[str] = []
     skipped = 0
+    found: list[dict[str, Any]] = []
     for repo in repos:
         issues = _gh_list(
             [
@@ -331,7 +335,7 @@ def scan_assigned(
                 "--state",
                 "open",
                 "--limit",
-                "100",
+                "1000",
                 "--json",
                 "number,title,url,body",
             ],
@@ -385,43 +389,60 @@ def scan_assigned(
                     newest_at = created_at
             if newest_at is None:
                 continue
-            _ensure_assigned_session(store, sid, now)
             title = issue.get("title")
             body = issue.get("body")
             url = issue.get("url")
-            activity_id = str(uuid.uuid4())
-            lock_key = f"assigned:{repo.lower()}:{number}"
-            event = store.write_with_advisory(
-                "activity",
-                "insert",
-                activity_id,
+            found.append(
                 {
-                    "id": activity_id,
-                    "session_id": sid,
-                    "type": "issue.assigned",
-                    "payload": {
-                        "repo": repo,
-                        "number": number,
-                        "url": url if isinstance(url, str) else "",
-                        "title": title if isinstance(title, str) else "",
-                        "body": body if isinstance(body, str) else "",
-                        "assigned_at": newest_at,
-                        "assignee": login,
-                        "mandate": "github-assignment",
-                    },
-                    "execution_status": "done",
-                },
-                lock_key=lock_key,
-                skip=lambda r=repo, n=number: _already_assigned(store, r, n),
+                    "repo": repo,
+                    "number": number,
+                    "url": url if isinstance(url, str) else "",
+                    "title": title if isinstance(title, str) else "",
+                    "body": body if isinstance(body, str) else "",
+                    "assigned_at": newest_at,
+                }
             )
-            if event is not None:
-                created.append(activity_id)
+    found.sort(key=lambda item: (str(item["assigned_at"]), str(item["repo"]).lower(), int(item["number"])))
+    if found:
+        _ensure_assigned_session(store, sid, now)
+    for item in found:
+        repo = str(item["repo"])
+        number = int(item["number"])
+        if _already_assigned(store, repo, number):
+            continue
+        activity_id = str(uuid.uuid4())
+        lock_key = f"assigned:{repo.lower()}:{number}"
+        event = store.write_with_advisory(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": sid,
+                "type": "issue.assigned",
+                "payload": {
+                    "repo": repo,
+                    "number": number,
+                    "url": item["url"],
+                    "title": item["title"],
+                    "body": item["body"],
+                    "assigned_at": item["assigned_at"],
+                    "assignee": login,
+                    "mandate": "github-assignment",
+                },
+                "execution_status": "done",
+            },
+            lock_key=lock_key,
+            skip=lambda r=repo, n=number: _already_assigned(store, r, n),
+        )
+        if event is not None:
+            created.append(activity_id)
     if skipped == 0:
         store.sync_set("assigned_watch_since", max(cursor, now))
     return created, skipped
 
 
-def _acked_assigned_ids(store: Store, session_id: str) -> set[str]:
+def acked_assigned_ids(store: Store, session_id: str) -> set[str]:
     out: set[str] = set()
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned.ack":
@@ -438,7 +459,7 @@ def _acked_assigned_ids(store: Store, session_id: str) -> set[str]:
 
 
 def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
-    acked = _acked_assigned_ids(store, session_id)
+    acked = acked_assigned_ids(store, session_id)
     ranked: list[tuple[str, str, dict[str, Any]]] = []
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
