@@ -511,6 +511,8 @@ def test_scan_assigned_login_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="does not match"):
         scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert store.sync_get("assigned_session_id") is None
+    assert store.sync_get("assigned_watch_since") is None
 
 
 def test_dispatch_assigned_sync_failure_does_not_start(tmp_path: Path) -> None:

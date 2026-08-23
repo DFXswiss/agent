@@ -330,12 +330,13 @@ def scan_assigned(
 ) -> tuple[list[str], int]:
     """Insert issue.assigned for allowlisted open issues newly assigned to this login."""
     repos, sid = load_watch_config(store.home)
-    sid = _pinned_assigned_session(store, sid)
     login = _paired_login(store, runner)
     cursor = store.sync_get("assigned_watch_since")
     if cursor is None:
+        store.sync_set("assigned_session_id", sid)
         store.sync_set("assigned_watch_since", now)
         return [], 0
+    sid = _pinned_assigned_session(store, sid)
     cursor_dt = _parse_gh_time(cursor)
     created: list[str] = []
     skipped = 0
@@ -548,8 +549,8 @@ def _write_assigned_queue_files(
         f"Session id: {session_id}",
         f"Current activity id: {activity_id}",
         "",
-        "Process the queue oldest first, one item at a time.",
-        "When that item is done, record issue.assigned.ack with payload assigned_id.",
+        "Process the current queue head, then remaining items oldest first.",
+        "When the current activity id is done, record issue.assigned.ack with payload assigned_id.",
         "Then the next knock is delivered.",
         "",
         "Read activities from the local store. Do not call gh.",
@@ -560,7 +561,7 @@ def _write_assigned_queue_files(
     queue = [
         "# Assignment queue",
         "",
-        "Oldest first. One item at a time.",
+        "Current head first (already knocked, if any). Then oldest first.",
         "",
     ]
     for row in pending:
