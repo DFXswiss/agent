@@ -281,6 +281,65 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     assert again == []
 
 
+def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {
+            "id": "assigned",
+            "kind": "runner",
+            "status": "active",
+            "skills": ["spine"],
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    session = store.row("session", "assigned")
+    assert session is not None
+    assert session["skills"] == ["spine"]
+
+
 def test_scan_assigned_equal_cursor_skips(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
