@@ -251,6 +251,8 @@ def _already_assigned(store: Store, repo: str, number: int) -> bool:
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned.ack":
             continue
+        if row.get("_origin_device_id") != store.device_id():
+            continue
         payload = row.get("payload")
         if not isinstance(payload, dict):
             continue
@@ -334,6 +336,8 @@ def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:
             },
         )
         return
+    if existing.get("_origin_device_id") != store.device_id():
+        raise StoreError(f"session {sid} is owned by another device")
     if existing.get("status") == "closed":
         raise StoreError(f"session {sid} is closed")
     if existing.get("kind") != "runner":
@@ -494,6 +498,8 @@ def acked_assigned_ids(store: Store, session_id: str) -> set[str]:
         if row.get("type") != "issue.assigned.ack":
             continue
         if row.get("session_id") != session_id:
+            continue
+        if row.get("_origin_device_id") != store.device_id():
             continue
         payload = row.get("payload")
         if not isinstance(payload, dict):

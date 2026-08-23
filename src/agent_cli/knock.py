@@ -38,6 +38,8 @@ def assigned_inflight_id(store: Store, session_id: str) -> str | None:
             continue
         if row.get("session_id") != session_id:
             continue
+        if row.get("_origin_device_id") != store.device_id():
+            continue
         aid = row.get("id")
         if not isinstance(aid, str) or aid in acked:
             continue
@@ -78,6 +80,8 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
         store.enqueue_wake(activity_id, sid)
         return "queued"
     if activity.get("type") == "issue.assigned":
+        if activity.get("_origin_device_id") != store.device_id():
+            return "missing"
         if activity_id in acked_assigned_ids(store, sid):
             store.claim_wake(activity_id)
             return "sent"
