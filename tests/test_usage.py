@@ -4,10 +4,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from agent_cli.store import Store, StoreError
-from agent_cli.usage import scan_usage, usage_poll_due
+from agent_cli.usage import (
+    CREDITS_URL,
+    SETTINGS_URL,
+    fetch_credits_and_settings,
+    last_usage_snapshot,
+    scan_usage,
+    usage_poll_due,
+)
 
 
 SETTINGS = {"subscription_tier_display": "SuperGrok Heavy"}
@@ -182,6 +190,86 @@ def test_scan_usage_rejects_inf_credit_usage_percent(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="finite"):
         scan_usage(store, fetch=fetch, auth_path=auth)
+
+
+def test_scan_usage_rejects_overflow_credit_usage_percent(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    credits = _credits()
+    credits["config"]["creditUsagePercent"] = 10**400
+
+    def fetch(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        return credits, SETTINGS
+
+    with pytest.raises(StoreError, match="finite"):
+        scan_usage(store, fetch=fetch, auth_path=auth)
+
+
+def test_fetch_credits_and_settings_success_via_mock_client() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if str(request.url) == CREDITS_URL:
+            return httpx.Response(200, json=_credits())
+        if str(request.url) == SETTINGS_URL:
+            return httpx.Response(200, json=SETTINGS)
+        return httpx.Response(404, json={"error": "unexpected"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        credits, settings = fetch_credits_and_settings("test-token", client=client)
+    assert credits == _credits()
+    assert settings == SETTINGS
+    assert len(requests) == 2
+    assert str(requests[0].url) == CREDITS_URL
+    assert str(requests[1].url) == SETTINGS_URL
+    for request in requests:
+        assert request.headers["Authorization"] == "Bearer test-token"
+        assert request.headers["Accept"] == "application/json"
+        assert request.headers["x-xai-token-auth"] == "xai-grok-cli"
+
+
+def test_fetch_credits_and_settings_http_500_hides_token() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="server error")
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        with pytest.raises(StoreError) as excinfo:
+            fetch_credits_and_settings("test-token", client=client)
+    assert "test-token" not in str(excinfo.value)
+
+
+def test_fetch_credits_and_settings_invalid_json_hides_token() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not-json")
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        with pytest.raises(StoreError, match="invalid JSON") as excinfo:
+            fetch_credits_and_settings("test-token", client=client)
+    assert "test-token" not in str(excinfo.value)
+
+
+def test_last_usage_snapshot_via_last_own_activity_insert(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    activity_id = scan_usage(
+        store,
+        fetch=lambda token: (_credits(), SETTINGS),
+        auth_path=auth,
+        now=lambda: "2026-08-20T12:00:00Z",
+    )
+    assert isinstance(activity_id, str)
+    event = store.last_own_activity_insert("usage.snapshot")
+    assert event is not None
+    assert event["type"] == "usage.snapshot"
+    assert event["id"] == activity_id
+    snapshot = last_usage_snapshot(store)
+    assert snapshot is not None
+    assert snapshot["vendor"] == "grok"
+    assert snapshot["used_percent"] == 11.0
+    assert last_usage_snapshot(store, vendor="other") is None
 
 
 def test_scan_usage_missing_auth_file(tmp_path: Path) -> None:

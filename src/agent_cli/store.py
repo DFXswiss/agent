@@ -490,6 +490,22 @@ class Store:
         payload["_origin_device_id"] = found["origin_device_id"]
         return payload
 
+    def last_own_activity_insert(self, activity_type: str) -> dict[str, Any] | None:
+        """Newest own ledger insert of this activity type (origin_seq DESC). Full activity row dict or None."""
+        with self._lock:
+            found = self.conn.execute(
+                "SELECT payload FROM ledger_event WHERE origin_device_id = %s AND table_name = %s AND op = %s "
+                "ORDER BY origin_seq DESC",
+                (self.device_id(), "activity", "insert"),
+            ).fetchall()
+        for row in found:
+            event = loads(row["payload"])
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == activity_type:
+                return event
+        return None
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {

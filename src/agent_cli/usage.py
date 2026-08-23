@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from .store import Store, StoreError, loads, utcnow
+from .store import Store, StoreError, utcnow
 
 # format=credits is required: the weekly SuperGrok pool lives only on that view;
 # the default monthly billing body has no currentPeriod.
@@ -113,21 +113,28 @@ def _get_json(
     return data
 
 
-def fetch_credits_and_settings(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def fetch_credits_and_settings(
+    token: str, client: httpx.Client | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     GET CREDITS_URL and SETTINGS_URL with httpx.Client(timeout=8.0, follow_redirects=False).
     Headers: Authorization Bearer, Accept application/json, x-xai-token-auth: xai-grok-cli.
     Non-200, HTTPError, invalid JSON, non-object body → StoreError.
     Return (credits_object, settings_object).
+    Optional client is caller-owned and is not closed.
     """
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "x-xai-token-auth": "xai-grok-cli",
     }
-    with httpx.Client(timeout=8.0, follow_redirects=False) as client:
-        credits = _get_json(client, CREDITS_URL, headers, "credits")
-        settings = _get_json(client, SETTINGS_URL, headers, "settings")
+    if client is None:
+        with httpx.Client(timeout=8.0, follow_redirects=False) as owned:
+            credits = _get_json(owned, CREDITS_URL, headers, "credits")
+            settings = _get_json(owned, SETTINGS_URL, headers, "settings")
+        return credits, settings
+    credits = _get_json(client, CREDITS_URL, headers, "credits")
+    settings = _get_json(client, SETTINGS_URL, headers, "settings")
     return credits, settings
 
 
@@ -140,7 +147,10 @@ def _require_nonempty_str(value: Any, field: str) -> str:
 def _require_float(value: Any, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise StoreError(f"{field} must be a number")
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise StoreError(f"{field} must be a finite number") from exc
     if not math.isfinite(number):
         raise StoreError(f"{field} must be a finite number")
     return number
@@ -271,25 +281,11 @@ def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -
 
 def last_usage_snapshot(store: Store, vendor: str = VENDOR) -> dict[str, Any] | None:
     """Newest owned activity with type=='usage.snapshot' and payload.vendor==vendor; return its payload dict or None."""
-    # origin_seq is monotonic per device; updated_at is second-resolution without a tiebreaker
-    with store._lock:
-        rows = store.conn.execute(
-            "SELECT payload FROM ledger_event "
-            "WHERE origin_device_id = %s AND table_name = %s AND op = %s "
-            "ORDER BY origin_seq DESC",
-            (store.device_id(), "activity", "insert"),
-        ).fetchall()
-    for row in rows:
-        event = loads(row["payload"])
-        if not isinstance(event, dict):
-            continue
-        if event.get("type") != "usage.snapshot":
-            continue
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("vendor") != vendor:
-            continue
+    event = store.last_own_activity_insert("usage.snapshot")
+    if event is None:
+        return None
+    payload = event.get("payload")
+    if isinstance(payload, dict) and payload.get("vendor") == vendor:
         return payload
     return None
 
