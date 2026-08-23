@@ -65,7 +65,7 @@ def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
     def runner(argv: list[str]) -> Completed:
         calls.append(list(argv))
         if argv[:3] == ["gh", "pr", "view"]:
-            return Completed(1, "", "not found")
+            return Completed(1, "", "no pull requests found")
         if "create" in argv:
             assert "--draft" in argv
             assert "--repo" in argv
@@ -165,6 +165,63 @@ def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "error"
     assert "HTTP 401" in (row.get("execution_error") or "")
+
+
+def test_pr_open_view_token_not_found_no_create(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-token"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "T",
+            "head": "feat",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", "authentication token not found")
+        raise AssertionError(f"create must not run: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} error"]
+    assert not any("create" in c for c in calls)
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+
+
+def test_pr_open_view_generic_http_404_no_create(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-404"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "T",
+            "head": "feat",
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", "Not Found (HTTP 404)")
+        raise AssertionError(f"create must not run: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} error"]
+    assert not any("create" in c for c in calls)
 
 
 def test_pr_open_existing_not_draft_errors(tmp_path: Path) -> None:
@@ -306,7 +363,7 @@ def test_pr_open_create_nonzero_errors(tmp_path: Path) -> None:
 
     def runner(argv: list[str]) -> Completed:
         if argv[:3] == ["gh", "pr", "view"]:
-            return Completed(1, "", "not found")
+            return Completed(1, "", "no pull requests found")
         if "create" in argv:
             return Completed(1, "", "create failed")
         raise AssertionError(argv)
@@ -617,6 +674,34 @@ def test_comment_post_invalid_target_errors(tmp_path: Path) -> None:
     row = store.row("activity", act_id)
     assert row is not None
     assert row["execution_status"] == "error"
+
+
+def test_comment_post_non_positive_number_errors(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    for act_id, number in (("c-zero", 0), ("c-neg", -1)):
+        _pending(
+            store,
+            act_id,
+            "comment.post",
+            {
+                "repo": "dfxswiss/agent",
+                "number": number,
+                "body": "x",
+            },
+        )
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str]) -> Completed:
+            calls.append(list(argv))
+            return Completed(0, "{}", "")
+
+        lines = scan_github(store, runner)
+        assert lines == [f"comment.post {act_id} error"]
+        assert calls == []
+        row = store.row("activity", act_id)
+        assert row is not None
+        assert row["execution_status"] == "error"
 
 
 def test_subscription_set_ignored(tmp_path: Path) -> None:

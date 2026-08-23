@@ -140,15 +140,15 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
 
 
 def _gh_not_found(completed: Completed) -> bool:
-    """True only when gh failed and output indicates the PR/resource is missing."""
+    """True only when gh failed because this pull request is missing."""
     if completed.returncode == 0:
         return False
     text = f"{completed.stderr or ''}{completed.stdout or ''}".casefold()
-    return (
-        "not found" in text
-        or "no pull request" in text
-        or "could not find" in text
-    )
+    if "no pull request" in text:
+        return True
+    if "pull request" in text and ("not found" in text or "could not find" in text):
+        return True
+    return False
 
 
 def _is_draft(raw: Any) -> bool:
@@ -349,7 +349,7 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     repo = _repo_ok(payload.get("repo"))
     number = _as_int(payload.get("number"))
     body = _nonempty_str(payload.get("body"))
-    if repo is None or number is None or body is None:
+    if repo is None or number is None or number <= 0 or body is None:
         _mark(
             store,
             row,
