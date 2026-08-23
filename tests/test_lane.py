@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import CompletedProcess
 from types import SimpleNamespace
 
 import pytest
 
 from agent_cli.lane import (
     GROK_STRIP_ENV,
+    _run_in_tmux,
     codex_argv,
     grok_argv,
     launch,
@@ -349,6 +351,80 @@ def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
     assert len(seen) == 1
     assert seen[0][:3] == ["tmux", "new-session", "-d"]
     assert result.status == "complete"
+
+
+def _tmux_script(handler):
+    calls: list[list[str]] = []
+
+    def fake(argv: list[str]) -> CompletedProcess[str]:
+        calls.append(list(argv))
+        return handler(argv, calls)
+
+    return fake, calls
+
+
+def test_run_in_tmux_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[:2] == ["tmux", "new-session"]:
+            return CompletedProcess(argv, 0, "", "")
+        if "remain-on-exit" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, "STATUS: complete\n", "")
+        if "kill-session" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok", "--prompt-file", "s"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 0
+    assert "STATUS: complete" in result.stdout
+    assert calls[0][:3] == ["tmux", "new-session", "-d"]
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_kills_on_remain_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if "remain-on-exit" in argv:
+            return CompletedProcess(argv, 1, "", "no tmux")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 1
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_kills_on_pane_dead_query_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 2, "", "gone")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    assert result.returncode == 2
+    assert any("kill-session" in c for c in calls)
+
+
+def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if "send-keys" in argv and "-l" in argv:
+            return CompletedProcess(argv, 3, "", "no pane")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
+    assert result.returncode == 3
+    assert any("kill-session" in c for c in calls)
 
 
 def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
