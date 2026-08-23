@@ -12,6 +12,7 @@ from agent_cli.lane import (
     grok_argv,
     launch,
     parse_status,
+    tmux_wrap_argv,
 )
 from agent_cli.main import main
 
@@ -94,6 +95,7 @@ def test_pr_reviewer_quality_uses_readonly_grok_argv(tmp_path: Path) -> None:
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
+        tmux=False,
     )
     assert "--deny" in result.argv
     assert "Write" in result.argv
@@ -166,6 +168,7 @@ def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
         cwd=str(tmp_path),
         runner=boom,
         dry_run=True,
+        tmux=False,
     )
     assert result.status == ""
     assert result.returncode == 0
@@ -188,6 +191,7 @@ def test_launch_codex_dry_run_skips_mkstemp(
         spec_file=str(spec),
         cwd=str(tmp_path),
         dry_run=True,
+        tmux=False,
     )
     assert "--output-last-message" in result.argv
 
@@ -212,6 +216,7 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
+        tmux=False,
     )
     assert len(seen) == 1
     assert seen[0][1] == contents
@@ -240,6 +245,7 @@ def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) ->
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=fake,
+            tmux=False,
         )
     assert out_path is not None
     assert not Path(out_path).exists()
@@ -266,8 +272,82 @@ def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
         spec_file=str(spec),
         cwd=str(tmp_path),
         runner=fake,
+        tmux=False,
     )
     assert seen == [None] or seen == [""]
+    assert result.status == "complete"
+
+
+def test_tmux_wrap_argv_shape() -> None:
+    inner = ["env", "-u", "ANTHROPIC_API_KEY", "grok", "--prompt-file", "s"]
+    argv = tmux_wrap_argv(inner, name="agent-lane-grok-implementer", cwd="/work")
+    assert argv[:6] == [
+        "tmux",
+        "new-session",
+        "-d",
+        "-s",
+        "agent-lane-grok-implementer",
+        "-c",
+    ]
+    assert argv[6] == "/work"
+    assert argv[7] == "--"
+    assert argv[8:] == inner
+
+
+def test_launch_default_wraps_tmux(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+    )
+    assert result.argv[:3] == ["tmux", "new-session", "-d"]
+    assert "-s" in result.argv
+    assert result.tmux_session is not None
+    assert result.tmux_session.startswith("agent-lane-grok-implementer")
+    assert "--" in result.argv
+    assert "grok-4.5" in result.argv
+    inner = result.argv[result.argv.index("--") + 1 :]
+    assert inner[0] == "env"
+
+
+def test_launch_no_tmux_starts_with_env(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+        tmux=False,
+    )
+    assert result.argv[0] == "env"
+    assert "tmux" not in result.argv
+    assert result.tmux_session is None
+
+
+def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="STATUS: complete\n", stderr="")
+
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+    )
+    assert len(seen) == 1
+    assert seen[0][:3] == ["tmux", "new-session", "-d"]
     assert result.status == "complete"
 
 
@@ -290,8 +370,35 @@ def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixt
         ]
     )
     out = capsys.readouterr().out.strip()
+    assert "tmux" in out
+    assert "new-session" in out
     assert "grok-4.5" in out
     assert "STATUS=" not in out
+
+
+def test_cli_no_tmux_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement me\n", encoding="utf-8")
+    run(
+        [
+            "lane",
+            "run",
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--spec-file",
+            str(spec),
+            "--cwd",
+            str(tmp_path),
+            "--dry-run",
+            "--no-tmux",
+        ]
+    )
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("env ")
+    assert "new-session" not in out
+    assert "grok-4.5" in out
 
 
 def test_cli_missing_spec_dies(tmp_path: Path) -> None:
