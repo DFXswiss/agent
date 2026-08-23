@@ -1103,7 +1103,8 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
 
 
 @pytest.mark.parametrize(
-    "typ", ["pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register"]
+    "typ",
+    ["pr.merged", "mail.ingest", "mail.seen", "query.result", "session.register", "issue.assigned"],
 )
 def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
     run(tmp_path, ["init"])
@@ -1302,6 +1303,18 @@ def test_knock_and_watch_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     run(tmp_path, ["watch", "pr-merged"])
     out = capsys.readouterr().out
     assert "pr.merged none" in out
+
+
+def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="assigned_repos|watch.json"):
+        run(tmp_path, ["watch", "assigned"])
+
+
+def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="assigned"):
+        run(tmp_path, ["watch"])
 
 
 def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

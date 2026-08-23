@@ -69,13 +69,22 @@ This package **is** the runtime: install it locally and run `agent`. There is no
 
 Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails.
 
-Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
+Session mail, `pr.merged`, and `issue.assigned` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
 
 ```bash
 agent knock --once
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); run from cron if you need a loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
+agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 ```
+
+`agent watch assigned` reads `$AGENT_HOME/watch.json`:
+
+```json
+{ "assigned_repos": ["Owner/repo"] }
+```
+
+Missing or empty `assigned_repos` is an error. The first scan only records the `assigned_watch_since` watermark and creates no activities. Later scans insert a runner session plus `issue.assigned`, push to the hub in the same process, start Grok in a session working directory (writes `MANDATE.md` there; issue body stays out of that file and out of tmux), then knock. Use `--follow` for a 30s loop, or cron for one-shot runs.
 
 ### Session terminal control
 

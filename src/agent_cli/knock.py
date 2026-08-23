@@ -18,7 +18,7 @@ def knock_text(activity_id: str) -> str:
 
 def target_session_id(activity: dict[str, Any]) -> str | None:
     typ = activity.get("type")
-    if typ == "pr.merged":
+    if typ in ("pr.merged", "issue.assigned"):
         sid = activity.get("session_id")
         return sid if isinstance(sid, str) and sid else None
     if typ == "message":
