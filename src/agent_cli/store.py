@@ -630,6 +630,8 @@ class Store:
             return
         if payload.get("type") not in WAKE_ACTIVITY_TYPES:
             return
+        if payload.get("type") == "issue.assigned" and event.get("origin_device_id") != self.device_id():
+            return
         if (
             payload.get("type") in DONE_WAKE_ACTIVITY_TYPES
             and payload.get("execution_status") != "done"
