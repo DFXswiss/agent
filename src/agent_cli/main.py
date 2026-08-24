@@ -1227,13 +1227,13 @@ def cmd_sync(args: list[str]) -> None:
         try:
             backoff = 1.0
             while True:
-                started: float | None = None
+                established: dict[str, float] = {}
                 try:
                     _sync_once(store)
-                    started = time.monotonic()
-                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture)
+                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, established)
                 except (HubError, OSError, WebSocketException) as exc:
                     print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
+                    started = established.get("at")
                     if started is not None and time.monotonic() - started >= _MAX_BACKOFF:
                         backoff = 1.0
                     time.sleep(backoff)
@@ -1250,12 +1250,16 @@ def _run_sync_ws_session(
     runtime: Runtime,
     terminal_seq: dict[str, int],
     last_capture: dict[str, str],
+    established: dict[str, float],
 ) -> None:
     """Run one websocket connection's message loop. Raises on disconnect/error;
-    the caller in cmd_sync reconnects with backoff instead of exiting the process."""
+    the caller in cmd_sync reconnects with backoff instead of exiting the process.
+    Sets established["at"] once the handshake actually succeeds, so the caller can
+    measure connection stability from there rather than from the connect attempt."""
     ws = hub.connect_sync_ws()
     try:
         ws.send(json.dumps({"type": "control-ready"}))
+        established["at"] = time.monotonic()
         last_capture.clear()  # a new connection has no idea what a prior one already sent
         _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
         for raw in ws:

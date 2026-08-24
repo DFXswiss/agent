@@ -39,7 +39,12 @@ def test_follow_reconnects_after_connection_drop_instead_of_dying(
     sleeps: list[float] = []
 
     def fake_session(
-        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
     ) -> None:
         calls.append(1)
         if len(calls) == 1:
@@ -70,7 +75,12 @@ def test_follow_used_to_die_on_first_disconnect_before_the_fix(
     calls: list[int] = []
 
     def always_fails(
-        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
     ) -> None:
         calls.append(1)
         if len(calls) >= 3:
@@ -135,7 +145,34 @@ def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
                 return _FailOnTerminalSendWs()
 
         with pytest.raises(OSError):
-            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {})
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+    finally:
+        store.close()
+
+
+def test_established_not_set_when_the_connect_attempt_itself_fails(
+    tmp_path: Path,
+) -> None:
+    """Regression test: established["at"] must only be set once the handshake (both
+    the connect AND the control-ready send) has actually succeeded - crediting a
+    failed connect attempt as "stable" would let a hub whose connect attempts hang
+    for a long time before failing (a black-holed connection, a slow TLS handshake -
+    hub.connect_sync_ws() sets no explicit timeout) falsely reset backoff, the same
+    failure class as the _sync_once case one call-frame deeper."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+
+        class _FailToConnectHub:
+            def connect_sync_ws(self) -> None:
+                raise HubError("hub websocket failed: connection timed out")
+
+        established: dict[str, float] = {}
+        with pytest.raises(HubError):
+            main_mod._run_sync_ws_session(
+                store, _FailToConnectHub(), _FakeRuntime(), {}, {}, established
+            )
+        assert established == {}, "a failed connect must not be credited as an established session"
     finally:
         store.close()
 
@@ -229,11 +266,11 @@ def test_reconnect_republishes_terminal_state_even_if_unchanged(tmp_path: Path) 
         last_capture: dict[str, str] = {}
 
         with pytest.raises(HubError):
-            main_mod._run_sync_ws_session(store, hub, _FakeRuntime(), terminal_seq, last_capture)
+            main_mod._run_sync_ws_session(store, hub, _FakeRuntime(), terminal_seq, last_capture, {})
         assert len(hub.sessions[0].sent) == 2, "control-ready + one terminal frame"
 
         with pytest.raises(HubError):
-            main_mod._run_sync_ws_session(store, hub, _FakeRuntime(), terminal_seq, last_capture)
+            main_mod._run_sync_ws_session(store, hub, _FakeRuntime(), terminal_seq, last_capture, {})
         assert len(hub.sessions[1].sent) == 2, (
             "reconnect must republish the terminal even though its content is unchanged"
         )
@@ -253,8 +290,14 @@ def test_backoff_grows_through_rapid_flapping_reconnects(
     sleeps: list[float] = []
 
     def fake_session(
-        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
     ) -> None:
+        established["at"] = main_mod.time.monotonic()  # simulate the handshake succeeding
         calls.append(1)
         if len(calls) >= 4:
             raise _StopTest("stop after 4 flapping attempts")
@@ -284,8 +327,14 @@ def test_backoff_resets_after_a_stable_connection(
     sleeps: list[float] = []
 
     def fake_session(
-        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
     ) -> None:
+        established["at"] = main_mod.time.monotonic()  # simulate the handshake succeeding
         calls.append(1)
         if len(calls) >= 3:
             raise _StopTest("stop after 3 attempts")
