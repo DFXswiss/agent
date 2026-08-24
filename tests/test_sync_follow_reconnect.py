@@ -4,10 +4,12 @@ import os
 from pathlib import Path
 
 import pytest
+from websockets.exceptions import WebSocketException
 
 from agent_cli import main as main_mod
 from agent_cli.main import cmd_sync, open_store
 from agent_cli.hub import HubError
+from agent_cli.store import StoreError
 
 
 class _StopTest(Exception):
@@ -125,6 +127,67 @@ def test_initial_sync_failure_in_follow_mode_reconnects_instead_of_dying(
         cmd_sync(["--follow"])
 
     assert len(calls) == 2, "the first sync failure must be retried, not exit the process"
+
+
+def test_store_error_from_sync_reconnects_instead_of_dying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: a lost/reset local postgres connection surfaces as
+    psycopg.Error, which Store's reconnect-path methods translate into StoreError
+    (see tests/test_store.py). The reconnect loop's except clause must actually
+    include StoreError - otherwise a transient DB blip during --follow, not just a
+    hub disconnect, would still kill the process."""
+    calls: list[int] = []
+
+    def fake_sync_once(store: object) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise StoreError("postgres error: server closed the connection unexpectedly")
+        raise _StopTest("reconnected past the store error - stopping the test here")
+
+    monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert len(calls) == 2, "a StoreError from sync must be retried, not exit the process"
+
+
+def test_websocket_exception_reconnects_instead_of_dying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the reconnect handler's except tuple names WebSocketException
+    explicitly - the type the websockets library actually raises for a real
+    protocol-level disconnect - but nothing in the suite drove that specific type
+    through the loop before this. Pin it down directly."""
+    calls: list[int] = []
+
+    def fake_session(
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
+    ) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise WebSocketException("connection closed")
+        raise _StopTest("reconnected after a websocket exception - stopping the test here")
+
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert len(calls) == 2, "a WebSocketException must be retried, not exit the process"
 
 
 class _FakeRuntime:
@@ -410,6 +473,45 @@ def test_backoff_grows_through_rapid_flapping_reconnects(
         cmd_sync(["--follow"])
 
     assert sleeps == [1.0, 2.0, 4.0], "backoff must keep growing when every reconnect fails almost immediately"
+
+
+def test_backoff_caps_at_max_backoff_under_sustained_flapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: backoff must stop growing once it reaches _MAX_BACKOFF, not
+    keep doubling past it - nothing else in this suite drives the sequence far
+    enough to observe the cap actually engage."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_session(
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
+    ) -> None:
+        established["at"] = main_mod.time.monotonic()
+        calls.append(1)
+        if len(calls) >= 8:
+            raise _StopTest("stop after 8 flapping attempts")
+        raise OSError("connection reset by peer")
+
+    times = iter(i * 0.1 for i in range(16))
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: next(times))
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, main_mod._MAX_BACKOFF, main_mod._MAX_BACKOFF], (
+        "backoff must grow exponentially then cap at _MAX_BACKOFF, not keep doubling past it"
+    )
 
 
 def test_backoff_resets_after_a_stable_connection(

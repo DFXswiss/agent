@@ -1231,7 +1231,7 @@ def cmd_sync(args: list[str]) -> None:
                 try:
                     _sync_once(store)
                     _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, established)
-                except (HubError, OSError, WebSocketException) as exc:
+                except (HubError, StoreError, OSError, WebSocketException) as exc:
                     print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
                     started = established.get("at")
                     if started is not None and time.monotonic() - started >= _MAX_BACKOFF:

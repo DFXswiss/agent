@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import threading
@@ -102,6 +103,21 @@ class StoreError(SystemExit):
     pass
 
 
+def _wrap_pg_errors(fn: Callable) -> Callable:
+    """A lost/reset postgres connection raises psycopg.Error, which is a plain
+    Exception - not caught by callers (e.g. cmd_sync's reconnect loop) that only
+    handle StoreError. Translate it so those call sites can retry instead of dying."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except psycopg.Error as exc:
+            raise StoreError(f"postgres error: {exc}") from exc
+
+    return wrapper
+
+
 class Store:
     def __init__(self, home: Path, dsn: str | None = None) -> None:
         self.home = Path(home)
@@ -178,6 +194,7 @@ class Store:
             raise StoreError("device_id is missing")
         return value
 
+    @_wrap_pg_errors
     def meta(self, key: str) -> str | None:
         with self._lock:
             row = self.conn.execute("SELECT value FROM meta WHERE key = %s", (key,)).fetchone()
@@ -290,6 +307,7 @@ class Store:
         self._maybe_work(event)
         return event
 
+    @_wrap_pg_errors
     def apply_remote(self, event: dict[str, Any], *, wake: bool = True) -> None:
         with self._lock, self.conn.transaction():
             inserted = self._insert_event_idempotent(event)
@@ -407,6 +425,7 @@ class Store:
             require_newer=False,
         )
 
+    @_wrap_pg_errors
     def apply_replica_row(self, row: dict[str, Any], *, wake: bool = True) -> None:
         if row.get("table") is None:
             raise StoreError("replica row missing table")
@@ -443,6 +462,7 @@ class Store:
                         self.enqueue_wake(event["row_id"], target)
                         self.claim_wake(event["row_id"])
 
+    @_wrap_pg_errors
     def pending_events(self) -> list[dict[str, Any]]:
         after = int(self.sync_get("pushed_origin_seq", "0") or "0")
         rows = self.conn.execute(
@@ -462,6 +482,7 @@ class Store:
             for r in rows
         ]
 
+    @_wrap_pg_errors
     def mark_pushed(self, seq: int) -> None:
         self.sync_set("pushed_origin_seq", str(seq))
 
@@ -469,15 +490,18 @@ class Store:
         raw = self.sync_get(f"origin:{origin}", "0")
         return int(raw or "0")
 
+    @_wrap_pg_errors
     def mark_origin(self, origin: str, seq: int) -> None:
         current = self.origin_cursor(origin)
         if seq > current:
             self.sync_set(f"origin:{origin}", str(seq))
 
+    @_wrap_pg_errors
     def all_cursors(self) -> dict[str, int]:
         rows = self.conn.execute("SELECT key, value FROM sync_state WHERE key LIKE 'origin:%'").fetchall()
         return {r["key"][7:]: int(r["value"]) for r in rows}
 
+    @_wrap_pg_errors
     def rows(self, table: str) -> list[dict[str, Any]]:
         with self._lock:
             found = self.conn.execute(

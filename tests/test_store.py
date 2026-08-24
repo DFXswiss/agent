@@ -425,3 +425,51 @@ def test_no_agent_work_notify_for_foreign_replica_pending(tmp_path: Path) -> Non
             }
         )
         assert next(conn.notifies(timeout=0.4), None) is None
+
+
+def test_pg_errors_translate_to_store_error_on_the_reconnect_path_methods(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: a lost/reset postgres connection raises psycopg.Error, a
+    plain Exception - not caught by cmd_sync's --follow reconnect loop, which only
+    handles StoreError (a SystemExit subclass). Every Store method the reconnect
+    path calls directly must translate psycopg.Error into StoreError so a transient
+    local DB blip is retried instead of killing the process."""
+    import psycopg
+
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+
+    def broken_execute(*args: object, **kwargs: object) -> None:
+        raise psycopg.OperationalError("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(store.conn, "execute", broken_execute)
+
+    event = {
+        "origin_device_id": "other",
+        "origin_seq": 1,
+        "table": "task",
+        "op": "insert",
+        "row_id": "x",
+        "payload": {"id": "x"},
+        "occurred_at": "2026-08-13T12:00:00Z",
+    }
+    replica_row = {
+        "table": "session",
+        "row_id": "s2",
+        "origin_device_id": "other",
+        "payload": {"id": "s2"},
+    }
+    calls = [
+        lambda: store.meta("device_id"),
+        lambda: store.pending_events(),
+        lambda: store.mark_pushed(1),
+        lambda: store.mark_origin("other", 1),
+        lambda: store.all_cursors(),
+        lambda: store.rows("session"),
+        lambda: store.apply_remote(event),
+        lambda: store.apply_replica_row(replica_row),
+    ]
+    for call in calls:
+        with pytest.raises(StoreError):
+            call()
