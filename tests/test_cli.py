@@ -1131,8 +1131,8 @@ def test_knock_once_does_not_call_scan_error_fix(
     run(tmp_path, ["init"])
     calls: list[object] = []
 
-    def fake_scan(store: object) -> list[str]:
-        calls.append(store)
+    def fake_scan(*_args: object, **_kwargs: object) -> list[str]:
+        calls.append(_args)
         return []
 
     monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", fake_scan)

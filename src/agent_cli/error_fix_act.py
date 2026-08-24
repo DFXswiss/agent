@@ -65,7 +65,7 @@ def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
     return row
 
 
-def _pr_open_merged(store: Store, session_id: str, pr_open_id: str) -> bool:
+def _pr_open_merged(store: Store, pr_open_id: str) -> bool:
     origin = store.device_id()
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
@@ -78,7 +78,7 @@ def _pr_open_merged(store: Store, session_id: str, pr_open_id: str) -> bool:
     return False
 
 
-def _already_open_draft(store: Store, session_id: str, fingerprint: str) -> bool:
+def _already_open_draft(store: Store, fingerprint: str) -> bool:
     origin = store.device_id()
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
@@ -91,7 +91,7 @@ def _already_open_draft(store: Store, session_id: str, fingerprint: str) -> bool
             continue
         if status == "pending":
             return True
-        if status == "done" and not _pr_open_merged(store, session_id, str(row.get("id") or "")):
+        if status == "done" and not _pr_open_merged(store, str(row.get("id") or "")):
             return True
     return False
 
@@ -125,7 +125,7 @@ def validate_conclusion(
             raise StoreError("conclusion already exists")
     if typ == "error.fix" and _repo_ok(seen_payload.get("repo")) is None:
         raise StoreError("unmapped-repo")
-    if typ == "error.fix" and _already_open_draft(store, session_id, fingerprint):
+    if typ == "error.fix" and _already_open_draft(store, fingerprint):
         raise StoreError("already-open-draft")
 
 
@@ -305,9 +305,18 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 shutil.rmtree(staging, ignore_errors=True)
                 lines.append(f"error.fix {rid} error")
                 continue
+        checkout = ["git", "-C", str(staging), "checkout", "-B", head]
+        existing_task = _lookup_implement_task(store, session_id, error_id)
+        if existing_task is not None:
+            existing_row = store.row("task", existing_task)
+            existing_ref = None
+            if existing_row is not None:
+                existing_ref = _nonempty_str(existing_row.get("ref"))
+            if existing_ref is not None:
+                checkout.append(existing_ref)
         error = _run_git(
             runner,
-            ["git", "-C", str(staging), "checkout", "-B", head],
+            checkout,
             "git checkout failed",
         )
         if error is not None:
@@ -335,9 +344,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                     staging.rename(path)
                 elif (path / ".git").exists():
                     shutil.rmtree(staging, ignore_errors=True)
-        except OSError as exc:
-            shutil.rmtree(staging, ignore_errors=True)
-            _mark(store, row, status="error", error=str(exc))
+        except OSError:
             lines.append(f"error.fix {rid} error")
             continue
         if not (path / ".git").exists():
