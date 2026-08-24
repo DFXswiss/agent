@@ -25,11 +25,11 @@ _AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).+")
 _COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).+")
 _USERINFO = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@")
 _JSON_SECRET = re.compile(
-    r'(?i)("(?:password|secret|token|api[_-]?key|access_token|authorization|passwd)"\s*:\s*")[^"]*(")'
+    r'(?i)("(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd)"\s*:\s*")[^"]*(")'
 )
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
 _SECRET = re.compile(
-    r"(?i)\b(password|secret|token|api[_-]?key|access_token|authorization|passwd)\s*[:=]\s*\S+"
+    r"(?i)\b(password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd)\s*[:=]\s*\S+"
 )
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")

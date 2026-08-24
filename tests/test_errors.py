@@ -140,6 +140,9 @@ def test_redact_and_fingerprint() -> None:
     assert "eyJhbGciOiJIUzI1NiJ9" not in jwt
     akia = redact("AKIAIOSFODNN7EXAMPLE")
     assert "AKIAIOSFODNN7EXAMPLE" not in akia
+    client = redact('{"client_secret":"s3cretvalue"} access-token=abcdef')
+    assert "s3cretvalue" not in client
+    assert "abcdef" not in client
     assert error_class(cleaned) == "TimeoutError"
     sig = stack_sig(cleaned)
     assert len(sig) == 16
