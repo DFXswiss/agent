@@ -369,6 +369,15 @@ def cmd_session(args: list[str]) -> None:
                 die("session has open work")
             if pending_assigned(store, sid):
                 die("session has pending assigned issues")
+            pending_fix = [
+                a
+                for a in store.rows("activity")
+                if a.get("session_id") == sid
+                and a.get("type") == "error.fix"
+                and a.get("execution_status") == "pending"
+            ]
+            if pending_fix:
+                die("session has pending error.fix")
             row["status"] = "closed"
             row["last_seen_at"] = utcnow()
             store.write("session", "update", sid, _strip(row))

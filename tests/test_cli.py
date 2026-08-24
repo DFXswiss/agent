@@ -1980,6 +1980,19 @@ def test_watch_usage_mentions_error_fix() -> None:
         main(["watch"])
 
 
+def test_session_close_refuses_pending_error_fix(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.fix",
+        payload={"error_id": error_id, "fingerprint": fingerprint},
+    )
+    with pytest.raises(SystemExit, match="pending error.fix"):
+        run(tmp_path, ["session", "close", "--id", "error-session"])
+
+
 def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
     run(

@@ -175,6 +175,8 @@ def _find_or_create_implement_task(
     session = store.row("session", session_id)
     if session is None:
         raise StoreError("session not found")
+    if session.get("status") != "active":
+        raise StoreError("session is not active")
     tid = str(uuid.uuid4())
     store.write(
         "task",

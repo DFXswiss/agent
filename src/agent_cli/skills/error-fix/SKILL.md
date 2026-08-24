@@ -38,31 +38,24 @@ rules live in DESIGN.md §§14–15, §19, and §21.
    - `error.fix` — local intent (`execution_status=pending`) to patch.
      Do not insert `error.fix` when `repo` is missing or a draft already
      exists. `agent task create` for this `error_id` is find-or-create.
+     The JSON payload contains `error_id` and `fingerprint`; `error.skip`
+     also requires `reason`.
+5. On `error.fix`, `agent watch error-fix` find-or-creates a spine
+   `implement` task on this session, copies `error_id` and `repo` from that
+   `error.seen` row into the task payload, and clones
+   `https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`
+   (never the origin checkout). Mandatory checks must `pass`, then
+   `pr.open` opens a **draft** via `agent github pending`. A retry reuses
+   head `error-fix-<id8>`. Gates run on that head after `pushed`. A human
+   merges.
 
 ```bash
 agent activity add --session <id> --type error.skip --payload-file <path>
 agent activity add --session <id> --type error.fix --payload-file <path>
-```
-
-The JSON payload contains `error_id` and `fingerprint`; `error.skip` also
-requires `reason`.
-5. On `error.fix`, create a spine `implement` task on this session. Copy
-   `error_id` and `repo` from that `error.seen` row into the task payload.
-   Isolated worktree of `payload.repo` at the allowed base revision. Never
-   fall back to the origin checkout. Mandatory checks must `pass`, then
-   `pr.open` opens a **draft**. A retry finds that draft instead of opening
-   a second one. Gates run on that head after `pushed`. A human merges.
-
-```bash
 agent task create --session <id> --workflow implement --title "Fix error" --error-id <error.seen-id>
+agent watch error-fix
+agent github pending
 ```
-
-This command find-or-creates the task for that `error.seen` id.
-`agent watch error-fix` find-or-creates the implement task and clones
-`https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`
-(never the origin checkout).
-`agent github pending` still opens draft pull requests; a retry reuses
-head `error-fix-<id8>`.
 
 The incident is **open** from the `error.seen` insert until `error.skip`
 or a terminal implement task (`done` / `failed`) for that `error_id`.

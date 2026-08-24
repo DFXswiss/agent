@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_cli.error_fix_act import scan_error_fix
+from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 
 
 def _runner_session(store: Store) -> None:
@@ -139,7 +139,9 @@ def test_scan_error_fix_marks_ineligible_rows(tmp_path: Path) -> None:
     assert row["execution_error"] == "unmapped-repo"
 
 
-def test_scan_error_fix_clone_failure_is_truncated(tmp_path: Path) -> None:
+def test_scan_error_fix_clone_failure_stays_pending_and_cleans_staging(
+    tmp_path: Path,
+) -> None:
     store = Store(tmp_path)
     _runner_session(store)
     _seen(store)
@@ -147,10 +149,29 @@ def test_scan_error_fix_clone_failure_is_truncated(tmp_path: Path) -> None:
 
     assert scan_error_fix(
         store,
-        lambda _argv: Completed(1, "", "x" * 600),
+        lambda _argv: Completed(1, "", "clone failed"),
     ) == ["error.fix fix-1 error"]
     row = store.row("activity", "fix-1")
     assert row is not None
     assert row["execution_status"] == "pending"
     assert store.rows("task") == []
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
+
+
+def test_find_or_create_requires_active_session(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    session = store.row("session", "runner-1")
+    assert session is not None
+    updated = {key: value for key, value in session.items() if not key.startswith("_")}
+    updated["status"] = "closed"
+    store.write("session", "update", "runner-1", updated)
+    with pytest.raises(StoreError, match="session is not active"):
+        find_or_create_implement_task(
+            store,
+            "runner-1",
+            "error-seen-12345678",
+            "Fix observed error",
+        )
+    assert store.rows("task") == []
