@@ -17,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from websockets.exceptions import WebSocketException
+
 from .allow import ACTIONS, evaluate_allow, ready_for_done_blocking
 from .chain import (
     NO_AUTO_CLOSE,
@@ -24,6 +26,8 @@ from .chain import (
     handoff_prompt,
     next_steps,
     required_source,
+)
+from .chain import (
     to_json as step_to_json,
 )
 from .hub import Hub, HubError
@@ -1220,56 +1224,64 @@ def cmd_sync(args: list[str]) -> None:
         terminal_seq: dict[str, int] = {}
         last_capture: dict[str, str] = {}
         try:
-            try:
-                ws = hub.connect_sync_ws()
-            except HubError as exc:
-                die(str(exc))
-            try:
+            backoff = 1.0
+            while True:
                 try:
-                    ws.send(json.dumps({"type": "control-ready"}))
-                except Exception as exc:
-                    die(f"control-ready send failed: {exc}")
-                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
-                for raw in ws:
-                    try:
-                        message = json.loads(raw)
-                    except (TypeError, ValueError):
-                        continue
-                    if not isinstance(message, dict):
-                        continue
-                    if message.get("type") == "control":
-                        ack = apply_control(store, runtime, message)
-                        try:
-                            ws.send(json.dumps(ack))
-                        except Exception as exc:
-                            die(f"control-ack send failed: {exc}")
-                    if message.get("type") == "subscription":
-                        rows = message.get("rows")
-                        if isinstance(rows, list):
-                            for row in rows:
-                                if not isinstance(row, dict) or not row.get("table"):
-                                    continue
-                                try:
-                                    store.apply_replica_row(row)
-                                except (StoreError, KeyError, TypeError):
-                                    continue
-                    if should_sync_on_ws(message):
-                        _sync_once(store)
-                    _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
-            except HubError as exc:
-                die(str(exc))
-            except Exception as exc:
-                die(f"websocket error: {exc}")
-            finally:
-                try:
-                    ws.close()
-                except Exception:
-                    pass
-            die("websocket closed")
+                    _sync_once(store)
+                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture)
+                    backoff = 1.0
+                except (HubError, OSError, WebSocketException) as exc:
+                    print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
         finally:
             hub.close()
     finally:
         store.close()
+
+
+def _run_sync_ws_session(
+    store: Store,
+    hub: Hub,
+    runtime: Runtime,
+    terminal_seq: dict[str, int],
+    last_capture: dict[str, str],
+) -> None:
+    """Run one websocket connection's message loop. Raises on disconnect/error;
+    the caller in cmd_sync reconnects with backoff instead of exiting the process."""
+    ws = hub.connect_sync_ws()
+    try:
+        ws.send(json.dumps({"type": "control-ready"}))
+        _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
+        for raw in ws:
+            try:
+                message = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(message, dict):
+                continue
+            if message.get("type") == "control":
+                ack = apply_control(store, runtime, message)
+                ws.send(json.dumps(ack))
+            if message.get("type") == "subscription":
+                rows = message.get("rows")
+                if isinstance(rows, list):
+                    for row in rows:
+                        if not isinstance(row, dict) or not row.get("table"):
+                            continue
+                        try:
+                            store.apply_replica_row(row)
+                        except (StoreError, KeyError, TypeError):
+                            continue
+            if should_sync_on_ws(message):
+                _sync_once(store)
+            _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
+        raise HubError("websocket closed")
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
 
 
 def cmd_restore(_: list[str]) -> None:
@@ -1405,7 +1417,7 @@ def cmd_dashboard(args: list[str]) -> None:
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             path = urlparse(self.path).path
             if path == "/api/state":
                 snap = store.snapshot()
@@ -1427,7 +1439,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 return
             self.send_error(404)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             path = urlparse(self.path).path
             match = re.fullmatch(r"/api/sessions/([^/]+)/control", path)
             if match is None:
@@ -1717,8 +1729,7 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
         if isinstance(err, int):
             err = f"exit {err}"
         text = str(err) if err is not None else "error"
-        if text.startswith("agent: "):
-            text = text[len("agent: ") :]
+        text = text.removeprefix("agent: ")
         ack["error"] = text
         return ack
     except Exception as exc:
