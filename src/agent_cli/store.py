@@ -6,9 +6,10 @@ import json
 import os
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import psycopg
@@ -212,6 +213,15 @@ class Store:
             (origin,),
         ).fetchone()
         return int(row["m"]) + 1
+
+    @contextmanager
+    def exclusive(self, key: str) -> Iterator[None]:
+        with self._lock:
+            self.conn.execute("SELECT pg_advisory_lock(hashtext(%s))", (key,))
+            try:
+                yield
+            finally:
+                self.conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
 
     def write(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self.conn.transaction():

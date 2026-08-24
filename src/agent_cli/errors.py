@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import netrc
 import os
 import re
 import uuid
@@ -20,6 +21,12 @@ from .store import Store, StoreError, utcnow
 
 _EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 _BEARER = re.compile(r"(?i)bearer\s+\S+")
+_BASIC = re.compile(r"(?i)(authorization:\s*basic\s+)\S+")
+_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*)\S+")
+_USERINFO = re.compile(r"(https?://)[^/@\s]+:[^/@\s]+@")
+_JSON_SECRET = re.compile(
+    r'(?i)("(?:password|secret|token|api[_-]?key)"\s*:\s*")[^"]*(")'
+)
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
 _SECRET = re.compile(r"(?i)\b(password|secret|token|api[_-]?key)\s*[:=]\s*\S+")
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
@@ -53,11 +60,23 @@ def load_config(path: Path) -> dict[str, Any]:
     sid = data.get("session_id")
     if not isinstance(sid, str) or sid == "":
         raise StoreError("error-fix.json session_id is missing")
+    for key in ("password", "token", "secret", "user", "username", "api_key", "apikey"):
+        if key in data:
+            raise StoreError("error-fix.json must not contain credentials")
+    url = data.get("url")
+    if isinstance(url, str) and url:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            raise StoreError("error-fix.json url must not contain credentials")
     return data
 
 
 def redact(text: str) -> str:
     out = _BEARER.sub("[redacted]", text)
+    out = _BASIC.sub(r"\1[redacted]", out)
+    out = _COOKIE.sub(r"\1[redacted]", out)
+    out = _USERINFO.sub(r"\1[redacted]@", out)
+    out = _JSON_SECRET.sub(r"\1[redacted]\2", out)
     out = _SECRET.sub("[redacted]", out)
     out = _EMAIL.sub("[redacted]", out)
     out = _HEX.sub("[redacted]", out)
@@ -162,9 +181,14 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
         start_ns = int((now - timedelta(hours=1)).timestamp() * 1_000_000_000)
     user = os.environ.get("AGENT_ERROR_FIX_USER")
     password = os.environ.get("AGENT_ERROR_FIX_PASSWORD")
-    request_auth: Any = httpx.NetRCAuth()
+    request_kwargs: dict[str, Any] = {}
     if isinstance(user, str) and user != "" and isinstance(password, str) and password != "":
-        request_auth = (user, password)
+        request_kwargs["auth"] = (user, password)
+    else:
+        try:
+            request_kwargs["auth"] = httpx.NetRCAuth()
+        except (OSError, netrc.NetrcParseError) as exc:
+            raise StoreError("error-fix netrc is missing or invalid") from exc
     params = {
         "query": query,
         "start": str(start_ns),
@@ -174,7 +198,7 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
     }
     try:
         with httpx.Client(trust_env=True, timeout=30.0) as client:
-            response = client.get(url, params=params, auth=request_auth)
+            response = client.get(url, params=params, **request_kwargs)
             response.raise_for_status()
             data = response.json()
     except httpx.HTTPError as exc:
@@ -226,6 +250,8 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
                 except (OverflowError, OSError, ValueError):
                     ts_iso = utcnow()
             item: dict[str, Any] = {"ts": ts_iso, "line": line}
+            if ts_ns is not None:
+                item["_ts_ns"] = ts_ns
             if service:
                 item["service"] = service
             if environment:
@@ -233,7 +259,9 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
             lines.append(item)
             if ts_ns is not None and (latest_ns is None or ts_ns > latest_ns):
                 latest_ns = ts_ns
-    lines.sort(key=lambda row: str(row.get("ts") or ""))
+    lines.sort(key=lambda row: int(row["_ts_ns"]) if isinstance(row.get("_ts_ns"), int) else 0)
+    for row in lines:
+        row.pop("_ts_ns", None)
     new_cursor = str(latest_ns) if latest_ns is not None else cursor
     return lines, new_cursor
 
@@ -256,6 +284,18 @@ def scan_errors(store: Store, fetch: Fetch) -> tuple[list[str], list[str]]:
     lines, new_cursor = fetch(cfg, cursor)
     lines = [item for item in lines if isinstance(item, dict)]
     lines.sort(key=lambda row: str(row.get("ts") or ""))
+    with store.exclusive("error-fix-scan:" + store.device_id()):
+        return _apply_lines(store, cfg, session_id, lines, new_cursor, cursor_file)
+
+
+def _apply_lines(
+    store: Store,
+    cfg: dict[str, Any],
+    session_id: str,
+    lines: list[dict[str, Any]],
+    new_cursor: str | None,
+    cursor_file: Path,
+) -> tuple[list[str], list[str]]:
     created: list[str] = []
     enriched: list[str] = []
     default_service = cfg.get("service")

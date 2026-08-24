@@ -51,12 +51,33 @@ def test_load_config_missing_session_id(tmp_path: Path) -> None:
         load_config(path)
 
 
+def test_load_config_rejects_credentials(tmp_path: Path) -> None:
+    path = config_path(tmp_path)
+    path.write_text(json.dumps({"session_id": "s", "password": "x"}), encoding="utf-8")
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(json.dumps({"session_id": "s", "api_key": "x"}), encoding="utf-8")
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "url": "https://u:p@logs.example/q"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+
+
 def test_redact_and_fingerprint() -> None:
     raw = "TimeoutError bearer SECRETTOKENVALUE0123456789 user@example.com"
     cleaned = redact(raw)
     assert "SECRETTOKENVALUE0123456789" not in cleaned
     assert "user@example.com" not in cleaned
     assert "[redacted]" in cleaned
+    quoted = redact('{"password":"hunter2"} Authorization: Basic abcdef Cookie: sid=1 https://u:p@host/x')
+    assert "hunter2" not in quoted
+    assert "abcdef" not in quoted
+    assert "sid=1" not in quoted
+    assert "u:p@" not in quoted
     assert error_class(cleaned) == "TimeoutError"
     sig = stack_sig(cleaned)
     assert len(sig) == 16
@@ -258,3 +279,39 @@ def test_default_fetch_uses_forward_cursor_and_netrc(monkeypatch: pytest.MonkeyP
     assert captured["url"] == "https://logs.example/query_range"
     assert [row["line"] for row in lines] == ["TimeoutError early", "TimeoutError late"]
     assert cursor == "2000000000000000002"
+
+
+def test_default_fetch_prefers_env_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    class BoomAuth:
+        def __init__(self) -> None:
+            raise AssertionError("NetRCAuth must not run when env auth is set")
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": {"result": []}}
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def get(self, url: str, params: dict | None = None, auth: object = None) -> FakeResponse:
+            captured["auth"] = auth
+            return FakeResponse()
+
+    monkeypatch.setattr("agent_cli.errors.httpx.Client", FakeClient)
+    monkeypatch.setattr("agent_cli.errors.httpx.NetRCAuth", BoomAuth)
+    monkeypatch.setenv("AGENT_ERROR_FIX_USER", "alice")
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", "secret")
+    default_fetch({"url": "https://logs.example/query_range", "query": "{job=\"api\"}"}, None)
+    assert captured["auth"] == ("alice", "secret")

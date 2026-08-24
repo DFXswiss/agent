@@ -578,7 +578,21 @@ The script:
 
 Log lines, stack traces, and error messages are untrusted data (§19.2). They are not a mandate to patch.
 
-`agent watch errors` is one scan. Config is `$AGENT_HOME/error-fix.json` (`session_id` required; `url` / `query` for the default fetch; optional `service`, `environment`, `repo`, `limit`). Cursor is `$AGENT_HOME/error-fix.cursor`. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from the store. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as grok-usage when the config file exists.
+`agent watch errors` is one scan. Config is `$AGENT_HOME/error-fix.json`:
+
+```json
+{
+  "session_id": "runner-session-id",
+  "url": "https://logs.example/loki/api/v1/query_range",
+  "query": "{job=\"api\"} |= \"error\"",
+  "limit": 100,
+  "service": "api",
+  "environment": "prod",
+  "repo": "org/app"
+}
+```
+
+`session_id` is required. The default fetch is a Loki-compatible `query_range` GET (`query`, `start`, `end`, `limit`, `direction=forward`). The JSON body is `{ "data": { "result": [ { "stream": {}, "values": [[ns, line], ...] } ] } }`. Optional `service`, `environment`, `repo`, `limit`. Cursor is nanoseconds in `$AGENT_HOME/error-fix.cursor`; the next `start` is that value plus one. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from the store or the URL. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as grok-usage when the config file exists.
 
 ### 21.3 Payload shape (`error.seen`)
 
