@@ -15,6 +15,7 @@ from agent_cli.daemon import (
     _terminate,
     acquire_lock,
     child_specs,
+    existing_service_agent_pg_bin,
     hub_configured,
     run_supervisor,
     service_extra_env,
@@ -129,6 +130,41 @@ def test_service_extra_env_persists_agent_pg_bin(monkeypatch: pytest.MonkeyPatch
     env = service_extra_env()
     assert env["PATH"] == "/usr/bin:/bin"
     assert env["AGENT_PG_BIN"] == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_keeps_existing_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    env = service_extra_env(existing_pg_bin="/opt/pg/bin")
+    assert env["AGENT_PG_BIN"] == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_empty_clears_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("AGENT_PG_BIN", "  ")
+    env = service_extra_env(existing_pg_bin="/opt/pg/bin")
+    assert "AGENT_PG_BIN" not in env
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_roundtrip() -> None:
+    darwin = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    assert existing_service_agent_pg_bin(darwin, "darwin") == "/opt/pg/bin"
+    linux = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="linux",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    assert existing_service_agent_pg_bin(linux, "linux") == "/opt/pg/bin"
+    assert existing_service_agent_pg_bin(darwin, "linux") is None
 
 
 @pytest.mark.no_pg

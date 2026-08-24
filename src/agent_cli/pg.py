@@ -51,23 +51,34 @@ HARDCODED_PG_BIN_DIRS = (
     Path("/usr/lib/postgresql/16/bin"),
     Path("/usr/lib/postgresql/15/bin"),
 )
+_VERSION_NAME = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
 
 
 def extra_pg_bin_dirs(*, versions_root: Path | None = None) -> list[Path]:
     dirs = list(HARDCODED_PG_BIN_DIRS)
     root = POSTGRES_APP_VERSIONS if versions_root is None else versions_root
     dirs.append(root / "latest" / "bin")
-    if root.is_dir():
-        numbered: list[Path] = []
-        for child in root.iterdir():
-            if child.name == "latest":
-                continue
-            bin_dir = child / "bin"
-            if bin_dir.is_dir():
-                numbered.append(bin_dir)
-        numbered.sort(key=lambda p: p.parent.name, reverse=True)
-        dirs.extend(numbered)
+    numbered: list[Path] = []
+    try:
+        children = list(root.iterdir()) if root.is_dir() else []
+    except OSError:
+        children = []
+    for child in children:
+        if not _VERSION_NAME.match(child.name):
+            continue
+        bin_dir = child / "bin"
+        if bin_dir.is_dir():
+            numbered.append(bin_dir)
+    numbered.sort(key=lambda p: tuple(int(part) for part in p.parent.name.split(".")), reverse=True)
+    dirs.extend(numbered)
     return dirs
+
+
+def _first_executable(paths: list[Path]) -> str | None:
+    for path in paths:
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
 
 
 def _bin(name: str) -> str:
@@ -79,11 +90,13 @@ def _bin(name: str) -> str:
     for folder in found.split(os.pathsep):
         if folder:
             candidates.append(Path(folder) / name)
-    for extra in extra_pg_bin_dirs():
-        candidates.append(extra / name)
-    for path in candidates:
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
+    hit = _first_executable(candidates)
+    if hit is not None:
+        return hit
+    extras = [extra / name for extra in extra_pg_bin_dirs()]
+    hit = _first_executable(extras)
+    if hit is not None:
+        return hit
     raise PgError(f"{name} is not installed")
 
 

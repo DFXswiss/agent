@@ -23,12 +23,18 @@ def test_extra_pg_bin_dirs_includes_postgres_app_latest() -> None:
 
 def test_extra_pg_bin_dirs_numbered_newest_first(tmp_path: Path) -> None:
     (tmp_path / "latest" / "bin").mkdir(parents=True)
+    (tmp_path / "9.6" / "bin").mkdir(parents=True)
+    (tmp_path / "10" / "bin").mkdir(parents=True)
     (tmp_path / "16" / "bin").mkdir(parents=True)
-    (tmp_path / "18" / "bin").mkdir(parents=True)
+    (tmp_path / "preview" / "bin").mkdir(parents=True)
     (tmp_path / "notes.txt").write_text("skip", encoding="utf-8")
     dirs = extra_pg_bin_dirs(versions_root=tmp_path)
     assert dirs[4] == tmp_path / "latest" / "bin"
-    assert dirs[5:] == [tmp_path / "18" / "bin", tmp_path / "16" / "bin"]
+    assert dirs[5:] == [
+        tmp_path / "16" / "bin",
+        tmp_path / "10" / "bin",
+        tmp_path / "9.6" / "bin",
+    ]
 
 
 def test_bin_uses_agent_pg_bin_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

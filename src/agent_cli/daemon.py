@@ -365,11 +365,36 @@ def _already_unloaded(stderr: str, stdout: str) -> bool:
     return any(n in text for n in needles)
 
 
-def service_extra_env() -> dict[str, str]:
+def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
+    if platform == "darwin":
+        marker = "<key>AGENT_PG_BIN</key>"
+        start = text.find(marker)
+        if start < 0:
+            return None
+        open_tag = text.find("<string>", start)
+        close_tag = text.find("</string>", open_tag)
+        if open_tag < 0 or close_tag < 0:
+            return None
+        value = text[open_tag + len("<string>") : close_tag].strip()
+        return value or None
+    if platform == "linux":
+        prefix = "Environment=AGENT_PG_BIN="
+        for line in text.splitlines():
+            if line.startswith(prefix):
+                value = line[len(prefix) :].strip()
+                return value or None
+        return None
+    return None
+
+
+def service_extra_env(*, existing_pg_bin: str | None = None) -> dict[str, str]:
     env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
-    pg_bin = os.environ.get("AGENT_PG_BIN")
-    if isinstance(pg_bin, str) and pg_bin.strip():
-        env["AGENT_PG_BIN"] = pg_bin.strip()
+    if "AGENT_PG_BIN" in os.environ:
+        pg_bin = os.environ["AGENT_PG_BIN"].strip()
+        if pg_bin:
+            env["AGENT_PG_BIN"] = pg_bin
+    elif isinstance(existing_pg_bin, str) and existing_pg_bin.strip():
+        env["AGENT_PG_BIN"] = existing_pg_bin.strip()
     dsn = os.environ.get("AGENT_PG_DSN")
     if dsn:
         env["AGENT_PG_DSN"] = dsn
@@ -385,13 +410,16 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
+    path = service_path(plat, home)
+    kept: str | None = None
+    if path.is_file():
+        kept = existing_service_agent_pg_bin(path.read_text(encoding="utf-8"), plat)
     text = service_unit_text(
         program=program,
         home=home,
         platform=plat,
-        extra_env=service_extra_env(),
+        extra_env=service_extra_env(existing_pg_bin=kept),
     )
-    path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     if os.environ.get("PYTEST_CURRENT_TEST"):
