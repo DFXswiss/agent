@@ -70,7 +70,7 @@ agent status
 agent dashboard
 ```
 
-`agent run` records a local check when that spine step is open, closes an agent step when the ledger already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). Reviewer lanes are not auto-approved from `STATUS: complete`.
+`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). Reviewer lanes are not auto-approved from `STATUS: complete`.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
