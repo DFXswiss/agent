@@ -18,8 +18,8 @@ def test_contributing_states_pr_done_contract() -> None:
     assert NOT_DONE in text
     assert "Push the branch to this repository" in text
     assert "Do not open the pull request from a personal fork" in text
-    assert "**grok** both dimensions" in text
-    assert "**codex** both dimensions" in text
+    assert "Four lane verdicts" in text
+    assert "those four `approved` verdicts on this head" in text
     assert "do not substitute another vendor" in text
     assert "Empty, partial, timeout, or unavailable" in text
     assert "`skipped` and `cancelled` are not green" in text
@@ -45,6 +45,7 @@ def test_design_locks_pr_done() -> None:
     assert "`skipped` and `cancelled` are not green" in section
     assert "do not substitute another vendor" in section
     assert "Vendors are `grok`, then `codex`" in section
+    assert "four lane verdicts" in section
 
 
 def test_pr_review_and_spine_point_at_pr_done() -> None:
@@ -56,9 +57,14 @@ def test_pr_review_and_spine_point_at_pr_done() -> None:
     assert "agent allow --action pr-ready" in pr_review
     assert "Do not\n  substitute another vendor" in pr_review or "Do not substitute another vendor" in pr_review
     assert "Empty, partial, timeout, or unavailable output is not zero findings" in pr_review
+    assert "four lane verdicts on this head are approved" in pr_review
+    assert "those four `approved` verdicts on this head" in pr_review
     assert NOT_DONE in spine
     assert "not pull-request done" in spine
     assert "not the pull-request review" in review_loop
+    assert "Inner implement/review rounds (`review-loop`) are not the PR reviews" in (
+        ROOT / "CONTRIBUTING.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_agents_md_and_readme_point_at_contributing() -> None:
