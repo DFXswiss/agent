@@ -592,7 +592,7 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 }
 ```
 
-`session_id` is required. The default fetch is a Loki-compatible `query_range` GET (`query`, `start`, `end`, `limit`, `direction=forward`). The JSON body is `{ "data": { "result": [ { "stream": {}, "values": [[ns, line], ...] } ] } }`. Optional `service`, `environment`, `repo`, `limit`. Cursor is nanoseconds in `$AGENT_HOME/error-fix.cursor`; the next `start` is that value plus one. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from the store or the URL. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as grok-usage when the config file exists.
+`session_id`, `url`, and `query` are required. The default fetch is a Loki-compatible `query_range` GET (`query`, `start`, `end`, `limit`, `direction=forward`). The JSON body is `{ "data": { "result": [ { "stream": {}, "values": [[ns, line], ...] } ] } }`. Optional `service`, `environment`, `repo`, `limit`. Cursor is nanoseconds in `$AGENT_HOME/error-fix.cursor`; the next `start` is that value plus one. Credentials come from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never from `error-fix.json`, the store, or the URL. The knock daemon (`agent knock` without `--once`) polls this scan on the same 60s interval as grok-usage when the config file exists.
 
 ### 21.3 Payload shape (`error.seen`)
 

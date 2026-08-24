@@ -7,6 +7,7 @@ import pytest
 
 from agent_cli.errors import (
     config_path,
+    cursor_path,
     default_fetch,
     error_class,
     fingerprint,
@@ -56,6 +57,36 @@ def test_load_config_rejects_credentials(tmp_path: Path) -> None:
     path.write_text(json.dumps({"session_id": "s", "password": "x"}), encoding="utf-8")
     with pytest.raises(StoreError, match="must not contain credentials"):
         load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "headers": {"token": "x"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "headers": {"Token": "x"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "url": "https://logs.example/q?api_key=secret"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "url": "https://logs.example/q?access_token=secret"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "url": "https://logs.example/q#password=x"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
     path.write_text(json.dumps({"session_id": "s", "api_key": "x"}), encoding="utf-8")
     with pytest.raises(StoreError, match="must not contain credentials"):
         load_config(path)
@@ -78,6 +109,13 @@ def test_redact_and_fingerprint() -> None:
     assert "abcdef" not in quoted
     assert "sid=1" not in quoted
     assert "u:p@" not in quoted
+    cookie = redact("Cookie: sid=1; extra=remain")
+    assert "sid=1" not in cookie
+    assert "extra=remain" not in cookie
+    jwt = redact("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc_def-ghi")
+    assert "eyJhbGciOiJIUzI1NiJ9" not in jwt
+    akia = redact("AKIAIOSFODNN7EXAMPLE")
+    assert "AKIAIOSFODNN7EXAMPLE" not in akia
     assert error_class(cleaned) == "TimeoutError"
     sig = stack_sig(cleaned)
     assert len(sig) == 16
@@ -163,6 +201,62 @@ def test_skip_opens_new_seen(tmp_path: Path) -> None:
     assert enriched2 == []
     assert len(created2) == 1
     assert created2[0] != eid
+
+
+def test_open_seen_is_preferred_over_newer_closed_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tick = 0
+
+    def now() -> str:
+        nonlocal tick
+        tick += 1
+        return f"2026-08-23T16:00:{tick:02d}Z"
+
+    monkeypatch.setattr("agent_cli.store.utcnow", now)
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    line = "TimeoutError once"
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"ts": "2026-08-23T16:00:00Z", "line": line}], None)
+
+    created, _ = scan_errors(store, fetch)
+    a_id = created[0]
+    fp = store.row("activity", a_id)["payload"]["fingerprint"]
+    store.write(
+        "activity",
+        "insert",
+        "skip-1",
+        {
+            "id": "skip-1",
+            "session_id": "runner-1",
+            "type": "error.skip",
+            "payload": {"error_id": a_id, "fingerprint": fp, "reason": "noisy"},
+            "execution_status": "done",
+        },
+    )
+    created2, enriched2 = scan_errors(store, fetch)
+    assert enriched2 == []
+    assert len(created2) == 1
+    b_id = created2[0]
+    stored = store.row("activity", a_id)
+    assert stored is not None
+    payload = {key: value for key, value in stored.items() if not key.startswith("_")}
+    store.write("activity", "update", a_id, payload)
+    assert store.rows("activity")[0]["id"] == a_id
+
+    created3, enriched3 = scan_errors(store, fetch)
+    assert created3 == []
+    assert enriched3 == [b_id]
+    b_row = store.row("activity", b_id)
+    assert b_row is not None
+    assert b_row["payload"]["count"] == 2
+    seen_ids = [
+        row["id"] for row in store.rows("activity") if row["type"] == "error.seen"
+    ]
+    assert set(seen_ids) == {a_id, b_id}
 
 
 def test_done_task_opens_new_seen(tmp_path: Path) -> None:
@@ -281,6 +375,54 @@ def test_default_fetch_uses_forward_cursor_and_netrc(monkeypatch: pytest.MonkeyP
     assert cursor == "2000000000000000002"
 
 
+def test_default_fetch_skips_lines_without_nanosecond_ts(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeAuth:
+        pass
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": {
+                    "result": [
+                        {
+                            "stream": {"service": "api"},
+                            "values": [
+                                ["not-a-ns", "TimeoutError skip"],
+                                ["2000000000000000003", "TimeoutError keep"],
+                            ],
+                        }
+                    ]
+                }
+            }
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def get(self, url: str, params: dict | None = None, auth: object = None) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("agent_cli.errors.httpx.Client", FakeClient)
+    monkeypatch.setattr("agent_cli.errors.httpx.NetRCAuth", FakeAuth)
+    monkeypatch.delenv("AGENT_ERROR_FIX_USER", raising=False)
+    monkeypatch.delenv("AGENT_ERROR_FIX_PASSWORD", raising=False)
+    lines, cursor = default_fetch(
+        {"url": "https://logs.example/query_range", "query": '{job="api"}'},
+        "2000000000000000000",
+    )
+    assert [row["line"] for row in lines] == ["TimeoutError keep"]
+    assert cursor == "2000000000000000003"
+
+
 def test_default_fetch_prefers_env_basic_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict = {}
 
@@ -315,3 +457,64 @@ def test_default_fetch_prefers_env_basic_auth(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", "secret")
     default_fetch({"url": "https://logs.example/query_range", "query": "{job=\"api\"}"}, None)
     assert captured["auth"] == ("alice", "secret")
+
+
+@pytest.mark.parametrize(
+    ("user", "password"),
+    [("alice", None), (None, "secret")],
+)
+def test_default_fetch_rejects_incomplete_env_auth(
+    monkeypatch: pytest.MonkeyPatch, user: str | None, password: str | None
+) -> None:
+    class BoomAuth:
+        def __init__(self) -> None:
+            raise AssertionError("NetRCAuth must not run when env auth is incomplete")
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": {"result": []}}
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            raise AssertionError("Client must not run when env auth is incomplete")
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def get(self, url: str, params: dict | None = None, auth: object = None) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("agent_cli.errors.httpx.Client", FakeClient)
+    monkeypatch.setattr("agent_cli.errors.httpx.NetRCAuth", BoomAuth)
+    if user is None:
+        monkeypatch.delenv("AGENT_ERROR_FIX_USER", raising=False)
+    else:
+        monkeypatch.setenv("AGENT_ERROR_FIX_USER", user)
+    if password is None:
+        monkeypatch.delenv("AGENT_ERROR_FIX_PASSWORD", raising=False)
+    else:
+        monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", password)
+    with pytest.raises(StoreError, match="incomplete"):
+        default_fetch(
+            {"url": "https://logs.example/query_range", "query": "{job=\"api\"}"},
+            None,
+        )
+
+
+def test_scan_rejects_unreadable_cursor(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    cursor_path(tmp_path).mkdir()
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        raise AssertionError("fetch must not run when the cursor is unreadable")
+
+    with pytest.raises(StoreError, match="error-fix.cursor"):
+        scan_errors(store, fetch)

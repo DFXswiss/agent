@@ -55,9 +55,10 @@ uses `error_id` / `fingerprint` plus the spine task with
 
 ## Config
 
-Adapter URL, query, and repo mapping live in `$AGENT_HOME/error-fix.json`.
-Credentials come from netrc or `AGENT_ERROR_FIX_USER` /
-`AGENT_ERROR_FIX_PASSWORD`, never from that file. Team-specific endpoints
+Required `session_id`, adapter URL, query, and optional repo mapping live
+in `$AGENT_HOME/error-fix.json` (see DESIGN.md §21.2). Credentials come
+from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never
+from `error-fix.json`, the store, or the URL. Team-specific endpoints
 stay out of this public client.
 
 ```bash

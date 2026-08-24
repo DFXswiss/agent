@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -22,19 +22,37 @@ from .store import Store, StoreError, utcnow
 _EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 _BEARER = re.compile(r"(?i)bearer\s+\S+")
 _BASIC = re.compile(r"(?i)(authorization:\s*basic\s+)\S+")
-_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*)\S+")
+_COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).+")
 _USERINFO = re.compile(r"(https?://)[^/@\s]+:[^/@\s]+@")
 _JSON_SECRET = re.compile(
-    r'(?i)("(?:password|secret|token|api[_-]?key)"\s*:\s*")[^"]*(")'
+    r'(?i)("(?:password|secret|token|api[_-]?key|access_token|authorization|passwd)"\s*:\s*")[^"]*(")'
 )
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
-_SECRET = re.compile(r"(?i)\b(password|secret|token|api[_-]?key)\s*[:=]\s*\S+")
+_SECRET = re.compile(
+    r"(?i)\b(password|secret|token|api[_-]?key|access_token|authorization|passwd)\s*[:=]\s*\S+"
+)
+_AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
 _UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 _DIGITS = re.compile(r"\d+")
 _SPACE = re.compile(r"\s+")
+_CREDENTIAL_KEYS = frozenset(
+    {
+        "password",
+        "token",
+        "secret",
+        "user",
+        "username",
+        "api_key",
+        "apikey",
+        "access_token",
+        "authorization",
+        "passwd",
+    }
+)
 
 Fetch = Callable[[dict[str, Any], str | None], tuple[list[dict[str, Any]], str | None]]
 
@@ -47,6 +65,17 @@ def cursor_path(home: Path) -> Path:
     return Path(home) / "error-fix.cursor"
 
 
+def _contains_credentials(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(
+            str(key).lower() in _CREDENTIAL_KEYS or _contains_credentials(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_credentials(item) for item in value)
+    return False
+
+
 def load_config(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise StoreError(f"error-fix.json not found: {path}")
@@ -57,16 +86,21 @@ def load_config(path: Path) -> dict[str, Any]:
         raise StoreError("error-fix.json is not valid JSON") from exc
     if not isinstance(data, dict):
         raise StoreError("error-fix.json is not an object")
+    if _contains_credentials(data):
+        raise StoreError("error-fix.json must not contain credentials")
     sid = data.get("session_id")
     if not isinstance(sid, str) or sid == "":
         raise StoreError("error-fix.json session_id is missing")
-    for key in ("password", "token", "secret", "user", "username", "api_key", "apikey"):
-        if key in data:
-            raise StoreError("error-fix.json must not contain credentials")
     url = data.get("url")
     if isinstance(url, str) and url:
         parsed = urlparse(url)
         if parsed.username or parsed.password:
+            raise StoreError("error-fix.json url must not contain credentials")
+        params = (
+            *parse_qs(parsed.query, keep_blank_values=True),
+            *parse_qs(parsed.fragment, keep_blank_values=True),
+        )
+        if any(name.lower() in _CREDENTIAL_KEYS for name in params):
             raise StoreError("error-fix.json url must not contain credentials")
     return data
 
@@ -78,6 +112,8 @@ def redact(text: str) -> str:
     out = _USERINFO.sub(r"\1[redacted]@", out)
     out = _JSON_SECRET.sub(r"\1[redacted]\2", out)
     out = _SECRET.sub("[redacted]", out)
+    out = _AKIA.sub("[redacted]", out)
+    out = _JWT.sub("[redacted]", out)
     out = _EMAIL.sub("[redacted]", out)
     out = _HEX.sub("[redacted]", out)
     return out
@@ -131,6 +167,7 @@ def incident_closed(store: Store, session_id: str, error_id: str) -> bool:
 
 def _latest_seen(store: Store, session_id: str, fp: str) -> dict[str, Any] | None:
     origin = store.device_id()
+    matches: list[dict[str, Any]] = []
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
             continue
@@ -140,8 +177,23 @@ def _latest_seen(store: Store, session_id: str, fp: str) -> dict[str, Any] | Non
             continue
         inner = row.get("payload")
         if isinstance(inner, dict) and inner.get("fingerprint") == fp:
-            return row
-    return None
+            matches.append(row)
+    if not matches:
+        return None
+    open_rows = [
+        row for row in matches if not incident_closed(store, session_id, str(row.get("id") or ""))
+    ]
+
+    def rank(row: dict[str, Any]) -> tuple[str, str, str]:
+        inner = row.get("payload")
+        payload = inner if isinstance(inner, dict) else {}
+        return (
+            str(payload.get("last_seen") or ""),
+            str(payload.get("first_seen") or ""),
+            str(row.get("id") or ""),
+        )
+
+    return max(open_rows or matches, key=rank)
 
 
 def _iso_to_ns(iso: str) -> int:
@@ -181,8 +233,12 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
         start_ns = int((now - timedelta(hours=1)).timestamp() * 1_000_000_000)
     user = os.environ.get("AGENT_ERROR_FIX_USER")
     password = os.environ.get("AGENT_ERROR_FIX_PASSWORD")
+    user_set = isinstance(user, str) and user != ""
+    pass_set = isinstance(password, str) and password != ""
+    if user_set != pass_set:
+        raise StoreError("error-fix env auth is incomplete")
     request_kwargs: dict[str, Any] = {}
-    if isinstance(user, str) and user != "" and isinstance(password, str) and password != "":
+    if user_set and pass_set:
         request_kwargs["auth"] = (user, password)
     else:
         try:
@@ -235,29 +291,29 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
             ts_raw, line = pair[0], pair[1]
             if not isinstance(line, str) or line == "":
                 continue
-            ts_iso = utcnow()
+            ts_iso: str | None = None
             ts_ns: int | None = None
             if isinstance(ts_raw, str) and ts_raw.isdigit():
                 try:
                     ts_ns = int(ts_raw)
                     ts_iso = _ns_to_iso(ts_ns)
                 except (OverflowError, OSError, ValueError):
-                    ts_iso = utcnow()
+                    continue
             elif isinstance(ts_raw, int) and not isinstance(ts_raw, bool):
                 try:
                     ts_ns = ts_raw
                     ts_iso = _ns_to_iso(ts_raw)
                 except (OverflowError, OSError, ValueError):
-                    ts_iso = utcnow()
-            item: dict[str, Any] = {"ts": ts_iso, "line": line}
-            if ts_ns is not None:
-                item["_ts_ns"] = ts_ns
+                    continue
+            if ts_ns is None or ts_iso is None:
+                continue
+            item: dict[str, Any] = {"ts": ts_iso, "line": line, "_ts_ns": ts_ns}
             if service:
                 item["service"] = service
             if environment:
                 item["environment"] = environment
             lines.append(item)
-            if ts_ns is not None and (latest_ns is None or ts_ns > latest_ns):
+            if latest_ns is None or ts_ns > latest_ns:
                 latest_ns = ts_ns
     lines.sort(key=lambda row: int(row["_ts_ns"]) if isinstance(row.get("_ts_ns"), int) else 0)
     for row in lines:
@@ -277,14 +333,18 @@ def scan_errors(store: Store, fetch: Fetch) -> tuple[list[str], list[str]]:
     if not has_skill(session, "error-fix"):
         raise StoreError(f"session {session_id} does not have skill error-fix")
     cursor_file = cursor_path(store.home)
-    cursor = None
-    if cursor_file.is_file():
-        raw = cursor_file.read_text(encoding="utf-8").strip()
-        cursor = raw if raw else None
-    lines, new_cursor = fetch(cfg, cursor)
-    lines = [item for item in lines if isinstance(item, dict)]
-    lines.sort(key=lambda row: str(row.get("ts") or ""))
     with store.exclusive("error-fix-scan:" + store.device_id()):
+        cursor = None
+        try:
+            raw = cursor_file.read_text(encoding="utf-8").strip()
+            cursor = raw if raw else None
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeDecodeError) as exc:
+            raise StoreError("error-fix.cursor is not readable") from exc
+        lines, new_cursor = fetch(cfg, cursor)
+        lines = [item for item in lines if isinstance(item, dict)]
+        lines.sort(key=lambda row: str(row.get("ts") or ""))
         return _apply_lines(store, cfg, session_id, lines, new_cursor, cursor_file)
 
 
@@ -371,6 +431,9 @@ def _apply_lines(
         )
         created.append(aid)
     if new_cursor is not None:
-        cursor_file.write_text(new_cursor + "\n", encoding="utf-8")
-        os.chmod(cursor_file, 0o600)
+        try:
+            cursor_file.write_text(new_cursor + "\n", encoding="utf-8")
+            os.chmod(cursor_file, 0o600)
+        except (OSError, UnicodeDecodeError) as exc:
+            raise StoreError("error-fix.cursor is not writable") from exc
     return created, enriched
