@@ -4,12 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.main import packaged_skills_dir
-
 pytestmark = pytest.mark.no_pg
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGED = packaged_skills_dir()
+PACKAGED = ROOT / "src" / "agent_cli" / "skills"
 NOT_DONE = "A draft plus local tests is not done"
 
 
@@ -22,6 +20,7 @@ def test_contributing_states_pr_done_contract() -> None:
     assert "those four `approved` verdicts on this head" in text
     assert "do not substitute another vendor" in text
     assert "Empty, partial, timeout, or unavailable" in text
+    assert "is not zero findings" in text
     assert "`skipped` and `cancelled` are not green" in text
     assert "agent allow --action pr-ready" in text
     assert "Do not mark ready if it denies" in text
@@ -35,12 +34,14 @@ def test_design_locks_pr_done() -> None:
     section = text.split("### 19.6 Pull request done", 1)[1].split("## 20.", 1)[0]
     assert "Pull request done" in text
     assert NOT_DONE in text
+    assert NOT_DONE in section
     assert "Opening a draft is not done" in text
     assert "only checks that a task is in `pushing` or `pr-review`" in section
     assert "When spine and pr-review are attached" in section
     assert "Without those skills, the target repository" in section
     assert "does not sit those PR reviews" in section
     assert "Empty, partial, timeout, or unavailable" in section
+    assert "is not zero findings" in section
     assert "agent allow --action pr-ready" in section
     assert "`skipped` and `cancelled` are not green" in section
     assert "do not substitute another vendor" in section

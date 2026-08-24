@@ -527,7 +527,7 @@ Write owner, hub role, opt-in skills, required session row, and the generic `act
 
 ### 19.6 Pull request done
 
-A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft is four lane verdicts (grok quality and grok logic, then Codex quality and Codex logic) on this head plus CI green on this head. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences.
+A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft is four lane verdicts (grok quality and grok logic, then Codex quality and Codex logic) on this head plus CI green on this head. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences.
 
 Quality and logic of one vendor stage run together. Vendors are `grok`, then `codex`. Codex runs only after both grok dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
