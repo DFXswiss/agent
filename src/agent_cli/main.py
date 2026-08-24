@@ -26,8 +26,6 @@ from .chain import (
     handoff_prompt,
     next_steps,
     required_source,
-)
-from .chain import (
     to_json as step_to_json,
 )
 from .hub import Hub, HubError
@@ -1224,16 +1222,15 @@ def cmd_sync(args: list[str]) -> None:
         terminal_seq: dict[str, int] = {}
         last_capture: dict[str, str] = {}
         try:
-            backoff = 1.0
+            backoff = [1.0]
             while True:
                 try:
                     _sync_once(store)
-                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture)
-                    backoff = 1.0
+                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, backoff)
                 except (HubError, OSError, WebSocketException) as exc:
                     print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, 30.0)
+                    time.sleep(backoff[0])
+                    backoff[0] = min(backoff[0] * 2, 30.0)
         finally:
             hub.close()
     finally:
@@ -1246,12 +1243,14 @@ def _run_sync_ws_session(
     runtime: Runtime,
     terminal_seq: dict[str, int],
     last_capture: dict[str, str],
+    backoff: list[float],
 ) -> None:
     """Run one websocket connection's message loop. Raises on disconnect/error;
     the caller in cmd_sync reconnects with backoff instead of exiting the process."""
     ws = hub.connect_sync_ws()
     try:
         ws.send(json.dumps({"type": "control-ready"}))
+        backoff[0] = 1.0
         _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
         for raw in ws:
             try:
@@ -1765,10 +1764,7 @@ def _publish_terminals(
             "seq": seq,
             "data": data,
         }
-        try:
-            ws.send(json.dumps(frame))  # type: ignore[attr-defined]
-        except Exception as exc:
-            die(f"terminal send failed: {exc}")
+        ws.send(json.dumps(frame))  # type: ignore[attr-defined]
 
 
 def _find_round(store: Store, task_id: str, round_num: object) -> dict:
