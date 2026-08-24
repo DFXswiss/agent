@@ -110,17 +110,24 @@ class StoreConnectionError(StoreError):
     silently retry or swallow the latter."""
 
 
-def _wrap_pg_errors(fn: Callable) -> Callable:
-    """A lost/reset postgres connection raises psycopg.Error, which is a plain
-    Exception - not caught by callers (e.g. cmd_sync's reconnect loop) that only
-    handle StoreError. Translate it so those call sites can retry instead of dying."""
+def _wrap_pg_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """A lost/reset postgres connection raises psycopg.OperationalError/
+    InterfaceError, plain Exceptions - not caught by callers (e.g. cmd_sync's
+    reconnect loop) that only handle StoreConnectionError. Translate those
+    specifically so those call sites can retry instead of dying. Any other
+    psycopg.Error (DataError, IntegrityError, ProgrammingError, ...) is a genuine
+    data/query problem, not a connection issue - it becomes a plain StoreError so
+    it still fails loud with a clean message instead of an uncaught traceback, but
+    is never mistaken for something safe to retry."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
-        except psycopg.Error as exc:
+        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
             raise StoreConnectionError(f"postgres error: {exc}") from exc
+        except psycopg.Error as exc:
+            raise StoreError(f"postgres error: {exc}") from exc
 
     return wrapper
 

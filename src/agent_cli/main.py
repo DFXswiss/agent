@@ -1234,14 +1234,15 @@ def cmd_sync(args: list[str]) -> None:
                     _sync_once(store)
                     _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, established)
                 except (HubError, StoreConnectionError, OSError, WebSocketException) as exc:
+                    started = established.get("at")
+                    failed_at = time.monotonic() if started is not None else None
                     print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
                     if isinstance(exc, StoreConnectionError):
                         try:
                             store.reconnect()
                         except StoreConnectionError as reconnect_exc:
                             print(f"agent: postgres reconnect failed, will retry: {reconnect_exc}", file=sys.stderr)
-                    started = established.get("at")
-                    if started is not None and time.monotonic() - started >= _MAX_BACKOFF:
+                    if failed_at is not None and failed_at - started >= _MAX_BACKOFF:
                         backoff = 1.0
                     time.sleep(backoff)
                     backoff = min(backoff * 2, _MAX_BACKOFF)

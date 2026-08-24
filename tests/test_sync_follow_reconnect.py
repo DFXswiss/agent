@@ -220,6 +220,101 @@ def test_reconnect_loop_reopens_the_store_connection_on_store_connection_error(
         store.close()
 
 
+def test_reconnect_failure_is_logged_and_retried_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: if store.reconnect() itself fails (postgres still
+    unreachable), that failure must be logged and the loop must keep retrying -
+    not let the reconnect attempt's own exception escape and crash the process,
+    which would be exactly the bug this whole PR exists to fix, triggered by the
+    recovery path itself."""
+    calls: list[int] = []
+
+    def fake_sync_once(store: object) -> None:
+        calls.append(1)
+        if len(calls) >= 3:
+            raise _StopTest("stop after enough attempts")
+        raise StoreConnectionError("server closed the connection unexpectedly")
+
+    def failing_reconnect() -> None:
+        raise StoreConnectionError("cannot reconnect to postgres: connection refused")
+
+    monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        monkeypatch.setattr(store, "reconnect", failing_reconnect)
+        monkeypatch.setattr(main_mod, "open_store", lambda *a, **k: store)
+
+        with pytest.raises(_StopTest):
+            cmd_sync(["--follow"])
+
+        assert calls == [1, 1, 1], "a failed reconnect attempt must not crash the process, only be retried"
+    finally:
+        store.close()
+
+
+def test_backoff_does_not_credit_time_spent_reconnecting_the_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the elapsed-time-since-established check used to call
+    time.monotonic() AFTER store.reconnect() returned, so if reconnecting the
+    postgres connection itself took a long time (psycopg.connect() sets no
+    explicit timeout), that recovery time got credited toward "the session was
+    stable" and could falsely reset backoff - even though the actual
+    established-session lifetime was near zero. The elapsed check must be measured
+    from right when the failure was caught, before any recovery work runs."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_session(
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
+    ) -> None:
+        established["at"] = main_mod.time.monotonic()
+        calls.append(1)
+        if len(calls) >= 3:
+            raise _StopTest("stop after enough attempts")
+        raise StoreConnectionError("connection reset by peer")
+
+    def slow_reconnect() -> None:
+        main_mod.time.monotonic()  # simulate reconnect() itself consuming meaningful time
+
+    # iter1: established at t=0.0, elapsed check at t=0.1 (small gap, no reset) ->
+    #        reconnect()'s own call consumes t=2.0, which must be ignored.
+    # iter2: established at t=1.0, elapsed check at t=1.1 (small gap, no reset) ->
+    #        reconnect()'s own call consumes t=999.0 - if that leaked into the
+    #        elapsed check instead, it would look like a 998s-stable session and
+    #        wrongly reset backoff.
+    times = iter([0.0, 0.1, 2.0, 1.0, 1.1, 999.0, 5.0])
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: next(times))
+
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        monkeypatch.setattr(store, "reconnect", slow_reconnect)
+        monkeypatch.setattr(main_mod, "open_store", lambda *a, **k: store)
+
+        with pytest.raises(_StopTest):
+            cmd_sync(["--follow"])
+
+        assert sleeps == [1.0, 2.0], (
+            "backoff must keep growing across both attempts - reconnect()'s own "
+            "elapsed time must never be mistaken for a stable established session"
+        )
+    finally:
+        store.close()
+
+
 def test_generic_store_error_from_sync_is_not_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
