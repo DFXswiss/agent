@@ -598,6 +598,31 @@ def test_daemon_install_writes_service_under_pytest(
         assert path_value in text
 
 
+def test_daemon_install_keeps_agent_pg_bin_on_reinstall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert os.environ.get("PYTEST_CURRENT_TEST")
+
+    def boom(_argv: list[str]) -> Any:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+    monkeypatch.setattr("agent_cli.runtime.run_argv", boom)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("AGENT_PG_BIN", "/opt/pg/bin")
+    run(tmp_path, ["daemon", "--install"])
+    path = tmp_path / "daemon.service"
+    first = path.read_text(encoding="utf-8")
+    plat = "darwin" if sys.platform == "darwin" else "linux"
+    if not sys.platform.startswith("linux") and sys.platform != "darwin":
+        plat = sys.platform
+    assert existing_service_agent_pg_bin(first, plat) == "/opt/pg/bin"
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    run(tmp_path, ["daemon", "--install"])
+    second = path.read_text(encoding="utf-8")
+    assert existing_service_agent_pg_bin(second, plat) == "/opt/pg/bin"
+
+
 def test_init_writes_daemon_service_under_pytest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
