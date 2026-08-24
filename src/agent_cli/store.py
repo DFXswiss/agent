@@ -69,6 +69,7 @@ OWNED_TABLES = frozenset(
 )
 
 WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged"})
+DONE_WAKE_ACTIVITY_TYPES = frozenset({"pr.merged"})
 
 EXECUTABLE_ACTIVITY_TYPES = frozenset(
     {
@@ -629,7 +630,10 @@ class Store:
             return
         if payload.get("type") not in WAKE_ACTIVITY_TYPES:
             return
-        if payload.get("type") == "pr.merged" and payload.get("execution_status") != "done":
+        if (
+            payload.get("type") in DONE_WAKE_ACTIVITY_TYPES
+            and payload.get("execution_status") != "done"
+        ):
             return
         target = self._inbox_target(payload)
         if target is None:

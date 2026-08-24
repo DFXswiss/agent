@@ -42,7 +42,14 @@ from .runtime import (
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreError, utcnow
 from .usage import scan_usage, usage_poll_due
-from .watch import scan_merged
+from .watch import (
+    assigned_session_id,
+    assigned_workspace_root,
+    dispatch_assigned,
+    pending_assigned,
+    scan_assigned,
+    scan_merged,
+)
 
 CHECKLIST = {
     "implement": (
@@ -103,6 +110,8 @@ ACTIVITY_TYPES = frozenset(
         "issue.write",
         "pr.open",
         "pr.merged",
+        "issue.assigned",
+        "issue.assigned.ack",
         "comment.post",
         "mail.ingest",
         "mail.seen",
@@ -119,6 +128,7 @@ ACTIVITY_TYPES = frozenset(
 SCRIPT_ONLY_ACTIVITY = frozenset(
     {
         "pr.merged",
+        "issue.assigned",
         "mail.ingest",
         "mail.seen",
         "query.result",
@@ -347,6 +357,8 @@ def cmd_session(args: list[str]) -> None:
             ]
             if open_work:
                 die("session has open work")
+            if pending_assigned(store, sid):
+                die("session has pending assigned issues")
             row["status"] = "closed"
             row["last_seen_at"] = utcnow()
             store.write("session", "update", sid, _strip(row))
@@ -445,6 +457,12 @@ def cmd_activity(args: list[str]) -> None:
             die(f"session {sid} is not active")
         if typ in SCRIPT_ONLY_ACTIVITY:
             die(f"{typ} is written by a script, not agent activity add")
+        if typ == "issue.assigned.ack":
+            assigned_id = raw.get("assigned_id")
+            pending = pending_assigned(store, sid)
+            head = pending[0].get("id") if pending else None
+            if not isinstance(assigned_id, str) or assigned_id == "" or assigned_id != head:
+                die("issue.assigned.ack assigned_id must be the queue head")
         status = "pending" if typ in ACTIVITY_TYPES else "error"
         activity_id = str(uuid.uuid4())
         store.write(
@@ -1495,6 +1513,7 @@ def _session_start(
     rows: int | None,
     provider: str | None = None,
     model: str | None = None,
+    cwd: str | None = None,
 ) -> str:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
@@ -1526,7 +1545,7 @@ def _session_start(
             meta["grok_session_id"] = new_id
         meta["provider"] = "grok"
         meta["model"] = resolved
-    runtime.start(sid, start_command, cols, rows, command_argv=command_argv)
+    runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
@@ -2402,8 +2421,8 @@ def cmd_knock(args: list[str]) -> None:
 
 
 def cmd_watch(args: list[str]) -> None:
-    if not args or args[0] not in ("pr-merged", "pending", "grok-usage"):
-        die("Usage: agent watch pr-merged|pending|grok-usage")
+    if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage"):
+        die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage")
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -2424,6 +2443,53 @@ def cmd_watch(args: list[str]) -> None:
             else:
                 print("usage.snapshot none")
             return
+        if args[0] == "assigned":
+            from .knock import deliver
+            from .runtime import run_argv
+
+            extra = args[1:]
+            if extra not in ([], ["--follow"]):
+                die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage")
+            follow = extra == ["--follow"]
+            while True:
+                created, skipped = scan_assigned(store, run_argv, now=utcnow())
+                workspace_root = assigned_workspace_root(store)
+                sid = assigned_session_id(store.home)
+                pending = pending_assigned(store, sid)
+                if pending:
+                    head_id = pending[0].get("id")
+                    if isinstance(head_id, str) and head_id:
+                        dispatch_assigned(
+                            store,
+                            head_id,
+                            sync=lambda: _sync_once(store),
+                            start=lambda session_id, cwd: _session_start(
+                                store,
+                                Runtime(),
+                                session_id,
+                                None,
+                                None,
+                                None,
+                                provider="grok",
+                                cwd=str(cwd),
+                            ),
+                            knock=lambda activity_id: deliver(store, Runtime(), activity_id),
+                            workspace_root=workspace_root,
+                            pane_up=lambda session_id: Runtime().exists(session_id),
+                        )
+                for activity_id in created:
+                    print(f"issue.assigned {activity_id}")
+                if not created:
+                    print("assigned none")
+                if skipped > 0:
+                    msg = f"watch skipped {skipped} assigned issues"
+                    if follow:
+                        print(msg, file=sys.stderr)
+                    else:
+                        die(msg)
+                if not follow:
+                    return
+                time.sleep(30)
         from .pending import scan_pending
 
         hub = _hub_from_store(store)

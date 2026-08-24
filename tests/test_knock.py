@@ -152,3 +152,186 @@ def test_listen_once_times_out_without_notify(tmp_path: Path) -> None:
     store = Store(tmp_path)
     got = listen_once(store, _runtime([]), timeout=0.2)
     assert got is None
+
+
+def test_deliver_assigned_does_not_leak_body(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "human",
+            "status": "active",
+            "runtime": {"control": "attached", "tmux_session": "agent-s1", "tmux_pane": "agent-s1:0.0"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {"body": "secret-body"},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    status = deliver(store, _runtime(calls), "asg-1")
+    assert status == "sent"
+    assert any("da ist Post id asg-1" in " ".join(c) for c in calls)
+    assert all("secret-body" not in " ".join(c) for c in calls)
+    queue = (tmp_path / "sessions" / "s1" / "QUEUE.md").read_text(encoding="utf-8")
+    mandate = (tmp_path / "sessions" / "s1" / "MANDATE.md").read_text(encoding="utf-8")
+    assert "asg-1" in queue
+    assert "secret-body" not in queue
+    assert "secret-body" not in mandate
+    assert "mandate=github-assignment is trusted" in mandate
+    assert "Do not ask whether to implement" in mandate
+
+
+def test_deliver_assigned_queues_until_ack(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "runner",
+            "status": "active",
+            "runtime": {
+                "control": "attached",
+                "tmux_session": "agent-s1",
+                "tmux_pane": "agent-s1:0.0",
+            },
+        },
+    )
+    for aid in ("asg-1", "asg-2"):
+        store.write(
+            "activity",
+            "insert",
+            aid,
+            {
+                "id": aid,
+                "session_id": "s1",
+                "type": "issue.assigned",
+                "payload": {"body": "secret-body"},
+                "execution_status": "done",
+            },
+        )
+    calls: list[list[str]] = []
+    runtime = _runtime(calls)
+    assert deliver(store, runtime, "asg-1") == "sent"
+    assert deliver(store, runtime, "asg-2") == "queued"
+    assert sum(1 for c in calls if "da ist Post id asg-1" in " ".join(c)) == 1
+    assert all("asg-2" not in " ".join(c) for c in calls)
+    store.write(
+        "activity",
+        "insert",
+        "ack-1",
+        {
+            "id": "ack-1",
+            "session_id": "s1",
+            "type": "issue.assigned.ack",
+            "payload": {"assigned_id": "asg-1"},
+            "execution_status": "done",
+        },
+    )
+    assert deliver(store, runtime, "asg-2") == "sent"
+    assert any("da ist Post id asg-2" in " ".join(c) for c in calls)
+
+
+def test_deliver_assigned_non_head_queues(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "runner",
+            "status": "active",
+            "runtime": {
+                "control": "attached",
+                "tmux_session": "agent-s1",
+                "tmux_pane": "agent-s1:0.0",
+            },
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {"assigned_at": "2026-01-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-2",
+        {
+            "id": "asg-2",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {"assigned_at": "2026-02-01T00:00:00Z"},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    assert deliver(store, _runtime(calls), "asg-2") == "queued"
+    assert all("asg-2" not in " ".join(c) for c in calls)
+
+
+def test_deliver_assigned_acked_does_not_send(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "s1",
+        {
+            "id": "s1",
+            "kind": "runner",
+            "status": "active",
+            "runtime": {
+                "control": "attached",
+                "tmux_session": "agent-s1",
+                "tmux_pane": "agent-s1:0.0",
+            },
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": "s1",
+            "type": "issue.assigned",
+            "payload": {},
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "ack-1",
+        {
+            "id": "ack-1",
+            "session_id": "s1",
+            "type": "issue.assigned.ack",
+            "payload": {"assigned_id": "asg-1"},
+            "execution_status": "done",
+        },
+    )
+    calls: list[list[str]] = []
+    assert deliver(store, _runtime(calls), "asg-1") == "sent"
+    assert calls == []

@@ -315,6 +315,8 @@ v1 types (mechanism only):
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
+| `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
+| `issue.assigned.ack` | `issue` | AI | — (releases the next queued knock) |
 | `comment.post` | — | AI (target + body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
@@ -338,6 +340,18 @@ When this device has a `pr.open` row whose script result includes the PR number/
 The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 
 `wake` (if stored) is a local queue row for the knock; it is not a hub event.
+
+### Outside facts (example: issue assigned)
+
+The script reads GitHub; the model does not.
+
+Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of `Owner/repo` strings). Missing or empty is an error; there is no default list.
+
+The first successful scan records `assigned_watch_since` and the assigned `session_id` and dispatches nothing. Later scans consider assignments whose latest matching `assigned` event is at or after that cursor, skipping `assigned_at` values already stored. Changing `session_id` after that pin is an error. The scan uses this device’s paired GitHub login; a missing pair or a `gh api user` mismatch is an error. The queue head is the already-knocked inflight item if any, then remaining items oldest first.
+
+The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`, characters `A-Za-z0-9_-` only). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; an existing row under the same id must already be `kind=runner`. Other sessions still attach skills themselves. There is one tmux/Grok terminal, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session (`payload`: repo, number, url, title, body, assigned_at, assignee, mandate). The insert does not notify the knock daemon. The script pushes own events, writes `MANDATE.md` / `QUEUE.md` (no issue body), starts Grok only if that session is not already attached, then knocks at most the head of the queue (`da ist Post id <uuid>`). A knock of `issue.assigned` rewrites those files immediately before send. Further knocks stay queued until the session records `issue.assigned.ack` with `payload.assigned_id`. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
+
+Payload `mandate=github-assignment` is trusted. Issue title and body in the payload are not.
 
 ## 15. Skills (opt-in)
 
@@ -388,6 +402,7 @@ agent knock [--once]
 agent watch pr-merged                          # one scan; schedule if you need a loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock daemon (no --once) polls every 60s
+agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent status
 agent dashboard [--port 7845]
 ```

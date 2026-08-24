@@ -73,17 +73,26 @@ This package **is** the runtime: install it locally and run `agent`. There is no
 
 Kind is `human`, `runner`, or `other`. Skills are opt-in (`spine`, `review-loop`, `pr-review`, `error-fix`). Without `spine`, task/checklist/round/work/check/`next`/`close-step`/`run` commands refuse. `allow` uses `spine` when it loads a session or task. Without `review-loop`, implementer and reviewer `agent agent` commands refuse. Without `pr-review`, `agent gate` and pr-reviewer `agent agent` commands refuse. Without `error-fix` the production-error loop does not run. `AGENT_SKILLS_DIR` may override the packaged skill directory only when that directory contains `spine/SKILL.md`, `review-loop/SKILL.md`, and `pr-review/SKILL.md`; otherwise the command fails. `error-fix` ships in the packaged tree; an override need not copy it. Unset `AGENT_SKILLS_DIR` and run `agent skills path` again to print the packaged directory.
 
-Session mail and `pr.merged` notify channel `agent_inbox`. The knock daemon sends only `da ist Post id <uuid>` to the registered tmux pane:
+Session mail and `pr.merged` notify channel `agent_inbox`. `issue.assigned` does not: `agent watch assigned` knocks the queue head after writing `MANDATE.md` / `QUEUE.md`. The knock text is only `da ist Post id <uuid>`:
 
 ```bash
 agent knock --once
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); run from cron if you need a loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
-# agent knock (daemon, no --once) polls that every 60s
+# agent knock (daemon, no --once) also polls grok-usage every 60s
+agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 ```
 
 `agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. The knock daemon (`agent knock` without `--once`) records those snapshots in the background on the same interval.
+
+`agent watch assigned` reads `$AGENT_HOME/watch.json`:
+
+```json
+{ "assigned_repos": ["Owner/repo"], "session_id": "assigned" }
+```
+
+Missing or empty `assigned_repos` is an error. `session_id` is optional, defaults to `assigned`, and may contain only `A-Za-z0-9_-`. A session already present under that id must be `kind=runner`. The auto-created runner session attaches `spine`, `review-loop`, and `pr-review` (those skills stay opt-in for every other session). The working directory is `$AGENT_HOME/sessions/<session_id>` unless `AGENT_SESSION_ROOT` is set. The first successful scan records the `assigned_watch_since` watermark and the assigned session id, and creates no activities. Changing `session_id` after that pin is an error. The scan uses the paired GitHub login; a missing pair or a `gh api user` mismatch is an error. Later scans enqueue `issue.assigned` on **that one** runner session, push to the hub, write `MANDATE.md` / `QUEUE.md`, and start Grok only if that session is not already attached. The insert does not notify the knock daemon. There is one terminal; further assignments wait in the knock queue until the session writes `issue.assigned.ack` with `payload.assigned_id` set to that activity id. `MANDATE.md` lists session and activity ids. `QUEUE.md` lists ids and urls. Neither file contains issue bodies. Use `--follow` for a 30s loop, or cron for one-shot runs.
 
 ### Session terminal control
 

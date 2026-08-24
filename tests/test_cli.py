@@ -44,6 +44,29 @@ def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFix
         run(tmp_path, ["task", "state", tid, "done"])
 
 
+def test_cannot_close_with_pending_assigned(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "assigned", "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "asg-1",
+            {
+                "id": "asg-1",
+                "session_id": "assigned",
+                "type": "issue.assigned",
+                "payload": {"assigned_at": "2026-01-01T00:00:00Z"},
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="pending assigned"):
+        run(tmp_path, ["session", "close", "--id", "assigned"])
+
+
 def test_cannot_close_with_open_task(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
@@ -1165,6 +1188,73 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         store.close()
 
 
+def test_activity_add_assigned_ack_requires_queue_head(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "assigned", "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "asg-1",
+            {
+                "id": "asg-1",
+                "session_id": "assigned",
+                "type": "issue.assigned",
+                "payload": {"assigned_at": "2026-01-01T00:00:00Z"},
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "asg-2",
+            {
+                "id": "asg-2",
+                "session_id": "assigned",
+                "type": "issue.assigned",
+                "payload": {"assigned_at": "2026-02-01T00:00:00Z"},
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+    bad = tmp_path / "ack-bad.json"
+    bad.write_text('{"assigned_id": "asg-2"}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="queue head"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "assigned",
+                "--type",
+                "issue.assigned.ack",
+                "--payload-file",
+                str(bad),
+            ],
+        )
+    good = tmp_path / "ack-good.json"
+    good.write_text('{"assigned_id": "asg-1"}', encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "activity",
+            "add",
+            "--session",
+            "assigned",
+            "--type",
+            "issue.assigned.ack",
+            "--payload-file",
+            str(good),
+        ],
+    )
+    assert "type=issue.assigned.ack" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "typ",
     [
@@ -1174,6 +1264,7 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         "query.result",
         "session.register",
         "usage.snapshot",
+        "issue.assigned",
     ],
 )
 def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:
@@ -1380,6 +1471,26 @@ def test_watch_usage_mentions_grok_usage() -> None:
         main(["watch"])
     with pytest.raises(SystemExit, match="grok-usage"):
         main(["watch", "nope"])
+
+
+def test_watch_assigned_rejects_unknown_flag(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match=r"assigned \[--follow\]"):
+        run(tmp_path, ["watch", "assigned", "--folow"])
+    with pytest.raises(SystemExit, match=r"assigned \[--follow\]"):
+        run(tmp_path, ["watch", "assigned", "--follow", "--follow"])
+
+
+def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="assigned_repos|watch.json"):
+        run(tmp_path, ["watch", "assigned"])
+
+
+def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match=r"assigned \[--follow\]\|grok-usage"):
+        run(tmp_path, ["watch"])
 
 
 def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
