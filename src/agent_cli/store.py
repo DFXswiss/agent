@@ -157,10 +157,16 @@ class Store:
             "hub_url": self.meta("hub_url"),
             "pair_challenge": self.meta("pair_challenge"),
         }
-        tmp = self.identity_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        tmp.replace(self.identity_path)
+        tmp = self.identity_path.with_name(f"{self.identity_path.name}.tmp.{os.getpid()}")
+        replaced = False
+        try:
+            tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            os.chmod(tmp, 0o600)
+            tmp.replace(self.identity_path)
+            replaced = True
+        finally:
+            if not replaced and tmp.exists():
+                tmp.unlink()
 
     def close(self) -> None:
         self.conn.close()

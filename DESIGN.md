@@ -40,6 +40,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
+| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / `pr.merged` polls) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
@@ -314,7 +315,7 @@ v1 types (mechanism only):
 | `session.register` | — | later (v1 register is the `session` row) | — |
 | `issue.write` | `issue` | AI | script |
 | `pr.open` | `pr` | AI | script |
-| `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; existing knock) |
+| `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; device daemon knock child) |
 | `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
 | `issue.assigned.ack` | `issue` | AI | — (releases the next queued knock) |
 | `comment.post` | — | AI (target + body) | script |
@@ -335,7 +336,7 @@ v1 types (mechanism only):
 
 The agent never learns a merge from a human prompt and never calls GitHub to ask “is it merged?”.
 
-When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The **existing** knock daemon and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
+When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The device daemon’s knock child and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
 
 The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 
@@ -399,10 +400,11 @@ agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
-agent knock [--once]
-agent watch pr-merged                          # one scan; schedule if you need a loop
+agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service
+agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
+agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
-agent watch grok-usage                         # one scan; knock daemon (no --once) polls every 60s
+agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent status
 agent dashboard [--port 7845]
@@ -452,7 +454,7 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init`, `agent pair --hub …`, `agent sync`.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, `pr.merged`, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
 
 Later product work (not required to operate v1 after merge):
 

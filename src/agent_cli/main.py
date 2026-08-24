@@ -277,9 +277,15 @@ def cmd_skills(args: list[str]) -> None:
 
 
 def cmd_init(_: list[str]) -> None:
+    from .daemon import agent_argv, install_and_start_service
+
     store = open_store()
-    print(f"ok  device={store.device_id()} home={store.home}")
-    store.close()
+    try:
+        install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
+        daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
+        print(f"ok  device={store.device_id()} home={store.home} daemon={daemon_state}")
+    finally:
+        store.close()
 
 
 def cmd_session(args: list[str]) -> None:
@@ -2403,6 +2409,9 @@ def cmd_knock(args: list[str]) -> None:
             for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
             return
+        from .pending import scan_pending
+        from .runtime import run_argv
+
         last_poll: float | None = None
         while True:
             if usage_poll_due(last_poll, time.monotonic()):
@@ -2412,12 +2421,56 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"usage.snapshot {usage_id}")
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
+                try:
+                    created, skipped = scan_merged(store, run_argv)
+                    for activity_id in created:
+                        print(f"pr.merged {activity_id}")
+                    if skipped:
+                        print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
+                except StoreError as exc:
+                    print(f"pr.merged error: {exc}", file=sys.stderr)
+                hub_url = store.meta("hub_url")
+                hub_token = store.meta("device_token")
+                if hub_url and hub_token:
+                    hub = Hub(hub_url, hub_token)
+                    try:
+                        lines = scan_pending(store, hub)
+                        for line in lines:
+                            print(line)
+                    except (HubError, StoreError) as exc:
+                        print(f"pending error: {exc}", file=sys.stderr)
+                    finally:
+                        hub.close()
                 last_poll = time.monotonic()
             activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:
                 print(f"knock {activity_id}")
     finally:
         store.close()
+
+
+def cmd_daemon(args: list[str]) -> None:
+    from .daemon import (
+        agent_argv,
+        install_and_start_service,
+        run_supervisor,
+        uninstall_service,
+    )
+
+    if args == []:
+        run_supervisor(home=home(), argv_prefix=agent_argv())
+        return
+    if args == ["--install"]:
+        store = open_store()
+        try:
+            install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
+        finally:
+            store.close()
+        return
+    if args == ["--uninstall"]:
+        uninstall_service(home=home())
+        return
+    die("Usage: agent daemon [--install|--uninstall]")
 
 
 def cmd_watch(args: list[str]) -> None:
@@ -2528,6 +2581,7 @@ COMMANDS = {
     "ping": cmd_ping,
     "status": cmd_status,
     "dashboard": cmd_dashboard,
+    "daemon": cmd_daemon,
     "knock": cmd_knock,
     "lane": cmd_lane,
     "watch": cmd_watch,
@@ -2540,7 +2594,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|lane|watch|github> …"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|github> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:
