@@ -360,7 +360,7 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
 
 # Script steps that `run` must not auto-set to ja (real check required).
 NO_AUTO_CLOSE = frozenset(
-    {"contributing_ok", "coverage_ok", "handbook_ok", "mergeable"}
+    {"contributing_ok", "coverage_ok", "handbook_ok"}
 )
 
 

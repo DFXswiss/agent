@@ -2167,6 +2167,7 @@ def cmd_run(args: list[str]) -> None:
         )
     close_key: str | None = None
     close_evidence: str | None = None
+    evidence: str | None = None
     store = open_store()
     try:
         task = _require_task_session_active(store, tid)
@@ -2194,6 +2195,30 @@ def cmd_run(args: list[str]) -> None:
                 file=sys.stderr,
             )
             raise SystemExit(2)
+        if step.key == "pushed" and not str(snap.get("head_sha") or "").strip():
+            cwd = _resolve_run_cwd(args)
+            from .git_act import GitActError, push_branch
+
+            try:
+                sha = push_branch(
+                    cwd=cwd, runner=lambda argv: _exec_argv(argv, cwd=cwd)
+                )
+            except GitActError as exc:
+                die(str(exc))
+            head = sha
+            snap = _chain_snapshot(store, tid, extra_head=head)
+
+        if step.key == "mergeable":
+            cwd = _resolve_run_cwd(args)
+            from .git_act import GitActError, measure_mergeable
+
+            try:
+                evidence = measure_mergeable(
+                    cwd=cwd, runner=lambda argv: _exec_argv(argv, cwd=cwd)
+                )
+            except GitActError as exc:
+                die(str(exc))
+            # fall through to close_allowed
         if step.key in NO_AUTO_CLOSE:
             print(
                 f"agent: {step.key} is not auto-closable — "
@@ -2314,12 +2339,17 @@ def cmd_run(args: list[str]) -> None:
             else:
                 _agent_handoff_exit(step, tid, str(snap.get("session_id")))
         if close_key is None:
+            close_ev = (
+                evidence
+                if step.key == "mergeable"
+                else "run auto"
+            )
             verdict = close_allowed(
                 wf,
                 step.key,
                 checklist=snap["checklist"],
                 source="script",
-                evidence="run auto",
+                evidence=close_ev,
                 snapshot=snap,
             )
             if not verdict.allowed:
@@ -2329,7 +2359,11 @@ def cmd_run(args: list[str]) -> None:
                 )
                 raise SystemExit(2)
             close_key = step.key
-            close_evidence = f"run auto:{verdict.reason}"
+            close_evidence = (
+                evidence
+                if step.key == "mergeable"
+                else f"run auto:{verdict.reason}"
+            )
     finally:
         store.close()
     close_args = [
