@@ -261,6 +261,7 @@ class Store:
             finally:
                 self.conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
 
+    @_wrap_pg_errors
     def write(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self.conn.transaction():
             return self._write_in_txn(table, op, row_id, payload)
@@ -538,6 +539,7 @@ class Store:
             out.append(payload)
         return out
 
+    @_wrap_pg_errors
     def row(self, table: str, row_id: str) -> dict[str, Any] | None:
         with self._lock:
             found = self.conn.execute(

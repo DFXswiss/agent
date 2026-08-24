@@ -257,6 +257,33 @@ def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
         store.close()
 
 
+def test_apply_control_propagates_store_connection_error_instead_of_acking_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: apply_control's `except (SystemExit, StoreError, ValueError)`
+    used to catch StoreConnectionError too (a StoreError subclass), turning a lost
+    DB connection into a normal-looking control-ack with ok=False instead of letting
+    it reach cmd_sync's reconnect loop - so a control frame hit during a transient
+    connection blip would fail permanently even though the connection later
+    recovers, instead of being retried after reconnect like everything else."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+
+        def broken_device_id() -> str:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+
+        monkeypatch.setattr(store, "device_id", broken_device_id)
+
+        message = {"type": "control", "session_id": "s1", "action": "stop", "payload": {}}
+
+        with pytest.raises(StoreConnectionError):
+            main_mod.apply_control(store, _FakeRuntime(), message)
+    finally:
+        store.close()
+
+
 def test_websocket_exception_reconnects_instead_of_dying(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

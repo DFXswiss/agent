@@ -1740,6 +1740,8 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
             die(f"unknown control action: {action}")
         ack["ok"] = True
         return ack
+    except StoreConnectionError:
+        raise  # a lost DB connection must reach cmd_sync's reconnect loop, not become an acked failure
     except (SystemExit, StoreError, ValueError) as exc:
         err = exc.args[0] if getattr(exc, "args", None) else str(exc)
         if isinstance(err, int):
