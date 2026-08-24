@@ -73,11 +73,12 @@ def test_agents_md_and_readme_point_at_contributing() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     stub = (ROOT / "skills" / "session-store" / "SKILL.md").read_text(encoding="utf-8")
     packaged = (PACKAGED / "session-store" / "SKILL.md").read_text(encoding="utf-8")
-    pointer = "CONTRIBUTING.md is the contract"
     assert NOT_DONE in agents
     assert "CONTRIBUTING.md" in agents
     assert "A draft plus local tests is not a finished pull request" in readme
     assert NOT_DONE in stub
-    assert pointer in stub
+    assert "for this repository" in stub
+    assert "store encoding when that skill is" in stub
     assert NOT_DONE in packaged
-    assert pointer in packaged
+    assert "for this repository" in packaged
+    assert "store encoding when that skill is" in packaged
