@@ -117,7 +117,7 @@ def _terminate(proc: Any) -> None:
         if isinstance(pid, int) and pid:
             try:
                 os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, OSError):
                 pass
         else:
             kill = getattr(proc, "kill", None)
@@ -197,6 +197,10 @@ def run_supervisor(
             code = sync.poll()
             if code is None:
                 continue
+            if not hub_configured(home):
+                _terminate(sync)
+                children.pop("sync", None)
+                continue
             stamp = now_fn()
             sync_deaths.append(stamp)
             sync_deaths = [t for t in sync_deaths if stamp - t <= SYNC_RESTART_WINDOW_S]
@@ -205,10 +209,6 @@ def run_supervisor(
             if n >= SYNC_RESTART_LIMIT:
                 terminate_remaining()
                 raise SystemExit("daemon sync restart limit")
-            if not hub_configured(home):
-                _terminate(sync)
-                children.pop("sync", None)
-                continue
             children["sync"] = start(specs["sync"], start_new_session=True)
     finally:
         signal.signal(signal.SIGTERM, previous_term)
