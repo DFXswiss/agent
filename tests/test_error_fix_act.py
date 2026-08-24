@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
