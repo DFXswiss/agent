@@ -407,6 +407,7 @@ agent watch pending                            # one scan; LISTEN agent_work / e
 agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
+agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
 agent status
 agent dashboard [--port 7845]
 ```
@@ -548,7 +549,7 @@ The wanted loop “production error → draft pull request” is the **error-fix
 
 Wanted. Opt-in. Runs on **this device** (a laptop that has the client, log credentials, a runner session, and git). It is one skill among many. It is not the session bus, and it is not a hub workflow.
 
-Attach `error-fix` together with `spine`, `review-loop`, and `pr-review` on the runner session that owns the work. Without `error-fix` the session does not run this loop. The `error.*` catalog names in §14 exist so adapters and later code share a spelling; this revision does not add a type allowlist.
+Attach `error-fix` together with `spine`, `review-loop`, and `pr-review` on the runner session that owns the work. Without `error-fix` the session does not run this loop. `error.skip` and `error.fix` are members of the activity type allowlist (`agent activity add`); `error.seen` stays script-only.
 
 ### 21.1 Laptop as execution plane
 
@@ -622,6 +623,8 @@ After the knock, the session reads the row and writes `investigate.step` immedia
 
 The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
 
+`agent activity add` now enforces the error-fix skill, payload, fingerprint, one-conclusion, unmapped-repo, and already-open-draft guards.
+
 The adapter decides open vs closed by that `error_id` / `fingerprint`, plus the spine task whose `payload.error_id` matches. A later `error.skip` or a terminal task (`done` / `failed`) for the same `error_id` closes the incident. `pr.merged` knocks as today; it is not a second close signal. `agent task create` for a given `error_id` is find-or-create; a second `error.fix` does not open a second task.
 
 Same fingerprint while the incident is **open**: enrich `error.seen`. Do not create a second task or a second pull request. After close: the next match is a **new** `error.seen` (new id, first insert knocks).
@@ -630,13 +633,15 @@ Same fingerprint while the incident is **open**: enrich `error.seen`. Do not cre
 
 On `error.fix`:
 
-1. `agent task create --workflow implement` on this session. Copy `error_id` (the `error.seen` id) and `repo` from that `error.seen` row into the task payload.
+1. `agent task create --workflow implement --error-id <error.seen-id>` on this session (find-or-create). That copies `error_id` and `repo` from the `error.seen` row into the task payload.
 2. Isolated worktree of that task `payload.repo` at the allowed base revision. Git operations are scripts. `payload.repo` is already on the task because analysis refused `error.fix` when `repo` was missing. Never fall back to the origin checkout.
 3. Spine implement: mandatory checks must `pass`, then `pr.open` opens a **draft** (spine `pushed`). Title/body may be model-drafted; the GitHub API call is a script. A retry finds an existing draft for this fingerprint instead of opening a second one.
 4. pr-review gates run on that head after `pushed`.
 5. A human merges. `pr.merged` knocks as today.
 
 The model never receives production credentials. Analysis that only reads the excerpt does not need write access to the origin branch.
+
+`agent watch error-fix` find-or-creates the implement task and clones `https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`; `agent github pending` still opens drafts, and a retry draft uses the existing head `error-fix-<id8>`.
 
 ### 21.6 Not in this revision
 

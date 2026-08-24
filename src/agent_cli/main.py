@@ -117,6 +117,9 @@ ACTIVITY_TYPES = frozenset(
         "mail.seen",
         "mail.reply",
         "investigate.step",
+        "error.seen",
+        "error.skip",
+        "error.fix",
         "message",
         "message.read",
         "query.request",
@@ -134,6 +137,7 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "query.result",
         "session.register",
         "usage.snapshot",
+        "error.seen",
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
@@ -365,6 +369,15 @@ def cmd_session(args: list[str]) -> None:
                 die("session has open work")
             if pending_assigned(store, sid):
                 die("session has pending assigned issues")
+            pending_fix = [
+                a
+                for a in store.rows("activity")
+                if a.get("session_id") == sid
+                and a.get("type") == "error.fix"
+                and a.get("execution_status") == "pending"
+            ]
+            if pending_fix:
+                die("session has pending error.fix")
             row["status"] = "closed"
             row["last_seen_at"] = utcnow()
             store.write("session", "update", sid, _strip(row))
@@ -463,6 +476,27 @@ def cmd_activity(args: list[str]) -> None:
             die(f"session {sid} is not active")
         if typ in SCRIPT_ONLY_ACTIVITY:
             die(f"{typ} is written by a script, not agent activity add")
+        if typ in ("error.skip", "error.fix"):
+            from .error_fix_act import validate_conclusion
+
+            _require_skill(session, "error-fix")
+            with store.exclusive("error-fix-act:" + store.device_id()):
+                validate_conclusion(store, sid, typ, raw)
+                activity_id = str(uuid.uuid4())
+                store.write(
+                    "activity",
+                    "insert",
+                    activity_id,
+                    {
+                        "id": activity_id,
+                        "session_id": sid,
+                        "type": typ,
+                        "payload": raw,
+                        "execution_status": "pending",
+                    },
+                )
+            print(f"activity {activity_id} type={typ}")
+            return
         if typ == "issue.assigned.ack":
             assigned_id = raw.get("assigned_id")
             pending = pending_assigned(store, sid)
@@ -498,6 +532,9 @@ def cmd_task(args: list[str]) -> None:
             session_id = require_flag(rest, "--session")
             workflow = require_flag(rest, "--workflow")
             title = require_flag(rest, "--title")
+            error_id = flag(rest, "--error-id")
+            if error_id is not None and workflow != "implement":
+                die("workflow must be implement")
             if workflow not in CHECKLIST:
                 die("workflow must be implement|review|resolve-conflicts")
             session = _need(store, "session", session_id)
@@ -505,6 +542,19 @@ def cmd_task(args: list[str]) -> None:
                 die(f"session {session_id} is not active")
             _require_owned(store, session, "session")
             _require_skill(session, "spine")
+            if error_id is not None:
+                from .error_fix_act import find_or_create_implement_task
+
+                _require_skill(session, "error-fix")
+                tid, _created = find_or_create_implement_task(
+                    store,
+                    session_id,
+                    error_id,
+                    title,
+                    ref=flag(rest, "--ref"),
+                )
+                print(f"task {tid}")
+                return
             tid = str(uuid.uuid4())
             store.write(
                 "task",
@@ -2494,6 +2544,13 @@ def cmd_knock(args: list[str]) -> None:
                             print(f"error.seen enrich {activity_id}")
                     except StoreError as exc:
                         print(f"error.seen error: {exc}", file=sys.stderr)
+                from .error_fix_act import scan_error_fix
+
+                try:
+                    for line in scan_error_fix(store, run_argv):
+                        print(line)
+                except StoreError as exc:
+                    print(f"error.fix error: {exc}", file=sys.stderr)
                 last_poll = time.monotonic()
             activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:
@@ -2527,8 +2584,18 @@ def cmd_daemon(args: list[str]) -> None:
 
 
 def cmd_watch(args: list[str]) -> None:
-    if not args or args[0] not in ("pr-merged", "pending", "assigned", "grok-usage", "errors"):
-        die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage|errors")
+    if not args or args[0] not in (
+        "pr-merged",
+        "pending",
+        "assigned",
+        "grok-usage",
+        "errors",
+        "error-fix",
+    ):
+        die(
+            "Usage: agent watch "
+            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+        )
     store = open_store()
     try:
         if args[0] == "pr-merged":
@@ -2555,7 +2622,10 @@ def cmd_watch(args: list[str]) -> None:
 
             extra = args[1:]
             if extra not in ([], ["--follow"]):
-                die("Usage: agent watch pr-merged|pending|assigned [--follow]|grok-usage|errors")
+                die(
+                    "Usage: agent watch "
+                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+                )
             follow = extra == ["--follow"]
             while True:
                 created, skipped = scan_assigned(store, run_argv, now=utcnow())
@@ -2606,6 +2676,17 @@ def cmd_watch(args: list[str]) -> None:
                 print(f"error.seen enrich {activity_id}")
             if not created and not enriched:
                 print("error.seen none")
+            return
+        if args[0] == "error-fix":
+            from .error_fix_act import scan_error_fix
+            from .runtime import run_argv
+
+            lines = scan_error_fix(store, run_argv)
+            if not lines:
+                print("error.fix none")
+                return
+            for line in lines:
+                print(line)
             return
         from .pending import scan_pending
 
