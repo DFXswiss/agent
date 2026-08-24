@@ -69,6 +69,10 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     if merge_short in PROTECTED:
         raise GitActError(f"upstream tracks protected branch {merge_short}")
 
+    completed = runner(_git(cwd, "fetch", "--", remote))
+    if completed.returncode != 0:
+        raise GitActError(_fail_detail(completed, "git fetch failed"))
+
     completed = runner(
         _git(cwd, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
     )

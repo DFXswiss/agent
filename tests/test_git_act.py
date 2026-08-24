@@ -49,6 +49,9 @@ def test_push_ahead_one_pushes_without_force() -> None:
         cfg = _config(argv)
         if cfg is not None:
             return cfg
+        if "fetch" in argv:
+            assert argv == ["git", "-C", CWD, "fetch", "--", "origin"]
+            return Completed(0, "", "")
         if "rev-list" in argv:
             return Completed(0, "0\t1\n", "")
         if argv == PUSH_ARGV:
@@ -59,7 +62,11 @@ def test_push_ahead_one_pushes_without_force() -> None:
 
     got = push_branch(cwd=CWD, runner=runner)
     assert got == SHA
+    assert ["git", "-C", CWD, "fetch", "--", "origin"] in calls
     assert PUSH_ARGV in calls
+    fetch_at = calls.index(["git", "-C", CWD, "fetch", "--", "origin"])
+    push_at = calls.index(PUSH_ARGV)
+    assert fetch_at < push_at
     for argv in calls:
         for flag in FORCE_FLAGS:
             assert flag not in argv
@@ -80,6 +87,8 @@ def test_push_ahead_zero_skips_push() -> None:
         cfg = _config(argv)
         if cfg is not None:
             return cfg
+        if "fetch" in argv:
+            return Completed(0, "", "")
         if "rev-list" in argv:
             return Completed(0, "0 0\n", "")
         if "push" in argv:
@@ -146,6 +155,8 @@ def test_push_behind_errors_no_push() -> None:
         cfg = _config(argv)
         if cfg is not None:
             return cfg
+        if "fetch" in argv:
+            return Completed(0, "", "")
         if "rev-list" in argv:
             return Completed(0, "1\t0\n", "")
         if "push" in argv:

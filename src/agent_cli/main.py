@@ -2205,8 +2205,12 @@ def cmd_run(args: list[str]) -> None:
                 )
             except GitActError as exc:
                 die(str(exc))
-            if head is not None and head.lower() != sha:
-                die(f"--head {head} does not match pushed sha {sha}")
+            if head is not None:
+                want = head.lower()
+                if want != sha and not (
+                    7 <= len(want) < len(sha) and sha.startswith(want)
+                ):
+                    die(f"--head {head} does not match pushed sha {sha}")
             head = sha
             snap = _chain_snapshot(store, tid, extra_head=head)
 
