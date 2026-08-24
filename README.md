@@ -63,11 +63,16 @@ agent checklist set --task <uuid> --key spec_written --status ja --source human 
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>
 agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT [--status ja|n_a]
-agent run --task <uuid> [--dry-run]
+agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
+agent github pending
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
 agent status
 agent dashboard
 ```
+
+`agent run` records a local check when that spine step is open, closes an agent step when the ledger already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). Reviewer lanes are not auto-approved from `STATUS: complete`.
+
+`agent github pending` is one scan: owned pending `pr.open`, `comment.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
 This package **is** the runtime: install it locally and run `agent`. There is no second store binary. The packaged files under `src/agent_cli/skills/` **are** the skill contracts (`spine`, `review-loop`, `pr-review`, `error-fix`). `agent skills path` prints that directory, or `AGENT_SKILLS_DIR` when set. Operator-specific git or deploy rules stay outside this package.
 
