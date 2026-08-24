@@ -103,6 +103,13 @@ class StoreError(SystemExit):
     pass
 
 
+class StoreConnectionError(StoreError):
+    """A lost/reset postgres connection specifically - distinct from a StoreError
+    raised for a genuine data problem (a conflicting event, an origin_seq gap, an
+    ownership violation). A caller may want to retry the former but must never
+    silently retry or swallow the latter."""
+
+
 def _wrap_pg_errors(fn: Callable) -> Callable:
     """A lost/reset postgres connection raises psycopg.Error, which is a plain
     Exception - not caught by callers (e.g. cmd_sync's reconnect loop) that only
@@ -113,7 +120,7 @@ def _wrap_pg_errors(fn: Callable) -> Callable:
         try:
             return fn(*args, **kwargs)
         except psycopg.Error as exc:
-            raise StoreError(f"postgres error: {exc}") from exc
+            raise StoreConnectionError(f"postgres error: {exc}") from exc
 
     return wrapper
 
@@ -187,6 +194,20 @@ class Store:
 
     def close(self) -> None:
         self.conn.close()
+
+    def reconnect(self) -> None:
+        """Re-establish the postgres connection after StoreConnectionError. The old
+        connection is already dead (that's what raised the error); discard it and
+        open a fresh one, same as __init__."""
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        try:
+            self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+            self.conn.execute("SET timezone TO 'UTC'")
+        except psycopg.Error as exc:
+            raise StoreConnectionError(f"cannot reconnect to postgres: {exc}") from exc
 
     def device_id(self) -> str:
         value = self.meta("device_id")

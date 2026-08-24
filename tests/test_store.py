@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.pg import PgError, create_database, require_loopback_dsn
-from agent_cli.store import Store, StoreError
+from agent_cli.store import Store, StoreConnectionError, StoreError
 
 
 def test_require_loopback_dsn() -> None:
@@ -427,14 +427,18 @@ def test_no_agent_work_notify_for_foreign_replica_pending(tmp_path: Path) -> Non
         assert next(conn.notifies(timeout=0.4), None) is None
 
 
-def test_pg_errors_translate_to_store_error_on_the_reconnect_path_methods(
+def test_pg_errors_translate_to_store_connection_error_on_the_reconnect_path_methods(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression test: a lost/reset postgres connection raises psycopg.Error, a
     plain Exception - not caught by cmd_sync's --follow reconnect loop, which only
-    handles StoreError (a SystemExit subclass). Every Store method the reconnect
-    path calls directly must translate psycopg.Error into StoreError so a transient
-    local DB blip is retried instead of killing the process."""
+    handles StoreConnectionError (a StoreError subclass, deliberately distinct from
+    a StoreError raised for a genuine data problem like a conflicting event or an
+    origin_seq gap - see test_write_emits_seq_and_blocks_foreign and
+    test_remote_gap_fail_closed above, which must keep failing loud, not retry).
+    Every Store method the reconnect path calls directly must translate
+    psycopg.Error into StoreConnectionError so a transient local DB blip is
+    retried instead of killing the process."""
     import psycopg
 
     store = Store(tmp_path)
@@ -471,5 +475,23 @@ def test_pg_errors_translate_to_store_error_on_the_reconnect_path_methods(
         lambda: store.apply_replica_row(replica_row),
     ]
     for call in calls:
-        with pytest.raises(StoreError):
+        with pytest.raises(StoreConnectionError):
             call()
+
+
+def test_reconnect_opens_a_fresh_connection(tmp_path: Path) -> None:
+    """Regression test: reconnect() must actually replace the dead connection, not
+    just discard it - a StoreConnectionError being non-fatal to the caller is only
+    useful if a subsequent call can succeed again."""
+    store = Store(tmp_path)
+    old_conn = store.conn
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+
+    old_conn.close()
+    with pytest.raises(StoreConnectionError):
+        store.meta("device_id")
+
+    store.reconnect()
+
+    assert store.conn is not old_conn
+    assert store.meta("device_id") == store.device_id()

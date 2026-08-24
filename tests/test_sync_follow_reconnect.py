@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from websockets.exceptions import WebSocketException
 from agent_cli import main as main_mod
 from agent_cli.main import cmd_sync, open_store
 from agent_cli.hub import HubError
-from agent_cli.store import StoreError
+from agent_cli.store import StoreConnectionError, StoreError
 
 
 class _StopTest(Exception):
@@ -129,20 +130,20 @@ def test_initial_sync_failure_in_follow_mode_reconnects_instead_of_dying(
     assert len(calls) == 2, "the first sync failure must be retried, not exit the process"
 
 
-def test_store_error_from_sync_reconnects_instead_of_dying(
+def test_store_connection_error_from_sync_reconnects_instead_of_dying(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression test: a lost/reset local postgres connection surfaces as
-    psycopg.Error, which Store's reconnect-path methods translate into StoreError
-    (see tests/test_store.py). The reconnect loop's except clause must actually
-    include StoreError - otherwise a transient DB blip during --follow, not just a
-    hub disconnect, would still kill the process."""
+    psycopg.Error, which Store's reconnect-path methods translate into
+    StoreConnectionError (see tests/test_store.py). The reconnect loop's except
+    clause must actually include StoreConnectionError - otherwise a transient DB
+    blip during --follow, not just a hub disconnect, would still kill the process."""
     calls: list[int] = []
 
     def fake_sync_once(store: object) -> None:
         calls.append(1)
         if len(calls) == 1:
-            raise StoreError("postgres error: server closed the connection unexpectedly")
+            raise StoreConnectionError("postgres error: server closed the connection unexpectedly")
         raise _StopTest("reconnected past the store error - stopping the test here")
 
     monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
@@ -153,7 +154,107 @@ def test_store_error_from_sync_reconnects_instead_of_dying(
     with pytest.raises(_StopTest):
         cmd_sync(["--follow"])
 
-    assert len(calls) == 2, "a StoreError from sync must be retried, not exit the process"
+    assert len(calls) == 2, "a StoreConnectionError from sync must be retried, not exit the process"
+
+
+def test_reconnect_loop_reopens_the_store_connection_on_store_connection_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: catching StoreConnectionError without ever reopening the
+    connection just turns a clean crash into a permanent silent stall - every retry
+    would hit the same dead connection and fail identically forever. The reconnect
+    loop must actually call store.reconnect() so a later attempt can succeed once
+    postgres is back."""
+    reconnect_calls: list[int] = []
+    calls: list[int] = []
+
+    def fake_sync_once(store: object) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+        raise _StopTest("reconnected past the store error - stopping the test here")
+
+    monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        monkeypatch.setattr(store, "reconnect", lambda: reconnect_calls.append(1))
+        monkeypatch.setattr(main_mod, "open_store", lambda *a, **k: store)
+
+        with pytest.raises(_StopTest):
+            cmd_sync(["--follow"])
+
+        assert reconnect_calls == [1], "store.reconnect() must be called exactly once per StoreConnectionError"
+    finally:
+        store.close()
+
+
+def test_generic_store_error_from_sync_is_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: a StoreError raised for a genuine data problem (a
+    conflicting event, an origin_seq gap - see test_write_emits_seq_and_blocks_foreign
+    and test_remote_gap_fail_closed in tests/test_store.py) is not a connection
+    issue and must not be silently retried forever as if it were one - it needs to
+    keep failing loud so a human notices the actual data corruption."""
+    calls: list[int] = []
+
+    def fake_sync_once(store: object) -> None:
+        calls.append(1)
+        raise StoreError("conflicting event other-device seq 3")
+
+    monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(StoreError, match="conflicting event"):
+        cmd_sync(["--follow"])
+
+    assert calls == [1], "a genuine data-integrity StoreError must not be retried"
+
+
+def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: a lost DB connection encountered while replicating an
+    incoming subscription row must reach cmd_sync's reconnect loop, not be silently
+    swallowed by the pre-existing `except (StoreError, KeyError, TypeError):
+    continue` around store.apply_replica_row - that clause exists for per-row
+    validation failures (a malformed row), not connection loss, but
+    apply_replica_row is one of the methods that now translates psycopg.Error into
+    a StoreError subclass."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+
+        def broken_apply_replica_row(row: dict) -> None:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+
+        monkeypatch.setattr(store, "apply_replica_row", broken_apply_replica_row)
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter(
+                    [json.dumps({"type": "subscription", "rows": [{"table": "session", "id": "s1"}]})]
+                )
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(StoreConnectionError):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+    finally:
+        store.close()
 
 
 def test_websocket_exception_reconnects_instead_of_dying(

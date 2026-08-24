@@ -42,7 +42,7 @@ from .runtime import (
     tmux_name,
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
-from .store import Store, StoreError, utcnow
+from .store import Store, StoreConnectionError, StoreError, utcnow
 from .usage import scan_usage, usage_poll_due
 from .watch import (
     assigned_session_id,
@@ -1231,8 +1231,13 @@ def cmd_sync(args: list[str]) -> None:
                 try:
                     _sync_once(store)
                     _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, established)
-                except (HubError, StoreError, OSError, WebSocketException) as exc:
+                except (HubError, StoreConnectionError, OSError, WebSocketException) as exc:
                     print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
+                    if isinstance(exc, StoreConnectionError):
+                        try:
+                            store.reconnect()
+                        except StoreConnectionError as reconnect_exc:
+                            print(f"agent: postgres reconnect failed, will retry: {reconnect_exc}", file=sys.stderr)
                     started = established.get("at")
                     if started is not None and time.monotonic() - started >= _MAX_BACKOFF:
                         backoff = 1.0
@@ -1280,6 +1285,8 @@ def _run_sync_ws_session(
                             continue
                         try:
                             store.apply_replica_row(row)
+                        except StoreConnectionError:
+                            raise  # a lost DB connection must reach cmd_sync's reconnect loop
                         except (StoreError, KeyError, TypeError):
                             continue
             if should_sync_on_ws(message):
