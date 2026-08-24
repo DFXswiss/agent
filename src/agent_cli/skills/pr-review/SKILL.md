@@ -41,7 +41,8 @@ Review lanes execute no software (no tests, builds, or servers).
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
   substitute another vendor.
 
-Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings.
+Zero findings only after an explicit complete pass. Empty, partial,
+timeout, or unavailable output is not zero findings.
 
 A reported point that contradicts a verified repo rule or fact may be
 dismissed with that evidence; it is not a defect.

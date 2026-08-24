@@ -46,6 +46,7 @@ def test_design_locks_pr_done() -> None:
     assert "do not substitute another vendor" in section
     assert "Vendors are `grok`, then `codex`" in section
     assert "four lane verdicts" in section
+    assert "those four `approved` verdicts on this head" in section
 
 
 def test_pr_review_and_spine_point_at_pr_done() -> None:
@@ -56,7 +57,7 @@ def test_pr_review_and_spine_point_at_pr_done() -> None:
     assert "session that authored the diff does not" in pr_review
     assert "agent allow --action pr-ready" in pr_review
     assert "Do not\n  substitute another vendor" in pr_review or "Do not substitute another vendor" in pr_review
-    assert "Empty, partial, timeout, or unavailable output is not zero findings" in pr_review
+    assert "unavailable output is not zero findings" in pr_review
     assert "four lane verdicts on this head are approved" in pr_review
     assert "those four `approved` verdicts on this head" in pr_review
     assert NOT_DONE in spine
@@ -72,7 +73,7 @@ def test_agents_md_and_readme_point_at_contributing() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     stub = (ROOT / "skills" / "session-store" / "SKILL.md").read_text(encoding="utf-8")
     packaged = (PACKAGED / "session-store" / "SKILL.md").read_text(encoding="utf-8")
-    pointer = "CONTRIBUTING.md and pr-review are the pull-request contract"
+    pointer = "CONTRIBUTING.md is the contract"
     assert NOT_DONE in agents
     assert "CONTRIBUTING.md" in agents
     assert "A draft plus local tests is not a finished pull request" in readme

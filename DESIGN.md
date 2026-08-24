@@ -531,7 +531,7 @@ A check records the local suite. When spine and pr-review are attached, a gate r
 
 Quality and logic of one vendor stage run together. Vendors are `grok`, then `codex`. Codex runs only after both grok dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
-CI on this head is a script-measured fact. `skipped` and `cancelled` are not green unless the workflow documents that skip. Stay draft until that holds. One comment stating the review-pass count, then ready. A retry reuses the existing draft. A human merges.
+CI on this head is a script-measured fact. `skipped` and `cancelled` are not green unless the workflow documents that skip. Stay draft until that holds. One comment whose review-pass count is those four `approved` verdicts on this head, then ready. A retry reuses the existing draft. A human merges.
 
 ## 20. Refused: hub as a coding control plane
 
