@@ -57,6 +57,12 @@ does not have the requirement.
 `deviation_granted` are separate. An undeclared or ungranted break stays
 `nein` on `contributing_ok`.
 
+Tests exist to find and document product defects. A quality finding if the
+change adds tests but leaves a discovered defect without a tracker row and an
+expected-fail case that asserts the correct behaviour. Encoding broken
+behaviour as a passing assertion is a logic finding. The contract is
+DESIGN.md and CONTRIBUTING.md.
+
 ## Pull requests
 
 The agent does not merge. Open pull requests as drafts; a human merges.

@@ -37,6 +37,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
 | Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, and `error-fix` exist as skills. They are **not** on by default. |
+| Tests | Tests exist to find and document product defects. A green suite that asserts broken behaviour, or that leaves a found defect only in chat, is incomplete. The target repo keeps a tracker plus an expected-fail case that asserts the correct behaviour. |
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
@@ -484,6 +485,8 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 | Merge | Human | Never a client command |
 
 A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition.
+
+Tests exist to find and document product defects. “Tests passed” without a tracker row and an expected-fail case for each product defect found during that work is not evidence that the testing step ran. Encoding broken behaviour as a passing assertion is a failed check, not a debate.
 
 No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, or timeout review output is not zero findings). A patch that does not apply is a failed check, not a debate.
 

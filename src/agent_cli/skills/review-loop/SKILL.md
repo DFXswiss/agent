@@ -33,4 +33,9 @@ The reviewer is read-only: no tests, builds, or servers.
 Empty, partial, timeout, or unavailable review output is not zero findings.
 Zero findings only after an explicit complete pass.
 
+Tests exist to find and document product defects. Reject the round when tests
+were in scope and a product defect was left only in chat, encoded as a passing
+expect, or missing an expected-fail case plus tracker row. The contract is
+DESIGN.md and CONTRIBUTING.md.
+
 Locate these files with `agent skills path`.

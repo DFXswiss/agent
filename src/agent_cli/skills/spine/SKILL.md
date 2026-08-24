@@ -60,4 +60,11 @@ Do not invent keys. Chains:
 `done` still requires the workflow checklist and both summary sentences
 (`agent task summary`).
 
+## Tests
+
+Tests exist to find and document product defects. When this session writes
+tests in a target repository, also write the tracker row and the expected-fail
+case that asserts the correct behaviour. Do not treat a green suite as the
+deliverable. The contract is DESIGN.md and CONTRIBUTING.md.
+
 Locate these files with `agent skills path`.

@@ -124,6 +124,8 @@ agent session stop --id <session-id>
 
 ## Tests
 
+Tests exist to find and document product defects. See CONTRIBUTING.md and DESIGN.md.
+
 ```bash
 pytest
 ```
