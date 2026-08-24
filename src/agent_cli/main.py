@@ -1217,8 +1217,8 @@ def cmd_sync(args: list[str]) -> None:
     follow = "--follow" in args
     store = open_store()
     try:
-        _sync_once(store)
         if not follow:
+            _sync_once(store)
             return
         hub = _hub_from_store(store)
         runtime = Runtime()

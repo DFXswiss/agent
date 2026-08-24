@@ -99,6 +99,34 @@ def test_follow_used_to_die_on_first_disconnect_before_the_fix(
     assert calls == [1, 1, 1]
 
 
+def test_initial_sync_failure_in_follow_mode_reconnects_instead_of_dying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the very first sync attempt when starting `agent sync
+    --follow` used to run unprotected before the reconnect loop even began - if the
+    hub was unreachable at process start (e.g. a service manager restarting the
+    agent and the hub together), that first _sync_once call killed the process
+    before any of this PR's reconnect-with-backoff logic ever ran. It must now go
+    through the same retry loop as every subsequent sync."""
+    calls: list[int] = []
+
+    def fake_sync_once(store: object) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise HubError("hub unreachable at startup")
+        raise _StopTest("reconnected past the initial failure - stopping the test here")
+
+    monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert len(calls) == 2, "the first sync failure must be retried, not exit the process"
+
+
 class _FakeRuntime:
     """Stands in for Runtime without shelling out to tmux."""
 
@@ -423,6 +451,84 @@ def test_backoff_resets_after_a_stable_connection(
     assert sleeps == [1.0, 1.0], "backoff must reset to 1.0 after attempt 2's long-lived session, not grow to 2.0"
 
 
+def test_backoff_resets_when_elapsed_equals_exactly_max_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the stability check is `elapsed >= _MAX_BACKOFF`, so a
+    connection that survives for exactly _MAX_BACKOFF seconds must already count as
+    stable. Pins down the inclusive boundary explicitly, since neither the threshold
+    constant nor the >= vs > comparison is exercised elsewhere at this exact value."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_session(
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
+    ) -> None:
+        established["at"] = main_mod.time.monotonic()
+        calls.append(1)
+        if len(calls) >= 3:
+            raise _StopTest("stop after 3 attempts")
+        raise OSError("connection reset by peer")
+
+    # attempt 1: fails almost instantly (elapsed 0.1s) -> no reset -> backoff grows to 2.0
+    # attempt 2: fails after exactly _MAX_BACKOFF elapsed -> must still count as stable -> reset
+    times = iter([0.0, 0.1, 1.0, 1.0 + main_mod._MAX_BACKOFF, 999.0])
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: next(times))
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert sleeps == [1.0, 1.0], "elapsed == _MAX_BACKOFF must already reset backoff, not require exceeding it"
+
+
+def test_backoff_does_not_reset_just_under_max_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the mirror of the exact-boundary case - a connection that
+    falls just short of _MAX_BACKOFF must not be credited as stable."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_session(
+        store: object,
+        hub: object,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
+    ) -> None:
+        established["at"] = main_mod.time.monotonic()
+        calls.append(1)
+        if len(calls) >= 3:
+            raise _StopTest("stop after 3 attempts")
+        raise OSError("connection reset by peer")
+
+    # attempt 1: fails almost instantly (elapsed 0.1s) -> no reset -> backoff grows to 2.0
+    # attempt 2: fails just short of _MAX_BACKOFF elapsed -> must not count as stable -> no reset
+    times = iter([0.0, 0.1, 1.0, 1.0 + main_mod._MAX_BACKOFF - 0.001, 999.0])
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: next(times))
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert sleeps == [1.0, 2.0], "elapsed just under _MAX_BACKOFF must not reset backoff"
+
+
 def test_backoff_does_not_reset_when_sync_once_itself_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -436,10 +542,7 @@ def test_backoff_does_not_reset_when_sync_once_itself_fails(
 
     def fake_sync_once(store: object) -> None:
         calls.append(1)
-        n = len(calls)
-        if n == 1:
-            return  # cmd_sync's initial sync before entering the follow loop
-        if n >= 5:
+        if len(calls) >= 4:
             raise _StopTest("stop after enough attempts")
         raise HubError("sync request timed out")  # websocket never reached
 
