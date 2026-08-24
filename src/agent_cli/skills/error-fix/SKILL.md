@@ -1,10 +1,9 @@
 ---
 name: error-fix
 description: >-
-  Device-owned production-error skill (specified, watcher not shipped):
-  a log adapter or operator insert writes error.seen, this session
-  analyses, and a draft pull request is optional. Requires spine,
-  review-loop, and pr-review. A human merges.
+  Device-owned production-error skill: agent watch errors writes
+  error.seen, this session analyses, and a draft pull request is
+  optional. Requires spine, review-loop, and pr-review. A human merges.
 ---
 
 # Error-fix
@@ -47,8 +46,8 @@ rules live in DESIGN.md §§14–15, §19, and §21.
    a second one. Gates run on that head after `pushed`. A human merges.
 
 The incident is **open** from the `error.seen` insert until `error.skip`
-or a terminal implement task (`done` / `failed` / `pr.merged`) for that
-`error_id`. While open, the same fingerprint **enriches** that row. Do
+or a terminal implement task (`done` / `failed`) for that `error_id`.
+`pr.merged` knocks as today; it is not a second close signal. While open, the same fingerprint **enriches** that row. Do
 not open a second task or a second pull request. After close, the next
 match is a **new** `error.seen` (new id, first insert knocks). The adapter
 uses `error_id` / `fingerprint` plus the spine task with
@@ -56,12 +55,15 @@ uses `error_id` / `fingerprint` plus the spine task with
 
 ## Config
 
-Adapter URL, credentials, stream selectors, and repo mapping live in
-`$AGENT_HOME`, not in this package. Team-specific endpoints stay out of
-this public client.
+Required `session_id`, adapter URL, query, and optional repo mapping live
+in `$AGENT_HOME/error-fix.json` (see DESIGN.md §21.2). Credentials come
+from netrc or `AGENT_ERROR_FIX_USER` / `AGENT_ERROR_FIX_PASSWORD` — never
+from `error-fix.json`, the store, or the URL. Team-specific endpoints
+stay out of this public client.
 
-The watch command that performs step 1 is specified in DESIGN.md §21. It
-is not a CLI verb in this revision.
+```bash
+agent watch errors   # one scan; knock daemon (no --once) polls every 60s
+```
 
 This file ships in the packaged tree. `agent skills path` may print an
 `AGENT_SKILLS_DIR` override that omits it. Unset `AGENT_SKILLS_DIR` and
