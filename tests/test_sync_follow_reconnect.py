@@ -153,12 +153,12 @@ def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
 def test_established_not_set_when_the_connect_attempt_itself_fails(
     tmp_path: Path,
 ) -> None:
-    """Regression test: established["at"] must only be set once the handshake (both
-    the connect AND the control-ready send) has actually succeeded - crediting a
-    failed connect attempt as "stable" would let a hub whose connect attempts hang
-    for a long time before failing (a black-holed connection, a slow TLS handshake -
-    hub.connect_sync_ws() sets no explicit timeout) falsely reset backoff, the same
-    failure class as the _sync_once case one call-frame deeper."""
+    """Regression test: established["at"] must not be set when hub.connect_sync_ws()
+    itself fails - crediting a failed connect attempt as "stable" would let a hub
+    whose connect attempts hang for a long time before failing (a black-holed
+    connection, a slow TLS handshake - hub.connect_sync_ws() sets no explicit
+    timeout) falsely reset backoff, the same failure class as the _sync_once case
+    one call-frame deeper."""
     _init_paired_store(tmp_path)
     store = open_store()
     try:
@@ -173,6 +173,68 @@ def test_established_not_set_when_the_connect_attempt_itself_fails(
                 store, _FailToConnectHub(), _FakeRuntime(), {}, {}, established
             )
         assert established == {}, "a failed connect must not be credited as an established session"
+    finally:
+        store.close()
+
+
+def test_established_not_set_when_the_control_ready_send_itself_fails(
+    tmp_path: Path,
+) -> None:
+    """Regression test: established["at"] must not be set when connect_sync_ws()
+    succeeds but the initial control-ready send fails - the handshake isn't complete
+    until that send succeeds, so crediting a connect-but-can't-send session as
+    "stable" would be the same false-reset gap, one line later."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+
+        class _FailOnFirstSendWs:
+            def send(self, data: str) -> None:
+                raise OSError("broken pipe")
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _FailOnFirstSendWs:
+                return _FailOnFirstSendWs()
+
+        established: dict[str, float] = {}
+        with pytest.raises(OSError):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, established)
+        assert established == {}, "a failed control-ready send must not be credited as established"
+    finally:
+        store.close()
+
+
+def test_established_is_set_once_the_handshake_actually_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Regression test: the positive case - once connect_sync_ws() and the
+    control-ready send both succeed, established["at"] must actually be set, so the
+    caller can measure real connection stability from it."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+
+        class _WorkingWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter(())
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _WorkingWs:
+                return _WorkingWs()
+
+        established: dict[str, float] = {}
+        with pytest.raises(HubError):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, established)
+        assert established.get("at") is not None, "a successful handshake must record when it happened"
     finally:
         store.close()
 
