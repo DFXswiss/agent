@@ -19,7 +19,7 @@ def _init_paired_store(tmp_path: Path) -> None:
     main_mod.main(["init"])
     store = open_store()
     try:
-        store.set_meta("hub_url", "https://agent.dfx.swiss")
+        store.set_meta("hub_url", "https://hub.example")
         store.set_meta("device_token", "fake-token")
     finally:
         store.close()
@@ -38,7 +38,9 @@ def test_follow_reconnects_after_connection_drop_instead_of_dying(
     calls: list[int] = []
     sleeps: list[float] = []
 
-    def fake_session(store, hub, runtime, terminal_seq, last_capture):
+    def fake_session(
+        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+    ) -> None:
         calls.append(1)
         if len(calls) == 1:
             raise OSError("connection reset by peer")
@@ -67,7 +69,9 @@ def test_follow_used_to_die_on_first_disconnect_before_the_fix(
 
     calls: list[int] = []
 
-    def always_fails(store, hub, runtime, terminal_seq, last_capture):
+    def always_fails(
+        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+    ) -> None:
         calls.append(1)
         if len(calls) >= 3:
             raise _StopTest("stop after 3 attempts")
@@ -248,7 +252,9 @@ def test_backoff_grows_through_rapid_flapping_reconnects(
     calls: list[int] = []
     sleeps: list[float] = []
 
-    def fake_session(store, hub, runtime, terminal_seq, last_capture):
+    def fake_session(
+        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+    ) -> None:
         calls.append(1)
         if len(calls) >= 4:
             raise _StopTest("stop after 4 flapping attempts")
@@ -277,7 +283,9 @@ def test_backoff_resets_after_a_stable_connection(
     calls: list[int] = []
     sleeps: list[float] = []
 
-    def fake_session(store, hub, runtime, terminal_seq, last_capture):
+    def fake_session(
+        store: object, hub: object, runtime: object, terminal_seq: dict, last_capture: dict
+    ) -> None:
         calls.append(1)
         if len(calls) >= 3:
             raise _StopTest("stop after 3 attempts")
@@ -297,3 +305,39 @@ def test_backoff_resets_after_a_stable_connection(
         cmd_sync(["--follow"])
 
     assert sleeps == [1.0, 1.0], "backoff must reset to 1.0 after attempt 2's long-lived session, not grow to 2.0"
+
+
+def test_backoff_does_not_reset_when_sync_once_itself_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the stability clock must start after _sync_once succeeds, not
+    before it runs. _sync_once's hub client has the same 30s timeout as _MAX_BACKOFF -
+    if a slow/timing-out sync alone (the websocket never even reached) counted toward
+    the stability window, it would falsely reset backoff and reproduce the exact
+    retry-storm the stability gate exists to prevent, just via a different trigger."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_sync_once(store: object) -> None:
+        calls.append(1)
+        n = len(calls)
+        if n == 1:
+            return  # cmd_sync's initial sync before entering the follow loop
+        if n >= 5:
+            raise _StopTest("stop after enough attempts")
+        raise HubError("sync request timed out")  # websocket never reached
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("time.monotonic() must not be consulted when _sync_once itself failed")
+
+    monkeypatch.setattr(main_mod, "_sync_once", fake_sync_once)
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fail_if_called)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", fail_if_called)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert sleeps == [1.0, 2.0, 4.0], "backoff must keep growing while only _sync_once is failing"
