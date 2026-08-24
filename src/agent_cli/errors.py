@@ -48,6 +48,20 @@ _CREDENTIAL_KEYS = frozenset(
         "username",
         "apikey",
         "accesstoken",
+        "accesskey",
+        "authorization",
+        "passwd",
+        "clientsecret",
+    }
+)
+_CREDENTIAL_TOKENS = frozenset(
+    {
+        "password",
+        "token",
+        "secret",
+        "apikey",
+        "accesstoken",
+        "accesskey",
         "authorization",
         "passwd",
         "clientsecret",
@@ -57,6 +71,14 @@ _CREDENTIAL_KEYS = frozenset(
 
 def _norm_cred(name: object) -> str:
     return "".join(str(name).lower().split()).replace("-", "").replace("_", "")
+
+
+def _is_cred_name(name: object) -> bool:
+    normalized = _norm_cred(name)
+    if normalized in _CREDENTIAL_KEYS:
+        return True
+    return any(token in normalized for token in _CREDENTIAL_TOKENS)
+
 
 Fetch = Callable[[dict[str, Any], str | None], tuple[list[dict[str, Any]], str | None]]
 
@@ -72,7 +94,7 @@ def cursor_path(home: Path) -> Path:
 def _contains_credentials(value: Any) -> bool:
     if isinstance(value, dict):
         return any(
-            _norm_cred(key) in _CREDENTIAL_KEYS or _contains_credentials(item)
+            _is_cred_name(key) or _contains_credentials(item)
             for key, item in value.items()
         )
     if isinstance(value, list):
@@ -104,7 +126,7 @@ def load_config(path: Path) -> dict[str, Any]:
             *parse_qs(parsed.query, keep_blank_values=True),
             *parse_qs(parsed.fragment, keep_blank_values=True),
         )
-        if any(_norm_cred(name) in _CREDENTIAL_KEYS for name in params):
+        if any(_is_cred_name(name) for name in params):
             raise StoreError("error-fix.json url must not contain credentials")
     return data
 

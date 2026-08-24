@@ -103,6 +103,18 @@ def test_load_config_rejects_credentials(tmp_path: Path) -> None:
     with pytest.raises(StoreError, match="must not contain credentials"):
         load_config(path)
     path.write_text(
+        json.dumps({"session_id": "s", "aws_secret_access_key": "x"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "url": "https://logs.example/q?access_key=secret"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
         json.dumps({"session_id": "s", "url": "https://logs.example/q#password=x"}),
         encoding="utf-8",
     )
