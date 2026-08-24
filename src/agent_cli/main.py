@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import socket
 import sys
 import time
@@ -35,6 +36,7 @@ from .runtime import (
     grok_model,
     grok_new_session_id,
     grok_tmux_command_argv,
+    run_argv,
     tmux_name,
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
@@ -2074,16 +2076,75 @@ def cmd_close_step(args: list[str]) -> None:
     cmd_checklist(set_args)
 
 
+def _exec_argv(argv: list[str], *, cwd: str | None = None) -> "Completed":
+    from .runtime import Completed
+    import subprocess
+
+    try:
+        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+    except OSError as exc:
+        return Completed(127, "", str(exc))
+    return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+
+
+def _resolve_run_cwd(args: list[str]) -> str:
+    cwd_flag = flag(args, "--cwd")
+    cwd = cwd_flag if cwd_flag is not None else os.getcwd()
+    path = Path(cwd)
+    if not path.is_dir():
+        die(f"--cwd is not a directory: {cwd}")
+    return str(path)
+
+
+def _find_working_agent(
+    store: Store,
+    tid: str,
+    *,
+    role: str,
+    vendor: str,
+    round_num: int | None,
+) -> dict | None:
+    for agent in store.rows("agent"):
+        if agent.get("task_id") != tid:
+            continue
+        if agent.get("role") != role:
+            continue
+        if agent.get("vendor") != vendor:
+            continue
+        if agent.get("status") != "working":
+            continue
+        if round_num is not None and agent.get("round") != round_num:
+            continue
+        return agent
+    return None
+
+
+def _agent_handoff_exit(step, tid: str, session_id: str | None) -> None:
+    sys.stdout.write(handoff_prompt(step, task_id=str(tid), session_id=session_id))
+    print(
+        f"agent: agent step. After the lane: close-step --task {tid} "
+        f"--key {step.key} --source script --evidence …",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
 def cmd_run(args: list[str]) -> None:
     tid = flag(args, "--task")
     head = flag(args, "--head")
     dry = "--dry-run" in args
+    spec_file = flag(args, "--spec-file")
     # v1: always one spine step (--once implied).
     if tid is None or tid == "":
-        die("Usage: agent run --task ID [--dry-run] [--head SHA]")
+        die(
+            "Usage: agent run --task ID [--dry-run] [--head SHA] "
+            "[--cwd PATH] [--spec-file PATH] [--no-tmux]"
+        )
+    close_key: str | None = None
+    close_evidence: str | None = None
     store = open_store()
     try:
-        _require_task_session_active(store, tid)
+        task = _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid, extra_head=head)
         wf = str(snap["workflow"])
         ready = next_steps(wf, snap["checklist"], spine_only=True)
@@ -2108,18 +2169,6 @@ def cmd_run(args: list[str]) -> None:
                 file=sys.stderr,
             )
             raise SystemExit(2)
-        if step.kind == "agent":
-            sys.stdout.write(
-                handoff_prompt(
-                    step, task_id=str(tid), session_id=str(snap.get("session_id"))
-                )
-            )
-            print(
-                f"agent: agent step. After the lane: close-step --task {tid} "
-                f"--key {step.key} --source script --evidence …",
-                file=sys.stderr,
-            )
-            raise SystemExit(2)
         if step.key in NO_AUTO_CLOSE:
             print(
                 f"agent: {step.key} is not auto-closable — "
@@ -2127,35 +2176,167 @@ def cmd_run(args: list[str]) -> None:
                 file=sys.stderr,
             )
             raise SystemExit(2)
-        verdict = close_allowed(
-            wf,
-            step.key,
-            checklist=snap["checklist"],
-            source="script",
-            evidence="run auto",
-            snapshot=snap,
-        )
-        if not verdict.allowed:
-            print(
-                f"agent: script step {step.key} not closable: {verdict.reason}",
-                file=sys.stderr,
+        if step.key == "local_check_pass" and not snap["local_checks"]:
+            cwd = _resolve_run_cwd(args)
+            env_cmd = os.environ.get("AGENT_CHECK_COMMAND")
+            if env_cmd is None:
+                command = "pytest -q"
+            elif env_cmd == "":
+                die("AGENT_CHECK_COMMAND is set but empty")
+            else:
+                command = env_cmd
+            argv = shlex.split(command)
+            if not argv:
+                die("check command is empty")
+            completed = _exec_argv(argv, cwd=cwd)
+            result = "pass" if completed.returncode == 0 else "fail"
+            output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
+            cmd_check(
+                [
+                    "record",
+                    "--task",
+                    tid,
+                    "--name",
+                    "local",
+                    "--command",
+                    command,
+                    "--result",
+                    result,
+                    "--output",
+                    output or "(no output)",
+                ]
             )
-            raise SystemExit(2)
+            if result == "fail":
+                raise SystemExit(2)
+            snap = _chain_snapshot(store, tid, extra_head=head)
+        if step.kind == "agent":
+            already = close_allowed(
+                wf,
+                step.key,
+                checklist=snap["checklist"],
+                source="script",
+                evidence="run auto",
+                snapshot=snap,
+            )
+            if already.allowed:
+                close_key = step.key
+                close_evidence = f"run auto:{already.reason}"
+            elif spec_file is not None:
+                spec_path = Path(spec_file)
+                if not spec_path.is_file():
+                    die(f"spec-file not found: {spec_file}")
+                if not spec_path.read_text(encoding="utf-8").strip():
+                    die(f"spec-file is empty: {spec_file}")
+                cwd = _resolve_run_cwd(args)
+                tmux = "--no-tmux" not in args
+                role = str(step.role or "")
+                vendor = str(step.vendor or "")
+                session_id = str(snap.get("session_id") or "")
+                current_round = int(task.get("current_round") or 0)
+                round_num: int | None = None
+                if role in ("implementer", "reviewer"):
+                    round_num = current_round
+                working = _find_working_agent(
+                    store, tid, role=role, vendor=vendor, round_num=round_num
+                )
+                if working is None:
+                    start_args = [
+                        "start",
+                        "--session",
+                        session_id,
+                        "--task",
+                        tid,
+                        "--role",
+                        role,
+                        "--vendor",
+                        vendor,
+                    ]
+                    if round_num is not None:
+                        start_args.extend(["--round", str(round_num)])
+                    cmd_agent(start_args)
+                result = launch(
+                    role=role,
+                    vendor=vendor,
+                    spec_file=spec_file,
+                    cwd=cwd,
+                    tmux=tmux,
+                )
+                print(
+                    f"lane role={result.role} vendor={result.vendor} "
+                    f"STATUS={result.status} rc={result.returncode}"
+                )
+                if role == "implementer" and result.status == "complete":
+                    working = _find_working_agent(
+                        store, tid, role=role, vendor=vendor, round_num=round_num
+                    )
+                    if working is None:
+                        die("implementer working agent not found after lane")
+                    cmd_agent(
+                        [
+                            "finish",
+                            "--id",
+                            str(working["id"]),
+                            "--verdict",
+                            "done",
+                            "--note",
+                            "lane STATUS=complete",
+                        ]
+                    )
+                    snap = _chain_snapshot(store, tid, extra_head=head)
+                    task = _need(store, "task", tid)
+                else:
+                    _agent_handoff_exit(step, tid, str(snap.get("session_id")))
+            else:
+                _agent_handoff_exit(step, tid, str(snap.get("session_id")))
+        if close_key is None:
+            verdict = close_allowed(
+                wf,
+                step.key,
+                checklist=snap["checklist"],
+                source="script",
+                evidence="run auto",
+                snapshot=snap,
+            )
+            if not verdict.allowed:
+                print(
+                    f"agent: script step {step.key} not closable: {verdict.reason}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(2)
+            close_key = step.key
+            close_evidence = f"run auto:{verdict.reason}"
     finally:
         store.close()
     close_args = [
         "--task",
         tid,
         "--key",
-        step.key,
+        str(close_key),
         "--source",
         "script",
         "--evidence",
-        f"run auto:{verdict.reason}",
+        str(close_evidence),
     ]
     if head:
         close_args.extend(["--head", head])
     cmd_close_step(close_args)
+
+
+def cmd_github(args: list[str]) -> None:
+    if not args or args[0] != "pending":
+        die("Usage: agent github pending")
+    from .github_act import scan_github
+
+    store = open_store()
+    try:
+        lines = scan_github(store, run_argv)
+        if not lines:
+            print("github pending none")
+            return
+        for line in lines:
+            print(line)
+    finally:
+        store.close()
 
 
 def cmd_lane(args: list[str]) -> None:
@@ -2284,6 +2465,7 @@ COMMANDS = {
     "knock": cmd_knock,
     "lane": cmd_lane,
     "watch": cmd_watch,
+    "github": cmd_github,
 }
 
 
@@ -2292,7 +2474,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|lane|watch> …"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|knock|lane|watch|github> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:
