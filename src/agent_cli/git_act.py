@@ -51,9 +51,6 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     upstream = completed.stdout.strip()
     if not upstream:
         raise GitActError("no upstream")
-    short = upstream.rsplit("/", 1)[-1]
-    if short in PROTECTED:
-        raise GitActError(f"upstream tracks protected branch {short}")
 
     completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
     if completed.returncode != 0 or not completed.stdout.strip():

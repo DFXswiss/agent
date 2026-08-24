@@ -174,12 +174,49 @@ def test_push_upstream_origin_develop_refused() -> None:
             return Completed(0, "feat-x\n", "")
         if "--porcelain" in argv:
             return Completed(0, "", "")
-        if "@{upstream}" in argv:
+        if "@{upstream}" in argv and "rev-list" not in argv:
             return Completed(0, "origin/develop\n", "")
+        if "config" in argv and "--get" in argv:
+            key = argv[-1]
+            if key == "branch.feat-x.remote":
+                return Completed(0, "origin\n", "")
+            if key == "branch.feat-x.merge":
+                return Completed(0, "refs/heads/develop\n", "")
+            return Completed(1, "", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    with pytest.raises(GitActError):
+    with pytest.raises(GitActError, match="protected branch"):
         push_branch(cwd=CWD, runner=runner)
+
+
+def test_push_upstream_feat_main_not_protected() -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat/main\n", "")
+        if "config" in argv and "--get" in argv:
+            key = argv[-1]
+            if key == "branch.feat-x.remote":
+                return Completed(0, "origin\n", "")
+            if key == "branch.feat-x.merge":
+                return Completed(0, "refs/heads/feat/main\n", "")
+            return Completed(1, "", "")
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0 0\n", "")
+        if argv[-1] == "HEAD":
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    assert push_branch(cwd=CWD, runner=runner) == SHA
+    assert not any(len(a) > 3 and a[3] == "push" for a in calls)
 
 
 def test_mergeable_open_empty_checks() -> None:
