@@ -365,6 +365,17 @@ def _already_unloaded(stderr: str, stdout: str) -> bool:
     return any(n in text for n in needles)
 
 
+def service_extra_env() -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
+    pg_bin = os.environ.get("AGENT_PG_BIN")
+    if isinstance(pg_bin, str) and pg_bin.strip():
+        env["AGENT_PG_BIN"] = pg_bin.strip()
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn:
+        env["AGENT_PG_DSN"] = dsn
+    return env
+
+
 def install_and_start_service(
     *,
     home: Path,
@@ -374,15 +385,11 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
-    extra_env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
-    dsn = os.environ.get("AGENT_PG_DSN")
-    if dsn:
-        extra_env["AGENT_PG_DSN"] = dsn
     text = service_unit_text(
         program=program,
         home=home,
         platform=plat,
-        extra_env=extra_env,
+        extra_env=service_extra_env(),
     )
     path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)

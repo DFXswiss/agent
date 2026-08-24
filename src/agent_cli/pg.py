@@ -44,6 +44,32 @@ def require_loopback_dsn(dsn: str) -> None:
             raise PgError("postgres DSN must use 127.0.0.1, ::1, localhost, or a unix socket")
 
 
+POSTGRES_APP_VERSIONS = Path("/Applications/Postgres.app/Contents/Versions")
+HARDCODED_PG_BIN_DIRS = (
+    Path("/opt/homebrew/opt/postgresql@16/bin"),
+    Path("/opt/homebrew/opt/postgresql@15/bin"),
+    Path("/usr/lib/postgresql/16/bin"),
+    Path("/usr/lib/postgresql/15/bin"),
+)
+
+
+def extra_pg_bin_dirs(*, versions_root: Path | None = None) -> list[Path]:
+    dirs = list(HARDCODED_PG_BIN_DIRS)
+    root = POSTGRES_APP_VERSIONS if versions_root is None else versions_root
+    dirs.append(root / "latest" / "bin")
+    if root.is_dir():
+        numbered: list[Path] = []
+        for child in root.iterdir():
+            if child.name == "latest":
+                continue
+            bin_dir = child / "bin"
+            if bin_dir.is_dir():
+                numbered.append(bin_dir)
+        numbered.sort(key=lambda p: p.parent.name, reverse=True)
+        dirs.extend(numbered)
+    return dirs
+
+
 def _bin(name: str) -> str:
     override = os.environ.get("AGENT_PG_BIN")
     candidates: list[Path] = []
@@ -53,12 +79,7 @@ def _bin(name: str) -> str:
     for folder in found.split(os.pathsep):
         if folder:
             candidates.append(Path(folder) / name)
-    for extra in (
-        Path("/opt/homebrew/opt/postgresql@16/bin"),
-        Path("/opt/homebrew/opt/postgresql@15/bin"),
-        Path("/usr/lib/postgresql/16/bin"),
-        Path("/usr/lib/postgresql/15/bin"),
-    ):
+    for extra in extra_pg_bin_dirs():
         candidates.append(extra / name)
     for path in candidates:
         if path.is_file() and os.access(path, os.X_OK):

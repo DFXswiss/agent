@@ -17,6 +17,7 @@ from agent_cli.daemon import (
     child_specs,
     hub_configured,
     run_supervisor,
+    service_extra_env,
     service_unit_text,
 )
 from agent_cli.main import main
@@ -109,6 +110,37 @@ def test_service_unit_text_darwin_contains_label_and_daemon() -> None:
     assert "<string>daemon</string>" in text
     assert "ProgramArguments" in text
     assert "<key>PATH</key>" not in text
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_omits_empty_agent_pg_bin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    env = service_extra_env()
+    assert env == {"PATH": "/usr/bin:/bin"}
+    monkeypatch.setenv("AGENT_PG_BIN", "  ")
+    assert "AGENT_PG_BIN" not in service_extra_env()
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_persists_agent_pg_bin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("AGENT_PG_BIN", " /opt/pg/bin ")
+    env = service_extra_env()
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["AGENT_PG_BIN"] == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_service_unit_text_darwin_includes_agent_pg_bin() -> None:
+    text = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    assert "<key>AGENT_PG_BIN</key>" in text
+    assert "<string>/opt/pg/bin</string>" in text
 
 
 @pytest.mark.no_pg
