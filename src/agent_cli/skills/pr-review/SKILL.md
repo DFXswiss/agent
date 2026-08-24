@@ -39,10 +39,9 @@ Review lanes execute no software (no tests, builds, or servers).
   resolve-conflicts, `agent gate record` returns the task to `implementing`.
   On workflow `review`, the task stays in pr-review and is not `done`.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
-  silently substitute another vendor.
+  substitute another vendor.
 
-Zero findings only after an explicit complete pass. Empty, partial, or
-timeout output is not zero findings.
+Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings.
 
 A reported point that contradicts a verified repo rule or fact may be
 dismissed with that evidence; it is not a defect.
@@ -60,5 +59,14 @@ does not have the requirement.
 ## Pull requests
 
 The agent does not merge. Open pull requests as drafts; a human merges.
+
+A draft plus local tests is not done. Quality and logic of one vendor stage
+run in parallel on **this** head. The session that authored the diff does not
+sit those reviews. Inner `review-loop` rounds are not these gates. Stay draft
+until grok then Codex are both approved and CI on this head is green
+(`skipped` and `cancelled` are not green unless the workflow documents
+that skip). `agent allow --action pr-ready` only checks task state; do
+not mark ready if it denies. Then one comment with the review-pass
+count, then mark the GitHub pull request ready.
 
 Locate these files with `agent skills path`.

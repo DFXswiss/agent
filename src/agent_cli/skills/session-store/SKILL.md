@@ -22,8 +22,9 @@ agent skills path
 (`spine/SKILL.md`, `review-loop/SKILL.md`, `pr-review/SKILL.md`), or
 `AGENT_SKILLS_DIR` when that is set. Those three files **are** required.
 `error-fix/SKILL.md` ships in the packaged tree; an override need not copy
-it. Unset `AGENT_SKILLS_DIR` and run `agent skills path` again to print
-the packaged directory. For implement/review, attach the review trio. For
+it. A draft plus local tests is not done; CONTRIBUTING.md and pr-review are the pull-request contract. Unset `AGENT_SKILLS_DIR` and run
+`agent skills path` again to print the packaged directory. For
+implement/review, attach the review trio. For
 production-error → draft PR, attach all four (`spine`, `review-loop`,
 `pr-review`, `error-fix`) on the **runner** session:
 
