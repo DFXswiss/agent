@@ -39,7 +39,7 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     if branch in PROTECTED:
         raise GitActError(f"refusing to push protected branch {branch}")
 
-    completed = runner(_git(cwd, "status", "--porcelain"))
+    completed = runner(_git(cwd, "status", "--porcelain", "--untracked-files=all"))
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "git failed"))
     if completed.stdout.strip():
@@ -87,6 +87,8 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
         ahead = int(parts[1])
     except ValueError as exc:
         raise GitActError(f"bad rev-list count: {count_raw!r}") from exc
+    if behind < 0 or ahead < 0:
+        raise GitActError(f"bad rev-list count: {count_raw!r}")
     if behind > 0:
         raise GitActError("branch is behind upstream")
     if ahead > 0:
@@ -105,11 +107,15 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     return sha.lower()
 
 
-def measure_mergeable(*, cwd: str, runner: Runner) -> str:
+def measure_mergeable(
+    *, cwd: str, runner: Runner, expected_head: str | None = None
+) -> str:
     """Return a short evidence string when the current branch PR is MERGEABLE
     and every GitHub check is SUCCESS (or there are no checks). Else raise GitActError."""
     _ = cwd  # gh argv has no -C; cwd is inherited from _exec_argv
-    completed = runner(["gh", "pr", "view", "--json", "mergeable,state,url,number"])
+    completed = runner(
+        ["gh", "pr", "view", "--json", "mergeable,state,url,number,headRefOid"]
+    )
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "gh failed"))
     raw = completed.stdout.strip()
@@ -129,8 +135,18 @@ def measure_mergeable(*, cwd: str, runner: Runner) -> str:
     number = view.get("number")
     if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
         raise GitActError("pr view missing number")
+    oid = view.get("headRefOid")
+    if not isinstance(oid, str) or oid == "":
+        raise GitActError("pr view missing headRefOid")
+    oid = oid.lower()
+    if expected_head:
+        want = expected_head.lower()
+        if want != oid and not (7 <= len(want) < len(oid) and oid.startswith(want)):
+            raise GitActError(f"pr head {oid} does not match {want}")
 
-    completed = runner(["gh", "pr", "checks", "--json", "name,state"])
+    completed = runner(
+        ["gh", "pr", "checks", str(number), "--json", "name,state"]
+    )
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "gh failed"))
     raw = completed.stdout.strip()

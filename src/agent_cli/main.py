@@ -2219,8 +2219,11 @@ def cmd_run(args: list[str]) -> None:
             from .git_act import GitActError, measure_mergeable
 
             try:
+                expected = str(snap.get("head_sha") or head or "").strip() or None
                 evidence = measure_mergeable(
-                    cwd=cwd, runner=lambda argv: _exec_argv(argv, cwd=cwd)
+                    cwd=cwd,
+                    runner=lambda argv: _exec_argv(argv, cwd=cwd),
+                    expected_head=expected,
                 )
             except GitActError as exc:
                 die(str(exc))

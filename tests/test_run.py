@@ -574,7 +574,7 @@ def test_run_mergeable_after_gates(
 
     monkeypatch.setattr(
         "agent_cli.git_act.measure_mergeable",
-        lambda *, cwd, runner: "ok",
+        lambda *, cwd, runner, expected_head=None: "ok",
     )
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()

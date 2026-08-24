@@ -193,6 +193,7 @@ def test_mergeable_open_empty_checks() -> None:
                         "state": "OPEN",
                         "url": "https://example.invalid/p/1",
                         "number": 1,
+                        "headRefOid": SHA,
                     }
                 ),
                 "",
@@ -218,6 +219,7 @@ def test_mergeable_all_success() -> None:
                         "state": "open",
                         "url": "https://example.invalid/p/2",
                         "number": 2,
+                        "headRefOid": SHA,
                     }
                 ),
                 "",
@@ -250,6 +252,7 @@ def test_mergeable_conflicting() -> None:
                         "state": "OPEN",
                         "url": "https://example.invalid/p/3",
                         "number": 3,
+                        "headRefOid": SHA,
                     }
                 ),
                 "",
@@ -271,6 +274,7 @@ def test_mergeable_check_failure() -> None:
                         "state": "OPEN",
                         "url": "https://example.invalid/p/4",
                         "number": 4,
+                        "headRefOid": SHA,
                     }
                 ),
                 "",
@@ -298,6 +302,7 @@ def test_mergeable_check_pending() -> None:
                         "state": "OPEN",
                         "url": "https://example.invalid/p/5",
                         "number": 5,
+                        "headRefOid": SHA,
                     }
                 ),
                 "",
@@ -325,6 +330,7 @@ def test_mergeable_check_skipped() -> None:
                         "state": "OPEN",
                         "url": "https://example.invalid/p/6",
                         "number": 6,
+                        "headRefOid": SHA,
                     }
                 ),
                 "",
@@ -339,6 +345,28 @@ def test_mergeable_check_skipped() -> None:
 
     with pytest.raises(GitActError, match="check ci is SKIPPED"):
         measure_mergeable(cwd=CWD, runner=runner)
+
+
+def test_mergeable_head_mismatch() -> None:
+    def runner(argv: list[str]) -> Completed:
+        if "pr" in argv and "view" in argv:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "mergeable": "MERGEABLE",
+                        "state": "OPEN",
+                        "url": "https://example.invalid/p/8",
+                        "number": 8,
+                        "headRefOid": SHA,
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match"):
+        measure_mergeable(cwd=CWD, runner=runner, expected_head="bbbbbbb")
 
 
 def test_mergeable_missing_number() -> None:
