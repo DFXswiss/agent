@@ -554,7 +554,7 @@ def test_run_mergeable_after_gates(
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
     run(tmp_path, ["run", "--task", tid, "--head", "abc1234"])
     capsys.readouterr()
-    assert push_called["n"] == 0
+    assert push_called["n"] == 1
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
     for stage, vendor in (("grok-pr", "grok"), ("codex-pr", "codex")):

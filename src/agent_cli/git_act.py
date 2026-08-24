@@ -55,6 +55,20 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     if short in PROTECTED:
         raise GitActError(f"upstream tracks protected branch {short}")
 
+    completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
+    if completed.returncode != 0 or not completed.stdout.strip():
+        raise GitActError("no upstream remote")
+    remote = completed.stdout.strip()
+    completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.merge"))
+    if completed.returncode != 0 or not completed.stdout.strip():
+        raise GitActError("no upstream merge ref")
+    merge_ref = completed.stdout.strip()
+    if not merge_ref.startswith("refs/heads/"):
+        raise GitActError(f"unexpected merge ref {merge_ref!r}")
+    merge_short = merge_ref[len("refs/heads/") :]
+    if merge_short in PROTECTED:
+        raise GitActError(f"upstream tracks protected branch {merge_short}")
+
     completed = runner(
         _git(cwd, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
     )
@@ -72,8 +86,9 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     if behind > 0:
         raise GitActError("branch is behind upstream")
     if ahead > 0:
-        # Never --force / --force-with-lease / -f.
-        completed = runner(_git(cwd, "push"))
+        completed = runner(
+            _git(cwd, "push", "--", remote, f"HEAD:{merge_ref}")
+        )
         if completed.returncode != 0:
             raise GitActError(_fail_detail(completed, "git push failed"))
 
@@ -108,6 +123,8 @@ def measure_mergeable(*, cwd: str, runner: Runner) -> str:
     if mergeable != "MERGEABLE" or not state_ok:
         raise GitActError(f"mergeable={mergeable!r} state={state!r}")
     number = view.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+        raise GitActError("pr view missing number")
 
     completed = runner(["gh", "pr", "checks", "--json", "name,state"])
     if completed.returncode != 0:

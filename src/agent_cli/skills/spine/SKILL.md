@@ -32,7 +32,7 @@ agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH]
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 ```
 
-`run` pushes the branch when `pushed` is open and measures mergeability when `mergeable` is open.
+`run` git-pushes (no force) when `pushed` is open and measures mergeability when `mergeable` is open. Protected branches stay refused.
 
 `allow` exits 0 when permitted, 2 when denied, 1 on usage errors.
 

@@ -14,6 +14,18 @@ pytestmark = pytest.mark.no_pg
 CWD = "/tmp/repo"
 SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 FORCE_FLAGS = ("--force", "--force-with-lease", "-f")
+PUSH_ARGV = ["git", "-C", CWD, "push", "--", "origin", "HEAD:refs/heads/feat-x"]
+
+
+def _config(argv: list[str]) -> Completed | None:
+    if "config" not in argv or "--get" not in argv:
+        return None
+    key = argv[-1]
+    if key == "branch.feat-x.remote":
+        return Completed(0, "origin\n", "")
+    if key == "branch.feat-x.merge":
+        return Completed(0, "refs/heads/feat-x\n", "")
+    return Completed(1, "", "")
 
 
 def _assert_git_c(argv: list[str]) -> None:
@@ -34,9 +46,12 @@ def test_push_ahead_one_pushes_without_force() -> None:
             return Completed(0, "", "")
         if "@{upstream}" in argv and "rev-list" not in argv:
             return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
         if "rev-list" in argv:
             return Completed(0, "0\t1\n", "")
-        if argv == ["git", "-C", CWD, "push"]:
+        if argv == PUSH_ARGV:
             return Completed(0, "", "")
         if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
             return Completed(0, SHA + "\n", "")
@@ -44,7 +59,7 @@ def test_push_ahead_one_pushes_without_force() -> None:
 
     got = push_branch(cwd=CWD, runner=runner)
     assert got == SHA
-    assert ["git", "-C", CWD, "push"] in calls
+    assert PUSH_ARGV in calls
     for argv in calls:
         for flag in FORCE_FLAGS:
             assert flag not in argv
@@ -62,6 +77,9 @@ def test_push_ahead_zero_skips_push() -> None:
             return Completed(0, "", "")
         if "@{upstream}" in argv and "rev-list" not in argv:
             return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
         if "rev-list" in argv:
             return Completed(0, "0 0\n", "")
         if "push" in argv:
@@ -125,6 +143,9 @@ def test_push_behind_errors_no_push() -> None:
             return Completed(0, "", "")
         if "@{upstream}" in argv and "rev-list" not in argv:
             return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
         if "rev-list" in argv:
             return Completed(0, "1\t0\n", "")
         if "push" in argv:
@@ -306,4 +327,24 @@ def test_mergeable_check_skipped() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="check ci is SKIPPED"):
+        measure_mergeable(cwd=CWD, runner=runner)
+
+
+def test_mergeable_missing_number() -> None:
+    def runner(argv: list[str]) -> Completed:
+        if "pr" in argv and "view" in argv:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "mergeable": "MERGEABLE",
+                        "state": "OPEN",
+                        "url": "https://example.invalid/p/7",
+                    }
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="missing number"):
         measure_mergeable(cwd=CWD, runner=runner)
