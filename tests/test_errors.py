@@ -82,6 +82,24 @@ def test_load_config_rejects_credentials(tmp_path: Path) -> None:
     with pytest.raises(StoreError, match="must not contain credentials"):
         load_config(path)
     path.write_text(
+        json.dumps({"session_id": "s", "headers": {"api-key": "x"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "url": "https://logs.example/q?api-key=secret"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "client_secret": "x"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
+    path.write_text(
         json.dumps({"session_id": "s", "url": "https://logs.example/q#password=x"}),
         encoding="utf-8",
     )
@@ -109,6 +127,12 @@ def test_redact_and_fingerprint() -> None:
     assert "abcdef" not in quoted
     assert "sid=1" not in quoted
     assert "u:p@" not in quoted
+    digest = redact("Authorization: Digest username=alice, nonce=abc")
+    assert "username=alice" not in digest
+    assert "nonce=abc" not in digest
+    dsn = redact("postgresql://u:p@logs.example/db TimeoutError")
+    assert "u:p@" not in dsn
+    assert "TimeoutError" in dsn
     cookie = redact("Cookie: sid=1; extra=remain")
     assert "sid=1" not in cookie
     assert "extra=remain" not in cookie
@@ -171,6 +195,29 @@ def test_scan_requires_error_fix_skill(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="does not have skill error-fix"):
         scan_errors(store, fetch)
+
+
+def test_fingerprint_uses_full_redacted_line(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    prefix = "x" * 500
+
+    def fetch_timeout(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"ts": "2026-08-23T16:00:00Z", "line": prefix + " TimeoutError boom"}], None)
+
+    created, _ = scan_errors(store, fetch_timeout)
+    assert len(created) == 1
+    assert store.row("activity", created[0])["payload"]["class"] == "TimeoutError"
+
+    def fetch_value(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"ts": "2026-08-23T16:00:01Z", "line": prefix + " ValueError boom"}], None)
+
+    created2, enriched2 = scan_errors(store, fetch_value)
+    assert enriched2 == []
+    assert len(created2) == 1
+    assert created2[0] != created[0]
+    assert store.row("activity", created2[0])["payload"]["class"] == "ValueError"
 
 
 def test_skip_opens_new_seen(tmp_path: Path) -> None:

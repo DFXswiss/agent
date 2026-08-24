@@ -21,9 +21,9 @@ from .store import Store, StoreError, utcnow
 
 _EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 _BEARER = re.compile(r"(?i)bearer\s+\S+")
-_BASIC = re.compile(r"(?i)(authorization:\s*basic\s+)\S+")
+_AUTHORIZATION = re.compile(r"(?i)(authorization:\s*).+")
 _COOKIE = re.compile(r"(?i)((?:set-)?cookie:\s*).+")
-_USERINFO = re.compile(r"(https?://)[^/@\s]+:[^/@\s]+@")
+_USERINFO = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+:[^/@\s]+@")
 _JSON_SECRET = re.compile(
     r'(?i)("(?:password|secret|token|api[_-]?key|access_token|authorization|passwd)"\s*:\s*")[^"]*(")'
 )
@@ -46,13 +46,17 @@ _CREDENTIAL_KEYS = frozenset(
         "secret",
         "user",
         "username",
-        "api_key",
         "apikey",
-        "access_token",
+        "accesstoken",
         "authorization",
         "passwd",
+        "clientsecret",
     }
 )
+
+
+def _norm_cred(name: object) -> str:
+    return str(name).lower().replace("-", "").replace("_", "")
 
 Fetch = Callable[[dict[str, Any], str | None], tuple[list[dict[str, Any]], str | None]]
 
@@ -68,7 +72,7 @@ def cursor_path(home: Path) -> Path:
 def _contains_credentials(value: Any) -> bool:
     if isinstance(value, dict):
         return any(
-            str(key).lower() in _CREDENTIAL_KEYS or _contains_credentials(item)
+            _norm_cred(key) in _CREDENTIAL_KEYS or _contains_credentials(item)
             for key, item in value.items()
         )
     if isinstance(value, list):
@@ -100,14 +104,14 @@ def load_config(path: Path) -> dict[str, Any]:
             *parse_qs(parsed.query, keep_blank_values=True),
             *parse_qs(parsed.fragment, keep_blank_values=True),
         )
-        if any(name.lower() in _CREDENTIAL_KEYS for name in params):
+        if any(_norm_cred(name) in _CREDENTIAL_KEYS for name in params):
             raise StoreError("error-fix.json url must not contain credentials")
     return data
 
 
 def redact(text: str) -> str:
-    out = _BEARER.sub("[redacted]", text)
-    out = _BASIC.sub(r"\1[redacted]", out)
+    out = _AUTHORIZATION.sub(r"\1[redacted]", text)
+    out = _BEARER.sub("[redacted]", out)
     out = _COOKIE.sub(r"\1[redacted]", out)
     out = _USERINFO.sub(r"\1[redacted]@", out)
     out = _JSON_SECRET.sub(r"\1[redacted]\2", out)
@@ -379,12 +383,13 @@ def _apply_lines(
         repo = item.get("repo")
         if not isinstance(repo, str) or repo == "":
             repo = default_repo if isinstance(default_repo, str) and default_repo else None
-        excerpt = redact(line)[:500]
-        cls = error_class(excerpt)
+        redacted = redact(line)
+        excerpt = redacted[:500]
+        cls = error_class(redacted)
         fp = fingerprint(
             service=service,
             error_class=cls,
-            stack_sig=stack_sig(excerpt),
+            stack_sig=stack_sig(redacted),
             environment=environment,
         )
         existing = _latest_seen(store, session_id, fp)
