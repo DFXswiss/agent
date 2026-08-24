@@ -88,10 +88,13 @@ agent watch pending     # one scan; runs subscription.set and query.request agai
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
 agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
-# agent knock (daemon, no --once) polls grok-usage and errors every 60s
+agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
+# agent knock (daemon, no --once) polls grok-usage, errors, and error-fix every 60s
 ```
 
-`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, and errors when `$AGENT_HOME/error-fix.json` exists) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
+The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
+
+`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 

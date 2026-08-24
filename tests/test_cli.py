@@ -1046,6 +1046,22 @@ def test_watch_errors_prints_none_and_ids(
     assert "error.seen enrich bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in out
 
 
+def test_watch_error_fix_prints_none_and_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda store, runner: [])
+    run(tmp_path, ["watch", "error-fix"])
+    assert "error.fix none" in capsys.readouterr().out
+    monkeypatch.setattr(
+        "agent_cli.error_fix_act.scan_error_fix",
+        lambda store, runner: ["error.fix x task=t worktree=/tmp/w"],
+    )
+    run(tmp_path, ["watch", "error-fix"])
+    assert "error.fix x task=t worktree=/tmp/w" in capsys.readouterr().out
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1109,6 +1125,21 @@ def test_knock_once_does_not_poll_errors(
     assert calls == []
 
 
+def test_knock_once_does_not_call_scan_error_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    calls: list[object] = []
+
+    def fake_scan(store: object) -> list[str]:
+        calls.append(store)
+        return []
+
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", fake_scan)
+    run(tmp_path, ["knock", "--once"])
+    assert calls == []
+
+
 def test_knock_daemon_polls_errors(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1146,6 +1177,40 @@ def test_knock_daemon_polls_errors(
     assert "error.seen error: nope" in captured.err
     assert "error.seen aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in captured.out
     assert "error.seen enrich bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in captured.out
+
+
+def test_knock_daemon_calls_scan_error_fix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    scan_calls = {"n": 0}
+    listen_calls = {"n": 0}
+
+    def fake_poll_due(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    def fake_scan(*_args: object, **_kwargs: object) -> list[str]:
+        scan_calls["n"] += 1
+        if scan_calls["n"] == 1:
+            raise StoreError("nope")
+        return ["error.fix x task=t worktree=/tmp/w"]
+
+    def fake_listen(*_args: object, **_kwargs: object) -> None:
+        listen_calls["n"] += 1
+        if listen_calls["n"] == 2:
+            raise SystemExit("stop")
+        return None
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", fake_scan)
+    monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+    captured = capsys.readouterr()
+    assert "error.fix error: nope" in captured.err
+    assert "error.fix x task=t worktree=/tmp/w" in captured.out
 
 
 def test_knock_daemon_skips_errors_without_config(
@@ -1281,6 +1346,321 @@ def test_activity_add(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
         assert rows[0]["session_id"] == "sess-1"
         assert rows[0]["payload"]["to_session"] == "sess-2"
         assert rows[0]["execution_status"] == "pending"
+    finally:
+        store.close()
+
+
+def _seed_cli_error_seen_for_conclusion(
+    tmp_path: Path,
+    *,
+    error_id: str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    fingerprint: str = "traceback-fingerprint",
+    repo: str | None = "org/app",
+    with_error_fix_skill: bool = True,
+) -> None:
+    run(tmp_path, ["init"])
+    register = [
+        "session",
+        "register",
+        "--id",
+        "error-session",
+        "--kind",
+        "human",
+        "--skill",
+        "spine",
+    ]
+    if with_error_fix_skill:
+        register.extend(["--skill", "error-fix"])
+    run(tmp_path, register)
+    payload: dict[str, object] = {"fingerprint": fingerprint}
+    if repo is not None:
+        payload["repo"] = repo
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            error_id,
+            {
+                "id": error_id,
+                "session_id": "error-session",
+                "type": "error.seen",
+                "payload": payload,
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+
+
+def _add_cli_error_conclusion(
+    tmp_path: Path,
+    *,
+    typ: str,
+    payload: dict[str, object],
+) -> None:
+    payload_file = tmp_path / f"{typ}.json"
+    payload_file.write_text(json.dumps(payload), encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "activity",
+            "add",
+            "--session",
+            "error-session",
+            "--type",
+            typ,
+            "--payload-file",
+            str(payload_file),
+        ],
+    )
+
+
+def test_activity_add_error_fix_happy_path(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.fix",
+        payload={"error_id": error_id, "fingerprint": fingerprint},
+    )
+
+    store = Store(tmp_path)
+    try:
+        rows = [row for row in store.rows("activity") if row["type"] == "error.fix"]
+        assert len(rows) == 1
+        assert rows[0]["type"] == "error.fix"
+        assert rows[0]["execution_status"] == "pending"
+    finally:
+        store.close()
+
+
+def test_activity_add_error_skip_happy_path(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.skip",
+        payload={
+            "error_id": error_id,
+            "fingerprint": fingerprint,
+            "reason": "Known external failure",
+        },
+    )
+
+    store = Store(tmp_path)
+    try:
+        rows = [row for row in store.rows("activity") if row["type"] == "error.skip"]
+        assert len(rows) == 1
+        assert rows[0]["type"] == "error.skip"
+        assert rows[0]["execution_status"] == "pending"
+    finally:
+        store.close()
+
+
+def test_activity_add_error_fix_requires_mapped_repo(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(
+        tmp_path,
+        error_id=error_id,
+        fingerprint=fingerprint,
+        repo=None,
+    )
+
+    with pytest.raises(SystemExit, match="unmapped-repo"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_error_fix_requires_skill(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(
+        tmp_path,
+        error_id=error_id,
+        fingerprint=fingerprint,
+        with_error_fix_skill=False,
+    )
+
+    with pytest.raises(SystemExit, match="error-fix"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_refuses_second_error_conclusion(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.skip",
+        payload={
+            "error_id": error_id,
+            "fingerprint": fingerprint,
+            "reason": "Known external failure",
+        },
+    )
+
+    with pytest.raises(SystemExit, match="conclusion already exists"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_error_skip_requires_reason(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    with pytest.raises(SystemExit, match="reason is required"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.skip",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_error_conclusion_rejects_fingerprint_mismatch(
+    tmp_path: Path,
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(
+        tmp_path,
+        error_id=error_id,
+        fingerprint="traceback-fingerprint",
+    )
+
+    with pytest.raises(SystemExit, match="fingerprint mismatch"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
+            payload={"error_id": error_id, "fingerprint": "different-fingerprint"},
+        )
+
+
+def test_activity_add_error_fix_rejects_already_open_draft(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            {
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "session_id": "error-session",
+                "type": "pr.open",
+                "payload": {"fingerprint": fingerprint},
+                "execution_status": "pending",
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="already-open-draft"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_error_fix_after_merged_draft_is_allowed(tmp_path: Path) -> None:
+    first_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    second_id = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=first_id, fingerprint=fingerprint)
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            {
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "session_id": "error-session",
+                "type": "pr.open",
+                "payload": {"fingerprint": fingerprint},
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            {
+                "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                "session_id": "error-session",
+                "type": "pr.merged",
+                "payload": {"pr_open_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"},
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            second_id,
+            {
+                "id": second_id,
+                "session_id": "error-session",
+                "type": "error.seen",
+                "payload": {"fingerprint": fingerprint, "repo": "org/app"},
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.fix",
+        payload={"error_id": second_id, "fingerprint": fingerprint},
+    )
+
+
+def test_task_create_error_id_is_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id)
+    capsys.readouterr()
+
+    create = [
+        "task",
+        "create",
+        "--session",
+        "error-session",
+        "--workflow",
+        "implement",
+        "--error-id",
+        error_id,
+        "--title",
+        "Fix observed error",
+    ]
+    run(tmp_path, create)
+    first_id = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, create)
+    second_id = _last_task_id(capsys.readouterr().out)
+
+    assert first_id == second_id
+    store = Store(tmp_path)
+    try:
+        assert len(store.rows("task")) == 1
     finally:
         store.close()
 
@@ -1592,6 +1972,11 @@ def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
 
 def test_watch_usage_mentions_errors() -> None:
     with pytest.raises(SystemExit, match="errors"):
+        main(["watch"])
+
+
+def test_watch_usage_mentions_error_fix() -> None:
+    with pytest.raises(SystemExit, match="error-fix"):
         main(["watch"])
 
 
