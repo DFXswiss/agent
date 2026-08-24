@@ -1210,6 +1210,9 @@ def cmd_pair(args: list[str]) -> None:
         store.close()
 
 
+_MAX_BACKOFF = 30.0
+
+
 def cmd_sync(args: list[str]) -> None:
     follow = "--follow" in args
     store = open_store()
@@ -1222,15 +1225,18 @@ def cmd_sync(args: list[str]) -> None:
         terminal_seq: dict[str, int] = {}
         last_capture: dict[str, str] = {}
         try:
-            backoff = [1.0]
+            backoff = 1.0
             while True:
+                started = time.monotonic()
                 try:
                     _sync_once(store)
-                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, backoff)
+                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture)
                 except (HubError, OSError, WebSocketException) as exc:
                     print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
-                    time.sleep(backoff[0])
-                    backoff[0] = min(backoff[0] * 2, 30.0)
+                    if time.monotonic() - started >= _MAX_BACKOFF:
+                        backoff = 1.0
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, _MAX_BACKOFF)
         finally:
             hub.close()
     finally:
@@ -1243,14 +1249,13 @@ def _run_sync_ws_session(
     runtime: Runtime,
     terminal_seq: dict[str, int],
     last_capture: dict[str, str],
-    backoff: list[float],
 ) -> None:
     """Run one websocket connection's message loop. Raises on disconnect/error;
     the caller in cmd_sync reconnects with backoff instead of exiting the process."""
     ws = hub.connect_sync_ws()
     try:
         ws.send(json.dumps({"type": "control-ready"}))
-        backoff[0] = 1.0
+        last_capture.clear()  # a new connection has no idea what a prior one already sent
         _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
         for raw in ws:
             try:
@@ -1754,9 +1759,7 @@ def _publish_terminals(
         text = runtime.capture(sid)
         if last_capture.get(sid) == text:
             continue
-        last_capture[sid] = text
         seq = terminal_seq.get(sid, 0) + 1
-        terminal_seq[sid] = seq
         data = base64.b64encode(text.encode("utf-8")).decode("ascii")
         frame = {
             "type": "terminal",
@@ -1765,6 +1768,8 @@ def _publish_terminals(
             "data": data,
         }
         ws.send(json.dumps(frame))  # type: ignore[attr-defined]
+        last_capture[sid] = text
+        terminal_seq[sid] = seq
 
 
 def _find_round(store: Store, task_id: str, round_num: object) -> dict:

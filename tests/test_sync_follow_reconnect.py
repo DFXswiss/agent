@@ -38,7 +38,7 @@ def test_follow_reconnects_after_connection_drop_instead_of_dying(
     calls: list[int] = []
     sleeps: list[float] = []
 
-    def fake_session(store, hub, runtime, terminal_seq, last_capture, backoff):
+    def fake_session(store, hub, runtime, terminal_seq, last_capture):
         calls.append(1)
         if len(calls) == 1:
             raise OSError("connection reset by peer")
@@ -67,7 +67,7 @@ def test_follow_used_to_die_on_first_disconnect_before_the_fix(
 
     calls: list[int] = []
 
-    def always_fails(store, hub, runtime, terminal_seq, last_capture, backoff):
+    def always_fails(store, hub, runtime, terminal_seq, last_capture):
         calls.append(1)
         if len(calls) >= 3:
             raise _StopTest("stop after 3 attempts")
@@ -85,19 +85,6 @@ def test_follow_used_to_die_on_first_disconnect_before_the_fix(
     assert calls == [1, 1, 1]
 
 
-class _EmptyWs:
-    """A websocket that accepts sends and yields no incoming messages."""
-
-    def send(self, data: str) -> None:
-        pass
-
-    def __iter__(self):
-        return iter(())
-
-    def close(self) -> None:
-        pass
-
-
 class _FakeRuntime:
     """Stands in for Runtime without shelling out to tmux."""
 
@@ -105,7 +92,7 @@ class _FakeRuntime:
         return "some output"
 
 
-def test_publish_terminals_send_failure_reconnects_instead_of_dying(
+def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
     tmp_path: Path,
 ) -> None:
     """Regression test: a failed terminal-frame send inside _publish_terminals used
@@ -144,28 +131,169 @@ def test_publish_terminals_send_failure_reconnects_instead_of_dying(
                 return _FailOnTerminalSendWs()
 
         with pytest.raises(OSError):
-            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, [1.0])
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {})
     finally:
         store.close()
 
 
-def test_backoff_resets_after_successful_reconnect(tmp_path: Path) -> None:
-    """Regression test: backoff must reset once a new connection is established
-    (control-ready sent successfully), not stay pinned at whatever it grew to during
-    earlier failures. _run_sync_ws_session never returns normally - it always raises
-    on the connection ending - so a reset placed only after its call site returns was
-    unreachable dead code."""
+def test_publish_terminals_does_not_record_state_for_a_failed_send(
+    tmp_path: Path,
+) -> None:
+    """Regression test: last_capture/terminal_seq must only be updated once the send
+    actually succeeds. Recording state before sending meant a failed send still
+    looked like a successful publish to the dedup check - and now that a reconnect
+    keeps the process (and terminal_seq/last_capture) alive instead of restarting it,
+    that frame would never be resent even after a successful reconnect."""
     _init_paired_store(tmp_path)
     store = open_store()
     try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
 
-        class _FakeHub:
-            def connect_sync_ws(self) -> _EmptyWs:
-                return _EmptyWs()
+        class _FailOnceWs:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+                self.fail_next = True
 
-        backoff = [16.0]  # simulate having grown from earlier failed attempts
-        with pytest.raises(HubError):
-            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, backoff)
-        assert backoff[0] == 1.0, "backoff must reset once the new connection is established"
+            def send(self, data: str) -> None:
+                if self.fail_next:
+                    self.fail_next = False
+                    raise OSError("broken pipe")
+                self.sent.append(data)
+
+        terminal_seq: dict[str, int] = {}
+        last_capture: dict[str, str] = {}
+        ws = _FailOnceWs()
+
+        with pytest.raises(OSError):
+            main_mod._publish_terminals(store, _FakeRuntime(), ws, terminal_seq, last_capture)
+        assert last_capture == {}, "a failed send must not be recorded as delivered"
+        assert terminal_seq == {}
+
+        main_mod._publish_terminals(store, _FakeRuntime(), ws, terminal_seq, last_capture)
+        assert len(ws.sent) == 1, "the retried publish must actually resend the frame, not skip it"
+        assert last_capture == {"s1": "some output"}
     finally:
         store.close()
+
+
+def test_reconnect_republishes_terminal_state_even_if_unchanged(tmp_path: Path) -> None:
+    """Regression test: terminal_seq/last_capture persist across internal reconnects
+    (that's the whole point of this fix - the process survives instead of restarting
+    with fresh dicts). But a brand new websocket connection has no idea what a prior,
+    now-dead connection already sent - if the terminal output happens to be unchanged
+    since the last publish on the old connection, the dedup check must not silently
+    withhold it from the new connection forever."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+
+        class _RecordingWs:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+            def __iter__(self):
+                return iter(())
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def __init__(self) -> None:
+                self.sessions: list[_RecordingWs] = []
+
+            def connect_sync_ws(self) -> _RecordingWs:
+                ws = _RecordingWs()
+                self.sessions.append(ws)
+                return ws
+
+        hub = _FakeHub()
+        terminal_seq: dict[str, int] = {}
+        last_capture: dict[str, str] = {}
+
+        with pytest.raises(HubError):
+            main_mod._run_sync_ws_session(store, hub, _FakeRuntime(), terminal_seq, last_capture)
+        assert len(hub.sessions[0].sent) == 2, "control-ready + one terminal frame"
+
+        with pytest.raises(HubError):
+            main_mod._run_sync_ws_session(store, hub, _FakeRuntime(), terminal_seq, last_capture)
+        assert len(hub.sessions[1].sent) == 2, (
+            "reconnect must republish the terminal even though its content is unchanged"
+        )
+    finally:
+        store.close()
+
+
+def test_backoff_grows_through_rapid_flapping_reconnects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: resetting backoff on every successful handshake regardless of
+    how long the connection then survived would let a hub that accepts the connection
+    and immediately drops it, every time, keep the retry delay pinned at ~1s forever
+    instead of growing - a fast reconnect storm against the hub. Backoff must only
+    reset after a connection proves itself stable, not merely established."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_session(store, hub, runtime, terminal_seq, last_capture):
+        calls.append(1)
+        if len(calls) >= 4:
+            raise _StopTest("stop after 4 flapping attempts")
+        raise OSError("connection reset by peer")
+
+    times = iter([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: next(times))
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert sleeps == [1.0, 2.0, 4.0], "backoff must keep growing when every reconnect fails almost immediately"
+
+
+def test_backoff_resets_after_a_stable_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: after a connection survives long enough to be considered
+    healthy, the next failure must back off from scratch again, not inherit whatever
+    backoff had grown to during earlier, unrelated flapping."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_session(store, hub, runtime, terminal_seq, last_capture):
+        calls.append(1)
+        if len(calls) >= 3:
+            raise _StopTest("stop after 3 attempts")
+        raise OSError("connection reset by peer")
+
+    # attempt 1: starts at t=0.0, fails almost instantly (elapsed 0.1s) -> no reset
+    # attempt 2: starts at t=1.0, fails after a long-lived session (elapsed 39s) -> reset
+    times = iter([0.0, 0.1, 1.0, 40.0, 42.0])
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: next(times))
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert sleeps == [1.0, 1.0], "backoff must reset to 1.0 after attempt 2's long-lived session, not grow to 2.0"
