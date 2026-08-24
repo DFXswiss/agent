@@ -391,3 +391,191 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
         if agent.get("role") != "reviewer":
             continue
         assert agent.get("status") == "working"
+
+
+def _advance_to_pushed(
+    home: Path, tid: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _finish_implementer(home, tid, capsys)
+    run(home, ["run", "--task", tid])
+    _finish_reviewer(home, tid, capsys)
+    run(home, ["run", "--task", tid])
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "agent_cli.main._exec_argv",
+        lambda argv, *, cwd=None: Completed(0, "ok", ""),
+    )
+    run(home, ["run", "--task", tid])
+    capsys.readouterr()
+    assert _checklist(home, tid)["local_check_pass"] == "ja"
+
+
+def test_run_pushed_calls_push_branch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    called = {"n": 0}
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        called["n"] += 1
+        return "abc1234"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    run(tmp_path, ["run", "--task", tid, "--dry-run"])
+    capsys.readouterr()
+    assert called["n"] == 0
+    assert _checklist(tmp_path, tid)["pushed"] != "ja"
+
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert called["n"] == 1
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+
+def _bootstrap_resolve(home: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    run(home, ["init"])
+    run(
+        home,
+        [
+            "session",
+            "register",
+            "--id",
+            "sess-1",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "review-loop",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(
+        home,
+        [
+            "task",
+            "create",
+            "--session",
+            "sess-1",
+            "--workflow",
+            "resolve-conflicts",
+            "--title",
+            "Unstick",
+        ],
+    )
+    tid = _last_task_id(capsys.readouterr().out)
+    run(
+        home,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(home, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    return tid
+
+
+def _record_pr_gate(
+    home: Path,
+    tid: str,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    stage: str,
+    dimension: str,
+    vendor: str,
+    head: str = "abc1234",
+) -> None:
+    role = f"pr-reviewer-{dimension}"
+    run(
+        home,
+        [
+            "agent",
+            "start",
+            "--session",
+            "sess-1",
+            "--task",
+            tid,
+            "--role",
+            role,
+            "--vendor",
+            vendor,
+        ],
+    )
+    agent_id = _last_agent_id(capsys.readouterr().out)
+    run(home, ["agent", "finish", "--id", agent_id, "--verdict", "approved"])
+    capsys.readouterr()
+    run(
+        home,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            stage,
+            "--dimension",
+            dimension,
+            "--vendor",
+            vendor,
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            agent_id,
+        ],
+    )
+    capsys.readouterr()
+
+
+def test_run_mergeable_after_gates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_resolve(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    push_called = {"n": 0}
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        push_called["n"] += 1
+        return "abc1234"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    run(tmp_path, ["run", "--task", tid, "--head", "abc1234"])
+    capsys.readouterr()
+    assert push_called["n"] == 1
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+    for stage, vendor in (("grok-pr", "grok"), ("codex-pr", "codex")):
+        for dimension in ("quality", "logic"):
+            _record_pr_gate(
+                tmp_path,
+                tid,
+                capsys,
+                stage=stage,
+                dimension=dimension,
+                vendor=vendor,
+            )
+            run(tmp_path, ["run", "--task", tid])
+            capsys.readouterr()
+            key = f"{vendor}_pr_{dimension}"
+            assert _checklist(tmp_path, tid)[key] == "ja"
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.measure_mergeable",
+        lambda *, cwd, runner, expected_head=None: "ok",
+    )
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["mergeable"] == "ja"
