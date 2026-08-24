@@ -37,6 +37,19 @@ def test_extra_pg_bin_dirs_numbered_newest_first(tmp_path: Path) -> None:
     ]
 
 
+def test_bin_prefers_path_over_extra_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path_dir = tmp_path / "path"
+    extra_dir = tmp_path / "extra"
+    path_dir.mkdir()
+    extra_dir.mkdir()
+    _exe(path_dir / "pg_ctl")
+    _exe(extra_dir / "pg_ctl")
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    monkeypatch.setenv("PATH", str(path_dir))
+    monkeypatch.setattr("agent_cli.pg.extra_pg_bin_dirs", lambda **_: [extra_dir])
+    assert _bin("pg_ctl") == str(path_dir / "pg_ctl")
+
+
 def test_bin_falls_back_to_extra_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _exe(tmp_path / "pg_ctl")
     monkeypatch.delenv("AGENT_PG_BIN", raising=False)

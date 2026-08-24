@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import html
 import json
 import os
 import plistlib
@@ -375,13 +376,18 @@ def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
         close_tag = text.find("</string>", open_tag)
         if open_tag < 0 or close_tag < 0:
             return None
-        value = text[open_tag + len("<string>") : close_tag].strip()
+        value = html.unescape(text[open_tag + len("<string>") : close_tag].strip())
         return value or None
     if platform == "linux":
         prefix = "Environment=AGENT_PG_BIN="
         for line in text.splitlines():
             if line.startswith(prefix):
-                value = line[len(prefix) :].strip()
+                raw = line[len(prefix) :].strip()
+                try:
+                    parts = shlex.split(raw, posix=True)
+                except ValueError:
+                    return raw or None
+                value = parts[0].strip() if parts else ""
                 return value or None
         return None
     return None

@@ -168,6 +168,26 @@ def test_existing_service_agent_pg_bin_roundtrip() -> None:
 
 
 @pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_unescapes() -> None:
+    special = "/opt/pg & bin"
+    darwin = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": special},
+    )
+    assert existing_service_agent_pg_bin(darwin, "darwin") == special
+    spaced = "/opt/pg bin"
+    linux = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="linux",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": spaced},
+    )
+    assert existing_service_agent_pg_bin(linux, "linux") == spaced
+
+
+@pytest.mark.no_pg
 def test_service_unit_text_darwin_includes_agent_pg_bin() -> None:
     text = service_unit_text(
         program=["/usr/bin/agent", "daemon"],
