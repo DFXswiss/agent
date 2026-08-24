@@ -113,16 +113,7 @@ def test_scan_error_fix_clones_then_reuses(tmp_path: Path) -> None:
     assert scan_error_fix(store, runner) == [
         f"error.fix fix-1 task={task_id} worktree={worktree}"
     ]
-    assert calls == [
-        [
-            "git",
-            "-C",
-            str(worktree),
-            "checkout",
-            "-B",
-            "error-fix-error-se",
-        ]
-    ]
+    assert calls == []
     assert len(store.rows("task")) == 1
 
 

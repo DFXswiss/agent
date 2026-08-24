@@ -70,7 +70,7 @@ def _pr_open_merged(store: Store, session_id: str, pr_open_id: str) -> bool:
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
             continue
-        if row.get("session_id") != session_id or row.get("type") != "pr.merged":
+        if row.get("type") != "pr.merged":
             continue
         payload = row.get("payload")
         if isinstance(payload, dict) and payload.get("pr_open_id") == pr_open_id:
@@ -83,7 +83,7 @@ def _already_open_draft(store: Store, session_id: str, fingerprint: str) -> bool
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
             continue
-        if row.get("session_id") != session_id or row.get("type") != "pr.open":
+        if row.get("type") != "pr.open":
             continue
         status = row.get("execution_status")
         payload = row.get("payload")
@@ -285,14 +285,6 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
         existing = _lookup_implement_task(store, session_id, error_id)
         if existing is not None and (parent / existing / ".git").exists():
             path = parent / existing
-            error = _run_git(
-                runner,
-                ["git", "-C", str(path), "checkout", "-B", head],
-                "git checkout failed",
-            )
-            if error is not None:
-                lines.append(f"error.fix {rid} error")
-                continue
             result = {
                 "task_id": existing,
                 "worktree": str(path),
