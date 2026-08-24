@@ -130,6 +130,35 @@ def test_initial_sync_failure_in_follow_mode_reconnects_instead_of_dying(
     assert len(calls) == 2, "the first sync failure must be retried, not exit the process"
 
 
+def test_hub_construction_failure_in_follow_mode_reconnects_instead_of_dying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: _hub_from_store used to run unprotected before the reconnect
+    loop even began (once follow mode passed the initial sync check) - it calls
+    store.meta(), one of the wrapped methods, so a transient DB blip right there
+    would kill the process before the loop's own retry logic ever got a chance to
+    run, the same failure class already fixed for the initial sync. It must now be
+    constructed lazily inside the loop so a failure there is retried too."""
+    calls: list[int] = []
+
+    def fake_hub_from_store(store: object) -> object:
+        calls.append(1)
+        if len(calls) == 1:
+            raise StoreConnectionError("hub metadata lookup failed: connection lost")
+        raise _StopTest("reconnected past the hub construction failure - stopping the test here")
+
+    monkeypatch.setattr(main_mod, "_hub_from_store", fake_hub_from_store)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert len(calls) == 2, "a hub-construction failure must be retried, not exit the process"
+
+
 def test_store_connection_error_from_sync_reconnects_instead_of_dying(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

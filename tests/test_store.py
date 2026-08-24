@@ -473,6 +473,8 @@ def test_pg_errors_translate_to_store_connection_error_on_the_reconnect_path_met
         lambda: store.rows("session"),
         lambda: store.apply_remote(event),
         lambda: store.apply_replica_row(replica_row),
+        lambda: store.row("session", "s1"),
+        lambda: store.write("session", "update", "s1", {"id": "s1", "kind": "human", "status": "active"}),
     ]
     for call in calls:
         with pytest.raises(StoreConnectionError):
