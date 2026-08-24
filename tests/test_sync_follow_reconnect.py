@@ -144,8 +144,13 @@ def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
             def connect_sync_ws(self) -> _FailOnTerminalSendWs:
                 return _FailOnTerminalSendWs()
 
+        established: dict[str, float] = {}
         with pytest.raises(OSError):
-            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, established)
+        assert established.get("at") is not None, (
+            "control-ready succeeded before the terminal publish failed; established must "
+            "already be set by then, not only after a later step that can itself fail"
+        )
     finally:
         store.close()
 
