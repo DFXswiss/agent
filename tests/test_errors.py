@@ -57,6 +57,9 @@ def test_load_config_rejects_credentials(tmp_path: Path) -> None:
     path.write_text(json.dumps({"session_id": "s", "password": "x"}), encoding="utf-8")
     with pytest.raises(StoreError, match="must not contain credentials"):
         load_config(path)
+    path.write_text(json.dumps({"session_id": "s", "password ": "x"}), encoding="utf-8")
+    with pytest.raises(StoreError, match="must not contain credentials"):
+        load_config(path)
     path.write_text(
         json.dumps({"session_id": "s", "headers": {"token": "x"}}),
         encoding="utf-8",
@@ -143,6 +146,8 @@ def test_redact_and_fingerprint() -> None:
     client = redact('{"client_secret":"s3cretvalue"} access-token=abcdef')
     assert "s3cretvalue" not in client
     assert "abcdef" not in client
+    aws = redact('{"aws_secret_access_key":"wJalrXUtnFEMI"} aws_secret_access_key=wJalrXUtnFEMI')
+    assert "wJalrXUtnFEMI" not in aws
     assert error_class(cleaned) == "TimeoutError"
     sig = stack_sig(cleaned)
     assert len(sig) == 16
