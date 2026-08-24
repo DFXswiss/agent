@@ -78,17 +78,42 @@ def _pr_open_merged(store: Store, pr_open_id: str) -> bool:
     return False
 
 
+def _error_fix_heads(store: Store, fingerprint: str) -> set[str]:
+    origin = store.device_id()
+    heads: set[str] = set()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "error.seen":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
+            continue
+        seen_id = _nonempty_str(row.get("id"))
+        if seen_id is not None:
+            heads.add(f"error-fix-{seen_id[:8]}")
+    return heads
+
+
+def _draft_matches(payload: dict[str, Any], fingerprint: str, heads: set[str]) -> bool:
+    if payload.get("fingerprint") == fingerprint:
+        return True
+    head = _nonempty_str(payload.get("head"))
+    return head is not None and head in heads
+
+
 def _already_open_draft(store: Store, fingerprint: str) -> bool:
     origin = store.device_id()
+    heads = _error_fix_heads(store, fingerprint)
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
             continue
         if row.get("type") != "pr.open":
             continue
-        status = row.get("execution_status")
         payload = row.get("payload")
-        if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
+        if not isinstance(payload, dict) or not _draft_matches(payload, fingerprint, heads):
             continue
+        status = row.get("execution_status")
         if status == "pending":
             return True
         if status == "done" and not _pr_open_merged(store, str(row.get("id") or "")):
@@ -148,6 +173,8 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
             continue
         if row.get("session_id") != session_id:
             continue
+        if row.get("workflow") != "implement":
+            continue
         payload = row.get("payload")
         if isinstance(payload, dict) and payload.get("error_id") == error_id:
             return str(row["id"])
@@ -172,6 +199,13 @@ def _find_or_create_implement_task(
     repo = _repo_ok(seen_payload.get("repo") if isinstance(seen_payload, dict) else None)
     if repo is None:
         raise StoreError("unmapped-repo")
+    fingerprint = _nonempty_str(
+        seen_payload.get("fingerprint") if isinstance(seen_payload, dict) else None
+    )
+    if fingerprint is None:
+        raise StoreError("fingerprint is required")
+    if _already_open_draft(store, fingerprint):
+        raise StoreError("already-open-draft")
     session = store.row("session", session_id)
     if session is None:
         raise StoreError("session not found")
@@ -332,7 +366,15 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             )
         except StoreError as exc:
             shutil.rmtree(staging, ignore_errors=True)
-            _mark(store, row, status="error", error=str(exc))
+            if str(exc) in {
+                "already-open-draft",
+                "unmapped-repo",
+                "error.seen not found",
+                "fingerprint mismatch",
+                "fingerprint is required",
+                "error_id is required",
+            }:
+                _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.fix {rid} error")
             continue
         path = parent / task_id

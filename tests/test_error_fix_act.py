@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
 from agent_cli.runtime import Completed
-from agent_cli.store import Store, StoreError
+from agent_cli.store import Store, StoreError, utcnow
 
 
 def _runner_session(store: Store) -> None:
@@ -168,3 +169,186 @@ def test_find_or_create_requires_active_session(tmp_path: Path) -> None:
             "Fix observed error",
         )
     assert store.rows("task") == []
+
+
+def _clone_runner(calls: list[list[str]]) -> Callable[[list[str]], Completed]:
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "clone", "--"]:
+            Path(argv[-1]).joinpath(".git").mkdir(parents=True)
+        return Completed(0, "", "")
+
+    return runner
+
+
+def test_scan_error_fix_honors_existing_task_ref(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    find_or_create_implement_task(
+        store,
+        "runner-1",
+        "error-seen-12345678",
+        "Fix observed error",
+        ref="origin/develop",
+    )
+    _fix(store)
+    calls: list[list[str]] = []
+    lines = scan_error_fix(store, _clone_runner(calls))
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    staging = tmp_path / "error-fix-work" / "pending-fix-1"
+    worktree = tmp_path / "error-fix-work" / tasks[0]["id"]
+    assert lines == [f"error.fix fix-1 task={tasks[0]['id']} worktree={worktree}"]
+    assert [
+        "git",
+        "-C",
+        str(staging),
+        "checkout",
+        "-B",
+        "error-fix-error-se",
+        "origin/develop",
+    ] in calls
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "done"
+
+
+def test_scan_error_fix_rename_oserror_stays_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    real_rename = Path.rename
+
+    def boom(self: Path, target: Path) -> Path:
+        if self.name.startswith("pending-"):
+            raise OSError("cross-device")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", boom)
+    calls: list[list[str]] = []
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "pending"
+    assert len(store.rows("task")) == 1
+    staging = tmp_path / "error-fix-work" / "pending-fix-1"
+    assert (staging / ".git").exists()
+
+
+def test_scan_error_fix_ignores_non_implement_task(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    now = utcnow()
+    store.write(
+        "task",
+        "insert",
+        "review-task",
+        {
+            "id": "review-task",
+            "session_id": "runner-1",
+            "workflow": "review",
+            "title": "Review observed error",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "created_at": now,
+            "updated_at": now,
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    _fix(store)
+    calls: list[list[str]] = []
+    scan_error_fix(store, _clone_runner(calls))
+    implement = [row for row in store.rows("task") if row.get("workflow") == "implement"]
+    assert len(implement) == 1
+    assert implement[0]["id"] != "review-task"
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["task_id"] == implement[0]["id"]
+
+
+def test_find_or_create_rejects_already_open_draft(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "activity",
+        "insert",
+        "pr-open-1",
+        {
+            "id": "pr-open-1",
+            "session_id": "runner-1",
+            "type": "pr.open",
+            "payload": {"head": "error-fix-error-se", "repo": "org/app"},
+            "execution_status": "pending",
+        },
+    )
+    with pytest.raises(StoreError, match="already-open-draft"):
+        find_or_create_implement_task(
+            store,
+            "runner-1",
+            "error-seen-12345678",
+            "Fix observed error",
+        )
+    assert store.rows("task") == []
+
+
+def test_find_or_create_returns_existing_implement_despite_draft(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    tid, created = find_or_create_implement_task(
+        store,
+        "runner-1",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert created is True
+    store.write(
+        "activity",
+        "insert",
+        "pr-open-1",
+        {
+            "id": "pr-open-1",
+            "session_id": "runner-1",
+            "type": "pr.open",
+            "payload": {"fingerprint": "api|TimeoutError|abc|prod"},
+            "execution_status": "pending",
+        },
+    )
+    again, created_again = find_or_create_implement_task(
+        store,
+        "runner-1",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert again == tid
+    assert created_again is False
+
+
+def test_scan_inactive_session_after_clone_stays_pending(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    session = store.row("session", "runner-1")
+    assert session is not None
+    updated = {key: value for key, value in session.items() if not key.startswith("_")}
+    updated["status"] = "closed"
+    store.write("session", "update", "runner-1", updated)
+    calls: list[list[str]] = []
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "pending"
+    assert store.rows("task") == []
+    assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()

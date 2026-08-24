@@ -1580,6 +1580,74 @@ def test_activity_add_error_fix_rejects_already_open_draft(tmp_path: Path) -> No
         )
 
 
+def test_activity_add_error_fix_rejects_draft_by_head(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            {
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "session_id": "error-session",
+                "type": "pr.open",
+                "payload": {"repo": "org/app", "head": "error-fix-aaaaaaaa", "title": "Fix"},
+                "execution_status": "done",
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="already-open-draft"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_task_create_error_id_rejects_already_open_draft(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            {
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "session_id": "error-session",
+                "type": "pr.open",
+                "payload": {"fingerprint": fingerprint},
+                "execution_status": "pending",
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="already-open-draft"):
+        run(
+            tmp_path,
+            [
+                "task",
+                "create",
+                "--session",
+                "error-session",
+                "--workflow",
+                "implement",
+                "--error-id",
+                error_id,
+                "--title",
+                "Fix observed error",
+            ],
+        )
+
+
 def test_activity_add_error_fix_after_merged_draft_is_allowed(tmp_path: Path) -> None:
     first_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     second_id = "cccccccc-cccc-cccc-cccc-cccccccccccc"
