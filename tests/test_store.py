@@ -430,14 +430,18 @@ def test_no_agent_work_notify_for_foreign_replica_pending(tmp_path: Path) -> Non
 def test_pg_errors_translate_to_store_connection_error_on_the_reconnect_path_methods(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: a lost/reset postgres connection raises psycopg.Error, a
-    plain Exception - not caught by cmd_sync's --follow reconnect loop, which only
-    handles StoreConnectionError (a StoreError subclass, deliberately distinct from
-    a StoreError raised for a genuine data problem like a conflicting event or an
-    origin_seq gap - see test_write_emits_seq_and_blocks_foreign and
-    test_remote_gap_fail_closed above, which must keep failing loud, not retry).
+    """Regression test: a lost/reset postgres connection raises
+    psycopg.OperationalError, a plain Exception - not caught by cmd_sync's
+    --follow reconnect loop, which only handles StoreConnectionError (a
+    StoreError subclass, deliberately distinct from a StoreError raised for a
+    genuine data problem like a conflicting event or an origin_seq gap - see
+    test_write_emits_seq_and_blocks_foreign and test_remote_gap_fail_closed
+    above, which must keep failing loud, not retry; and see
+    test_data_integrity_pg_errors_are_not_classified_as_connection_errors below,
+    which confirms a DataError does NOT get this same translation).
     Every Store method the reconnect path calls directly must translate
-    psycopg.Error into StoreConnectionError so a transient local DB blip is
+    psycopg.OperationalError into StoreConnectionError so a transient local DB
+    blip is
     retried instead of killing the process."""
     import psycopg
 

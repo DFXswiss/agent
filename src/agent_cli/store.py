@@ -111,14 +111,14 @@ class StoreConnectionError(StoreError):
 
 
 def _wrap_pg_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """A lost/reset postgres connection raises psycopg.OperationalError/
-    InterfaceError, plain Exceptions - not caught by callers (e.g. cmd_sync's
-    reconnect loop) that only handle StoreConnectionError. Translate those
-    specifically so those call sites can retry instead of dying. Any other
-    psycopg.Error (DataError, IntegrityError, ProgrammingError, ...) is a genuine
-    data/query problem, not a connection issue - it becomes a plain StoreError so
-    it still fails loud with a clean message instead of an uncaught traceback, but
-    is never mistaken for something safe to retry."""
+    """A lost/reset postgres connection raises psycopg.OperationalError or
+    psycopg.InterfaceError - plain Exception subclasses, not caught by callers
+    (e.g. cmd_sync's reconnect loop) that only handle StoreConnectionError.
+    Translate those specifically so those call sites can retry instead of dying.
+    Any other psycopg.Error (DataError, IntegrityError, ProgrammingError, ...) is a
+    genuine data/query problem, not a connection issue - it becomes a plain
+    StoreError so it still fails loud with a clean message instead of an uncaught
+    traceback, but is never mistaken for something safe to retry."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -205,7 +205,12 @@ class Store:
     def reconnect(self) -> None:
         """Re-establish the postgres connection after StoreConnectionError. The old
         connection is already dead (that's what raised the error); discard it and
-        open a fresh one, same as __init__."""
+        open a fresh one, same as __init__. Unlike _wrap_pg_errors' narrower
+        translation, ANY psycopg.Error here becomes StoreConnectionError - this
+        call only ever does a bare connect + SET timezone, nothing that could
+        legitimately raise a data/query error, so any failure here genuinely is a
+        connection problem. cmd_sync's reconnect loop expects and handles exactly
+        this type from this method."""
         try:
             self.conn.close()
         except Exception:
