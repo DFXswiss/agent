@@ -93,12 +93,21 @@ def _run_mail_reply(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     except _MailError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"mail.reply {rid} error"
-    argv = ["himalaya", "message", "send", "--header", f"To: {to}"]
-    if subject is not None:
-        argv.extend(["--header", f"Subject: {subject}"])
     if in_reply_to is not None:
-        argv.extend(["--header", f"In-Reply-To: {in_reply_to}"])
-    argv.extend(["--body", body])
+        argv = [
+            "himalaya",
+            "message",
+            "reply",
+            "--body",
+            body,
+            "--send",
+            in_reply_to,
+        ]
+    else:
+        argv = ["himalaya", "message", "compose", "--to", to]
+        if subject is not None:
+            argv.extend(["--subject", subject])
+        argv.extend(["--body", body, "--send"])
     try:
         completed = _run_himalaya(argv, runner)
         if completed.returncode != 0:
@@ -230,7 +239,7 @@ def _envelope_payload(item: dict[str, Any]) -> dict[str, Any] | None:
 
 def scan_mail_ingest(store: Store, runner: Runner) -> list[str]:
     """List envelopes via himalaya and insert new mail.ingest rows (no knock)."""
-    argv = ["himalaya", "envelope", "list", "-o", "json", "--page-size", "30"]
+    argv = ["himalaya", "--json", "envelope", "list", "--page-size", "30"]
     try:
         completed = runner(argv)
     except OSError:

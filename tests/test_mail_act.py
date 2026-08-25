@@ -65,13 +65,14 @@ def test_mail_reply_success(tmp_path: Path) -> None:
         [
             "himalaya",
             "message",
-            "send",
-            "--header",
-            "To: peer",
-            "--header",
-            "Subject: Re: hello",
+            "compose",
+            "--to",
+            "peer",
+            "--subject",
+            "Re: hello",
             "--body",
             "thanks",
+            "--send",
         ]
     ]
 
@@ -132,7 +133,7 @@ def test_mail_ingest_inserts_and_idempotent(tmp_path: Path) -> None:
     def runner(argv: list[str]) -> Completed:
         nonlocal calls
         calls += 1
-        assert argv == ["himalaya", "envelope", "list", "-o", "json", "--page-size", "30"]
+        assert argv == ["himalaya", "--json", "envelope", "list", "--page-size", "30"]
         return Completed(0, json.dumps(envelopes), "")
 
     lines1 = scan_mail_ingest(store, runner)
