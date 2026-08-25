@@ -2190,3 +2190,22 @@ def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, cap
     assert "gate grok-pr/quality=rejected" in out
     assert "type=comment.post" not in out
     assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_with_blank_evidence_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="--evidence is required"):
+        run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "   \t "))
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_recorded_twice_queues_one_comment(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    first = capsys.readouterr().out
+    run(tmp_path, argv)
+    second = capsys.readouterr().out
+    assert "type=comment.post" in first
+    assert "type=comment.post" not in second
+    assert len(_comment_activities(tmp_path)) == 1

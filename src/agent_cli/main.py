@@ -1000,7 +1000,13 @@ def _queue_gate_findings(
         return None
     if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
         return None
-    activity_id = str(uuid.uuid4())
+    # Derived, not random: a retried `gate record` must reuse the id so the marker
+    # github_act writes matches and the findings are not posted twice.
+    activity_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"gate-findings:{task['id']}:{stage}:{dimension}:{head}")
+    )
+    if store.row("activity", activity_id) is not None:
+        return None
     store.write(
         "activity",
         "insert",
@@ -1048,7 +1054,7 @@ def cmd_gate(args: list[str]) -> None:
         die(f"stage {stage} requires vendor {expected_vendor}")
     if verdict not in ("approved", "rejected"):
         die("verdict must be approved|rejected")
-    if verdict == "rejected" and not evidence:
+    if verdict == "rejected" and not (evidence or "").strip():
         die("--evidence is required when --verdict is rejected")
     if not re.fullmatch(r"[0-9a-f]{7,40}", head):
         die("--head must be a git SHA (lowercase hex, length 7–40)")
