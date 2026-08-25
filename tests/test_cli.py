@@ -2379,3 +2379,37 @@ def test_the_same_finding_at_a_new_head_queues_its_own_comment(
     bodies = sorted(row["payload"]["body"] for row in rows)
     assert any(_GATE_HEAD in b for b in bodies)
     assert any(other_head in b for b in bodies)
+
+
+def test_a_retargeted_task_queues_a_comment_on_the_new_pull_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Same lane, head and evidence, different destination. Keying only on the
+    # content would treat the retargeted comment as one already delivered.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    evidence = "dto.ts:91 keeps @IsOptional()"
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    capsys.readouterr()
+
+    def _retarget(repo: str, ref: str) -> None:
+        store = Store(tmp_path)
+        try:
+            task = store.row("task", tid)
+            assert task is not None
+            task["repo"] = repo
+            task["ref"] = ref
+            task["updated_at"] = utcnow()
+            store.write("task", "update", tid, task)
+        finally:
+            store.close()
+
+    # Move the number alone, then the repository alone. Changing both at once would
+    # leave either one missing from the key undetected: the other still separates them.
+    _retarget("owner/name", "99")
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    _retarget("owner/other", "99")
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    capsys.readouterr()
+    rows = _comment_activities(tmp_path)
+    targets = sorted((row["payload"]["repo"], row["payload"]["number"]) for row in rows)
+    assert targets == [("owner/name", 7), ("owner/name", 99), ("owner/other", 99)]
