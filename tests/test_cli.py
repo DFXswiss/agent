@@ -2285,14 +2285,17 @@ def test_rejected_gate_survives_a_stale_existence_read(
     real_row = Store.row
     seen: list[int] = []
 
-    def _stale_first(self: Store, table: str, row_id: str):
+    def _stale_op_read(self: Store, table: str, row_id: str):
+        # Call 1 is `_settled()`, which must see the errored row so the retry
+        # proceeds at all. Call 2 is the insert/update choice — that is the read a
+        # concurrent insert makes stale, so it alone reports the row as absent.
         if table == "activity" and row_id == activity_id:
             seen.append(1)
-            if len(seen) == 1:
+            if len(seen) == 2:
                 return None
         return real_row(self, table, row_id)
 
-    monkeypatch.setattr(Store, "row", _stale_first)
+    monkeypatch.setattr(Store, "row", _stale_op_read)
 
     run(tmp_path, argv)
     out = capsys.readouterr().out
