@@ -82,10 +82,9 @@ def _run_mail_reply(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     if not isinstance(payload, dict):
         _mark(store, row, status="error", error="payload must be an object")
         return f"mail.reply {rid} error"
-    to = _nonempty_str(payload.get("to"))
     body = _nonempty_str(payload.get("body"))
-    if to is None or body is None:
-        _mark(store, row, status="error", error="mail.reply requires to, body")
+    if body is None:
+        _mark(store, row, status="error", error="mail.reply requires body")
         return f"mail.reply {rid} error"
     try:
         subject = _optional_str_field(payload, "subject", nonempty=True)
@@ -93,17 +92,21 @@ def _run_mail_reply(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     except _MailError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"mail.reply {rid} error"
+    to = _nonempty_str(payload.get("to"))
     if in_reply_to is not None:
         argv = [
             "himalaya",
             "message",
             "reply",
+            in_reply_to,
             "--body",
             body,
             "--send",
-            in_reply_to,
         ]
     else:
+        if to is None:
+            _mark(store, row, status="error", error="mail.reply requires to, body")
+            return f"mail.reply {rid} error"
         argv = ["himalaya", "message", "compose", "--to", to]
         if subject is not None:
             argv.extend(["--subject", subject])
@@ -114,7 +117,8 @@ def _run_mail_reply(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             detail = (completed.stderr or completed.stdout or "himalaya failed").strip()
             _mark(store, row, status="error", error=detail[:500] or "himalaya failed")
             return f"mail.reply {rid} error"
-        _mark(store, row, status="done", result={"to": to})
+        result = {"to": to} if to is not None else {"in_reply_to": in_reply_to}
+        _mark(store, row, status="done", result=result)
         return f"mail.reply {rid} done"
     except _MailError as exc:
         _mark(store, row, status="error", error=str(exc))

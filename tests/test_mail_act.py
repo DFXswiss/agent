@@ -77,6 +77,28 @@ def test_mail_reply_success(tmp_path: Path) -> None:
     ]
 
 
+def test_mail_reply_in_reply_to_without_to(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "reply-2"
+    _pending(store, act_id, "mail.reply", {"in_reply_to": "11", "body": "thanks"})
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    lines = scan_mail(store, runner)
+    assert lines == [f"mail.reply {act_id} done"]
+    assert calls == [
+        ["himalaya", "message", "reply", "11", "--body", "thanks", "--send"]
+    ]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"] == {"in_reply_to": "11"}
+
+
 def test_mail_reply_missing_to_no_runner(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
