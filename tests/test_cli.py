@@ -2303,3 +2303,46 @@ def test_rejected_gate_survives_a_stale_existence_read(
     rows = _comment_activities(tmp_path)
     assert len(rows) == 1
     assert rows[0]["execution_status"] == "pending"
+
+
+def test_rejected_gate_does_not_retry_a_failed_update(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Recovery exists only for a stale `insert`. An `update` that fails is a real
+    # failure: retrying it repeats the same write and buries the original error.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    capsys.readouterr()
+    activity_id = _comment_activities(tmp_path)[0]["id"]
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row is not None
+        store.write(
+            "activity",
+            "update",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": row["session_id"],
+                "type": row["type"],
+                "payload": row["payload"],
+                "execution_status": "error",
+            },
+        )
+    finally:
+        store.close()
+
+    ops: list[str] = []
+
+    def _refuse(self: Store, table: str, op: str, row_id: str, payload: dict, **kwargs: object):
+        ops.append(op)
+        raise StoreError("write refused")
+
+    monkeypatch.setattr(Store, "write_with_advisory", _refuse)
+
+    with pytest.raises((SystemExit, StoreError)):
+        run(tmp_path, argv)
+    assert ops == ["update"]

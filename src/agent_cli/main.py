@@ -1045,11 +1045,14 @@ def _queue_gate_findings(
 
     if _settled():
         return None
+    op = "update" if store.row("activity", activity_id) is not None else "insert"
     try:
-        written = _queue("update" if store.row("activity", activity_id) is not None else "insert")
+        written = _queue(op)
     except StoreError:
-        # The row appeared between that read and the lock. `skip` was evaluated
-        # under the lock and is sound; only the choice of op was stale.
+        # Only a stale `insert` is recoverable: the row appeared between that read
+        # and the lock. Any other StoreError is a real failure and must surface.
+        if op != "insert":
+            raise
         written = _queue("update")
     return None if written is None else activity_id
 
