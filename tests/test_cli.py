@@ -2249,3 +2249,54 @@ def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path
     assert len(rows) == 1
     assert rows[0]["id"] == activity_id
     assert rows[0]["execution_status"] == "pending"
+
+
+def test_rejected_gate_survives_a_stale_existence_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two callers can record the same rejection. One inserts the deterministic
+    # activity and the executor marks it `error` before the other takes the lock,
+    # so the second caller's insert/update choice is already stale when it writes.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    capsys.readouterr()
+    activity_id = _comment_activities(tmp_path)[0]["id"]
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row is not None
+        store.write(
+            "activity",
+            "update",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": row["session_id"],
+                "type": row["type"],
+                "payload": row["payload"],
+                "execution_status": "error",
+            },
+        )
+    finally:
+        store.close()
+
+    real_row = Store.row
+    seen: list[int] = []
+
+    def _stale_first(self: Store, table: str, row_id: str):
+        if table == "activity" and row_id == activity_id:
+            seen.append(1)
+            if len(seen) == 1:
+                return None
+        return real_row(self, table, row_id)
+
+    monkeypatch.setattr(Store, "row", _stale_first)
+
+    run(tmp_path, argv)
+    out = capsys.readouterr().out
+    assert "type=comment.post" in out
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["execution_status"] == "pending"

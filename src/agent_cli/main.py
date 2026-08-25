@@ -1020,28 +1020,37 @@ def _queue_gate_findings(
         row = store.row("activity", activity_id)
         return row is not None and row.get("execution_status") != "error"
 
-    existing = store.row("activity", activity_id)
+    payload = {
+        "id": activity_id,
+        "session_id": task["session_id"],
+        "type": "comment.post",
+        "payload": {
+            "repo": repo,
+            "number": number,
+            "target": "pr",
+            "body": f"`{stage}` / `{dimension}` ({vendor}) rejected at `{head}`\n\n{evidence}",
+        },
+        "execution_status": "pending",
+    }
+
+    def _queue(op: str) -> dict | None:
+        return store.write_with_advisory(
+            "activity",
+            op,
+            activity_id,
+            payload,
+            lock_key=f"gate-findings:{activity_id}",
+            skip=_settled,
+        )
+
     if _settled():
         return None
-    written = store.write_with_advisory(
-        "activity",
-        "update" if existing is not None else "insert",
-        activity_id,
-        {
-            "id": activity_id,
-            "session_id": task["session_id"],
-            "type": "comment.post",
-            "payload": {
-                "repo": repo,
-                "number": number,
-                "target": "pr",
-                "body": f"`{stage}` / `{dimension}` ({vendor}) rejected at `{head}`\n\n{evidence}",
-            },
-            "execution_status": "pending",
-        },
-        lock_key=f"gate-findings:{activity_id}",
-        skip=_settled,
-    )
+    try:
+        written = _queue("update" if store.row("activity", activity_id) is not None else "insert")
+    except StoreError:
+        # The row appeared between that read and the lock. `skip` was evaluated
+        # under the lock and is sound; only the choice of op was stale.
+        written = _queue("update")
     return None if written is None else activity_id
 
 
