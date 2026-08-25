@@ -35,12 +35,13 @@ Review lanes execute no software (no tests, builds, or servers).
 ## Verdicts
 
 - `approved` → close the matching checklist key with evidence.
-- `rejected` → do not treat the stage as passed. `--evidence` is required and
-  is queued as a pull-request comment, so the findings reach the author
-  instead of stopping the task silently; `agent github pending` performs the
-  HTTP. On implement / resolve-conflicts, `agent gate record` returns the task
-  to `implementing`. On workflow `review`, the task stays in pr-review and is
-  not `done`.
+- `rejected` → do not treat the stage as passed. `--evidence` is required. On a
+  task that carries a pull request the evidence is queued as a comment there,
+  so the findings reach the author instead of stopping the task silently;
+  `agent github pending` performs the HTTP. A task without a pull request
+  records the rejection and reports that nothing was queued. On implement /
+  resolve-conflicts, `agent gate record` returns the task to `implementing`.
+  On workflow `review`, the task stays in pr-review and is not `done`.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
   substitute another vendor.
 

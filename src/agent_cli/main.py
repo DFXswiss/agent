@@ -980,6 +980,17 @@ def cmd_check(args: list[str]) -> None:
         store.close()
 
 
+def _task_pull_request(task: dict) -> tuple[str, int] | None:
+    """The task's pull request as (repo, number), or None when it has none."""
+    repo = task.get("repo")
+    ref = task.get("ref")
+    if not isinstance(repo, str) or repo.count("/") != 1 or "" in repo.split("/"):
+        return None
+    if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
+        return None
+    return repo, int(ref)
+
+
 def _queue_gate_findings(
     store: Store,
     task: dict,
@@ -994,22 +1005,27 @@ def _queue_gate_findings(
     A rejection that is only recorded stops the task without telling the author
     what was found. `agent github pending` performs the HTTP.
     """
-    repo = task.get("repo")
-    ref = task.get("ref")
-    if not isinstance(repo, str) or repo.count("/") != 1 or "" in repo.split("/"):
+    pull_request = _task_pull_request(task)
+    if pull_request is None:
         return None
-    if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
-        return None
+    repo, number = pull_request
     # Derived, not random: a retried `gate record` must reuse the id so the marker
     # github_act writes matches and the findings are not posted twice.
     activity_id = str(
         uuid.uuid5(uuid.NAMESPACE_URL, f"gate-findings:{task['id']}:{stage}:{dimension}:{head}")
     )
-    if store.row("activity", activity_id) is not None:
+    def _settled() -> bool:
+        # An errored row is not settled: the executor gave up on it, so a later
+        # `gate record` has to hand it back rather than treat it as delivered.
+        row = store.row("activity", activity_id)
+        return row is not None and row.get("execution_status") != "error"
+
+    existing = store.row("activity", activity_id)
+    if _settled():
         return None
-    store.write(
+    written = store.write_with_advisory(
         "activity",
-        "insert",
+        "update" if existing is not None else "insert",
         activity_id,
         {
             "id": activity_id,
@@ -1017,14 +1033,16 @@ def _queue_gate_findings(
             "type": "comment.post",
             "payload": {
                 "repo": repo,
-                "number": int(ref),
+                "number": number,
                 "target": "pr",
                 "body": f"`{stage}` / `{dimension}` ({vendor}) rejected at `{head}`\n\n{evidence}",
             },
             "execution_status": "pending",
         },
+        lock_key=f"gate-findings:{activity_id}",
+        skip=_settled,
     )
-    return activity_id
+    return None if written is None else activity_id
 
 
 def cmd_gate(args: list[str]) -> None:
@@ -1122,6 +1140,8 @@ def cmd_gate(args: list[str]) -> None:
         print(f"gate {stage}/{dimension}={verdict}")
         if queued is not None:
             print(f"activity {queued} type=comment.post")
+        elif verdict == "rejected" and _task_pull_request(task) is None:
+            print("no pull request on this task: findings not queued")
     finally:
         store.close()
 

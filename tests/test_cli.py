@@ -2189,6 +2189,7 @@ def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, cap
     out = capsys.readouterr().out
     assert "gate grok-pr/quality=rejected" in out
     assert "type=comment.post" not in out
+    assert "no pull request on this task: findings not queued" in out
     assert _comment_activities(tmp_path) == []
 
 
@@ -2209,3 +2210,42 @@ def test_rejected_gate_recorded_twice_queues_one_comment(tmp_path: Path, capsys:
     assert "type=comment.post" in first
     assert "type=comment.post" not in second
     assert len(_comment_activities(tmp_path)) == 1
+
+
+def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    capsys.readouterr()
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    activity_id = rows[0]["id"]
+
+    # github_act marks a transient GitHub failure as `error`; scan_github only
+    # picks up pending work, so nothing would retry it on its own.
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row is not None
+        store.write(
+            "activity",
+            "update",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": row["session_id"],
+                "type": row["type"],
+                "payload": row["payload"],
+                "execution_status": "error",
+            },
+        )
+    finally:
+        store.close()
+
+    run(tmp_path, argv)
+    out = capsys.readouterr().out
+    assert "type=comment.post" in out
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["id"] == activity_id
+    assert rows[0]["execution_status"] == "pending"
