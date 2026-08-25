@@ -2135,10 +2135,10 @@ def _seed_pr_review_gate(
     return tid, aid
 
 
-def _gate_argv(tid: str, aid: str, verdict: str, *extra: str) -> list[str]:
+def _gate_argv(tid: str, aid: str, verdict: str, *extra: str, head: str = _GATE_HEAD) -> list[str]:
     return [
         "gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality",
-        "--vendor", "grok", "--verdict", verdict, "--head", _GATE_HEAD, "--agent", aid, *extra,
+        "--vendor", "grok", "--verdict", verdict, "--head", head, "--agent", aid, *extra,
     ]
 
 
@@ -2361,3 +2361,21 @@ def test_a_second_rejection_with_new_findings_queues_its_own_comment(
     assert len(bodies) == 2
     assert any("first finding" in b for b in bodies)
     assert any("corrected finding" in b for b in bodies)
+
+
+def test_the_same_finding_at_a_new_head_queues_its_own_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The head is part of the comment's identity: the same defect surviving a new
+    # push is a new rejection to report, not a repeat of the one already posted.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    evidence = "dto.ts:91 keeps @IsOptional()"
+    other_head = "b2c3d4e5f60718293a4b5c6d7e8f901234567890"
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence, head=other_head))
+    capsys.readouterr()
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 2
+    bodies = sorted(row["payload"]["body"] for row in rows)
+    assert any(_GATE_HEAD in b for b in bodies)
+    assert any(other_head in b for b in bodies)
