@@ -44,6 +44,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
+| Pull request done | A draft plus local tests is not done. CONTRIBUTING.md is the contract for this repository. When spine and pr-review are attached, grok then Codex on this head are the gates; `agent allow --action pr-ready` only checks task state. A human merges. |
 | Merge | The client never merges. A human merges. |
 | Repos | Public MIT: `DFXswiss/agent` (client), `DFXswiss/agent-core` (hub). |
 | Website host | `agent.dfx.swiss` (development: `dev.agent.dfx.swiss`). Singular product name. |
@@ -483,9 +484,9 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 | Whether a command ran and what it returned | The process that ran it | `agent check record` (name, command, `pass`/`fail`/`skip`, output) |
 | Merge | Human | Never a client command |
 
-A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition.
+A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition. Opening a draft is not done.
 
-No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, or timeout review output is not zero findings). A patch that does not apply is a failed check, not a debate.
+No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, timeout, or unavailable review output is not zero findings). A patch that does not apply is a failed check, not a debate.
 
 ### 19.2 Untrusted inputs
 
@@ -523,6 +524,14 @@ Partial multi-step actions (push, then open a pull request) record each complete
 ### 19.5 What this does not change
 
 Write owner, hub role, opt-in skills, required session row, and the generic `activity` catalog stay as in §2. Spine task states stay the spine skill’s states. They are not replaced by a hub machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
+
+### 19.6 Pull request done
+
+A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft is four lane verdicts (grok quality and grok logic, then Codex quality and Codex logic) on this head plus CI green on this head. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences.
+
+Quality and logic of one vendor stage run together. Vendors are `grok`, then `codex`. Codex runs only after both grok dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+
+CI on this head is a script-measured fact. `skipped` and `cancelled` are not green unless the workflow documents that skip. Stay draft until that holds. One comment whose review-pass count is those four `approved` verdicts on this head, then ready. A retry reuses the existing draft. A human merges.
 
 ## 20. Refused: hub as a coding control plane
 

@@ -33,4 +33,7 @@ The reviewer is read-only: no tests, builds, or servers.
 Empty, partial, timeout, or unavailable review output is not zero findings.
 Zero findings only after an explicit complete pass.
 
+This inner loop is not the pull-request review. `reviewer_approved` does not
+close `grok_pr_*` or `codex_pr_*`. A draft plus local tests is not done.
+
 Locate these files with `agent skills path`.
