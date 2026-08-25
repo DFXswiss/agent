@@ -1497,7 +1497,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 self._json(400, {"ok": False, "error": "body must be an object"})
                 return
 
-            def handle_control() -> dict | None:
+            def lookup_session() -> dict | None:
                 row = store.row("session", sid)
                 if row is None:
                     self.send_error(404)
@@ -1505,19 +1505,10 @@ def cmd_dashboard(args: list[str]) -> None:
                 if row.get("_origin_device_id") != store.device_id():
                     self.send_error(403)
                     return None
-                payload = body.get("payload")
-                if not isinstance(payload, dict):
-                    payload = {k: v for k, v in body.items() if k != "action"}
-                message = {
-                    "type": "control",
-                    "session_id": sid,
-                    "action": body.get("action"),
-                    "payload": payload,
-                }
-                return apply_control(store, Runtime(), message)
+                return row
 
             try:
-                ack = handle_control()
+                row = lookup_session()
             except StoreConnectionError:
                 try:
                     store.reconnect()
@@ -1525,11 +1516,31 @@ def cmd_dashboard(args: list[str]) -> None:
                     self._json(503, {"ok": False, "error": str(exc)})
                     return
                 try:
-                    ack = handle_control()
+                    row = lookup_session()
                 except StoreConnectionError as exc:
                     self._json(503, {"ok": False, "error": str(exc)})
                     return
-            if ack is None:
+            if row is None:
+                return
+
+            payload = body.get("payload")
+            if not isinstance(payload, dict):
+                payload = {k: v for k, v in body.items() if k != "action"}
+            message = {
+                "type": "control",
+                "session_id": sid,
+                "action": body.get("action"),
+                "payload": payload,
+            }
+            try:
+                ack = apply_control(store, Runtime(), message)
+            except StoreConnectionError as exc:
+                try:
+                    store.reconnect()
+                except StoreConnectionError as rec_exc:
+                    self._json(503, {"ok": False, "error": str(rec_exc)})
+                    return
+                self._json(503, {"ok": False, "error": str(exc)})
                 return
             if not ack.get("ok"):
                 self._json(400, {"ok": False, "error": ack.get("error")})
