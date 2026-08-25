@@ -397,6 +397,9 @@ agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
 agent allow|next|close-step|run …                 # spine skill; run: [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
 agent github pending                           # one scan; pr.open, comment.post, issue.write via gh
+agent query --match-file PATH                  # hub POST /sync/query; prints {"rows":[…]}
+agent subscribe list|set --file PATH|clear     # hub GET/PUT /sync/subscriptions
+agent mail pending|ingest                      # mail.reply / mail.seen via himalaya; envelope ingest
 agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
@@ -462,7 +465,6 @@ These are not silent defaults in code; they are human steps after merge:
 Later product work (not required to operate v1 after merge):
 
 - Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts).
-- `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
 - `activity` type `session.register` (v1 records the `session` row only).
 
 ## 19. Deterministic core

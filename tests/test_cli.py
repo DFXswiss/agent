@@ -1805,7 +1805,6 @@ def test_activity_add_assigned_ack_requires_queue_head(
     [
         "pr.merged",
         "mail.ingest",
-        "mail.seen",
         "query.result",
         "session.register",
         "usage.snapshot",
