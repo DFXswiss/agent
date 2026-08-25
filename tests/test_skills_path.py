@@ -82,3 +82,12 @@ def test_skills_path_usage() -> None:
         run(["skills"])
     with pytest.raises(SystemExit, match="Usage: agent skills path"):
         run(["skills", "list"])
+
+
+def test_the_documented_rejected_gate_command_carries_evidence() -> None:
+    # The contract's own example is what an operator copies. A `rejected` form
+    # without `--evidence` exits before recording the gate or queuing its findings.
+    contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
+    rejected = [ln for ln in contract.splitlines() if "--verdict rejected" in ln]
+    assert rejected, "the contract shows no rejected gate example"
+    assert any("--evidence" in ln for ln in rejected), rejected

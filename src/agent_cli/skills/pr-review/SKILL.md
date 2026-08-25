@@ -25,7 +25,9 @@ agent agent start --session <session-id> --task <uuid> --role pr-reviewer-qualit
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
 agent agent finish --id <uuid> --verdict approved|rejected
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
-  --verdict approved|rejected --head <sha> --agent <reviewer-uuid>
+  --verdict approved --head <sha> --agent <reviewer-uuid>
+agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+  --verdict rejected --head <sha> --agent <reviewer-uuid> --evidence <findings>
 ```
 
 Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
