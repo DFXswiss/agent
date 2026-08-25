@@ -96,7 +96,7 @@ def test_mail_reply_in_reply_to_without_to(tmp_path: Path) -> None:
     row = store.row("activity", act_id)
     assert row is not None
     assert row["execution_status"] == "done"
-    assert row["result"] == {"in_reply_to": "11"}
+    assert row["result"] == {"in_reply_to": 11}
 
 
 def test_mail_reply_missing_to_no_runner(tmp_path: Path) -> None:
