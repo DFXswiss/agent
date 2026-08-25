@@ -86,39 +86,43 @@ def _run_mail_reply(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     if body is None:
         _mark(store, row, status="error", error="mail.reply requires body")
         return f"mail.reply {rid} error"
-    try:
-        subject = _optional_str_field(payload, "subject", nonempty=True)
-        in_reply_to = _optional_str_field(payload, "in_reply_to", nonempty=True)
-    except _MailError as exc:
-        _mark(store, row, status="error", error=str(exc))
-        return f"mail.reply {rid} error"
     to = _nonempty_str(payload.get("to"))
-    if in_reply_to is not None:
+    reply_id = _as_id(payload.get("in_reply_to"))
+    if "in_reply_to" in payload and payload.get("in_reply_to") is not None and reply_id is None:
+        _mark(store, row, status="error", error="in_reply_to must be an id")
+        return f"mail.reply {rid} error"
+    if reply_id is not None:
         argv = [
             "himalaya",
             "message",
             "reply",
-            in_reply_to,
+            reply_id,
             "--body",
             body,
             "--send",
         ]
+        done_result: dict[str, Any] = {"in_reply_to": payload.get("in_reply_to")}
     else:
         if to is None:
             _mark(store, row, status="error", error="mail.reply requires to, body")
+            return f"mail.reply {rid} error"
+        try:
+            subject = _optional_str_field(payload, "subject", nonempty=True)
+        except _MailError as exc:
+            _mark(store, row, status="error", error=str(exc))
             return f"mail.reply {rid} error"
         argv = ["himalaya", "message", "compose", "--to", to]
         if subject is not None:
             argv.extend(["--subject", subject])
         argv.extend(["--body", body, "--send"])
+        done_result = {"to": to}
     try:
         completed = _run_himalaya(argv, runner)
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "himalaya failed").strip()
             _mark(store, row, status="error", error=detail[:500] or "himalaya failed")
             return f"mail.reply {rid} error"
-        result = {"to": to} if to is not None else {"in_reply_to": in_reply_to}
-        _mark(store, row, status="done", result=result)
+        _mark(store, row, status="done", result=done_result)
         return f"mail.reply {rid} done"
     except _MailError as exc:
         _mark(store, row, status="error", error=str(exc))

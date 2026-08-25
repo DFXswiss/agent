@@ -418,7 +418,7 @@ agent dashboard [--port 7845]
 
 Local dashboard binds `127.0.0.1` only.
 
-The AI is not expected to type hub HTTP or `gh`. It inserts `activity` (and `query.request` / `subscription.set`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
+The AI is not expected to type hub HTTP, `gh`, or himalaya. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
 
 ## 17. Control
 

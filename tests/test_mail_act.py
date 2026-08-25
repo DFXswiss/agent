@@ -81,7 +81,7 @@ def test_mail_reply_in_reply_to_without_to(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
     act_id = "reply-2"
-    _pending(store, act_id, "mail.reply", {"in_reply_to": "11", "body": "thanks"})
+    _pending(store, act_id, "mail.reply", {"in_reply_to": 11, "body": "thanks"})
     calls: list[list[str]] = []
 
     def runner(argv: list[str]) -> Completed:
