@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.pg import PgError, create_database, require_loopback_dsn
-from agent_cli.store import Store, StoreError
+from agent_cli.store import Store, StoreConnectionError, StoreError
 
 
 def test_require_loopback_dsn() -> None:
@@ -425,3 +425,109 @@ def test_no_agent_work_notify_for_foreign_replica_pending(tmp_path: Path) -> Non
             }
         )
         assert next(conn.notifies(timeout=0.4), None) is None
+
+
+def test_pg_errors_translate_to_store_connection_error_on_the_reconnect_path_methods(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: a lost/reset postgres connection raises
+    psycopg.OperationalError, a plain Exception - not caught by cmd_sync's
+    --follow reconnect loop, which only handles StoreConnectionError (a
+    StoreError subclass, deliberately distinct from a StoreError raised for a
+    genuine data problem like a conflicting event or an origin_seq gap - see
+    test_write_emits_seq_and_blocks_foreign and test_remote_gap_fail_closed
+    above, which must keep failing loud, not retry; and see
+    test_data_integrity_pg_errors_are_not_classified_as_connection_errors below,
+    which confirms a DataError does NOT get this same translation).
+    Every Store method the reconnect path calls directly must translate
+    psycopg.OperationalError into StoreConnectionError so a transient local DB
+    blip is
+    retried instead of killing the process."""
+    import psycopg
+
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+
+    def broken_execute(*args: object, **kwargs: object) -> None:
+        raise psycopg.OperationalError("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(store.conn, "execute", broken_execute)
+
+    event = {
+        "origin_device_id": "other",
+        "origin_seq": 1,
+        "table": "task",
+        "op": "insert",
+        "row_id": "x",
+        "payload": {"id": "x"},
+        "occurred_at": "2026-08-13T12:00:00Z",
+    }
+    replica_row = {
+        "table": "session",
+        "row_id": "s2",
+        "origin_device_id": "other",
+        "payload": {"id": "s2"},
+    }
+    calls = [
+        lambda: store.meta("device_id"),
+        lambda: store.pending_events(),
+        lambda: store.mark_pushed(1),
+        lambda: store.mark_origin("other", 1),
+        lambda: store.all_cursors(),
+        lambda: store.rows("session"),
+        lambda: store.apply_remote(event),
+        lambda: store.apply_replica_row(replica_row),
+        lambda: store.row("session", "s1"),
+        lambda: store.write("session", "update", "s1", {"id": "s1", "kind": "human", "status": "active"}),
+    ]
+    for call in calls:
+        with pytest.raises(StoreConnectionError):
+            call()
+
+
+def test_data_integrity_pg_errors_are_not_classified_as_connection_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: _wrap_pg_errors used to translate ANY psycopg.Error into
+    StoreConnectionError, including genuine data/query problems (DataError,
+    IntegrityError, ProgrammingError, ...) that are not connection issues at all.
+    Those would then be misrouted into cmd_sync's retry-forever reconnect loop
+    instead of failing loud - the exact class of bug already fixed once for
+    StoreError raised directly by application code (see
+    test_generic_store_error_from_sync_is_not_retried in
+    test_sync_follow_reconnect.py). Only OperationalError/InterfaceError - actual
+    connection-loss signals - should become StoreConnectionError; anything else
+    must still become a plain (non-retryable) StoreError."""
+    import psycopg
+
+    store = Store(tmp_path)
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+
+    def broken_execute(*args: object, **kwargs: object) -> None:
+        raise psycopg.DataError("invalid input syntax for type timestamp")
+
+    monkeypatch.setattr(store.conn, "execute", broken_execute)
+
+    with pytest.raises(StoreError) as excinfo:
+        store.meta("device_id")
+    assert not isinstance(excinfo.value, StoreConnectionError), (
+        "a genuine data error must not be classified as a retryable connection error"
+    )
+
+
+def test_reconnect_opens_a_fresh_connection(tmp_path: Path) -> None:
+    """Regression test: reconnect() must actually replace the dead connection, not
+    just discard it - a StoreConnectionError being non-fatal to the caller is only
+    useful if a subsequent call can succeed again."""
+    store = Store(tmp_path)
+    old_conn = store.conn
+    store.write("session", "insert", "s1", {"id": "s1", "kind": "human", "status": "active"})
+
+    old_conn.close()
+    with pytest.raises(StoreConnectionError):
+        store.meta("device_id")
+
+    store.reconnect()
+
+    assert store.conn is not old_conn
+    assert store.meta("device_id") == store.device_id()

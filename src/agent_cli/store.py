@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import threading
@@ -102,6 +103,35 @@ class StoreError(SystemExit):
     pass
 
 
+class StoreConnectionError(StoreError):
+    """A lost/reset postgres connection specifically - distinct from a StoreError
+    raised for a genuine data problem (a conflicting event, an origin_seq gap, an
+    ownership violation). A caller may want to retry the former but must never
+    silently retry or swallow the latter."""
+
+
+def _wrap_pg_errors(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """A lost/reset postgres connection raises psycopg.OperationalError or
+    psycopg.InterfaceError - plain Exception subclasses, not caught by callers
+    (e.g. cmd_sync's reconnect loop) that only handle StoreConnectionError.
+    Translate those specifically so those call sites can retry instead of dying.
+    Any other psycopg.Error (DataError, IntegrityError, ProgrammingError, ...) is a
+    genuine data/query problem, not a connection issue - it becomes a plain
+    StoreError so it still fails loud with a clean message instead of an uncaught
+    traceback, but is never mistaken for something safe to retry."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+            raise StoreConnectionError(f"postgres error: {exc}") from exc
+        except psycopg.Error as exc:
+            raise StoreError(f"postgres error: {exc}") from exc
+
+    return wrapper
+
+
 class Store:
     def __init__(self, home: Path, dsn: str | None = None) -> None:
         self.home = Path(home)
@@ -172,12 +202,34 @@ class Store:
     def close(self) -> None:
         self.conn.close()
 
+    def reconnect(self) -> None:
+        """Re-establish the postgres connection after StoreConnectionError. The old
+        connection is already dead (that's what raised the error); discard it and
+        open a fresh one, same as __init__. Unlike _wrap_pg_errors' narrower
+        translation, ANY psycopg.Error here becomes StoreConnectionError - this
+        call only ever does a bare connect + SET timezone, nothing that could
+        legitimately raise a data/query error, so any failure here genuinely is a
+        connection problem. cmd_sync's reconnect loop expects and handles exactly
+        this type from this method. Holds self._lock so ThreadingHTTPServer
+        handlers cannot race a reconnect against other store calls."""
+        with self._lock:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            try:
+                self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+                self.conn.execute("SET timezone TO 'UTC'")
+            except psycopg.Error as exc:
+                raise StoreConnectionError(f"cannot reconnect to postgres: {exc}") from exc
+
     def device_id(self) -> str:
         value = self.meta("device_id")
         if value is None:
             raise StoreError("device_id is missing")
         return value
 
+    @_wrap_pg_errors
     def meta(self, key: str) -> str | None:
         with self._lock:
             row = self.conn.execute("SELECT value FROM meta WHERE key = %s", (key,)).fetchone()
@@ -223,6 +275,7 @@ class Store:
             finally:
                 self.conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
 
+    @_wrap_pg_errors
     def write(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self.conn.transaction():
             return self._write_in_txn(table, op, row_id, payload)
@@ -290,6 +343,7 @@ class Store:
         self._maybe_work(event)
         return event
 
+    @_wrap_pg_errors
     def apply_remote(self, event: dict[str, Any], *, wake: bool = True) -> None:
         with self._lock, self.conn.transaction():
             inserted = self._insert_event_idempotent(event)
@@ -407,6 +461,7 @@ class Store:
             require_newer=False,
         )
 
+    @_wrap_pg_errors
     def apply_replica_row(self, row: dict[str, Any], *, wake: bool = True) -> None:
         if row.get("table") is None:
             raise StoreError("replica row missing table")
@@ -443,6 +498,7 @@ class Store:
                         self.enqueue_wake(event["row_id"], target)
                         self.claim_wake(event["row_id"])
 
+    @_wrap_pg_errors
     def pending_events(self) -> list[dict[str, Any]]:
         after = int(self.sync_get("pushed_origin_seq", "0") or "0")
         rows = self.conn.execute(
@@ -462,6 +518,7 @@ class Store:
             for r in rows
         ]
 
+    @_wrap_pg_errors
     def mark_pushed(self, seq: int) -> None:
         self.sync_set("pushed_origin_seq", str(seq))
 
@@ -469,15 +526,18 @@ class Store:
         raw = self.sync_get(f"origin:{origin}", "0")
         return int(raw or "0")
 
+    @_wrap_pg_errors
     def mark_origin(self, origin: str, seq: int) -> None:
         current = self.origin_cursor(origin)
         if seq > current:
             self.sync_set(f"origin:{origin}", str(seq))
 
+    @_wrap_pg_errors
     def all_cursors(self) -> dict[str, int]:
         rows = self.conn.execute("SELECT key, value FROM sync_state WHERE key LIKE 'origin:%'").fetchall()
         return {r["key"][7:]: int(r["value"]) for r in rows}
 
+    @_wrap_pg_errors
     def rows(self, table: str) -> list[dict[str, Any]]:
         with self._lock:
             found = self.conn.execute(
@@ -493,6 +553,7 @@ class Store:
             out.append(payload)
         return out
 
+    @_wrap_pg_errors
     def row(self, table: str, row_id: str) -> dict[str, Any] | None:
         with self._lock:
             found = self.conn.execute(

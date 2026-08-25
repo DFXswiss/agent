@@ -218,7 +218,7 @@ Rules:
 - Implicit **session mail** does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
 - Person pings this login **sent or received** are delivered the same way (snapshots on pull / WebSocket), independent of a subscription. Team-visible pings this login is not a party to stay on the website and on query; they are not laptop pull.
 - `GET /sync/restore` returns `own_events`, `inbox` (each session-mail snapshot addressed to a session this device owns, plus the parent `session` snapshot for that activity’s `session_id`), and `pings` (person-ping snapshots this login sent or received).
-- `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dead socket is a visible failure, not a silent poll).
+- `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dropped socket is logged and retried with capped exponential backoff, not a process exit and not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.
 
 Matcher v1 (subscriptions): `AND` of equality or `IN` on allowlisted paths only (`type`, `payload.repo`, `payload.issue_key`, `payload.to_session`). Unknown paths are 400. The subscription set lives on the hub for that device; it is not a fan-out row in the event log.
@@ -278,7 +278,7 @@ Ack of session mail is a **recipient-owned** `message.read` activity, not a muta
 | Scripts | `LISTEN` on `agent_work` (or poll `execution_status=pending`). |
 | Offline | Own events queue locally. On reconnect: own catch-up, session-mail inbox, person-ping snapshots this login sent or received, and subscriptions. |
 
-`agent sync --follow` stays on `/sync/ws?token=…` after one push+pull; a dead or failed socket is a loud error (no silent poll fallback).
+`agent sync --follow` stays on `/sync/ws?token=…` after one push+pull; a dropped socket is logged and retried with capped exponential backoff (not a process exit, not a silent poll fallback).
 
 ## 12. Auth and cookies
 

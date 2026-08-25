@@ -23,7 +23,7 @@ agent init
 agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
-agent sync --follow   # foreground WebSocket; a dead socket is a loud error
+agent sync --follow   # foreground WebSocket; reconnects with backoff on a dropped connection (cap 30s, logs to stderr; not a silent poll; process stays up)
 agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is present
 # other commands refuse until you move ledger.sqlite aside
 ```

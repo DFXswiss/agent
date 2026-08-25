@@ -17,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from websockets.exceptions import WebSocketException
+
 from .allow import ACTIONS, evaluate_allow, ready_for_done_blocking
 from .chain import (
     NO_AUTO_CLOSE,
@@ -40,7 +42,7 @@ from .runtime import (
     tmux_name,
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
-from .store import Store, StoreError, utcnow
+from .store import Store, StoreConnectionError, StoreError, utcnow
 from .usage import scan_usage, usage_poll_due
 from .watch import (
     assigned_session_id,
@@ -1208,68 +1210,105 @@ def cmd_pair(args: list[str]) -> None:
         store.close()
 
 
+_MAX_BACKOFF = 30.0
+
+
 def cmd_sync(args: list[str]) -> None:
     follow = "--follow" in args
     store = open_store()
     try:
-        _sync_once(store)
         if not follow:
+            _sync_once(store)
             return
-        hub = _hub_from_store(store)
+        hub: Hub | None = None
         runtime = Runtime()
         terminal_seq: dict[str, int] = {}
         last_capture: dict[str, str] = {}
         try:
-            try:
-                ws = hub.connect_sync_ws()
-            except HubError as exc:
-                die(str(exc))
-            try:
+            backoff = 1.0
+            while True:
+                established: dict[str, float] = {}
                 try:
-                    ws.send(json.dumps({"type": "control-ready"}))
-                except Exception as exc:
-                    die(f"control-ready send failed: {exc}")
-                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
-                for raw in ws:
-                    try:
-                        message = json.loads(raw)
-                    except (TypeError, ValueError):
-                        continue
-                    if not isinstance(message, dict):
-                        continue
-                    if message.get("type") == "control":
-                        ack = apply_control(store, runtime, message)
+                    if hub is not None:
                         try:
-                            ws.send(json.dumps(ack))
-                        except Exception as exc:
-                            die(f"control-ack send failed: {exc}")
-                    if message.get("type") == "subscription":
-                        rows = message.get("rows")
-                        if isinstance(rows, list):
-                            for row in rows:
-                                if not isinstance(row, dict) or not row.get("table"):
-                                    continue
-                                try:
-                                    store.apply_replica_row(row)
-                                except (StoreError, KeyError, TypeError):
-                                    continue
-                    if should_sync_on_ws(message):
-                        _sync_once(store)
-                    _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
-            except HubError as exc:
-                die(str(exc))
-            except Exception as exc:
-                die(f"websocket error: {exc}")
-            finally:
-                try:
-                    ws.close()
-                except Exception:
-                    pass
-            die("websocket closed")
+                            hub.close()
+                        except Exception:
+                            pass
+                        hub = None
+                    # Rebuild every iteration so a rotated device_token / hub URL
+                    # from the store is picked up (Hub freezes both at init).
+                    hub = _hub_from_store(store)
+                    _sync_once(store)
+                    _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, established)
+                except (HubError, StoreConnectionError, OSError, WebSocketException) as exc:
+                    started = established.get("at")
+                    failed_at = time.monotonic() if started is not None else None
+                    print(f"agent: sync connection lost, reconnecting: {exc}", file=sys.stderr)
+                    if isinstance(exc, StoreConnectionError):
+                        try:
+                            store.reconnect()
+                        except StoreConnectionError as reconnect_exc:
+                            print(f"agent: postgres reconnect failed, will retry: {reconnect_exc}", file=sys.stderr)
+                    if failed_at is not None and failed_at - started >= _MAX_BACKOFF:
+                        backoff = 1.0
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, _MAX_BACKOFF)
         finally:
-            hub.close()
+            if hub is not None:
+                hub.close()
     finally:
         store.close()
+
+
+def _run_sync_ws_session(
+    store: Store,
+    hub: Hub,
+    runtime: Runtime,
+    terminal_seq: dict[str, int],
+    last_capture: dict[str, str],
+    established: dict[str, float],
+) -> None:
+    """Run one websocket connection's message loop. Raises on disconnect/error;
+    the caller in cmd_sync reconnects with backoff instead of exiting the process.
+    Sets established["at"] once the handshake actually succeeds, so the caller can
+    measure connection stability from there rather than from the connect attempt."""
+    ws = hub.connect_sync_ws()
+    try:
+        ws.send(json.dumps({"type": "control-ready"}))
+        established["at"] = time.monotonic()
+        last_capture.clear()  # a new connection has no idea what a prior one already sent
+        _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
+        for raw in ws:
+            try:
+                message = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(message, dict):
+                continue
+            if message.get("type") == "control":
+                ack = apply_control(store, runtime, message)
+                ws.send(json.dumps(ack))
+            if message.get("type") == "subscription":
+                rows = message.get("rows")
+                if isinstance(rows, list):
+                    for row in rows:
+                        if not isinstance(row, dict) or not row.get("table"):
+                            continue
+                        try:
+                            store.apply_replica_row(row)
+                        except StoreConnectionError:
+                            raise  # a lost DB connection must reach cmd_sync's reconnect loop
+                        except (StoreError, KeyError, TypeError):
+                            continue
+            if should_sync_on_ws(message):
+                _sync_once(store)
+            _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
+        raise HubError("websocket closed")
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
 
 
 def cmd_restore(_: list[str]) -> None:
@@ -1405,11 +1444,24 @@ def cmd_dashboard(args: list[str]) -> None:
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             path = urlparse(self.path).path
             if path == "/api/state":
-                snap = store.snapshot()
-                device = store.device_id()
+                try:
+                    snap = store.snapshot()
+                    device = store.device_id()
+                except StoreConnectionError:
+                    try:
+                        store.reconnect()
+                    except StoreConnectionError as exc:
+                        self._json(503, {"ok": False, "error": str(exc)})
+                        return
+                    try:
+                        snap = store.snapshot()
+                        device = store.device_id()
+                    except StoreConnectionError as exc:
+                        self._json(503, {"ok": False, "error": str(exc)})
+                        return
                 for session in snap.get("sessions") or []:
                     session["can_control"] = session.get("_origin_device_id") == device
                     session["control_connected"] = True
@@ -1427,7 +1479,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 return
             self.send_error(404)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             path = urlparse(self.path).path
             match = re.fullmatch(r"/api/sessions/([^/]+)/control", path)
             if match is None:
@@ -1444,13 +1496,33 @@ def cmd_dashboard(args: list[str]) -> None:
             if not isinstance(body, dict):
                 self._json(400, {"ok": False, "error": "body must be an object"})
                 return
-            row = store.row("session", sid)
+
+            def lookup_session() -> dict | None:
+                row = store.row("session", sid)
+                if row is None:
+                    self.send_error(404)
+                    return None
+                if row.get("_origin_device_id") != store.device_id():
+                    self.send_error(403)
+                    return None
+                return row
+
+            try:
+                row = lookup_session()
+            except StoreConnectionError:
+                try:
+                    store.reconnect()
+                except StoreConnectionError as exc:
+                    self._json(503, {"ok": False, "error": str(exc)})
+                    return
+                try:
+                    row = lookup_session()
+                except StoreConnectionError as exc:
+                    self._json(503, {"ok": False, "error": str(exc)})
+                    return
             if row is None:
-                self.send_error(404)
                 return
-            if row.get("_origin_device_id") != store.device_id():
-                self.send_error(403)
-                return
+
             payload = body.get("payload")
             if not isinstance(payload, dict):
                 payload = {k: v for k, v in body.items() if k != "action"}
@@ -1460,7 +1532,16 @@ def cmd_dashboard(args: list[str]) -> None:
                 "action": body.get("action"),
                 "payload": payload,
             }
-            ack = apply_control(store, Runtime(), message)
+            try:
+                ack = apply_control(store, Runtime(), message)
+            except StoreConnectionError as exc:
+                try:
+                    store.reconnect()
+                except StoreConnectionError as rec_exc:
+                    self._json(503, {"ok": False, "error": str(rec_exc)})
+                    return
+                self._json(503, {"ok": False, "error": str(exc)})
+                return
             if not ack.get("ok"):
                 self._json(400, {"ok": False, "error": ack.get("error")})
                 return
@@ -1712,13 +1793,14 @@ def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
             die(f"unknown control action: {action}")
         ack["ok"] = True
         return ack
+    except StoreConnectionError:
+        raise  # a lost DB connection must reach cmd_sync's reconnect loop, not become an acked failure
     except (SystemExit, StoreError, ValueError) as exc:
         err = exc.args[0] if getattr(exc, "args", None) else str(exc)
         if isinstance(err, int):
             err = f"exit {err}"
         text = str(err) if err is not None else "error"
-        if text.startswith("agent: "):
-            text = text[len("agent: ") :]
+        text = text.removeprefix("agent: ")
         ack["error"] = text
         return ack
     except Exception as exc:
@@ -1744,9 +1826,7 @@ def _publish_terminals(
         text = runtime.capture(sid)
         if last_capture.get(sid) == text:
             continue
-        last_capture[sid] = text
         seq = terminal_seq.get(sid, 0) + 1
-        terminal_seq[sid] = seq
         data = base64.b64encode(text.encode("utf-8")).decode("ascii")
         frame = {
             "type": "terminal",
@@ -1754,10 +1834,9 @@ def _publish_terminals(
             "seq": seq,
             "data": data,
         }
-        try:
-            ws.send(json.dumps(frame))  # type: ignore[attr-defined]
-        except Exception as exc:
-            die(f"terminal send failed: {exc}")
+        ws.send(json.dumps(frame))  # type: ignore[attr-defined]
+        last_capture[sid] = text
+        terminal_seq[sid] = seq
 
 
 def _find_round(store: Store, task_id: str, round_num: object) -> dict:
