@@ -90,7 +90,6 @@ def _run_mail_reply(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     try:
         subject = _optional_str_field(payload, "subject", nonempty=True)
         in_reply_to = _optional_str_field(payload, "in_reply_to", nonempty=True)
-        _optional_str_field(payload, "folder", nonempty=True)
     except _MailError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"mail.reply {rid} error"
