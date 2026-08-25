@@ -2106,3 +2106,87 @@ def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str
     dry = capsys.readouterr().out
     assert f"run task={tid}" in dry
     assert "spec_written" in dry
+
+
+_GATE_HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+
+
+def _seed_pr_review_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    repo: str | None = "owner/name",
+    ref: str | None = "7",
+    verdict: str = "rejected",
+) -> tuple[str, str]:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "pr-review"])
+    create = ["task", "create", "--session", "s", "--workflow", "review", "--title", "Look"]
+    if repo is not None:
+        create += ["--repo", repo]
+    if ref is not None:
+        create += ["--ref", ref]
+    run(tmp_path, create)
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
+    aid = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", verdict])
+    capsys.readouterr()
+    return tid, aid
+
+
+def _gate_argv(tid: str, aid: str, verdict: str, *extra: str) -> list[str]:
+    return [
+        "gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality",
+        "--vendor", "grok", "--verdict", verdict, "--head", _GATE_HEAD, "--agent", aid, *extra,
+    ]
+
+
+def _comment_activities(tmp_path: Path) -> list[dict]:
+    store = Store(tmp_path)
+    try:
+        return [row for row in store.rows("activity") if row["type"] == "comment.post"]
+    finally:
+        store.close()
+
+
+def test_rejected_gate_without_evidence_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="--evidence is required"):
+        run(tmp_path, _gate_argv(tid, aid, "rejected"))
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_queues_its_findings_for_the_pull_request(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=rejected" in out
+    assert "type=comment.post" in out
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert payload["repo"] == "owner/name"
+    assert payload["number"] == 7
+    assert payload["target"] == "pr"
+    assert "dto.ts:91 keeps @IsOptional()" in payload["body"]
+    assert _GATE_HEAD in payload["body"]
+    assert rows[0]["execution_status"] == "pending"
+
+
+def test_approved_gate_queues_no_comment(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys, verdict="approved")
+    run(tmp_path, _gate_argv(tid, aid, "approved"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=approved" in out
+    assert "type=comment.post" not in out
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys, repo=None, ref=None)
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "no pull request yet"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=rejected" in out
+    assert "type=comment.post" not in out
+    assert _comment_activities(tmp_path) == []

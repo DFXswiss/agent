@@ -980,12 +980,53 @@ def cmd_check(args: list[str]) -> None:
         store.close()
 
 
+def _queue_gate_findings(
+    store: Store,
+    task: dict,
+    stage: str,
+    dimension: str,
+    vendor: str,
+    head: str,
+    evidence: str,
+) -> str | None:
+    """Queue a rejected gate's evidence as a pull-request comment.
+
+    A rejection that is only recorded stops the task without telling the author
+    what was found. `agent github pending` performs the HTTP.
+    """
+    repo = task.get("repo")
+    ref = task.get("ref")
+    if not isinstance(repo, str) or repo.count("/") != 1 or "" in repo.split("/"):
+        return None
+    if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
+        return None
+    activity_id = str(uuid.uuid4())
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": task["session_id"],
+            "type": "comment.post",
+            "payload": {
+                "repo": repo,
+                "number": int(ref),
+                "target": "pr",
+                "body": f"`{stage}` / `{dimension}` ({vendor}) rejected at `{head}`\n\n{evidence}",
+            },
+            "execution_status": "pending",
+        },
+    )
+    return activity_id
+
+
 def cmd_gate(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
             "Usage: agent gate record --task UUID --stage grok-pr|codex-pr "
             "--dimension quality|logic --vendor grok|codex --verdict approved|rejected "
-            "--head SHA --agent UUID [--evidence TEXT]"
+            "--head SHA --agent UUID [--evidence TEXT; required when rejected]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
@@ -1007,6 +1048,8 @@ def cmd_gate(args: list[str]) -> None:
         die(f"stage {stage} requires vendor {expected_vendor}")
     if verdict not in ("approved", "rejected"):
         die("verdict must be approved|rejected")
+    if verdict == "rejected" and not evidence:
+        die("--evidence is required when --verdict is rejected")
     if not re.fullmatch(r"[0-9a-f]{7,40}", head):
         die("--head must be a git SHA (lowercase hex, length 7–40)")
     store = open_store()
@@ -1065,7 +1108,14 @@ def cmd_gate(args: list[str]) -> None:
                 task["state"] = "implementing"
                 task["updated_at"] = utcnow()
                 store.write("task", "update", tid, _strip(task))
+        queued = None
+        if verdict == "rejected":
+            queued = _queue_gate_findings(
+                store, task, stage, dimension, vendor, head, evidence or ""
+            )
         print(f"gate {stage}/{dimension}={verdict}")
+        if queued is not None:
+            print(f"activity {queued} type=comment.post")
     finally:
         store.close()
 
