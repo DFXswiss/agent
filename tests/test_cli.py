@@ -2346,3 +2346,18 @@ def test_rejected_gate_does_not_retry_a_failed_update(
     with pytest.raises((SystemExit, StoreError)):
         run(tmp_path, argv)
     assert ops == ["update"]
+
+
+def test_a_second_rejection_with_new_findings_queues_its_own_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Same task, lane and head, different findings. Keying only on the lane would
+    # treat the second rejection as a repeat and drop its evidence.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "first finding"))
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "corrected finding"))
+    capsys.readouterr()
+    bodies = sorted(row["payload"]["body"] for row in _comment_activities(tmp_path))
+    assert len(bodies) == 2
+    assert any("first finding" in b for b in bodies)
+    assert any("corrected finding" in b for b in bodies)

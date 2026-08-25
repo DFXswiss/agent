@@ -1010,9 +1010,14 @@ def _queue_gate_findings(
         return None
     repo, number = pull_request
     # Derived, not random: a retried `gate record` must reuse the id so the marker
-    # github_act writes matches and the findings are not posted twice.
+    # github_act writes matches and the findings are not posted twice. The evidence
+    # is part of the key — a second rejection carrying different findings is a
+    # different comment, not a repeat of the first.
     activity_id = str(
-        uuid.uuid5(uuid.NAMESPACE_URL, f"gate-findings:{task['id']}:{stage}:{dimension}:{head}")
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"gate-findings:{task['id']}:{stage}:{dimension}:{head}:{evidence}",
+        )
     )
     def _settled() -> bool:
         # An errored row is not settled: the executor gave up on it, so a later
