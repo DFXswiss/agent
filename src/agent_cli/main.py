@@ -1229,8 +1229,15 @@ def cmd_sync(args: list[str]) -> None:
             while True:
                 established: dict[str, float] = {}
                 try:
-                    if hub is None:
-                        hub = _hub_from_store(store)
+                    if hub is not None:
+                        try:
+                            hub.close()
+                        except Exception:
+                            pass
+                        hub = None
+                    # Rebuild every iteration so a rotated device_token / hub URL
+                    # from the store is picked up (Hub freezes both at init).
+                    hub = _hub_from_store(store)
                     _sync_once(store)
                     _run_sync_ws_session(store, hub, runtime, terminal_seq, last_capture, established)
                 except (HubError, StoreConnectionError, OSError, WebSocketException) as exc:
@@ -1443,9 +1450,18 @@ def cmd_dashboard(args: list[str]) -> None:
                 try:
                     snap = store.snapshot()
                     device = store.device_id()
-                except StoreConnectionError as exc:
-                    self._json(503, {"ok": False, "error": str(exc)})
-                    return
+                except StoreConnectionError:
+                    try:
+                        store.reconnect()
+                    except StoreConnectionError as exc:
+                        self._json(503, {"ok": False, "error": str(exc)})
+                        return
+                    try:
+                        snap = store.snapshot()
+                        device = store.device_id()
+                    except StoreConnectionError as exc:
+                        self._json(503, {"ok": False, "error": str(exc)})
+                        return
                 for session in snap.get("sessions") or []:
                     session["can_control"] = session.get("_origin_device_id") == device
                     session["control_connected"] = True
@@ -1480,14 +1496,15 @@ def cmd_dashboard(args: list[str]) -> None:
             if not isinstance(body, dict):
                 self._json(400, {"ok": False, "error": "body must be an object"})
                 return
-            try:
+
+            def handle_control() -> dict | None:
                 row = store.row("session", sid)
                 if row is None:
                     self.send_error(404)
-                    return
+                    return None
                 if row.get("_origin_device_id") != store.device_id():
                     self.send_error(403)
-                    return
+                    return None
                 payload = body.get("payload")
                 if not isinstance(payload, dict):
                     payload = {k: v for k, v in body.items() if k != "action"}
@@ -1497,9 +1514,22 @@ def cmd_dashboard(args: list[str]) -> None:
                     "action": body.get("action"),
                     "payload": payload,
                 }
-                ack = apply_control(store, Runtime(), message)
-            except StoreConnectionError as exc:
-                self._json(503, {"ok": False, "error": str(exc)})
+                return apply_control(store, Runtime(), message)
+
+            try:
+                ack = handle_control()
+            except StoreConnectionError:
+                try:
+                    store.reconnect()
+                except StoreConnectionError as exc:
+                    self._json(503, {"ok": False, "error": str(exc)})
+                    return
+                try:
+                    ack = handle_control()
+                except StoreConnectionError as exc:
+                    self._json(503, {"ok": False, "error": str(exc)})
+                    return
+            if ack is None:
                 return
             if not ack.get("ok"):
                 self._json(400, {"ok": False, "error": ack.get("error")})

@@ -210,16 +210,18 @@ class Store:
         call only ever does a bare connect + SET timezone, nothing that could
         legitimately raise a data/query error, so any failure here genuinely is a
         connection problem. cmd_sync's reconnect loop expects and handles exactly
-        this type from this method."""
-        try:
-            self.conn.close()
-        except Exception:
-            pass
-        try:
-            self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
-            self.conn.execute("SET timezone TO 'UTC'")
-        except psycopg.Error as exc:
-            raise StoreConnectionError(f"cannot reconnect to postgres: {exc}") from exc
+        this type from this method. Holds self._lock so ThreadingHTTPServer
+        handlers cannot race a reconnect against other store calls."""
+        with self._lock:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            try:
+                self.conn = psycopg.connect(self.dsn, row_factory=dict_row, autocommit=True)
+                self.conn.execute("SET timezone TO 'UTC'")
+            except psycopg.Error as exc:
+                raise StoreConnectionError(f"cannot reconnect to postgres: {exc}") from exc
 
     def device_id(self) -> str:
         value = self.meta("device_id")

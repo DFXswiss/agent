@@ -169,3 +169,41 @@ def test_dashboard_get_state_returns_503_on_store_connection_error(
 
         assert resp.status == 503
         assert payload["ok"] is False
+
+
+def test_dashboard_get_state_reconnects_after_transient_store_connection_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient postgres blip on /api/state must reconnect once and retry the
+    same request, so a long-lived ThreadingHTTPServer recovers instead of sticky
+    503s until process restart."""
+    _init_paired_store(tmp_path)
+    snapshot_calls: list[int] = []
+    reconnect_calls: list[int] = []
+    real_snapshot = main_mod.Store.snapshot
+    real_reconnect = main_mod.Store.reconnect
+
+    def flaky_snapshot(self: object) -> object:
+        snapshot_calls.append(1)
+        if len(snapshot_calls) == 1:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+        return real_snapshot(self)
+
+    def counting_reconnect(self: object) -> None:
+        reconnect_calls.append(1)
+        real_reconnect(self)
+
+    monkeypatch.setattr(main_mod.Store, "snapshot", flaky_snapshot)
+    monkeypatch.setattr(main_mod.Store, "reconnect", counting_reconnect)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 200, "transient failure must recover on the same request after reconnect"
+        assert "sessions" in payload
+        assert reconnect_calls == [1], "store.reconnect() must be called exactly once"
+        assert snapshot_calls == [1, 1], "snapshot must be tried once, then retried after reconnect"

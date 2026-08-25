@@ -9,8 +9,8 @@ from websockets.exceptions import WebSocketException
 
 from agent_cli import main as main_mod
 from agent_cli.main import cmd_sync, open_store
-from agent_cli.hub import HubError
-from agent_cli.store import StoreConnectionError, StoreError
+from agent_cli.hub import Hub, HubError
+from agent_cli.store import Store, StoreConnectionError, StoreError
 
 
 class _StopTest(Exception):
@@ -157,6 +157,44 @@ def test_hub_construction_failure_in_follow_mode_reconnects_instead_of_dying(
         cmd_sync(["--follow"])
 
     assert len(calls) == 2, "a hub-construction failure must be retried, not exit the process"
+
+
+def test_follow_rebuilds_hub_with_rotated_device_token_across_reconnect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: Hub freezes base_url/token at init. Reusing one Hub across
+    --follow reconnects left the websocket on a stale token after re-pair while
+    HTTP sync (_sync_once) already built a fresh Hub. Each reconnect-loop
+    iteration must build a new Hub from the store so a rotated device_token is
+    visible to the next websocket session."""
+    tokens_seen: list[str | None] = []
+
+    def fake_session(
+        store: Store,
+        hub: Hub,
+        runtime: object,
+        terminal_seq: dict,
+        last_capture: dict,
+        established: dict,
+    ) -> None:
+        tokens_seen.append(hub.token)
+        if len(tokens_seen) == 1:
+            store.set_meta("device_token", "rotated-token")
+            raise OSError("connection reset by peer")
+        raise _StopTest("second session saw the rotated token - stopping here")
+
+    monkeypatch.setattr(main_mod, "_run_sync_ws_session", fake_session)
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: None)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+    _init_paired_store(tmp_path)
+
+    with pytest.raises(_StopTest):
+        cmd_sync(["--follow"])
+
+    assert tokens_seen == ["fake-token", "rotated-token"], (
+        "second websocket session must use a Hub rebuilt from the rotated store token"
+    )
 
 
 def test_store_connection_error_from_sync_reconnects_instead_of_dying(
