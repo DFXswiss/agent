@@ -318,7 +318,7 @@ def tick(
             last_phase = last_payload.get("phase")
             last_answer = last_payload.get("answer")
     pane_missing = not runtime.exists(session_id)
-    if last_kind is None and (not pane_missing) and runtime.is_busy(session_id):
+    if last_kind is None and not pane_missing:
         _log(
             store,
             session_id,
