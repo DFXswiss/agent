@@ -8,6 +8,7 @@ import pytest
 
 from agent_cli.main import main
 from agent_cli.store import Store, StoreError, utcnow
+from agent_cli.usage import AuthStale
 
 
 def run(home: Path, argv: list[str]) -> None:
@@ -1028,14 +1029,31 @@ def test_watch_grok_usage_prints_snapshot_or_none(
     assert "usage.snapshot none" in capsys.readouterr().out
 
 
-def test_watch_errors_prints_none_and_ids(
+def test_watch_grok_usage_auth_stale_prints_skipped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+
+    def fake_scan(_store: object) -> str:
+        raise AuthStale("grok auth token expired; run grok login")
+
+    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
+    run(tmp_path, ["watch", "grok-usage"])
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "usage.snapshot skipped"
+    assert "error" not in captured.out.lower()
+    assert "error" not in captured.err.lower()
+
+
+def test_watch_errors_empty_scan_prints_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
     capsys.readouterr()
     monkeypatch.setattr("agent_cli.errors.scan_errors", lambda store, fetch: ([], []))
     run(tmp_path, ["watch", "errors"])
-    assert "error.seen none" in capsys.readouterr().out
+    assert capsys.readouterr().out == ""
     monkeypatch.setattr(
         "agent_cli.errors.scan_errors",
         lambda store, fetch: (["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"], ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]),
@@ -1046,14 +1064,14 @@ def test_watch_errors_prints_none_and_ids(
     assert "error.seen enrich bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" in out
 
 
-def test_watch_error_fix_prints_none_and_lines(
+def test_watch_error_fix_empty_scan_prints_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
     capsys.readouterr()
     monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda store, runner: [])
     run(tmp_path, ["watch", "error-fix"])
-    assert "error.fix none" in capsys.readouterr().out
+    assert capsys.readouterr().out == ""
     monkeypatch.setattr(
         "agent_cli.error_fix_act.scan_error_fix",
         lambda store, runner: ["error.fix x task=t worktree=/tmp/w"],
@@ -1107,6 +1125,33 @@ def test_knock_daemon_polls_usage(
     captured = capsys.readouterr()
     assert "usage.snapshot error: boom" in captured.err
     assert "usage.snapshot 11111111-1111-1111-1111-111111111111" in captured.out
+
+
+def test_knock_daemon_auth_stale_is_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    listen_calls = {"n": 0}
+
+    def fake_poll_due(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    def fake_scan(_store: object) -> str:
+        raise AuthStale("grok auth token expired; run grok login")
+
+    def fake_listen(*_args: object, **_kwargs: object) -> None:
+        listen_calls["n"] += 1
+        raise SystemExit("stop")
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", fake_poll_due)
+    monkeypatch.setattr("agent_cli.main.scan_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+    captured = capsys.readouterr()
+    assert "usage.snapshot error" not in captured.err
+    assert "usage.snapshot" not in captured.out
 
 
 def test_knock_once_does_not_poll_errors(

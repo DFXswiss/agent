@@ -11,6 +11,7 @@ from agent_cli.errors import (
     default_fetch,
     error_class,
     fingerprint,
+    is_incident_line,
     line_fingerprint,
     load_config,
     redact,
@@ -737,3 +738,141 @@ def test_scan_rejects_unreadable_cursor(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="error-fix.cursor"):
         scan_errors(store, fetch)
+
+
+def test_is_incident_line_keeps_timeout_error_and_logger_level() -> None:
+    assert is_incident_line("TimeoutError boom") is True
+    assert is_incident_line("2026-08-23 12:00:00 ERROR [Service] failed") is True
+
+
+def test_is_incident_line_drops_access_logs_and_plain_error_word() -> None:
+    assert is_incident_line("POST /v1/log/clientError 204 - - 12ms") is False
+    assert is_incident_line("TRACE /v1/log/clientError 204 -") is False
+    assert is_incident_line("CONNECT /v1/log/clientError 204 -") is False
+    assert is_incident_line("\x1b[32mGET /health 200\x1b[0m ok") is False
+    assert is_incident_line("LOG request failed with an error during retry") is False
+
+
+def test_scan_errors_drops_non_incident_lines(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:00Z",
+                    "line": "POST /v1/log/clientError 204 - - 12ms",
+                },
+                {
+                    "ts": "2026-08-23T16:00:01Z",
+                    "line": "\x1b[32mGET /health 200\x1b[0m ok",
+                },
+                {
+                    "ts": "2026-08-23T16:00:02Z",
+                    "line": "LOG request failed with an error during retry",
+                },
+                {
+                    "ts": "2026-08-23T16:00:05Z",
+                    "line": "TRACE /v1/log/clientError 204 -",
+                },
+                {
+                    "ts": "2026-08-23T16:00:06Z",
+                    "line": "CONNECT /v1/log/clientError 204 -",
+                },
+                {"ts": "2026-08-23T16:00:03Z", "line": "TimeoutError boom"},
+                {
+                    "ts": "2026-08-23T16:00:04Z",
+                    "line": "2026-08-23 12:00:00 ERROR [Service] failed",
+                },
+            ],
+            "cursor-1",
+        )
+
+    created, enriched = scan_errors(store, fetch)
+    assert enriched == []
+    assert len(created) == 2
+    classes = {
+        store.row("activity", aid)["payload"]["class"] for aid in created
+    }
+    assert classes == {"TimeoutError", "error"}
+    assert cursor_path(tmp_path).read_text(encoding="utf-8").strip() == "cursor-1"
+
+
+def test_line_must_not_match_drops_otherwise_valid_error(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    config_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "session_id": "runner-1",
+                "service": "api",
+                "environment": "prod",
+                "repo": "org/app",
+                "line_must_not_match": "noisy",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {"ts": "2026-08-23T16:00:00Z", "line": "ERROR noisy Service boom"},
+                {"ts": "2026-08-23T16:00:01Z", "line": "ERROR keep Service boom"},
+            ],
+            None,
+        )
+
+    created, enriched = scan_errors(store, fetch)
+    assert enriched == []
+    assert len(created) == 1
+    assert "keep" in store.row("activity", created[0])["payload"]["excerpt"]
+
+
+def test_load_config_rejects_invalid_line_filters(tmp_path: Path) -> None:
+    path = config_path(tmp_path)
+    path.write_text(
+        json.dumps({"session_id": "s", "line_must_match": ""}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="line_must_match is invalid"):
+        load_config(path)
+    path.write_text(
+        json.dumps({"session_id": "s", "line_must_not_match": "("}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="line_must_not_match is invalid"):
+        load_config(path)
+
+
+def test_line_must_match_keeps_and_drops(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    config_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "session_id": "runner-1",
+                "service": "api",
+                "environment": "prod",
+                "repo": "org/app",
+                "line_must_match": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {"ts": "2026-08-23T16:00:00Z", "line": "ERROR drop Service boom"},
+                {"ts": "2026-08-23T16:00:01Z", "line": "ERROR keep Service boom"},
+            ],
+            None,
+        )
+
+    created, enriched = scan_errors(store, fetch)
+    assert enriched == []
+    assert len(created) == 1
+    assert "keep" in store.row("activity", created[0])["payload"]["excerpt"]

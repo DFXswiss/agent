@@ -38,6 +38,10 @@ _COMPARE_KEYS = (
 )
 
 
+class AuthStale(StoreError):
+    """Grok login missing or expired. Not a runtime failure of this scan."""
+
+
 def grok_auth_path() -> Path:
     """$GROK_HOME/auth.json if GROK_HOME is set and non-empty, else ~/.grok/auth.json."""
     home = os.environ.get("GROK_HOME")
@@ -51,15 +55,15 @@ def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
     Read the SuperGrok OIDC entry.
     Prefer the first top-level key that starts with 'https://auth.x.ai::'.
     Required fields: key (non-empty str), expires_at (non-empty str), email (non-empty str).
-    expires_at must parse as aware UTC; if now >= expiry → StoreError('grok auth token expired; run grok login').
+    expires_at must parse as aware UTC; if now >= expiry → AuthStale('grok auth token expired; run grok login').
     Parse ISO-8601; replace trailing Z with +00:00. No other date libraries.
-    Missing file, invalid JSON, no auth.x.ai entry, missing key/expires_at/email → StoreError with a specific message.
+    Missing file or no auth.x.ai entry → AuthStale. Invalid JSON, missing key/expires_at/email → StoreError.
     Return (token, account_email). Never log the token.
     Do not refresh tokens. Do not read refresh_token except to ignore it.
     """
     path = auth_path if auth_path is not None else grok_auth_path()
     if not path.is_file():
-        raise StoreError(f"grok auth file not found: {path}")
+        raise AuthStale(f"grok auth file not found: {path}")
     try:
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
@@ -75,7 +79,7 @@ def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
             entry = value
             break
     if entry is None:
-        raise StoreError("grok auth file has no auth.x.ai entry")
+        raise AuthStale("grok auth file has no auth.x.ai entry")
     token = entry.get("key")
     if not isinstance(token, str) or token == "":
         raise StoreError("grok auth entry field key is missing or invalid")
@@ -90,7 +94,7 @@ def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
     if when.tzinfo is None:
         raise StoreError("grok auth entry field expires_at is invalid")
     if datetime.now(timezone.utc) >= when:
-        raise StoreError("grok auth token expired; run grok login")
+        raise AuthStale("grok auth token expired; run grok login")
     account_email = entry.get("email")
     if not isinstance(account_email, str) or account_email == "":
         raise StoreError("grok auth entry field email is missing or invalid")

@@ -45,7 +45,7 @@ from .runtime import (
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreConnectionError, StoreError, utcnow
-from .usage import scan_usage, usage_poll_due
+from .usage import AuthStale, scan_usage, usage_poll_due
 from .watch import (
     assigned_session_id,
     assigned_workspace_root,
@@ -2784,6 +2784,8 @@ def cmd_knock(args: list[str]) -> None:
                     usage_id = scan_usage(store)
                     if usage_id:
                         print(f"usage.snapshot {usage_id}")
+                except AuthStale:
+                    pass
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 try:
@@ -2896,7 +2898,11 @@ def cmd_watch(args: list[str]) -> None:
                 print("pr.merged none")
             return
         if args[0] == "grok-usage":
-            activity_id = scan_usage(store)
+            try:
+                activity_id = scan_usage(store)
+            except AuthStale:
+                print("usage.snapshot skipped")
+                return
             if activity_id:
                 print(f"usage.snapshot {activity_id}")
             else:
@@ -2960,17 +2966,12 @@ def cmd_watch(args: list[str]) -> None:
                 print(f"error.seen {activity_id}")
             for activity_id in enriched:
                 print(f"error.seen enrich {activity_id}")
-            if not created and not enriched:
-                print("error.seen none")
             return
         if args[0] == "error-fix":
             from .error_fix_act import scan_error_fix
             from .runtime import run_argv
 
             lines = scan_error_fix(store, run_argv)
-            if not lines:
-                print("error.fix none")
-                return
             for line in lines:
                 print(line)
             return

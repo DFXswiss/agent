@@ -34,6 +34,11 @@ _SECRET = re.compile(
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_ACCESS_LOG = re.compile(
+    r"^(?:OPTIONS|GET|POST|PUT|PATCH|DELETE|HEAD|TRACE|CONNECT)\s+\S+\s+\d{3}\b"
+)
+_ERROR_LEVEL = re.compile(r"\b(?:ERROR|FATAL|PANIC|CRITICAL)\b")
 _UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
@@ -128,7 +133,41 @@ def load_config(path: Path) -> dict[str, Any]:
         )
         if any(_is_cred_name(name) for name in params):
             raise StoreError("error-fix.json url must not contain credentials")
+    for key in ("line_must_match", "line_must_not_match"):
+        if key not in data:
+            continue
+        value = data.get(key)
+        if not isinstance(value, str) or value == "":
+            raise StoreError(f"error-fix.json {key} is invalid")
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise StoreError(f"error-fix.json {key} is invalid") from exc
     return data
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
+def is_incident_line(line: str, cfg: dict[str, Any] | None = None) -> bool:
+    plain = strip_ansi(line)
+    if isinstance(cfg, dict):
+        must_not = cfg.get("line_must_not_match")
+        if isinstance(must_not, str) and must_not != "":
+            if re.search(must_not, plain):
+                return False
+        must = cfg.get("line_must_match")
+        if isinstance(must, str) and must != "":
+            if re.search(must, plain) is None:
+                return False
+    if _ACCESS_LOG.search(plain.lstrip()):
+        return False
+    if _ERROR_LEVEL.search(plain):
+        return True
+    if error_class(plain) != "error":
+        return True
+    return False
 
 
 def redact(text: str) -> str:
@@ -155,14 +194,14 @@ def line_fingerprint(*, server: str, container: str, line: str) -> str:
 
 
 def error_class(line: str) -> str:
-    match = _CLASS.search(line)
+    match = _CLASS.search(strip_ansi(line))
     if match is None:
         return "error"
     return match.group(1)
 
 
 def stack_sig(line: str) -> str:
-    norm = redact(line)
+    norm = redact(strip_ansi(line))
     norm = _UUID.sub("", norm)
     norm = _DIGITS.sub("", norm)
     norm = _SPACE.sub(" ", norm).strip().lower()
@@ -410,6 +449,8 @@ def _apply_lines(
         line = item.get("line")
         if not isinstance(line, str) or line == "":
             continue
+        if not is_incident_line(line, cfg):
+            continue
         ts = item.get("ts")
         if not isinstance(ts, str) or ts == "":
             ts = utcnow()
@@ -422,7 +463,7 @@ def _apply_lines(
         repo = item.get("repo")
         if not isinstance(repo, str) or repo == "":
             repo = default_repo if isinstance(default_repo, str) and default_repo else None
-        redacted = redact(line)
+        redacted = redact(strip_ansi(line))
         excerpt = redacted[:500]
         cls = error_class(redacted)
         fp = fingerprint(
