@@ -94,3 +94,14 @@ def test_the_documented_rejected_gate_command_carries_evidence() -> None:
     # Findings contain spaces. An unquoted placeholder teaches a command that
     # silently drops everything after the first word.
     assert any('--evidence "' in ln for ln in rejected), rejected
+
+
+def test_the_contract_separates_introduced_from_inherited_findings() -> None:
+    # A reviewer that gates on debt the change did not create blocks clean pull
+    # requests, which is how a review bot stops being read. The rule has to be in
+    # the contract the reviewer reads, not only in whoever wrote the prompt.
+    contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
+    assert "gates the stage only when this change introduced it" in contract
+    assert "merge base" in contract
+    lowered = contract.lower()
+    assert "inherited" in lowered

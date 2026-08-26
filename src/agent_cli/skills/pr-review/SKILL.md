@@ -53,6 +53,14 @@ timeout, or unavailable output is not zero findings.
 A reported point that contradicts a verified repo rule or fact may be
 dismissed with that evidence; it is not a defect.
 
+A finding gates the stage only when this change introduced it. A rule the
+surrounding code already broke is reported, not gated: name it in the evidence,
+say it is inherited, and leave it to the author. Judge against the diff to the
+merge base, not the file as it now stands — touching a line does not put
+everything about that line in scope. The check is cheap: if the same defect sits
+in code this change did not touch, it is inherited. Blocking a pull request on
+debt it did not create is how a review stops being read.
+
 ## Coverage, handbook, contributing
 
 `coverage_ok` and `handbook_ok`: `ja` / `nein` / `n_a` only from the **target
