@@ -307,15 +307,6 @@ def tick(
         payload = {}
     repo, number = _item_ref(payload)
     root = workspace_root if workspace_root is not None else assigned_workspace_root(store)
-    dispatched = dispatch_assigned(
-        store,
-        assigned_id,
-        sync=lambda: None,
-        start=start,
-        knock=knock,
-        workspace_root=root,
-        pane_up=lambda sid: runtime.exists(sid),
-    )
     last = latest_supervise(store, session_id, assigned_id)
     last_kind = None
     last_phase = None
@@ -326,6 +317,19 @@ def tick(
             last_kind = last_payload.get("kind")
             last_phase = last_payload.get("phase")
             last_answer = last_payload.get("answer")
+    pane_missing = not runtime.exists(session_id)
+    if last_kind is None or pane_missing:
+        dispatched = dispatch_assigned(
+            store,
+            assigned_id,
+            sync=lambda: None,
+            start=start,
+            knock=knock,
+            workspace_root=root,
+            pane_up=lambda sid: runtime.exists(sid),
+        )
+    else:
+        dispatched = "held"
     if last_kind is None:
         _log(
             store,

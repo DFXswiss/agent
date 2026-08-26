@@ -231,6 +231,32 @@ def test_tick_continue_on_can_finish(tmp_path: Path) -> None:
     assert acks == []
 
 
+def test_tick_does_not_knock_again_while_busy(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    _assigned(store)
+    knocks: list[str] = []
+    rt = FakeRuntime(busy=True, pane="")
+    tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: knocks.append(aid) or "sent",
+        quiet_seconds=0,
+    )
+    assert len(knocks) == 1
+    tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: knocks.append(aid) or "sent",
+        quiet_seconds=0,
+    )
+    assert knocks == knocks[:1]
+
+
 def test_tick_busy_does_not_ask(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
