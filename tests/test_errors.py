@@ -835,3 +835,34 @@ def test_load_config_rejects_invalid_line_filters(tmp_path: Path) -> None:
     )
     with pytest.raises(StoreError, match="line_must_not_match is invalid"):
         load_config(path)
+
+
+def test_line_must_match_keeps_and_drops(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    config_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "session_id": "runner-1",
+                "service": "api",
+                "environment": "prod",
+                "repo": "org/app",
+                "line_must_match": "keep",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {"ts": "2026-08-23T16:00:00Z", "line": "ERROR drop Service boom"},
+                {"ts": "2026-08-23T16:00:01Z", "line": "ERROR keep Service boom"},
+            ],
+            None,
+        )
+
+    created, enriched = scan_errors(store, fetch)
+    assert enriched == []
+    assert len(created) == 1
+    assert "keep" in store.row("activity", created[0])["payload"]["excerpt"]

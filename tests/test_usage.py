@@ -430,3 +430,17 @@ def test_usage_poll_due() -> None:
     assert usage_poll_due(None, 0) is True
     assert usage_poll_due(100.0, 159.0, 60) is False
     assert usage_poll_due(100.0, 160.0, 60) is True
+
+
+def test_scan_usage_no_auth_xai_entry(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    path = tmp_path / "auth.json"
+    path.write_text(json.dumps({"other": {}}), encoding="utf-8")
+    with pytest.raises(AuthStale, match="no auth.x.ai entry"):
+        scan_usage(
+            store,
+            fetch=lambda token: (_credits(), SETTINGS),
+            auth_path=path,
+        )
+    assert store.rows("activity") == []
