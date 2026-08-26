@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_cli.store import Store
-from agent_cli.telegram_act import notify_status, should_notify
+from agent_cli.telegram_act import notify_status
 
 
 class FakeResponse:
@@ -11,15 +11,7 @@ class FakeResponse:
         self.status_code = status_code
 
 
-def test_should_notify_skips_busy_idle_wait() -> None:
-    assert should_notify("supervise busy assigned=x", None) is False
-    assert should_notify("supervise idle", None) is False
-    assert should_notify("supervise wait assigned=x last=a/b/c", None) is False
-    assert should_notify("supervise commission assigned=x", None) is True
-    assert should_notify("supervise commission assigned=x", "supervise commission assigned=x") is False
-
-
-def test_idle_posts_immediately_then_every_ten_minutes(tmp_path: Path) -> None:
+def test_idle_arms_then_posts_after_ten_minutes(tmp_path: Path) -> None:
     store = Store(tmp_path)
     calls: list[dict[str, object]] = []
 
@@ -40,6 +32,7 @@ def test_idle_posts_immediately_then_every_ten_minutes(tmp_path: Path) -> None:
         environ=env,
         post=post,
         now=1_000.0,
+        working=False,
     )
     soon = notify_status(
         store,
@@ -48,6 +41,7 @@ def test_idle_posts_immediately_then_every_ten_minutes(tmp_path: Path) -> None:
         environ=env,
         post=post,
         now=1_000.0 + 60,
+        working=False,
     )
     later = notify_status(
         store,
@@ -56,39 +50,16 @@ def test_idle_posts_immediately_then_every_ten_minutes(tmp_path: Path) -> None:
         environ=env,
         post=post,
         now=1_000.0 + 600,
-    )
-    assert first == "telegram sent"
-    assert soon == "telegram skipped"
-    assert later == "telegram sent"
-    assert len(calls) == 2
-    assert calls[0]["text"] == "not working\nrunner-1\nsupervise idle"
-    assert calls[1]["text"] == "not working\nrunner-1\nsupervise idle"
-
-
-def test_activity_not_working_overrides_pane_busy(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    calls: list[dict[str, object]] = []
-
-    def post(url: str, json: object, timeout: float) -> FakeResponse:
-        assert isinstance(json, dict)
-        calls.append(json)
-        return FakeResponse(200)
-
-    env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
-    out = notify_status(
-        store,
-        "runner-1",
-        "supervise busy assigned=x",
-        environ=env,
-        post=post,
-        now=1_000.0,
         working=False,
     )
-    assert out == "telegram sent"
-    assert calls[0]["text"] == "not working\nrunner-1\nsupervise busy assigned=x"
+    assert first == "telegram skipped"
+    assert soon == "telegram skipped"
+    assert later == "telegram sent"
+    assert len(calls) == 1
+    assert calls[0]["text"] == "not working\nrunner-1\nsupervise idle"
 
 
-def test_busy_clears_idle_clock_so_next_stop_posts(tmp_path: Path) -> None:
+def test_busy_clears_timer_so_short_gaps_do_not_page(tmp_path: Path) -> None:
     store = Store(tmp_path)
     calls: list[object] = []
 
@@ -104,6 +75,7 @@ def test_busy_clears_idle_clock_so_next_stop_posts(tmp_path: Path) -> None:
         environ=env,
         post=post,
         now=1_000.0,
+        working=False,
     )
     busy = notify_status(
         store,
@@ -112,18 +84,20 @@ def test_busy_clears_idle_clock_so_next_stop_posts(tmp_path: Path) -> None:
         environ=env,
         post=post,
         now=1_010.0,
+        working=True,
     )
-    stopped = notify_status(
+    gap = notify_status(
         store,
         "runner-1",
         "supervise idle",
         environ=env,
         post=post,
         now=1_020.0,
+        working=False,
     )
     assert busy == "telegram skipped"
-    assert stopped == "telegram sent"
-    assert len(calls) == 2
+    assert gap == "telegram skipped"
+    assert calls == []
 
 
 def test_notify_skipped_without_env(tmp_path: Path) -> None:
@@ -137,63 +111,40 @@ def test_notify_skipped_without_env(tmp_path: Path) -> None:
     out = notify_status(
         store,
         "runner-1",
-        "supervise commission assigned=x",
+        "supervise idle",
         environ={},
         post=post,
+        working=False,
     )
     assert out == "telegram skipped"
     assert calls == []
 
 
-def test_notify_posts_once_then_skips_duplicate(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    calls: list[tuple[str, object]] = []
-
-    def post(url: str, json: object, timeout: float) -> FakeResponse:
-        calls.append((url, json))
-        return FakeResponse(200)
-
-    env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
-    first = notify_status(
-        store,
-        "runner-1",
-        "supervise commission assigned=x",
-        environ=env,
-        post=post,
-    )
-    second = notify_status(
-        store,
-        "runner-1",
-        "supervise commission assigned=x",
-        environ=env,
-        post=post,
-    )
-    assert first == "telegram sent"
-    assert second == "telegram skipped"
-    assert len(calls) == 1
-    url, body = calls[0]
-    assert url.endswith("/bottok/sendMessage")
-    assert "tok" in url
-    assert isinstance(body, dict)
-    assert body["chat_id"] == "123"
-    assert body["text"] == "runner-1\nsupervise commission assigned=x"
-    assert body["disable_web_page_preview"] is True
-
-
-def test_notify_http_error_does_not_record_last(tmp_path: Path) -> None:
+def test_notify_http_error_does_not_advance_timer(tmp_path: Path) -> None:
     store = Store(tmp_path)
 
     def post(url: str, json: object, timeout: float) -> FakeResponse:
         return FakeResponse(401)
 
     env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
+    notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=1_000.0,
+        working=False,
+    )
     try:
         notify_status(
             store,
             "runner-1",
-            "supervise done assigned=x",
+            "supervise idle",
             environ=env,
             post=post,
+            now=1_000.0 + 600,
+            working=False,
         )
         raised = False
     except RuntimeError as exc:
@@ -201,4 +152,4 @@ def test_notify_http_error_does_not_record_last(tmp_path: Path) -> None:
         assert "401" in str(exc)
         assert "tok" not in str(exc)
     assert raised is True
-    assert store.sync_get("supervise_telegram_last") is None
+    assert store.sync_get("supervise_telegram_idle_at") == "1000.0"

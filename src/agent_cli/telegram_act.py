@@ -12,8 +12,6 @@ import httpx
 from .store import Store
 
 TELEGRAM_API = "https://api.telegram.org"
-SKIP_PREFIXES = ("supervise busy", "supervise idle", "supervise wait")
-LAST_KEY = "supervise_telegram_last"
 IDLE_AT_KEY = "supervise_telegram_idle_at"
 IDLE_NOTIFY_SECONDS = 600
 
@@ -37,23 +35,6 @@ def idle_seconds(environ: Mapping[str, str] | None = None) -> int:
         if value >= 1:
             return value
     return IDLE_NOTIFY_SECONDS
-
-
-def is_working_line(line: str) -> bool:
-    return line.startswith("supervise busy")
-
-
-def should_notify(line: str, last: str | None) -> bool:
-    if line == "":
-        return False
-    for prefix in SKIP_PREFIXES:
-        if line.startswith(prefix):
-            return False
-    return line != last
-
-
-def format_status(session_id: str, line: str) -> str:
-    return f"{session_id}\n{line}"
 
 
 def format_not_working(session_id: str, line: str) -> str:
@@ -103,22 +84,25 @@ def notify_status(
     now: float | None = None,
     working: bool | None = None,
 ) -> str:
+    """Post not-working only after a full idle window of grok_working False.
+
+    Turn gaps of a few seconds must not page the operator.
+    """
     cfg = telegram_config(environ)
     if cfg is None:
         return "telegram skipped"
     token, chat_id = cfg
     clock = time.time() if now is None else now
-    busy = is_working_line(line) if working is None else working
+    busy = working if working is not None else line.startswith("supervise busy")
     if busy:
         store.sync_set(IDLE_AT_KEY, "")
         return "telegram skipped"
-    if should_notify(line, store.sync_get(LAST_KEY)):
-        send_message(token, chat_id, format_status(session_id, line), post=post)
-        store.sync_set(LAST_KEY, line)
-        store.sync_set(IDLE_AT_KEY, str(clock))
-        return "telegram sent"
     last_idle = _idle_at(store)
-    if last_idle is not None and clock - last_idle < idle_seconds(environ):
+    window = idle_seconds(environ)
+    if last_idle is None:
+        store.sync_set(IDLE_AT_KEY, str(clock))
+        return "telegram skipped"
+    if clock - last_idle < window:
         return "telegram skipped"
     send_message(token, chat_id, format_not_working(session_id, line), post=post)
     store.sync_set(IDLE_AT_KEY, str(clock))

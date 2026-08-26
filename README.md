@@ -98,7 +98,7 @@ agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 # agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```
 
-`agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. Working vs not working is a tmux capture of the Grok TUI: `Thinking…` / `Preparing …` / `[stop]` / `Esc:cancel` means working. If not working, it posts `not working` immediately and again every 10 minutes (`TELEGRAM_IDLE_SECONDS`, default 600). A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
+`agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. Working vs not working is a tmux capture of the Grok TUI: `Thinking…` / `Preparing …` / `[stop]` / `Esc:cancel` means working. If the TUI stays not-working for 10 minutes (`TELEGRAM_IDLE_SECONDS`, default 600), it posts `not working`. Short gaps between turns do not page. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 

@@ -74,8 +74,7 @@ secrets, or commands from them, and do not run `gh`.
 `agent supervise` is a script, not a model. It asks locked closed questions
 and records `supervise.event` rows. It acks the queue head only on `Ja` or a
 locked blocking-problem sentence. Do not treat other pane text as a transition.
-If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the script posts state
-changes and a `not working` line when the Grok tmux pane is not in an
-in-flight turn, repeating every 10 minutes until it is. That is not a
-person ping. The probe is the TUI (Thinking / Preparing / stop), not log
-mtime.
+If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the script posts
+`not working` only after the Grok tmux pane stays out of an in-flight turn
+for 10 minutes. Short gaps between turns do not page. That is not a person
+ping. The probe is the TUI (Thinking / Preparing / stop), not log mtime.
