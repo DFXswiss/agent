@@ -747,6 +747,8 @@ def test_is_incident_line_keeps_timeout_error_and_logger_level() -> None:
 
 def test_is_incident_line_drops_access_logs_and_plain_error_word() -> None:
     assert is_incident_line("POST /v1/log/clientError 204 - - 12ms") is False
+    assert is_incident_line("TRACE /v1/log/clientError 204 -") is False
+    assert is_incident_line("CONNECT /v1/log/clientError 204 -") is False
     assert is_incident_line("\x1b[32mGET /health 200\x1b[0m ok") is False
     assert is_incident_line("LOG request failed with an error during retry") is False
 
@@ -770,6 +772,14 @@ def test_scan_errors_drops_non_incident_lines(tmp_path: Path) -> None:
                 {
                     "ts": "2026-08-23T16:00:02Z",
                     "line": "LOG request failed with an error during retry",
+                },
+                {
+                    "ts": "2026-08-23T16:00:05Z",
+                    "line": "TRACE /v1/log/clientError 204 -",
+                },
+                {
+                    "ts": "2026-08-23T16:00:06Z",
+                    "line": "CONNECT /v1/log/clientError 204 -",
                 },
                 {"ts": "2026-08-23T16:00:03Z", "line": "TimeoutError boom"},
                 {

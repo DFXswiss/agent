@@ -36,7 +36,7 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _ACCESS_LOG = re.compile(
-    r"^(?:OPTIONS|GET|POST|PUT|PATCH|DELETE|HEAD)\s+\S+\s+\d{3}\b"
+    r"^(?:OPTIONS|GET|POST|PUT|PATCH|DELETE|HEAD|TRACE|CONNECT)\s+\S+\s+\d{3}\b"
 )
 _ERROR_LEVEL = re.compile(r"\b(?:ERROR|FATAL|PANIC|CRITICAL)\b")
 _UUID = re.compile(
