@@ -149,6 +149,11 @@ def fingerprint(*, service: str, error_class: str, stack_sig: str, environment: 
     return f"{service}|{error_class}|{stack_sig}|{environment}"
 
 
+def line_fingerprint(*, server: str, container: str, line: str) -> str:
+    """sha256(server + newline + container + newline + exact line)."""
+    return hashlib.sha256(f"{server}\n{container}\n{line}".encode("utf-8")).hexdigest()
+
+
 def error_class(line: str) -> str:
     match = _CLASS.search(line)
     if match is None:
@@ -304,6 +309,8 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
             continue
         service = None
         environment = None
+        server = None
+        container = None
         if isinstance(labels, dict):
             raw_svc = labels.get("service") or labels.get("compose_service")
             if isinstance(raw_svc, str) and raw_svc:
@@ -311,6 +318,12 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
             raw_env = labels.get("environment")
             if isinstance(raw_env, str) and raw_env:
                 environment = raw_env
+            raw_server = labels.get("server")
+            if isinstance(raw_server, str) and raw_server:
+                server = raw_server
+            raw_container = labels.get("container_name")
+            if isinstance(raw_container, str) and raw_container:
+                container = raw_container
         for pair in values:
             if not isinstance(pair, list) or len(pair) < 2:
                 continue
@@ -338,6 +351,10 @@ def default_fetch(cfg: dict[str, Any], cursor: str | None) -> tuple[list[dict[st
                 item["service"] = service
             if environment:
                 item["environment"] = environment
+            if server:
+                item["server"] = server
+            if container:
+                item["container"] = container
             lines.append(item)
             if latest_ns is None or ts_ns > latest_ns:
                 latest_ns = ts_ns
@@ -414,6 +431,14 @@ def _apply_lines(
             stack_sig=stack_sig(redacted),
             environment=environment,
         )
+        server = item.get("server")
+        container = item.get("container")
+        line_fp = None
+        if isinstance(server, str) and server and isinstance(container, str) and container:
+            try:
+                line_fp = line_fingerprint(server=server, container=container, line=line)
+            except UnicodeEncodeError:
+                line_fp = None
         existing = _latest_seen(store, session_id, fp)
         if existing is not None and not incident_closed(store, session_id, str(existing.get("id") or "")):
             inner = existing.get("payload")
@@ -424,6 +449,10 @@ def _apply_lines(
             payload_obj["count"] = count + 1
             payload_obj["last_seen"] = ts
             payload_obj["excerpt"] = excerpt
+            if line_fp is not None:
+                payload_obj["line_fingerprint"] = line_fp
+            else:
+                payload_obj.pop("line_fingerprint", None)
             updated = _strip(existing)
             updated["payload"] = payload_obj
             rid = str(existing.get("id") or "")
@@ -442,6 +471,8 @@ def _apply_lines(
             "excerpt": excerpt,
             "evidence": None,
         }
+        if line_fp is not None:
+            payload_obj["line_fingerprint"] = line_fp
         if isinstance(repo, str) and repo:
             payload_obj["repo"] = repo
         store.write(

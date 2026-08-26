@@ -11,6 +11,7 @@ from agent_cli.errors import (
     default_fetch,
     error_class,
     fingerprint,
+    line_fingerprint,
     load_config,
     redact,
     scan_errors,
@@ -203,6 +204,96 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert again is not None
     assert again["payload"]["count"] == 2
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
+    assert "line_fingerprint" not in payload
+
+
+def test_line_fingerprint_is_sha256_of_server_container_line() -> None:
+    import hashlib
+
+    line = "boom once"
+    expect = hashlib.sha256(b"prd\napi\nboom once").hexdigest()
+    assert line_fingerprint(server="prd", container="api", line=line) == expect
+
+
+def test_scan_stores_line_fingerprint_when_labels_present(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    line = "TimeoutError bearer SECRETTOKENVALUE0123456789 boom"
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:00Z",
+                    "line": line,
+                    "server": "prd",
+                    "container": "api",
+                }
+            ],
+            None,
+        )
+
+    created, _ = scan_errors(store, fetch)
+    payload = store.row("activity", created[0])["payload"]
+    raw_fp = line_fingerprint(server="prd", container="api", line=line)
+    redacted_fp = line_fingerprint(server="prd", container="api", line=redact(line))
+    assert payload["line_fingerprint"] == raw_fp
+    assert raw_fp != redacted_fp
+    assert "SECRETTOKENVALUE0123456789" not in payload["excerpt"]
+
+    def fetch_no_labels(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [{"ts": "2026-08-23T16:00:01Z", "line": line}],
+            None,
+        )
+
+    _, enriched = scan_errors(store, fetch_no_labels)
+    assert enriched == created
+    again = store.row("activity", created[0])["payload"]
+    assert "line_fingerprint" not in again
+
+    def fetch_labels(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:02Z",
+                    "line": line,
+                    "server": "prd",
+                    "container": "api",
+                }
+            ],
+            None,
+        )
+
+    _, enriched2 = scan_errors(store, fetch_labels)
+    assert enriched2 == created
+    labeled = store.row("activity", created[0])["payload"]
+    assert labeled["line_fingerprint"] == raw_fp
+
+
+def test_scan_omits_line_fingerprint_when_server_is_not_utf8(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:00Z",
+                    "line": "TimeoutError boom",
+                    "server": "\ud800",
+                    "container": "api",
+                }
+            ],
+            None,
+        )
+
+    created, _ = scan_errors(store, fetch)
+    payload = store.row("activity", created[0])["payload"]
+    assert "line_fingerprint" not in payload
+    assert payload["class"] == "TimeoutError"
 
 
 def test_scan_requires_error_fix_skill(tmp_path: Path) -> None:
@@ -440,6 +531,67 @@ def test_default_fetch_uses_forward_cursor_and_netrc(monkeypatch: pytest.MonkeyP
     assert captured["url"] == "https://logs.example/query_range"
     assert [row["line"] for row in lines] == ["TimeoutError early", "TimeoutError late"]
     assert cursor == "2000000000000000002"
+    assert "server" not in lines[0]
+    assert "container" not in lines[0]
+
+
+def test_default_fetch_maps_server_and_container_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAuth:
+        pass
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": {
+                    "result": [
+                        {
+                            "stream": {
+                                "service": "api",
+                                "server": "prd",
+                                "container_name": "api",
+                            },
+                            "values": [["2000000000000000001", "TimeoutError one"]],
+                        },
+                        {
+                            "stream": {"service": "api", "server": "prd"},
+                            "values": [["2000000000000000002", "TimeoutError two"]],
+                        },
+                    ]
+                }
+            }
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def get(self, url: str, params: dict | None = None, auth: object = None) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("agent_cli.errors.httpx.Client", FakeClient)
+    monkeypatch.setattr("agent_cli.errors.httpx.NetRCAuth", FakeAuth)
+    monkeypatch.delenv("AGENT_ERROR_FIX_USER", raising=False)
+    monkeypatch.delenv("AGENT_ERROR_FIX_PASSWORD", raising=False)
+    lines, _cursor = default_fetch(
+        {"url": "https://logs.example/query_range", "query": '{job="api"}'},
+        None,
+    )
+    both = next(row for row in lines if row["line"] == "TimeoutError one")
+    partial = next(row for row in lines if row["line"] == "TimeoutError two")
+    assert both["server"] == "prd"
+    assert both["container"] == "api"
+    assert partial["server"] == "prd"
+    assert "container" not in partial
 
 
 def test_default_fetch_skips_lines_without_nanosecond_ts(monkeypatch: pytest.MonkeyPatch) -> None:
