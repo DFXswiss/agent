@@ -144,12 +144,48 @@ def test_scan_error_fix_prints_valid_line_fingerprint(tmp_path: Path) -> None:
     assert lines == [
         f"error.fix fix-1 task={task_id} worktree={worktree} line_fingerprint={hex64}"
     ]
+    row = store.row("activity", "fix-1")
+    updated = {k: v for k, v in row.items() if not k.startswith("_")}
+    updated["execution_status"] = "pending"
+    store.write("activity", "update", "fix-1", updated)
+    assert scan_error_fix(store, runner) == [
+        f"error.fix fix-1 task={task_id} worktree={worktree} line_fingerprint={hex64}"
+    ]
 
 
 def test_scan_error_fix_omits_invalid_line_fingerprint(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
     _seen(store, line_fingerprint="NOTHEX")
+    _fix(store)
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["git", "clone", "--"]:
+            destination = Path(argv[-1])
+            (destination / ".git").mkdir(parents=True)
+        return Completed(0, "", "")
+
+    lines = scan_error_fix(store, runner)
+    task_id = store.rows("task")[0]["id"]
+    worktree = tmp_path / "error-fix-work" / task_id
+    assert lines == [f"error.fix fix-1 task={task_id} worktree={worktree}"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ab" * 31 + "a",  # 63
+        "ab" * 32 + "a",  # 65
+        "AB" * 32,  # uppercase
+        "ag" * 32,  # non-hex
+    ],
+)
+def test_scan_error_fix_omits_malformed_line_fingerprints(
+    tmp_path: Path, value: str
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, line_fingerprint=value)
     _fix(store)
 
     def runner(argv: list[str]) -> Completed:

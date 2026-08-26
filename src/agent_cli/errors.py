@@ -448,6 +448,8 @@ def _apply_lines(
             payload_obj["excerpt"] = excerpt
             if line_fp is not None:
                 payload_obj["line_fingerprint"] = line_fp
+            else:
+                payload_obj.pop("line_fingerprint", None)
             updated = _strip(existing)
             updated["payload"] = payload_obj
             rid = str(existing.get("id") or "")

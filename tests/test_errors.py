@@ -242,6 +242,17 @@ def test_scan_stores_line_fingerprint_when_labels_present(tmp_path: Path) -> Non
     assert raw_fp != redacted_fp
     assert "SECRETTOKENVALUE0123456789" not in payload["excerpt"]
 
+    def fetch_no_labels(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [{"ts": "2026-08-23T16:00:01Z", "line": line}],
+            None,
+        )
+
+    _, enriched = scan_errors(store, fetch_no_labels)
+    assert enriched == created
+    again = store.row("activity", created[0])["payload"]
+    assert "line_fingerprint" not in again
+
 
 def test_scan_requires_error_fix_skill(tmp_path: Path) -> None:
     store = Store(tmp_path)

@@ -620,7 +620,7 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
   "last_seen": "2026-08-23T16:00:00Z",
   "excerpt": "sanitized log line…",
   "evidence": null,
-  "line_fingerprint": "64-lowercase-hex"
+  "line_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
 ```
 
