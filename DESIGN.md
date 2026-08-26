@@ -570,7 +570,7 @@ A second model must not orchestrate the first. `agent supervise` is a **script**
 - One pending `issue.assigned` at a time (same queue as `agent watch assigned`).
 - `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing. Title and body stay untrusted payload.
 - Busy means the tmux pane contents changed across a short settle window (`Runtime.is_busy`). The script does not ask while busy.
-- When idle, the script asks only: done? (`Ja` / `Nein`); if no, can you finish alone vs a blocking problem (two locked German sentences in code). Anything else is ignored.
+- When idle, the script does not type into tmux for 10 minutes after the last in-flight Grok turn (`QUIET_SECONDS`). Then it asks only: done? (`Ja` / `Nein`); if no, can you finish alone vs a blocking problem (two locked German sentences in code). Anything else is ignored.
 - `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
 - `supervise.event` is script-only and does not knock.
 - Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect. They are not person pings and not the hub. Missing env is a no-op. **Working** is a Ja/Nein read of the Grok TUI in the session's tmux pane (`Thinking…`, `Preparing …`, `[stop]`, `Esc:cancel`). Pane flicker, process lists, and log mtimes are not that question. When that probe is Nein, the script posts `not working` immediately and again every 10 minutes (`TELEGRAM_IDLE_SECONDS`, default 600). A send failure does not stop the loop.

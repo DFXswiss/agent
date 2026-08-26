@@ -42,6 +42,8 @@ REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 SESSION_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 EXCERPT_MAX = 500
 FOLLOW_SECONDS = 60
+QUIET_SECONDS = 600
+LAST_WORKING_KEY = "supervise_last_working_at"
 
 
 def parse_closed_answer(pane: str) -> str | None:
@@ -240,6 +242,23 @@ def enqueue_assigned(
     return activity_id
 
 
+def _mark_working(store: Store, now: float) -> None:
+    store.sync_set(LAST_WORKING_KEY, str(now))
+
+
+def _in_quiet(store: Store, now: float, quiet_seconds: int) -> bool:
+    if quiet_seconds <= 0:
+        return False
+    raw = store.sync_get(LAST_WORKING_KEY)
+    if raw is None or raw == "":
+        return False
+    try:
+        last = float(raw)
+    except ValueError:
+        return False
+    return now - last < quiet_seconds
+
+
 def tick(
     store: Store,
     runtime: Runtime,
@@ -248,9 +267,12 @@ def tick(
     start: Callable[[str, Path], None],
     knock: Callable[[str], Any],
     workspace_root: Path | None = None,
+    quiet_seconds: int = QUIET_SECONDS,
+    now: float | None = None,
 ) -> str:
     if SESSION_RE.match(session_id) is None:
         raise StoreError("session id may contain only A-Za-z0-9_-")
+    clock = time.time() if now is None else now
     pending = pending_assigned(store, session_id)
     if not pending:
         return "supervise idle"
@@ -292,9 +314,13 @@ def tick(
             repo=repo,
             number=number,
         )
+        _mark_working(store, clock)
         return f"supervise commission assigned={assigned_id} dispatch={dispatched}"
     if runtime.is_busy(session_id):
+        _mark_working(store, clock)
         return f"supervise busy assigned={assigned_id}"
+    if _in_quiet(store, clock, quiet_seconds):
+        return f"supervise quiet assigned={assigned_id}"
     pane = runtime.capture(session_id)
     answer = parse_closed_answer(pane)
     if last_kind == "ask" and answer is not None:
