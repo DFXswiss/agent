@@ -253,6 +253,24 @@ def test_scan_stores_line_fingerprint_when_labels_present(tmp_path: Path) -> Non
     again = store.row("activity", created[0])["payload"]
     assert "line_fingerprint" not in again
 
+    def fetch_labels(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:02Z",
+                    "line": line,
+                    "server": "prd",
+                    "container": "api",
+                }
+            ],
+            None,
+        )
+
+    _, enriched2 = scan_errors(store, fetch_labels)
+    assert enriched2 == created
+    labeled = store.row("activity", created[0])["payload"]
+    assert labeled["line_fingerprint"] == raw_fp
+
 
 def test_scan_requires_error_fix_skill(tmp_path: Path) -> None:
     store = Store(tmp_path)

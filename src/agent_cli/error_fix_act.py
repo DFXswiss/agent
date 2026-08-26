@@ -320,9 +320,6 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             lines.append(f"error.fix {rid} error")
             continue
         session_id = str(row["session_id"])
-        seen = _error_seen(store, session_id, error_id)
-        seen_inner = seen.get("payload")
-        seen_payload = seen_inner if isinstance(seen_inner, dict) else {}
         parent = Path(store.home) / "error-fix-work"
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         head = f"error-fix-{error_id[:8]}"
