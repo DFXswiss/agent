@@ -3100,6 +3100,14 @@ def cmd_supervise(args: list[str]) -> None:
                 knock=lambda activity_id: deliver(store, runtime, activity_id),
             )
             print(line)
+            from .telegram_act import notify_status
+
+            try:
+                posted = notify_status(store, sid, line)
+                if posted == "telegram sent":
+                    print(posted)
+            except RuntimeError as exc:
+                print(f"telegram error: {exc}", file=sys.stderr)
             if not follow:
                 return
             time.sleep(FOLLOW_SECONDS)
