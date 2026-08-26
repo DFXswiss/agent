@@ -54,12 +54,19 @@ A reported point that contradicts a verified repo rule or fact may be
 dismissed with that evidence; it is not a defect.
 
 A finding gates the stage only when this change introduced it. A rule the
-surrounding code already broke is reported, not gated: name it in the evidence,
-say it is inherited, and leave it to the author. Judge against the diff to the
-merge base, not the file as it now stands — touching a line does not put
-everything about that line in scope. The check is cheap: if the same defect sits
-in code this change did not touch, it is inherited. Blocking a pull request on
-debt it did not create is how a review stops being read.
+surrounding code already broke is reported, not gated: put it in the `--evidence`
+of the verdict you do record, say that it is inherited, and leave it to the
+author. Judge against the diff to the merge base, not the file as it now stands —
+touching a line does not put everything about that line in scope. The check is
+cheap: if the same defect sits in code this change did not touch, it is
+inherited. Blocking a pull request on debt it did not create is how a review
+stops being read.
+
+Exposing a defect counts as introducing it. If the change makes a pre-existing
+fault reachable where it was not, more likely to be hit, or worse when it is,
+gate on that: the fault is older than the change, the reachability is not. Say
+which of the two you are gating on, because they are fixed differently — the
+author can undo the exposure without owning the fault.
 
 ## Coverage, handbook, contributing
 

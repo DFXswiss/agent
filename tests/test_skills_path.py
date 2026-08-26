@@ -101,7 +101,23 @@ def test_the_contract_separates_introduced_from_inherited_findings() -> None:
     # requests, which is how a review bot stops being read. The rule has to be in
     # the contract the reviewer reads, not only in whoever wrote the prompt.
     contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
-    assert "gates the stage only when this change introduced it" in contract
-    assert "merge base" in contract
-    lowered = contract.lower()
-    assert "inherited" in lowered
+    start = contract.index("A finding gates the stage only when")
+    rule = contract[start : contract.index("## Coverage", start)]
+
+    # When a finding gates.
+    assert "only when this change introduced it" in rule
+    # What happens to one that does not, and where the reviewer is to put it —
+    # "report it" alone left the destination undecided.
+    assert "reported, not gated" in rule
+    assert "--evidence" in rule
+    assert "inherited" in rule
+    # The case the introduced/inherited split leaves open on its own: a fault that
+    # predates the change but that the change makes reachable.
+    assert "Exposing a defect counts as introducing it" in rule
+    assert "reachable" in rule
+    # What it is measured against.
+    assert "merge base" in rule
+
+    # What this cannot check: that no later passage contradicts the rule. It holds
+    # that all four statements live in one paragraph, so a partial rule fails here
+    # rather than reading as complete.
