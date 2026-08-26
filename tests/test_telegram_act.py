@@ -65,6 +65,29 @@ def test_idle_posts_immediately_then_every_ten_minutes(tmp_path: Path) -> None:
     assert calls[1]["text"] == "not working\nrunner-1\nsupervise idle"
 
 
+def test_activity_not_working_overrides_pane_busy(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def post(url: str, json: object, timeout: float) -> FakeResponse:
+        assert isinstance(json, dict)
+        calls.append(json)
+        return FakeResponse(200)
+
+    env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
+    out = notify_status(
+        store,
+        "runner-1",
+        "supervise busy assigned=x",
+        environ=env,
+        post=post,
+        now=1_000.0,
+        working=False,
+    )
+    assert out == "telegram sent"
+    assert calls[0]["text"] == "not working\nrunner-1\nsupervise busy assigned=x"
+
+
 def test_busy_clears_idle_clock_so_next_stop_posts(tmp_path: Path) -> None:
     store = Store(tmp_path)
     calls: list[object] = []

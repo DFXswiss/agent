@@ -39,7 +39,7 @@ def idle_seconds(environ: Mapping[str, str] | None = None) -> int:
     return IDLE_NOTIFY_SECONDS
 
 
-def is_working(line: str) -> bool:
+def is_working_line(line: str) -> bool:
     return line.startswith("supervise busy")
 
 
@@ -101,13 +101,15 @@ def notify_status(
     environ: Mapping[str, str] | None = None,
     post: Callable[..., Any] | None = None,
     now: float | None = None,
+    working: bool | None = None,
 ) -> str:
     cfg = telegram_config(environ)
     if cfg is None:
         return "telegram skipped"
     token, chat_id = cfg
     clock = time.time() if now is None else now
-    if is_working(line):
+    busy = is_working_line(line) if working is None else working
+    if busy:
         store.sync_set(IDLE_AT_KEY, "")
         return "telegram skipped"
     if should_notify(line, store.sync_get(LAST_KEY)):
