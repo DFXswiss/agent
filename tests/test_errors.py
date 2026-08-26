@@ -11,6 +11,7 @@ from agent_cli.errors import (
     default_fetch,
     error_class,
     fingerprint,
+    line_fingerprint,
     load_config,
     redact,
     scan_errors,
@@ -203,6 +204,41 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert again is not None
     assert again["payload"]["count"] == 2
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
+    assert "line_fingerprint" not in payload
+
+
+def test_line_fingerprint_is_sha256_of_server_container_line() -> None:
+    import hashlib
+
+    line = "boom once"
+    expect = hashlib.sha256(b"dfxprd\napi\nboom once").hexdigest()
+    assert line_fingerprint(server="dfxprd", container="api", line=line) == expect
+
+
+def test_scan_stores_line_fingerprint_when_labels_present(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    line = "TimeoutError boom"
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:00Z",
+                    "line": line,
+                    "server": "dfxprd",
+                    "container": "dfx-api",
+                }
+            ],
+            None,
+        )
+
+    created, _ = scan_errors(store, fetch)
+    payload = store.row("activity", created[0])["payload"]
+    assert payload["line_fingerprint"] == line_fingerprint(
+        server="dfxprd", container="dfx-api", line=line
+    )
 
 
 def test_scan_requires_error_fix_skill(tmp_path: Path) -> None:

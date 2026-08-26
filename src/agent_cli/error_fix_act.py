@@ -255,6 +255,13 @@ def _find_or_create_implement_task(
     return tid, True
 
 
+def _line_fingerprint(seen_payload: dict[str, Any]) -> str | None:
+    raw = _nonempty_str(seen_payload.get("line_fingerprint"))
+    if raw is None or not all(c in "0123456789abcdef" for c in raw) or len(raw) != 64:
+        return None
+    return raw
+
+
 def _pending_fix(store: Store, row: dict[str, Any]) -> tuple[str, str, str]:
     payload = row.get("payload")
     if not isinstance(payload, dict):
@@ -313,6 +320,9 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             lines.append(f"error.fix {rid} error")
             continue
         session_id = str(row["session_id"])
+        seen = _error_seen(store, session_id, error_id)
+        seen_inner = seen.get("payload")
+        seen_payload = seen_inner if isinstance(seen_inner, dict) else {}
         parent = Path(store.home) / "error-fix-work"
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         head = f"error-fix-{error_id[:8]}"
@@ -326,7 +336,9 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 "repo": repo,
             }
             _mark(store, row, status="done", result=result)
-            lines.append(f"error.fix {rid} task={existing} worktree={path}")
+            extra = _line_fingerprint(seen_payload)
+            suffix = f" line_fingerprint={extra}" if extra else ""
+            lines.append(f"error.fix {rid} task={existing} worktree={path}{suffix}")
             continue
         staging = parent / f"pending-{rid}"
         if not (staging / ".git").exists():
@@ -401,5 +413,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             "repo": repo,
         }
         _mark(store, row, status="done", result=result)
-        lines.append(f"error.fix {rid} task={task_id} worktree={worktree}")
+        extra = _line_fingerprint(seen_payload)
+        suffix = f" line_fingerprint={extra}" if extra else ""
+        lines.append(f"error.fix {rid} task={task_id} worktree={worktree}{suffix}")
     return lines
