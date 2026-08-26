@@ -206,3 +206,27 @@ def test_start_without_tmux_dies() -> None:
 def test_capture_missing_returns_empty() -> None:
     rt = Runtime(runner=lambda argv: Completed(1, "", "no session"))
     assert rt.capture("missing") == ""
+
+
+def test_is_busy_when_pane_changes() -> None:
+    calls = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:2] == ["tmux", "capture-pane"]:
+            calls["n"] += 1
+            return Completed(0, f"frame-{calls['n']}", "")
+        return Completed(1, "", "")
+
+    rt = Runtime(runner=runner)
+    assert rt.is_busy("s1", settle=0) is True
+    assert calls["n"] == 2
+
+
+def test_is_busy_false_when_pane_stable() -> None:
+    def runner(argv: list[str]) -> Completed:
+        if argv[:2] == ["tmux", "capture-pane"]:
+            return Completed(0, "same", "")
+        return Completed(1, "", "")
+
+    rt = Runtime(runner=runner)
+    assert rt.is_busy("s1", settle=0) is False

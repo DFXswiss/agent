@@ -130,6 +130,7 @@ ACTIVITY_TYPES = frozenset(
         "query.result",
         "subscription.set",
         "usage.snapshot",
+        "supervise.event",
     }
 )
 SCRIPT_ONLY_ACTIVITY = frozenset(
@@ -141,6 +142,7 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "session.register",
         "usage.snapshot",
         "error.seen",
+        "supervise.event",
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
@@ -3048,6 +3050,63 @@ def cmd_watch(args: list[str]) -> None:
         store.close()
 
 
+def cmd_supervise(args: list[str]) -> None:
+    from .knock import deliver
+    from .supervise import FOLLOW_SECONDS, SESSION_RE, enqueue_assigned, tick
+
+    if "--session" not in args:
+        die("Usage: agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]")
+    sid = require_flag(args, "--session")
+    if SESSION_RE.match(sid) is None:
+        die("session id may contain only A-Za-z0-9_-")
+    repo = flag(args, "--repo")
+    number_raw = flag(args, "--number")
+    if (repo is None) != (number_raw is None):
+        die("--repo and --number must be used together")
+    follow = "--follow" in args
+    if "--once" in args and follow:
+        die("use only one of --once or --follow")
+    store = open_store()
+    try:
+        runtime = Runtime()
+
+        def start(session_id: str, cwd: Path) -> None:
+            _session_start(
+                store,
+                runtime,
+                session_id,
+                None,
+                None,
+                None,
+                provider="grok",
+                cwd=str(cwd),
+            )
+
+        queued = False
+        while True:
+            if repo is not None and number_raw is not None and not queued:
+                try:
+                    number = int(number_raw)
+                except ValueError:
+                    die("--number must be a positive integer")
+                assigned_id = enqueue_assigned(store, sid, repo, number, run_argv)
+                print(f"issue.assigned {assigned_id}")
+                queued = True
+            line = tick(
+                store,
+                runtime,
+                sid,
+                start=start,
+                knock=lambda activity_id: deliver(store, runtime, activity_id),
+            )
+            print(line)
+            if not follow:
+                return
+            time.sleep(FOLLOW_SECONDS)
+    finally:
+        store.close()
+
+
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
@@ -3074,6 +3133,7 @@ COMMANDS = {
     "knock": cmd_knock,
     "lane": cmd_lane,
     "watch": cmd_watch,
+    "supervise": cmd_supervise,
     "github": cmd_github,
     "query": cmd_query,
     "subscribe": cmd_subscribe,
@@ -3087,7 +3147,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|"
-            "github|query|subscribe|mail> …"
+            "github|query|subscribe|mail|supervise> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

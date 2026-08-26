@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from .store import StoreError
 
 GROK_DEFAULT_MODEL = "grok-4.6"
 GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+BUSY_SETTLE_SECONDS = 0.4
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
@@ -93,8 +95,14 @@ class Runtime:
         name = target or tmux_name(session_id)
         return self._run(["tmux", "has-session", "-t", name]).returncode == 0
 
-    def is_busy(self, session_id: str) -> bool:
-        return False
+    def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
+        """True when the pane contents change across a short settle window."""
+        wait = BUSY_SETTLE_SECONDS if settle is None else settle
+        first = self.capture(session_id)
+        if wait > 0:
+            time.sleep(wait)
+        second = self.capture(session_id)
+        return first != second
 
     def start(
         self,

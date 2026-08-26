@@ -330,6 +330,7 @@ v1 types (mechanism only):
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
+| `supervise.event` | `supervise` | script | — (closed-question loop; no TUI knock; payload tokens only) |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
 
@@ -416,6 +417,7 @@ agent watch grok-usage                         # one scan; knock child (under th
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
+agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard [--port 7845]
 ```
@@ -561,6 +563,19 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 
 The wanted loop “production error → draft pull request” is the **error-fix** skill (§21). It still means: this device writes `activity`, a script on this device queries logs, the session analyses, scripts validate and open a **draft** pull request, a human merges. It must not move write ownership to the hub.
 
+## 22. Static supervise loop (v1)
+
+A second model must not orchestrate the first. `agent supervise` is a **script** with locked questions and locked answers. Model text is not a state transition.
+
+- One pending `issue.assigned` at a time (same queue as `agent watch assigned`).
+- `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing. Title and body stay untrusted payload.
+- Busy means the tmux pane contents changed across a short settle window (`Runtime.is_busy`). The script does not ask while busy.
+- When idle, the script asks only: done? (`Ja` / `Nein`); if no, can you finish alone vs a blocking problem (two locked German sentences in code). Anything else is ignored.
+- `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
+- `supervise.event` is script-only and does not knock.
+
+Phase 1 is this loop plus a backlog. Smarter questions are later.
+
 ## 21. Skill: error-fix
 
 Wanted. Opt-in. Runs on **this device** (a laptop that has the client, log credentials, a runner session, and git). It is one skill among many. It is not the session bus, and it is not a hub workflow.
@@ -665,10 +680,10 @@ The model never receives production credentials. Analysis that only reads the ex
 
 - A second hub state machine, leases, or autonomous merge
 
-## 22. Document history
+## 23. Document history
 
 Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, default model `grok-4.6`, no Claude environment in the pane.
 
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
 
-Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; it is the opt-in **error-fix** skill on this device (§21).
+Deterministic core (§19) and the refused hub control plane (§20) lock the split that was already in §§1–17: scripts execute, checks measure, gates decide, and model text is never a transition. Error-to-PR is not the product core and not a hub workflow; it is the opt-in **error-fix** skill on this device (§21). The static supervise loop (§22) is a script with locked questions; a second model does not orchestrate the first.

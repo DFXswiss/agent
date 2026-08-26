@@ -70,6 +70,7 @@ agent query --match-file PATH
 agent subscribe list|set --file PATH|clear
 agent mail pending|ingest
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
+agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard
 ```
@@ -93,6 +94,7 @@ agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapsh
 agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
+agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 # agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```
 
