@@ -2142,6 +2142,28 @@ def _gate_argv(tid: str, aid: str, verdict: str, *extra: str, head: str = _GATE_
     ]
 
 
+def _mark_activity_error(tmp_path: Path, activity_id: str) -> None:
+    """Mark a queued activity `error`, the way github_act does on a failed request."""
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row is not None
+        store.write(
+            "activity",
+            "update",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": row["session_id"],
+                "type": row["type"],
+                "payload": row["payload"],
+                "execution_status": "error",
+            },
+        )
+    finally:
+        store.close()
+
+
 def _comment_activities(tmp_path: Path) -> list[dict]:
     store = Store(tmp_path)
     try:
@@ -2223,24 +2245,7 @@ def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path
 
     # github_act marks a transient GitHub failure as `error`; scan_github only
     # picks up pending work, so nothing would retry it on its own.
-    store = Store(tmp_path)
-    try:
-        row = store.row("activity", activity_id)
-        assert row is not None
-        store.write(
-            "activity",
-            "update",
-            activity_id,
-            {
-                "id": activity_id,
-                "session_id": row["session_id"],
-                "type": row["type"],
-                "payload": row["payload"],
-                "execution_status": "error",
-            },
-        )
-    finally:
-        store.close()
+    _mark_activity_error(tmp_path, activity_id)
 
     run(tmp_path, argv)
     out = capsys.readouterr().out
@@ -2263,32 +2268,16 @@ def test_rejected_gate_survives_a_stale_existence_read(
     capsys.readouterr()
     activity_id = _comment_activities(tmp_path)[0]["id"]
 
-    store = Store(tmp_path)
-    try:
-        row = store.row("activity", activity_id)
-        assert row is not None
-        store.write(
-            "activity",
-            "update",
-            activity_id,
-            {
-                "id": activity_id,
-                "session_id": row["session_id"],
-                "type": row["type"],
-                "payload": row["payload"],
-                "execution_status": "error",
-            },
-        )
-    finally:
-        store.close()
+    _mark_activity_error(tmp_path, activity_id)
 
     real_row = Store.row
     seen: list[int] = []
 
     def _stale_op_read(self: Store, table: str, row_id: str):
-        # Call 1 is `_settled()`, which must see the errored row so the retry
-        # proceeds at all. Call 2 is the insert/update choice — that is the read a
-        # concurrent insert makes stale, so it alone reports the row as absent.
+        # Call 1 is now the combined existence/status read that picks insert or
+        # update — that is the read a concurrent insert makes stale, so it alone
+        # reports the row as absent. `_settled()` runs later, under the advisory
+        # lock, and must see the errored row for the retry to proceed at all.
         if table == "activity" and row_id == activity_id:
             seen.append(1)
             if len(seen) == 1:
@@ -2316,24 +2305,7 @@ def test_rejected_gate_does_not_retry_a_failed_update(
     capsys.readouterr()
     activity_id = _comment_activities(tmp_path)[0]["id"]
 
-    store = Store(tmp_path)
-    try:
-        row = store.row("activity", activity_id)
-        assert row is not None
-        store.write(
-            "activity",
-            "update",
-            activity_id,
-            {
-                "id": activity_id,
-                "session_id": row["session_id"],
-                "type": row["type"],
-                "payload": row["payload"],
-                "execution_status": "error",
-            },
-        )
-    finally:
-        store.close()
+    _mark_activity_error(tmp_path, activity_id)
 
     ops: list[str] = []
 

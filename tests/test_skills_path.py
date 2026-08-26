@@ -91,3 +91,6 @@ def test_the_documented_rejected_gate_command_carries_evidence() -> None:
     rejected = [ln for ln in contract.splitlines() if "--verdict rejected" in ln]
     assert rejected, "the contract shows no rejected gate example"
     assert any("--evidence" in ln for ln in rejected), rejected
+    # Findings contain spaces. An unquoted placeholder teaches a command that
+    # silently drops everything after the first word.
+    assert any('--evidence "' in ln for ln in rejected), rejected
