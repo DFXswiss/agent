@@ -435,7 +435,10 @@ def _apply_lines(
         container = item.get("container")
         line_fp = None
         if isinstance(server, str) and server and isinstance(container, str) and container:
-            line_fp = line_fingerprint(server=server, container=container, line=line)
+            try:
+                line_fp = line_fingerprint(server=server, container=container, line=line)
+            except UnicodeEncodeError:
+                line_fp = None
         existing = _latest_seen(store, session_id, fp)
         if existing is not None and not incident_closed(store, session_id, str(existing.get("id") or "")):
             inner = existing.get("payload")
