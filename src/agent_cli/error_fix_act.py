@@ -333,9 +333,13 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 "repo": repo,
             }
             _mark(store, row, status="done", result=result)
-            seen = _error_seen(store, session_id, error_id)
-            seen_inner = seen.get("payload")
-            extra = _line_fingerprint(seen_inner if isinstance(seen_inner, dict) else {})
+            extra = None
+            try:
+                seen = _error_seen(store, session_id, error_id)
+                seen_inner = seen.get("payload")
+                extra = _line_fingerprint(seen_inner if isinstance(seen_inner, dict) else {})
+            except StoreError:
+                pass
             suffix = f" line_fingerprint={extra}" if extra else ""
             lines.append(f"error.fix {rid} task={existing} worktree={path}{suffix}")
             continue
@@ -412,9 +416,13 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             "repo": repo,
         }
         _mark(store, row, status="done", result=result)
-        seen = _error_seen(store, session_id, error_id)
-        seen_inner = seen.get("payload")
-        extra = _line_fingerprint(seen_inner if isinstance(seen_inner, dict) else {})
+        extra = None
+        try:
+            seen = _error_seen(store, session_id, error_id)
+            seen_inner = seen.get("payload")
+            extra = _line_fingerprint(seen_inner if isinstance(seen_inner, dict) else {})
+        except StoreError:
+            pass
         suffix = f" line_fingerprint={extra}" if extra else ""
         lines.append(f"error.fix {rid} task={task_id} worktree={worktree}{suffix}")
     return lines
