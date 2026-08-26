@@ -573,7 +573,7 @@ A second model must not orchestrate the first. `agent supervise` is a **script**
 - When idle, the script asks only: done? (`Ja` / `Nein`); if no, can you finish alone vs a blocking problem (two locked German sentences in code). Anything else is ignored.
 - `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
 - `supervise.event` is script-only and does not knock.
-- Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect on state changes. They are not person pings and not the hub. Missing env is a no-op. Busy/idle/wait ticks are not posted. A send failure does not stop the loop.
+- Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect. They are not person pings and not the hub. Missing env is a no-op. Busy ticks are not posted. When the pane is **not** working, the script posts `not working` immediately and again every 10 minutes (`TELEGRAM_IDLE_SECONDS`, default 600) until busy. A send failure does not stop the loop.
 
 Phase 1 is this loop plus a backlog. Smarter questions are later.
 

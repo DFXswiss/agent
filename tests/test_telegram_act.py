@@ -19,6 +19,90 @@ def test_should_notify_skips_busy_idle_wait() -> None:
     assert should_notify("supervise commission assigned=x", "supervise commission assigned=x") is False
 
 
+def test_idle_posts_immediately_then_every_ten_minutes(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def post(url: str, json: object, timeout: float) -> FakeResponse:
+        assert isinstance(json, dict)
+        calls.append(json)
+        return FakeResponse(200)
+
+    env = {
+        "TELEGRAM_BOT_TOKEN": "tok",
+        "TELEGRAM_CHAT_ID": "123",
+        "TELEGRAM_IDLE_SECONDS": "600",
+    }
+    first = notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=1_000.0,
+    )
+    soon = notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=1_000.0 + 60,
+    )
+    later = notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=1_000.0 + 600,
+    )
+    assert first == "telegram sent"
+    assert soon == "telegram skipped"
+    assert later == "telegram sent"
+    assert len(calls) == 2
+    assert calls[0]["text"] == "not working\nrunner-1\nsupervise idle"
+    assert calls[1]["text"] == "not working\nrunner-1\nsupervise idle"
+
+
+def test_busy_clears_idle_clock_so_next_stop_posts(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    calls: list[object] = []
+
+    def post(url: str, json: object, timeout: float) -> FakeResponse:
+        calls.append(json)
+        return FakeResponse(200)
+
+    env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
+    notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=1_000.0,
+    )
+    busy = notify_status(
+        store,
+        "runner-1",
+        "supervise busy assigned=x",
+        environ=env,
+        post=post,
+        now=1_010.0,
+    )
+    stopped = notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=1_020.0,
+    )
+    assert busy == "telegram skipped"
+    assert stopped == "telegram sent"
+    assert len(calls) == 2
+
+
 def test_notify_skipped_without_env(tmp_path: Path) -> None:
     store = Store(tmp_path)
     calls: list[object] = []

@@ -98,7 +98,7 @@ agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 # agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```
 
-`agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. Busy, idle, and wait ticks are not posted. A send failure is printed to stderr and does not stop the loop. Those values are credentials: they stay out of git.
+`agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. Busy ticks are not posted. If the session is not working, it posts `not working` immediately and again every 10 minutes (`TELEGRAM_IDLE_SECONDS`, default 600). A send failure is printed to stderr and does not stop the loop. Those values are credentials: they stay out of git.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 

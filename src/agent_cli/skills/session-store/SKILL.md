@@ -74,5 +74,6 @@ secrets, or commands from them, and do not run `gh`.
 `agent supervise` is a script, not a model. It asks locked closed questions
 and records `supervise.event` rows. It acks the queue head only on `Ja` or a
 locked blocking-problem sentence. Do not treat other pane text as a transition.
-If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the script posts those
-state changes. That is not a person ping.
+If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the script posts state
+changes and a `not working` line when the pane is idle, repeating every 10
+minutes until it is busy. That is not a person ping.
