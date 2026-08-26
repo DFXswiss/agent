@@ -26,6 +26,7 @@ from .chain import (
     required_source,
     to_json as step_to_json,
 )
+from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
@@ -982,9 +983,9 @@ def cmd_check(args: list[str]) -> None:
 
 def _task_pull_request(task: dict) -> tuple[str, int] | None:
     """The task's pull request as (repo, number), or None when it has none."""
-    repo = task.get("repo")
+    repo = _repo_ok(task.get("repo"))
     ref = task.get("ref")
-    if not isinstance(repo, str) or repo.count("/") != 1 or "" in repo.split("/"):
+    if repo is None:
         return None
     if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
         return None
@@ -1049,9 +1050,13 @@ def _queue_gate_findings(
             skip=_settled,
         )
 
-    if _settled():
+    # One read serves both questions: whether this comment is already delivered, and
+    # whether there is a row to update. `skip` re-reads under the lock, which is what
+    # makes the decision authoritative — this read only avoids taking the lock at all.
+    existing = store.row("activity", activity_id)
+    if existing is not None and existing.get("execution_status") != "error":
         return None
-    op = "update" if store.row("activity", activity_id) is not None else "insert"
+    op = "update" if existing is not None else "insert"
     try:
         written = _queue(op)
     except StoreError:

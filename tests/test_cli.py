@@ -2291,7 +2291,7 @@ def test_rejected_gate_survives_a_stale_existence_read(
         # concurrent insert makes stale, so it alone reports the row as absent.
         if table == "activity" and row_id == activity_id:
             seen.append(1)
-            if len(seen) == 2:
+            if len(seen) == 1:
                 return None
         return real_row(self, table, row_id)
 
@@ -2413,3 +2413,17 @@ def test_a_retargeted_task_queues_a_comment_on_the_new_pull_request(
     rows = _comment_activities(tmp_path)
     targets = sorted((row["payload"]["repo"], row["payload"]["number"]) for row in rows)
     assert targets == [("owner/name", 7), ("owner/name", 99), ("owner/other", 99)]
+
+
+@pytest.mark.parametrize("bad_repo", ["noslash", "owner/name/extra", "/name", "owner/"])
+def test_a_malformed_repository_queues_no_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], bad_repo: str
+) -> None:
+    # A missing repository is caught by the None check on its own. Only a malformed
+    # one exercises the validator, so without these the validation is unpinned.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys, repo=bad_repo, ref="7")
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "findings"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=rejected" in out
+    assert "no pull request on this task: findings not queued" in out
+    assert _comment_activities(tmp_path) == []
