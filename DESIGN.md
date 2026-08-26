@@ -318,7 +318,7 @@ v1 types (mechanism only):
 | `pr.open` | `pr` | AI | script |
 | `pr.merged` | `pr` | script | — (`NOTIFY` `agent_inbox` / `wake`; device daemon knock child) |
 | `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
-| `issue.assigned.ack` | `issue` | AI | — (releases the next queued knock) |
+| `issue.assigned.ack` | `issue` | script | — (releases the next queued knock; supervise only) |
 | `comment.post` | — | AI (target + body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |

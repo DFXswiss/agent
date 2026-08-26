@@ -318,6 +318,18 @@ def tick(
             last_phase = last_payload.get("phase")
             last_answer = last_payload.get("answer")
     pane_missing = not runtime.exists(session_id)
+    if last_kind is None and (not pane_missing) and runtime.is_busy(session_id):
+        _log(
+            store,
+            session_id,
+            assigned_id,
+            kind="commission",
+            phase="work",
+            repo=repo,
+            number=number,
+        )
+        _mark_working(store, clock)
+        return f"supervise commission assigned={assigned_id} dispatch=held"
     if last_kind is None or pane_missing:
         dispatched = dispatch_assigned(
             store,

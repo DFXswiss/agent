@@ -1813,7 +1813,7 @@ def test_activity_add_assigned_ack_requires_queue_head(
         store.close()
     bad = tmp_path / "ack-bad.json"
     bad.write_text('{"assigned_id": "asg-2"}', encoding="utf-8")
-    with pytest.raises(SystemExit, match="queue head"):
+    with pytest.raises(SystemExit, match="written by a script"):
         run(
             tmp_path,
             [
@@ -1829,20 +1829,20 @@ def test_activity_add_assigned_ack_requires_queue_head(
         )
     good = tmp_path / "ack-good.json"
     good.write_text('{"assigned_id": "asg-1"}', encoding="utf-8")
-    run(
-        tmp_path,
-        [
-            "activity",
-            "add",
-            "--session",
-            "assigned",
-            "--type",
-            "issue.assigned.ack",
-            "--payload-file",
-            str(good),
-        ],
-    )
-    assert "type=issue.assigned.ack" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="written by a script"):
+        run(
+            tmp_path,
+            [
+                "activity",
+                "add",
+                "--session",
+                "assigned",
+                "--type",
+                "issue.assigned.ack",
+                "--payload-file",
+                str(good),
+            ],
+        )
 
 
 @pytest.mark.parametrize(
@@ -1854,6 +1854,7 @@ def test_activity_add_assigned_ack_requires_queue_head(
         "session.register",
         "usage.snapshot",
         "issue.assigned",
+        "issue.assigned.ack",
     ],
 )
 def test_activity_add_rejects_script_only(tmp_path: Path, typ: str) -> None:

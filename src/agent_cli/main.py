@@ -143,6 +143,7 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "usage.snapshot",
         "error.seen",
         "supervise.event",
+        "issue.assigned.ack",
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
@@ -3051,6 +3052,8 @@ def cmd_watch(args: list[str]) -> None:
 
 
 def cmd_supervise(args: list[str]) -> None:
+    import fcntl
+
     from .knock import deliver
     from .supervise import FOLLOW_SECONDS, SESSION_RE, enqueue_assigned, tick
 
@@ -3067,7 +3070,18 @@ def cmd_supervise(args: list[str]) -> None:
     if "--once" in args and follow:
         die("use only one of --once or --follow")
     store = open_store()
+    lock_fh = None
     try:
+        if follow:
+            lock_path = store.home / f"supervise-{sid}.lock"
+            lock_fh = lock_path.open("w")
+            try:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                lock_fh.close()
+                die(f"supervise --follow already running for session {sid}")
+            lock_fh.write(str(os.getpid()))
+            lock_fh.flush()
         runtime = Runtime()
 
         def start(session_id: str, cwd: Path) -> None:
@@ -3117,6 +3131,8 @@ def cmd_supervise(args: list[str]) -> None:
                 return
             time.sleep(FOLLOW_SECONDS)
     finally:
+        if lock_fh is not None:
+            lock_fh.close()
         store.close()
 
 
