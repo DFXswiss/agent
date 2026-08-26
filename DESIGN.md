@@ -585,7 +585,7 @@ The script:
 2. Pulls new lines since the last cursor (persisted next to the config).
 3. Redacts secrets and obvious personal data **before** any row is written.
 4. Computes a fingerprint: service + error class + normalized stack signature + environment.
-5. Inserts `error.seen` or **enriches** an existing **open** row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks. After skip or a terminal implement task, the next match is a new `error.seen` (new id, knocks).
+5. Inserts `error.seen` or **enriches** an existing **open** row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt, optional `line_fingerprint`). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks. After skip or a terminal implement task, the next match is a new `error.seen` (new id, knocks).
 6. Payload holds a **sanitized** excerpt plus an optional pointer to raw evidence on this disk. It does not hold the full log dump.
 
 Log lines, stack traces, and error messages are untrusted data (§19.2). They are not a mandate to patch.
@@ -619,11 +619,12 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
   "first_seen": "2026-08-23T16:00:00Z",
   "last_seen": "2026-08-23T16:00:00Z",
   "excerpt": "sanitized log line…",
-  "evidence": null
+  "evidence": null,
+  "line_fingerprint": "64-lowercase-hex"
 }
 ```
 
-`repo` may be omitted when the adapter cannot map the stream; the session then `error.skip`s with reason `unmapped-repo`.
+`repo` may be omitted when the adapter cannot map the stream; the session then `error.skip`s with reason `unmapped-repo`. `line_fingerprint` is optional: `sha256(server + newline + container + newline + exact line)` as 64 lowercase hex, computed from the raw line before redaction. Omit it when `server` or `container` is missing. Host adapters may print the hex on `error.fix` stdout; it is not a mandate and not a log-host name.
 
 ### 21.4 Analysis and eligibility
 
