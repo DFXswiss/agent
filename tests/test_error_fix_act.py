@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli import error_fix_act as error_fix_act_mod
 from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, utcnow
@@ -198,6 +199,41 @@ def test_scan_error_fix_omits_malformed_line_fingerprints(
     task_id = store.rows("task")[0]["id"]
     worktree = tmp_path / "error-fix-work" / task_id
     assert lines == [f"error.fix fix-1 task={task_id} worktree={worktree}"]
+
+
+def test_scan_error_fix_prints_without_fingerprint_if_reload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    hex64 = "ab" * 32
+    _seen(store, line_fingerprint=hex64)
+    _fix(store)
+    real = error_fix_act_mod._error_seen
+
+    def after_mark(store_inner: Store, session_id: str, error_id: str) -> dict:
+        row = store_inner.row("activity", "fix-1")
+        if row is not None and row.get("execution_status") == "done":
+            raise StoreError("error.seen not found")
+        return real(store_inner, session_id, error_id)
+
+    monkeypatch.setattr(error_fix_act_mod, "_error_seen", after_mark)
+    lines = scan_error_fix(store, _clone_runner([]))
+    task_id = store.rows("task")[0]["id"]
+    worktree = tmp_path / "error-fix-work" / task_id
+    assert lines == [f"error.fix fix-1 task={task_id} worktree={worktree}"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "done"
+    updated = {k: v for k, v in row.items() if not k.startswith("_")}
+    updated["execution_status"] = "pending"
+    store.write("activity", "update", "fix-1", updated)
+    assert scan_error_fix(store, _clone_runner([])) == [
+        f"error.fix fix-1 task={task_id} worktree={worktree}"
+    ]
+    again = store.row("activity", "fix-1")
+    assert again is not None
+    assert again["execution_status"] == "done"
 
 
 def test_scan_error_fix_marks_ineligible_rows(tmp_path: Path) -> None:

@@ -272,6 +272,30 @@ def test_scan_stores_line_fingerprint_when_labels_present(tmp_path: Path) -> Non
     assert labeled["line_fingerprint"] == raw_fp
 
 
+def test_scan_omits_line_fingerprint_when_server_is_not_utf8(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {
+                    "ts": "2026-08-23T16:00:00Z",
+                    "line": "TimeoutError boom",
+                    "server": "\ud800",
+                    "container": "api",
+                }
+            ],
+            None,
+        )
+
+    created, _ = scan_errors(store, fetch)
+    payload = store.row("activity", created[0])["payload"]
+    assert "line_fingerprint" not in payload
+    assert payload["class"] == "TimeoutError"
+
+
 def test_scan_requires_error_fix_skill(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.write("session", "insert", "runner-1", {"id": "runner-1", "kind": "runner", "status": "active", "skills": ["spine"]})
