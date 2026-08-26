@@ -287,6 +287,44 @@ def test_run_dry_run_skips_local_check(
     assert called["n"] == 0
 
 
+def test_run_prints_vendor_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role="implementer",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="implemented the thing, distinctive-marker-run456\nSTATUS: complete\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    run(
+        tmp_path,
+        [
+            "run",
+            "--task",
+            tid,
+            "--spec-file",
+            str(spec),
+            "--no-tmux",
+            "--cwd",
+            str(tmp_path),
+        ],
+    )
+    out = capsys.readouterr().out
+    marker_at = out.index("distinctive-marker-run456")
+    summary_at = out.index("STATUS=complete")
+    assert marker_at < summary_at
+
+
 def test_run_spec_file_implementer_complete(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

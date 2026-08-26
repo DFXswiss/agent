@@ -17,7 +17,7 @@ from agent_cli.lane import (
     parse_status,
     tmux_wrap_argv,
 )
-from agent_cli.main import main
+from agent_cli.main import _sanitize_lane_output, main
 
 pytestmark = pytest.mark.no_pg
 
@@ -577,6 +577,15 @@ def test_cli_lane_run_prints_vendor_stderr(
         )
     err = capsys.readouterr().err
     assert "distinctive-marker-xyz789" in err
+
+
+def test_sanitize_lane_output_strips_escape_sequences_keeps_text() -> None:
+    raw = "before\x1b[31mred\x1b[0m after\x07\ttab\nline2"
+    cleaned = _sanitize_lane_output(raw)
+    assert "\x1b" not in cleaned
+    assert "\x07" not in cleaned
+    assert "red" in cleaned and "after" in cleaned
+    assert "\ttab\nline2" in cleaned
 
 
 def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

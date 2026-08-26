@@ -2726,15 +2726,27 @@ def cmd_mail(args: list[str]) -> None:
         store.close()
 
 
+_LANE_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_lane_output(text: str) -> str:
+    # The --no-tmux runner captures raw vendor subprocess output (unlike the tmux
+    # path, whose capture-pane already drops escape sequences), so an ESC-led CSI/OSC
+    # sequence from a misbehaving vendor process could otherwise reach the terminal
+    # verbatim. Stripping C0/DEL control bytes (keeping \t/\n/\r) neutralizes that
+    # without touching the printable content a human or --evidence actually needs.
+    return _LANE_CONTROL_CHARS_RE.sub("", text)
+
+
 def _print_lane_result(result: LaneResult) -> None:
     # The vendor's actual review/implementation text lives only in result.stdout —
     # by the time launch() returns, the tmux pane it was captured from is already
     # killed, so this is the only remaining chance to surface it. Without this, a
     # caller sees STATUS/rc but never the content a gate record --evidence needs.
     if result.stdout.strip():
-        print(result.stdout.rstrip())
+        print(_sanitize_lane_output(result.stdout.rstrip()))
     if result.stderr.strip():
-        print(result.stderr.rstrip(), file=sys.stderr)
+        print(_sanitize_lane_output(result.stderr.rstrip()), file=sys.stderr)
     print(
         f"lane role={result.role} vendor={result.vendor} "
         f"STATUS={result.status} rc={result.returncode}"
