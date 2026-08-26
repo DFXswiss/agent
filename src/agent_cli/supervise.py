@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .grok_pane import grok_permission_prompt, strip_ansi
 from .runtime import Completed, Runtime
 from .store import Store, StoreError, utcnow
 from .watch import (
@@ -46,13 +47,34 @@ QUIET_SECONDS = 600
 LAST_WORKING_KEY = "supervise_last_working_at"
 
 
+_CHROME = (
+    "Worked for",
+    "Shift+Tab",
+    "Help improve",
+    "Enter:send",
+    "Esc:cancel",
+    "Ctrl+x",
+    "Off by default",
+    "Read Terms",
+    "always-approve",
+    "Grok 4.6",
+)
+
+
 def parse_closed_answer(pane: str) -> str | None:
-    found: str | None = None
-    for line in pane.splitlines():
-        text = line.strip().strip('"').strip("'")
+    """Only the newest content line counts. Scrollback 'Ja' is not an answer."""
+    for raw in reversed(pane.splitlines()):
+        text = strip_ansi(raw).strip().strip('"').strip("'")
+        if text == "":
+            continue
+        if text.startswith("│") or text.startswith("╰") or text.startswith("╭"):
+            continue
+        if any(text.startswith(p) or p in text for p in _CHROME):
+            continue
         if text in ALLOWED_ANSWERS:
-            found = text
-    return found
+            return text
+        return None
+    return None
 
 
 def latest_supervise(

@@ -99,6 +99,17 @@ def test_parse_closed_answer_last_token() -> None:
     assert parse_closed_answer(f'"{ANSWER_YES}"') == ANSWER_YES
 
 
+def test_parse_closed_answer_ignores_ja_in_scrollback() -> None:
+    pane = (
+        "Ja\n"
+        "Referral-Programm umsetzen, nächster Schritt.\n"
+        "     Worked for 35m21s\n"
+        "  Help improve Grok                                         [Opt out] [Opt in]\n"
+        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    )
+    assert parse_closed_answer(pane) is None
+
+
 def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
