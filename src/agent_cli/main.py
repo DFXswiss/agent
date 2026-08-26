@@ -15,6 +15,7 @@ import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from websockets.exceptions import WebSocketException
@@ -135,7 +136,6 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "pr.merged",
         "issue.assigned",
         "mail.ingest",
-        "mail.seen",
         "query.result",
         "session.register",
         "usage.snapshot",
@@ -2535,6 +2535,101 @@ def cmd_github(args: list[str]) -> None:
         store.close()
 
 
+def _print_json(data: Any) -> None:
+    print(json.dumps(data, indent=2, sort_keys=True))
+
+
+def _load_json_file(path: Path) -> Any:
+    if not path.is_file():
+        die(f"file not found: {path}")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        die(f"invalid JSON: {path}")
+    return raw
+
+
+def cmd_query(args: list[str]) -> None:
+    if "--match-file" not in args:
+        die("Usage: agent query --match-file PATH")
+    path = Path(require_flag(args, "--match-file"))
+    match = _load_json_file(path)
+    if not isinstance(match, dict):
+        die("match file must contain a JSON object")
+    store = open_store()
+    try:
+        hub = _hub_from_store(store)
+        try:
+            _print_json(hub.query(match))
+        finally:
+            hub.close()
+    finally:
+        store.close()
+
+
+def cmd_subscribe(args: list[str]) -> None:
+    if not args or args[0] not in ("list", "set", "clear"):
+        die("Usage: agent subscribe list|set --file PATH|clear")
+    sub = args[0]
+    rest = args[1:]
+    store = open_store()
+    try:
+        hub = _hub_from_store(store)
+        try:
+            if sub == "list":
+                if rest:
+                    die("Usage: agent subscribe list|set --file PATH|clear")
+                _print_json(hub.get_subscriptions())
+                return
+            if sub == "clear":
+                if rest:
+                    die("Usage: agent subscribe list|set --file PATH|clear")
+                _print_json(hub.put_subscriptions([]))
+                return
+            if "--file" not in rest:
+                die("Usage: agent subscribe list|set --file PATH|clear")
+            path = Path(require_flag(rest, "--file"))
+            raw = _load_json_file(path)
+            if isinstance(raw, dict):
+                subscriptions = raw.get("subscriptions")
+                if not isinstance(subscriptions, list):
+                    die('subscribe file must be a list or {"subscriptions": [...]}')
+            elif isinstance(raw, list):
+                subscriptions = raw
+            else:
+                die('subscribe file must be a list or {"subscriptions": [...]}')
+            _print_json(hub.put_subscriptions(subscriptions))
+        finally:
+            hub.close()
+    finally:
+        store.close()
+
+
+def cmd_mail(args: list[str]) -> None:
+    if not args or args[0] not in ("pending", "ingest"):
+        die("Usage: agent mail pending|ingest")
+    from .mail_act import scan_mail, scan_mail_ingest
+
+    store = open_store()
+    try:
+        if args[0] == "pending":
+            lines = scan_mail(store, run_argv)
+            if not lines:
+                print("mail pending none")
+                return
+            for line in lines:
+                print(line)
+            return
+        lines = scan_mail_ingest(store, run_argv)
+        if not lines:
+            print("mail ingest none")
+            return
+        for line in lines:
+            print(line)
+    finally:
+        store.close()
+
+
 def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
@@ -2612,6 +2707,19 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"pending error: {exc}", file=sys.stderr)
                     finally:
                         hub.close()
+                from .github_act import scan_github
+                from .mail_act import scan_mail
+
+                try:
+                    for line in scan_github(store, run_argv):
+                        print(line)
+                except StoreError as exc:
+                    print(f"github pending error: {exc}", file=sys.stderr)
+                try:
+                    for line in scan_mail(store, run_argv):
+                        print(line)
+                except StoreError as exc:
+                    print(f"mail pending error: {exc}", file=sys.stderr)
                 from .errors import config_path, default_fetch, scan_errors
 
                 if config_path(store.home).is_file():
@@ -2810,6 +2918,9 @@ COMMANDS = {
     "lane": cmd_lane,
     "watch": cmd_watch,
     "github": cmd_github,
+    "query": cmd_query,
+    "subscribe": cmd_subscribe,
+    "mail": cmd_mail,
 }
 
 
@@ -2818,7 +2929,8 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|github> …"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|"
+            "github|query|subscribe|mail> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

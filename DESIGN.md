@@ -40,7 +40,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
-| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / `pr.merged` polls) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
+| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
@@ -397,6 +397,9 @@ agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
 agent allow|next|close-step|run …                 # spine skill; run: [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
 agent github pending                           # one scan; pr.open, comment.post, issue.write via gh
+agent query --match-file PATH                  # hub POST /sync/query; prints {"rows":[…]}
+agent subscribe list|set --file PATH|clear     # hub GET/PUT /sync/subscriptions
+agent mail pending|ingest                      # mail.reply / mail.seen via himalaya; envelope ingest
 agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
@@ -415,7 +418,7 @@ agent dashboard [--port 7845]
 
 Local dashboard binds `127.0.0.1` only.
 
-The AI is not expected to type hub HTTP or `gh`. It inserts `activity` (and `query.request` / `subscription.set`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, and `issue.write` rows. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
+The AI is not expected to type hub HTTP, `gh`, or himalaya. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
 
 ## 17. Control
 
@@ -457,12 +460,11 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, `pr.merged`, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
 
 Later product work (not required to operate v1 after merge):
 
 - Two local Postgres roles with password auth on a socket under `$AGENT_HOME` (AI vs scripts).
-- `agent query` / `agent subscribe` CLI. Catalog types `query.request` / `subscription.set` already exist.
 - `activity` type `session.register` (v1 records the `session` row only).
 
 ## 19. Deterministic core

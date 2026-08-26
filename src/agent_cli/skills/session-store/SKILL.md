@@ -40,6 +40,22 @@ agent session skill attach --id <session-id> --skill error-fix
 Data lives under `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`.
 Kind is `human`, `runner`, or `other`.
 
+## Hub query / subscribe / mail
+
+Operators can call hub HTTP and mail executors directly:
+
+```bash
+agent query --match-file PATH
+agent subscribe list|set --file PATH|clear
+agent mail pending
+agent mail ingest
+```
+
+The AI still inserts catalog rows (`query.request`, `subscription.set`, `mail.reply`,
+`mail.seen`) rather than typing hub HTTP or himalaya. Scripts and the knock poll run
+those rows; `agent query` / `agent subscribe` are operator shortcuts that do not write
+catalog rows.
+
 Outside facts arrive as script-written activity rows plus a knock. The knock text is
 only `da ist Post id <uuid>`. Select that activity from the local store.
 

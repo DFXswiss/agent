@@ -65,6 +65,9 @@ agent next --task <uuid>
 agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT [--status ja|n_a]
 agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
 agent github pending
+agent query --match-file PATH
+agent subscribe list|set --file PATH|clear
+agent mail pending|ingest
 agent ping send --to some-login --kind review-request --task <uuid> --note "ready"
 agent status
 agent dashboard
@@ -89,12 +92,12 @@ agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapsh
 agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
-# agent knock (daemon, no --once) polls grok-usage, errors, and error-fix every 60s
+# agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 
-`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
+`agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, github pending, mail pending, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 
