@@ -38,6 +38,9 @@ class FakeRuntime(Runtime):
     def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
         return self.busy
 
+    def grok_working(self, session_id: str) -> bool:
+        return self.busy
+
     def capture(self, session_id: str) -> str:
         return self.pane
 

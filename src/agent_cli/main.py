@@ -3100,16 +3100,14 @@ def cmd_supervise(args: list[str]) -> None:
                 knock=lambda activity_id: deliver(store, runtime, activity_id),
             )
             print(line)
-            from .telegram_act import idle_seconds, notify_status
-            from .work_signal import is_recent_work
+            from .telegram_act import notify_status
 
             try:
-                clock = time.time()
-                working = is_recent_work(
-                    os.environ, now=clock, window=idle_seconds()
-                )
                 posted = notify_status(
-                    store, sid, line, now=clock, working=working
+                    store,
+                    sid,
+                    line,
+                    working=runtime.grok_working(sid),
                 )
                 if posted == "telegram sent":
                     print(posted)

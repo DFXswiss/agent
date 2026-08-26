@@ -208,25 +208,34 @@ def test_capture_missing_returns_empty() -> None:
     assert rt.capture("missing") == ""
 
 
-def test_is_busy_when_pane_changes() -> None:
-    calls = {"n": 0}
-
+def test_is_busy_when_grok_thinking() -> None:
     def runner(argv: list[str]) -> Completed:
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(0, "", "")
         if argv[:2] == ["tmux", "capture-pane"]:
-            calls["n"] += 1
-            return Completed(0, f"frame-{calls['n']}", "")
+            return Completed(0, "  \u280b Thinking… 4.3s                    [stop]\n", "")
         return Completed(1, "", "")
 
-    rt = Runtime(runner=runner)
-    assert rt.is_busy("s1", settle=0) is True
-    assert calls["n"] == 2
+    assert Runtime(runner=runner).is_busy("s1") is True
 
 
-def test_is_busy_false_when_pane_stable() -> None:
+def test_is_busy_false_on_idle_prompt() -> None:
+    idle = (
+        "     Worked for 1.8s\n"
+        "  \u2502 \u276f                                                                        \u2502\n"
+        "  Shift+Tab:mode  \u2502  Ctrl+x:shortcuts\n"
+    )
+
     def runner(argv: list[str]) -> Completed:
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(0, "", "")
         if argv[:2] == ["tmux", "capture-pane"]:
-            return Completed(0, "same", "")
+            return Completed(0, idle, "")
         return Completed(1, "", "")
 
-    rt = Runtime(runner=runner)
-    assert rt.is_busy("s1", settle=0) is False
+    assert Runtime(runner=runner).is_busy("s1") is False
+
+
+def test_grok_working_false_when_session_missing() -> None:
+    rt = Runtime(runner=lambda argv: Completed(1, "", "no session"))
+    assert rt.grok_working("missing") is False
