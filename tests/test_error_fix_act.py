@@ -24,10 +24,17 @@ def _runner_session(store: Store) -> None:
     )
 
 
-def _seen(store: Store, *, repo: str | None = "org/app") -> None:
+def _seen(
+    store: Store,
+    *,
+    repo: str | None = "org/app",
+    line_fingerprint: str | None = None,
+) -> None:
     payload = {"fingerprint": "api|TimeoutError|abc|prod"}
     if repo is not None:
         payload["repo"] = repo
+    if line_fingerprint is not None:
+        payload["line_fingerprint"] = line_fingerprint
     store.write(
         "activity",
         "insert",
@@ -116,6 +123,45 @@ def test_scan_error_fix_clones_then_reuses(tmp_path: Path) -> None:
     ]
     assert calls == []
     assert len(store.rows("task")) == 1
+
+
+def test_scan_error_fix_prints_valid_line_fingerprint(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    hex64 = "ab" * 32
+    _seen(store, line_fingerprint=hex64)
+    _fix(store)
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["git", "clone", "--"]:
+            destination = Path(argv[-1])
+            (destination / ".git").mkdir(parents=True)
+        return Completed(0, "", "")
+
+    lines = scan_error_fix(store, runner)
+    task_id = store.rows("task")[0]["id"]
+    worktree = tmp_path / "error-fix-work" / task_id
+    assert lines == [
+        f"error.fix fix-1 task={task_id} worktree={worktree} line_fingerprint={hex64}"
+    ]
+
+
+def test_scan_error_fix_omits_invalid_line_fingerprint(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, line_fingerprint="NOTHEX")
+    _fix(store)
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["git", "clone", "--"]:
+            destination = Path(argv[-1])
+            (destination / ".git").mkdir(parents=True)
+        return Completed(0, "", "")
+
+    lines = scan_error_fix(store, runner)
+    task_id = store.rows("task")[0]["id"]
+    worktree = tmp_path / "error-fix-work" / task_id
+    assert lines == [f"error.fix fix-1 task={task_id} worktree={worktree}"]
 
 
 def test_scan_error_fix_marks_ineligible_rows(tmp_path: Path) -> None:
