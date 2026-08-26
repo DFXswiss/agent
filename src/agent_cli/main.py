@@ -29,6 +29,7 @@ from .chain import (
     required_source,
     to_json as step_to_json,
 )
+from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
@@ -982,12 +983,99 @@ def cmd_check(args: list[str]) -> None:
         store.close()
 
 
+def _task_pull_request(task: dict) -> tuple[str, int] | None:
+    """The task's pull request as (repo, number), or None when it has none."""
+    repo = _repo_ok(task.get("repo"))
+    ref = task.get("ref")
+    if repo is None:
+        return None
+    if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
+        return None
+    return repo, int(ref)
+
+
+def _queue_gate_findings(
+    store: Store,
+    task: dict,
+    stage: str,
+    dimension: str,
+    vendor: str,
+    head: str,
+    evidence: str,
+) -> str | None:
+    """Queue a rejected gate's evidence as a pull-request comment.
+
+    A rejection that is only recorded stops the task without telling the author
+    what was found. `agent github pending` performs the HTTP.
+    """
+    pull_request = _task_pull_request(task)
+    if pull_request is None:
+        return None
+    repo, number = pull_request
+    # Derived, not random: a retried `gate record` must reuse the id so the marker
+    # github_act writes matches and the findings are not posted twice. The key holds
+    # everything that defines the comment — where it goes (repo, number) and what it
+    # says (lane, head, evidence) — so anything that would read differently on the
+    # pull request gets its own identity rather than being taken for a repeat.
+    activity_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"gate-findings:{task['id']}:{repo}:{number}:{stage}:{dimension}:{head}:{evidence}",
+        )
+    )
+    def _settled() -> bool:
+        # An errored row is not settled: the executor gave up on it, so a later
+        # `gate record` has to hand it back rather than treat it as delivered.
+        row = store.row("activity", activity_id)
+        return row is not None and row.get("execution_status") != "error"
+
+    payload = {
+        "id": activity_id,
+        "session_id": task["session_id"],
+        "type": "comment.post",
+        "payload": {
+            "repo": repo,
+            "number": number,
+            "target": "pr",
+            "body": f"`{stage}` / `{dimension}` ({vendor}) rejected at `{head}`\n\n{evidence}",
+        },
+        "execution_status": "pending",
+    }
+
+    def _queue(op: str) -> dict | None:
+        return store.write_with_advisory(
+            "activity",
+            op,
+            activity_id,
+            payload,
+            lock_key=f"gate-findings:{activity_id}",
+            skip=_settled,
+        )
+
+    # One read serves both questions: whether this comment is already delivered, and
+    # whether there is a row to update. `skip` re-reads under the lock, which is what
+    # makes the decision authoritative — this read only avoids taking the lock at all.
+    existing = store.row("activity", activity_id)
+    if existing is not None and existing.get("execution_status") != "error":
+        return None
+    op = "update" if existing is not None else "insert"
+    try:
+        written = _queue(op)
+    except StoreError:
+        # Only a stale `insert` is recoverable: the row appeared between that read
+        # and the lock. Any other StoreError is a real failure and must surface.
+        if op != "insert":
+            raise
+        written = _queue("update")
+    return None if written is None else activity_id
+
+
 def cmd_gate(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
             "Usage: agent gate record --task UUID --stage grok-pr|codex-pr "
             "--dimension quality|logic --vendor grok|codex --verdict approved|rejected "
-            "--head SHA --agent UUID [--evidence TEXT]"
+            "--head SHA --agent UUID [--evidence TEXT; required when rejected]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
@@ -1009,6 +1097,8 @@ def cmd_gate(args: list[str]) -> None:
         die(f"stage {stage} requires vendor {expected_vendor}")
     if verdict not in ("approved", "rejected"):
         die("verdict must be approved|rejected")
+    if verdict == "rejected" and not (evidence or "").strip():
+        die("--evidence is required when --verdict is rejected")
     if not re.fullmatch(r"[0-9a-f]{7,40}", head):
         die("--head must be a git SHA (lowercase hex, length 7–40)")
     store = open_store()
@@ -1067,7 +1157,16 @@ def cmd_gate(args: list[str]) -> None:
                 task["state"] = "implementing"
                 task["updated_at"] = utcnow()
                 store.write("task", "update", tid, _strip(task))
+        queued = None
+        if verdict == "rejected":
+            queued = _queue_gate_findings(
+                store, task, stage, dimension, vendor, head, evidence or ""
+            )
         print(f"gate {stage}/{dimension}={verdict}")
+        if queued is not None:
+            print(f"activity {queued} type=comment.post")
+        elif verdict == "rejected" and _task_pull_request(task) is None:
+            print("no pull request on this task: findings not queued")
     finally:
         store.close()
 

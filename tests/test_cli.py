@@ -2105,3 +2105,296 @@ def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str
     dry = capsys.readouterr().out
     assert f"run task={tid}" in dry
     assert "spec_written" in dry
+
+
+_GATE_HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+
+
+def _seed_pr_review_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    repo: str | None = "owner/name",
+    ref: str | None = "7",
+    verdict: str = "rejected",
+) -> tuple[str, str]:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "pr-review"])
+    create = ["task", "create", "--session", "s", "--workflow", "review", "--title", "Look"]
+    if repo is not None:
+        create += ["--repo", repo]
+    if ref is not None:
+        create += ["--ref", ref]
+    run(tmp_path, create)
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
+    aid = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", verdict])
+    capsys.readouterr()
+    return tid, aid
+
+
+def _gate_argv(tid: str, aid: str, verdict: str, *extra: str, head: str = _GATE_HEAD) -> list[str]:
+    return [
+        "gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality",
+        "--vendor", "grok", "--verdict", verdict, "--head", head, "--agent", aid, *extra,
+    ]
+
+
+def _mark_activity_error(tmp_path: Path, activity_id: str) -> None:
+    """Mark a queued activity `error`, the way github_act does on a failed request."""
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row is not None
+        store.write(
+            "activity",
+            "update",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": row["session_id"],
+                "type": row["type"],
+                "payload": row["payload"],
+                "execution_status": "error",
+            },
+        )
+    finally:
+        store.close()
+
+
+def _comment_activities(tmp_path: Path) -> list[dict]:
+    store = Store(tmp_path)
+    try:
+        return [row for row in store.rows("activity") if row["type"] == "comment.post"]
+    finally:
+        store.close()
+
+
+def test_rejected_gate_without_evidence_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="--evidence is required"):
+        run(tmp_path, _gate_argv(tid, aid, "rejected"))
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_queues_its_findings_for_the_pull_request(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=rejected" in out
+    assert "type=comment.post" in out
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert payload["repo"] == "owner/name"
+    assert payload["number"] == 7
+    assert payload["target"] == "pr"
+    assert "dto.ts:91 keeps @IsOptional()" in payload["body"]
+    assert _GATE_HEAD in payload["body"]
+    assert rows[0]["execution_status"] == "pending"
+
+
+def test_approved_gate_queues_no_comment(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys, verdict="approved")
+    run(tmp_path, _gate_argv(tid, aid, "approved"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=approved" in out
+    assert "type=comment.post" not in out
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys, repo=None, ref=None)
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "no pull request yet"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=rejected" in out
+    assert "type=comment.post" not in out
+    assert "no pull request on this task: findings not queued" in out
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_with_blank_evidence_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="--evidence is required"):
+        run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "   \t "))
+    assert _comment_activities(tmp_path) == []
+
+
+def test_rejected_gate_recorded_twice_queues_one_comment(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    first = capsys.readouterr().out
+    run(tmp_path, argv)
+    second = capsys.readouterr().out
+    assert "type=comment.post" in first
+    assert "type=comment.post" not in second
+    assert len(_comment_activities(tmp_path)) == 1
+
+
+def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    capsys.readouterr()
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    activity_id = rows[0]["id"]
+
+    # github_act marks a transient GitHub failure as `error`; scan_github only
+    # picks up pending work, so nothing would retry it on its own.
+    _mark_activity_error(tmp_path, activity_id)
+
+    run(tmp_path, argv)
+    out = capsys.readouterr().out
+    assert "type=comment.post" in out
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["id"] == activity_id
+    assert rows[0]["execution_status"] == "pending"
+
+
+def test_rejected_gate_survives_a_stale_existence_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two callers can record the same rejection. One inserts the deterministic
+    # activity and the executor marks it `error` before the other takes the lock,
+    # so the second caller's insert/update choice is already stale when it writes.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    capsys.readouterr()
+    activity_id = _comment_activities(tmp_path)[0]["id"]
+
+    _mark_activity_error(tmp_path, activity_id)
+
+    real_row = Store.row
+    seen: list[int] = []
+
+    def _stale_op_read(self: Store, table: str, row_id: str):
+        # Call 1 is now the combined existence/status read that picks insert or
+        # update — that is the read a concurrent insert makes stale, so it alone
+        # reports the row as absent. `_settled()` runs later, under the advisory
+        # lock, and must see the errored row for the retry to proceed at all.
+        if table == "activity" and row_id == activity_id:
+            seen.append(1)
+            if len(seen) == 1:
+                return None
+        return real_row(self, table, row_id)
+
+    monkeypatch.setattr(Store, "row", _stale_op_read)
+
+    run(tmp_path, argv)
+    out = capsys.readouterr().out
+    assert "type=comment.post" in out
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["execution_status"] == "pending"
+
+
+def test_rejected_gate_does_not_retry_a_failed_update(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Recovery exists only for a stale `insert`. An `update` that fails is a real
+    # failure: retrying it repeats the same write and buries the original error.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
+    run(tmp_path, argv)
+    capsys.readouterr()
+    activity_id = _comment_activities(tmp_path)[0]["id"]
+
+    _mark_activity_error(tmp_path, activity_id)
+
+    ops: list[str] = []
+
+    def _refuse(self: Store, table: str, op: str, row_id: str, payload: dict, **kwargs: object):
+        ops.append(op)
+        raise StoreError("write refused")
+
+    monkeypatch.setattr(Store, "write_with_advisory", _refuse)
+
+    with pytest.raises((SystemExit, StoreError)):
+        run(tmp_path, argv)
+    assert ops == ["update"]
+
+
+def test_a_second_rejection_with_new_findings_queues_its_own_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Same task, lane and head, different findings. Keying only on the lane would
+    # treat the second rejection as a repeat and drop its evidence.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "first finding"))
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "corrected finding"))
+    capsys.readouterr()
+    bodies = sorted(row["payload"]["body"] for row in _comment_activities(tmp_path))
+    assert len(bodies) == 2
+    assert any("first finding" in b for b in bodies)
+    assert any("corrected finding" in b for b in bodies)
+
+
+def test_the_same_finding_at_a_new_head_queues_its_own_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The head is part of the comment's identity: the same defect surviving a new
+    # push is a new rejection to report, not a repeat of the one already posted.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    evidence = "dto.ts:91 keeps @IsOptional()"
+    other_head = "b2c3d4e5f60718293a4b5c6d7e8f901234567890"
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence, head=other_head))
+    capsys.readouterr()
+    rows = _comment_activities(tmp_path)
+    assert len(rows) == 2
+    bodies = sorted(row["payload"]["body"] for row in rows)
+    assert any(_GATE_HEAD in b for b in bodies)
+    assert any(other_head in b for b in bodies)
+
+
+def test_a_retargeted_task_queues_a_comment_on_the_new_pull_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Same lane, head and evidence, different destination. Keying only on the
+    # content would treat the retargeted comment as one already delivered.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    evidence = "dto.ts:91 keeps @IsOptional()"
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    capsys.readouterr()
+
+    def _retarget(repo: str, ref: str) -> None:
+        store = Store(tmp_path)
+        try:
+            task = store.row("task", tid)
+            assert task is not None
+            task["repo"] = repo
+            task["ref"] = ref
+            task["updated_at"] = utcnow()
+            store.write("task", "update", tid, task)
+        finally:
+            store.close()
+
+    # Move the number alone, then the repository alone. Changing both at once would
+    # leave either one missing from the key undetected: the other still separates them.
+    _retarget("owner/name", "99")
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    _retarget("owner/other", "99")
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    capsys.readouterr()
+    rows = _comment_activities(tmp_path)
+    targets = sorted((row["payload"]["repo"], row["payload"]["number"]) for row in rows)
+    assert targets == [("owner/name", 7), ("owner/name", 99), ("owner/other", 99)]
+
+
+@pytest.mark.parametrize("bad_repo", ["noslash", "owner/name/extra", "/name", "owner/"])
+def test_a_malformed_repository_queues_no_comment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], bad_repo: str
+) -> None:
+    # A missing repository is caught by the None check on its own. Only a malformed
+    # one exercises the validator, so without these the validation is unpinned.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys, repo=bad_repo, ref="7")
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "findings"))
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=rejected" in out
+    assert "no pull request on this task: findings not queued" in out
+    assert _comment_activities(tmp_path) == []

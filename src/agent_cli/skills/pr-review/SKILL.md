@@ -25,7 +25,9 @@ agent agent start --session <session-id> --task <uuid> --role pr-reviewer-qualit
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
 agent agent finish --id <uuid> --verdict approved|rejected
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
-  --verdict approved|rejected --head <sha> --agent <reviewer-uuid>
+  --verdict approved --head <sha> --agent <reviewer-uuid>
+agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+  --verdict rejected --head <sha> --agent <reviewer-uuid> --evidence "<findings>"
 ```
 
 Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
@@ -35,7 +37,11 @@ Review lanes execute no software (no tests, builds, or servers).
 ## Verdicts
 
 - `approved` → close the matching checklist key with evidence.
-- `rejected` → do not treat the stage as passed. On implement /
+- `rejected` → do not treat the stage as passed. `--evidence` is required. On a
+  task that carries a pull request the evidence is queued as a comment there,
+  so the findings reach the author instead of stopping the task silently;
+  `agent github pending` performs the HTTP. A task without a pull request
+  records the rejection and reports that nothing was queued. On implement /
   resolve-conflicts, `agent gate record` returns the task to `implementing`.
   On workflow `review`, the task stays in pr-review and is not `done`.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
