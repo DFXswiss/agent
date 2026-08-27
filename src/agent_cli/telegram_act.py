@@ -13,7 +13,8 @@ from .store import Store
 
 TELEGRAM_API = "https://api.telegram.org"
 IDLE_AT_KEY = "supervise_telegram_idle_at"
-IDLE_NOTIFY_SECONDS = 600
+PAGED_KEY = "supervise_telegram_paged"
+TELEGRAM_IDLE_TICKS = 10
 
 
 def telegram_config(environ: Mapping[str, str] | None = None) -> tuple[str, str] | None:
@@ -25,16 +26,6 @@ def telegram_config(environ: Mapping[str, str] | None = None) -> tuple[str, str]
     if not isinstance(chat, str) or chat == "":
         return None
     return token, chat
-
-
-def idle_seconds(environ: Mapping[str, str] | None = None) -> int:
-    env = os.environ if environ is None else environ
-    raw = env.get("TELEGRAM_IDLE_SECONDS", "")
-    if isinstance(raw, str) and raw.isdigit():
-        value = int(raw)
-        if value >= 1:
-            return value
-    return IDLE_NOTIFY_SECONDS
 
 
 def format_not_working(session_id: str, line: str) -> str:
@@ -65,22 +56,12 @@ def send_message(
 
 
 def reset_idle_clock(store: Store, *, working: bool, now: float | None = None) -> None:
-    """Follow start must not inherit a stale idle timestamp."""
-    if working:
-        store.sync_set(IDLE_AT_KEY, "")
-        return
-    clock = time.time() if now is None else now
-    store.sync_set(IDLE_AT_KEY, str(clock))
-
-
-def _idle_at(store: Store) -> float | None:
-    raw = store.sync_get(IDLE_AT_KEY)
-    if raw is None or raw == "":
-        return None
-    try:
-        return float(raw)
-    except ValueError:
-        return None
+    """Follow start must not inherit a stale idle streak or page flag."""
+    del working
+    del now
+    store.sync_set(IDLE_AT_KEY, "")
+    store.sync_set(PAGED_KEY, "")
+    store.sync_set("supervise_idle_streak", "0")
 
 
 def notify_status(
@@ -105,14 +86,18 @@ def notify_status(
     busy = working if working is not None else line.startswith("supervise busy")
     if busy:
         store.sync_set(IDLE_AT_KEY, "")
+        store.sync_set(PAGED_KEY, "")
         return "telegram skipped"
-    last_idle = _idle_at(store)
-    window = idle_seconds(environ)
-    if last_idle is None:
-        store.sync_set(IDLE_AT_KEY, str(clock))
+    raw_streak = store.sync_get("supervise_idle_streak")
+    try:
+        streak = int(raw_streak) if raw_streak not in (None, "") else 0
+    except ValueError:
+        streak = 0
+    if streak < TELEGRAM_IDLE_TICKS:
         return "telegram skipped"
-    if clock - last_idle < window:
+    if store.sync_get(PAGED_KEY) == "1":
         return "telegram skipped"
     send_message(token, chat_id, format_not_working(session_id, line), post=post)
+    store.sync_set(PAGED_KEY, "1")
     store.sync_set(IDLE_AT_KEY, str(clock))
     return "telegram sent"

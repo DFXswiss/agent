@@ -45,6 +45,8 @@ EXCERPT_MAX = 500
 FOLLOW_SECONDS = 60
 QUIET_SECONDS = 120
 LAST_WORKING_KEY = "supervise_last_working_at"
+STREAK_KEY = "supervise_idle_streak"
+CONTINUE_TICKS = 3
 
 
 _CHROME = (
@@ -266,6 +268,29 @@ def enqueue_assigned(
 
 def _mark_working(store: Store, now: float) -> None:
     store.sync_set(LAST_WORKING_KEY, str(now))
+    store.sync_set(STREAK_KEY, "0")
+
+
+def idle_streak(store: Store) -> int:
+    raw = store.sync_get(STREAK_KEY)
+    if raw is None or raw == "":
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+def _bump_idle_streak(store: Store) -> int:
+    n = idle_streak(store) + 1
+    store.sync_set(STREAK_KEY, str(n))
+    return n
+
+
+def reset_idle_tracking(store: Store) -> None:
+    store.sync_set(STREAK_KEY, "0")
+    store.sync_set("supervise_telegram_paged", "")
+    store.sync_set("supervise_telegram_idle_at", "")
 
 
 def _in_quiet(store: Store, now: float, quiet_seconds: int) -> bool:
@@ -378,21 +403,26 @@ def tick(
     if busy:
         _mark_working(store, clock)
         return f"supervise busy assigned={assigned_id}"
-    if _in_quiet(store, clock, quiet_seconds):
-        return f"supervise quiet assigned={assigned_id}"
-    if not ask:
-        _send(runtime, session_id, CONTINUE_TEXT)
-        _log(
-            store,
-            session_id,
-            assigned_id,
-            kind="continue",
-            phase="work",
-            repo=repo,
-            number=number,
-        )
-        _mark_working(store, clock)
-        return f"supervise continue assigned={assigned_id}"
+    if ask:
+        if _in_quiet(store, clock, quiet_seconds):
+            return f"supervise quiet assigned={assigned_id}"
+    else:
+        streak = _bump_idle_streak(store)
+        if streak < CONTINUE_TICKS:
+            return f"supervise quiet assigned={assigned_id} streak={streak}"
+        if streak == CONTINUE_TICKS:
+            _send(runtime, session_id, CONTINUE_TEXT)
+            _log(
+                store,
+                session_id,
+                assigned_id,
+                kind="continue",
+                phase="work",
+                repo=repo,
+                number=number,
+            )
+            return f"supervise continue assigned={assigned_id}"
+        return f"supervise stalled assigned={assigned_id} streak={streak}"
     answer = parse_closed_answer(pane)
     if last_kind == "ask" and answer is not None:
         _log(

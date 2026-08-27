@@ -318,31 +318,40 @@ def test_follow_does_not_ask_when_stalled(tmp_path: Path) -> None:
         now=1_000.0,
     )
     rt.sent.clear()
+    for i in range(1, 3):
+        line = tick(
+            store,
+            rt,
+            "runner-1",
+            start=lambda sid, cwd: None,
+            knock=lambda aid: "sent",
+            ask=False,
+        )
+        assert line.startswith("supervise quiet")
+        assert f"streak={i}" in line
+        assert rt.sent == []
     line = tick(
         store,
         rt,
         "runner-1",
         start=lambda sid, cwd: None,
         knock=lambda aid: "sent",
-        now=1_000.0 + 60,
-        quiet_seconds=120,
-        ask=False,
-    )
-    assert line.startswith("supervise quiet")
-    assert rt.sent == []
-    line = tick(
-        store,
-        rt,
-        "runner-1",
-        start=lambda sid, cwd: None,
-        knock=lambda aid: "sent",
-        now=1_000.0 + 120,
-        quiet_seconds=120,
         ask=False,
     )
     assert line.startswith("supervise continue")
     assert assigned in line
     assert CONTINUE_TEXT in rt.sent
+    rt.sent.clear()
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        ask=False,
+    )
+    assert line.startswith("supervise stalled")
+    assert rt.sent == []
 
 
 def test_tick_quiet_does_not_ask_for_ten_minutes(tmp_path: Path) -> None:
