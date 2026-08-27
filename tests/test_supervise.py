@@ -173,6 +173,7 @@ def test_tick_commissions_then_asks_then_acks_yes(tmp_path: Path) -> None:
         start=lambda sid, cwd: starts.append(sid),
         knock=lambda aid: knocks.append(aid) or "sent",
         quiet_seconds=0,
+        ask=True,
     )
     assert "ask phase=done" in line
     assert QUESTION_DONE in rt.sent
@@ -184,6 +185,7 @@ def test_tick_commissions_then_asks_then_acks_yes(tmp_path: Path) -> None:
         start=lambda sid, cwd: starts.append(sid),
         knock=lambda aid: knocks.append(aid) or "sent",
         quiet_seconds=0,
+        ask=True,
     )
     assert line.startswith("supervise done")
     acks = [r for r in store.rows("activity") if r.get("type") == "issue.assigned.ack"]
@@ -196,13 +198,13 @@ def test_tick_skip_on_blocked(tmp_path: Path) -> None:
     _session(store)
     assigned = _assigned(store)
     rt = FakeRuntime(pane="")
-    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
-    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
+    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     rt.pane = ANSWER_NO
-    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     assert "phase=why" in line
     rt.pane = ANSWER_BLOCKED
-    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     assert line.startswith("supervise skip")
     skips = [
         r
@@ -220,12 +222,12 @@ def test_tick_continue_on_can_finish(tmp_path: Path) -> None:
     _session(store)
     _assigned(store)
     rt = FakeRuntime(pane="")
-    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
-    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
+    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     rt.pane = ANSWER_NO
-    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     rt.pane = ANSWER_CAN
-    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     assert line.startswith("supervise continue")
     acks = [r for r in store.rows("activity") if r.get("type") == "issue.assigned.ack"]
     assert acks == []
@@ -263,10 +265,70 @@ def test_tick_busy_does_not_ask(tmp_path: Path) -> None:
     _session(store)
     _assigned(store)
     rt = FakeRuntime(busy=True, pane="")
-    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     rt.sent.clear()
-    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0)
+    line = tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True)
     assert line.startswith("supervise busy")
+    assert rt.sent == []
+
+
+def test_tick_approves_permission_prompt_even_when_busy(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store)
+    pane = (
+        "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
+        "  1/3:select  \u2502  Tab:next option\n"
+    )
+    rt = FakeRuntime(busy=True, pane=pane)
+    tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        quiet_seconds=0,
+    )
+    rt.keys.clear()
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        quiet_seconds=0,
+    )
+    assert line.startswith("supervise approve")
+    assert assigned in line
+    assert rt.keys == ["enter"]
+
+
+def test_follow_does_not_ask_when_stalled(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store)
+    rt = FakeRuntime(pane="")
+    tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        now=1_000.0,
+    )
+    rt.sent.clear()
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        now=1_000.0 + 600,
+        quiet_seconds=600,
+        ask=False,
+    )
+    assert line.startswith("supervise stalled")
+    assert assigned in line
     assert rt.sent == []
 
 
@@ -303,6 +365,7 @@ def test_tick_quiet_does_not_ask_for_ten_minutes(tmp_path: Path) -> None:
         knock=lambda aid: "sent",
         now=1_000.0 + 600,
         quiet_seconds=600,
+        ask=True,
     )
     assert "ask phase=done" in line
     assert QUESTION_DONE in rt.sent
@@ -312,7 +375,7 @@ def test_tick_idle_without_queue(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
     rt = FakeRuntime()
-    assert tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0) == (
+    assert tick(store, rt, "runner-1", start=lambda sid, cwd: None, knock=lambda aid: "sent", quiet_seconds=0, ask=True) == (
         "supervise idle"
     )
 

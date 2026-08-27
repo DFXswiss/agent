@@ -291,6 +291,7 @@ def tick(
     workspace_root: Path | None = None,
     quiet_seconds: int = QUIET_SECONDS,
     now: float | None = None,
+    ask: bool = False,
 ) -> str:
     if SESSION_RE.match(session_id) is None:
         raise StoreError("session id may contain only A-Za-z0-9_-")
@@ -359,6 +360,8 @@ def tick(
         return f"supervise busy assigned={assigned_id}"
     if _in_quiet(store, clock, quiet_seconds):
         return f"supervise quiet assigned={assigned_id}"
+    if not ask:
+        return f"supervise stalled assigned={assigned_id}"
     pane = runtime.capture(session_id)
     answer = parse_closed_answer(pane)
     if last_kind == "ask" and answer is not None:
