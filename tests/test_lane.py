@@ -539,6 +539,7 @@ def test_cli_lane_run_prints_vendor_stdout(
     out = capsys.readouterr().out
     assert "distinctive-marker-abc123" in out
     assert "STATUS=complete" in out
+    assert out.index("distinctive-marker-abc123") < out.index("STATUS=complete")
 
 
 def test_cli_lane_run_prints_vendor_stderr(
@@ -593,6 +594,15 @@ def test_sanitize_lane_output_strips_c1_control_bytes() -> None:
     cleaned = _sanitize_lane_output(raw)
     assert "\x9b" not in cleaned
     assert "before" in cleaned and "after" in cleaned
+
+
+def test_sanitize_lane_output_strips_exact_range_boundaries() -> None:
+    stripped = "\x00\x08\x0b\x0c\x0e\x1f\x7f\x80\x9f"
+    cleaned = _sanitize_lane_output(stripped)
+    assert cleaned == ""
+
+    kept = "\t\n\r"
+    assert _sanitize_lane_output(kept) == kept
 
 
 def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
