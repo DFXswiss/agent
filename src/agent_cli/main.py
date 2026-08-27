@@ -33,7 +33,7 @@ from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
-from .lane import LANE_ROLES, LANE_VENDORS, launch
+from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
     Runtime,
@@ -2651,10 +2651,7 @@ def cmd_run(args: list[str]) -> None:
                     cwd=cwd,
                     tmux=tmux,
                 )
-                print(
-                    f"lane role={result.role} vendor={result.vendor} "
-                    f"STATUS={result.status} rc={result.returncode}"
-                )
+                _print_lane_result(result)
                 if role == "implementer" and result.status == "complete":
                     working = _find_working_agent(
                         store, tid, role=role, vendor=vendor, round_num=round_num
@@ -2833,6 +2830,35 @@ def cmd_mail(args: list[str]) -> None:
         store.close()
 
 
+_LANE_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _sanitize_lane_output(text: str) -> str:
+    # The --no-tmux runner captures raw vendor subprocess output (unlike the tmux
+    # path, whose capture-pane already drops escape sequences), so an ESC-led CSI/OSC
+    # sequence (7-bit, \x1b-prefixed) or an 8-bit C1 control byte (\x80-\x9f, e.g. a
+    # bare CSI at \x9b) from a misbehaving vendor process could otherwise reach the
+    # terminal verbatim. Stripping C0/C1/DEL control bytes (keeping \t/\n/\r)
+    # neutralizes that without touching the printable content a human or
+    # --evidence actually needs.
+    return _LANE_CONTROL_CHARS_RE.sub("", text)
+
+
+def _print_lane_result(result: LaneResult) -> None:
+    # The vendor's actual review/implementation text lives only in result.stdout —
+    # by the time launch() returns, the tmux pane it was captured from is already
+    # killed, so this is the only remaining chance to surface it. Without this, a
+    # caller sees STATUS/rc but never the content a gate record --evidence needs.
+    if result.stdout.strip():
+        print(_sanitize_lane_output(result.stdout.rstrip()))
+    if result.stderr.strip():
+        print(_sanitize_lane_output(result.stderr.rstrip()), file=sys.stderr)
+    print(
+        f"lane role={result.role} vendor={result.vendor} "
+        f"STATUS={result.status} rc={result.returncode}"
+    )
+
+
 def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
@@ -2861,10 +2887,7 @@ def cmd_lane(args: list[str]) -> None:
     if dry_run:
         print(" ".join(result.argv))
         return
-    print(
-        f"lane role={result.role} vendor={result.vendor} "
-        f"STATUS={result.status} rc={result.returncode}"
-    )
+    _print_lane_result(result)
     if result.status != "complete":
         raise SystemExit(2)
 
