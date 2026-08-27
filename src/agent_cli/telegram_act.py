@@ -48,7 +48,7 @@ def send_message(
     sender = post if post is not None else httpx.post
     try:
         response = sender(url, json=body, timeout=10.0)
-    except OSError as exc:
+    except (OSError, httpx.HTTPError) as exc:
         raise RuntimeError("telegram send failed") from exc
     status = getattr(response, "status_code", None)
     if status != 200:

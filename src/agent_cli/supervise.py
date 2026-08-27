@@ -358,7 +358,9 @@ def tick(
         )
         _mark_working(store, clock)
         return f"supervise commission assigned={assigned_id} dispatch=held"
-    if last_kind is None or pane_missing:
+    if last_kind is not None and pane_missing:
+        return f"supervise missing assigned={assigned_id}"
+    if last_kind is None and pane_missing:
         dispatched = dispatch_assigned(
             store,
             assigned_id,

@@ -109,6 +109,30 @@ def test_reset_idle_clock_clears_page_flag(tmp_path: Path) -> None:
     assert store.sync_get("supervise_telegram_paged") == ""
 
 
+def test_httpx_timeout_becomes_runtime_error(tmp_path: Path) -> None:
+    import httpx
+
+    store = Store(tmp_path)
+
+    def post(url: str, json: object, timeout: float) -> FakeResponse:
+        raise httpx.TimeoutException("timeout")
+
+    try:
+        notify_status(
+            store,
+            "runner-1",
+            "supervise idle",
+            environ=_env(),
+            post=post,
+            working=False,
+        )
+        raised = False
+    except RuntimeError as exc:
+        raised = True
+        assert "telegram send failed" in str(exc)
+    assert raised is True
+
+
 def test_notify_skipped_without_env(tmp_path: Path) -> None:
     store = Store(tmp_path)
     calls: list[object] = []
