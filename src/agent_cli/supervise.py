@@ -43,7 +43,7 @@ REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 SESSION_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 EXCERPT_MAX = 500
 FOLLOW_SECONDS = 60
-QUIET_SECONDS = 600
+QUIET_SECONDS = 120
 LAST_WORKING_KEY = "supervise_last_working_at"
 
 
@@ -381,8 +381,18 @@ def tick(
     if _in_quiet(store, clock, quiet_seconds):
         return f"supervise quiet assigned={assigned_id}"
     if not ask:
-        return f"supervise stalled assigned={assigned_id}"
-    pane = runtime.capture(session_id)
+        _send(runtime, session_id, CONTINUE_TEXT)
+        _log(
+            store,
+            session_id,
+            assigned_id,
+            kind="continue",
+            phase="work",
+            repo=repo,
+            number=number,
+        )
+        _mark_working(store, clock)
+        return f"supervise continue assigned={assigned_id}"
     answer = parse_closed_answer(pane)
     if last_kind == "ask" and answer is not None:
         _log(

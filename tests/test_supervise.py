@@ -10,6 +10,7 @@ from agent_cli.supervise import (
     ANSWER_CAN,
     ANSWER_NO,
     ANSWER_YES,
+    CONTINUE_TEXT,
     QUESTION_DONE,
     enqueue_assigned,
     parse_closed_answer,
@@ -323,13 +324,25 @@ def test_follow_does_not_ask_when_stalled(tmp_path: Path) -> None:
         "runner-1",
         start=lambda sid, cwd: None,
         knock=lambda aid: "sent",
-        now=1_000.0 + 600,
-        quiet_seconds=600,
+        now=1_000.0 + 60,
+        quiet_seconds=120,
         ask=False,
     )
-    assert line.startswith("supervise stalled")
-    assert assigned in line
+    assert line.startswith("supervise quiet")
     assert rt.sent == []
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        now=1_000.0 + 120,
+        quiet_seconds=120,
+        ask=False,
+    )
+    assert line.startswith("supervise continue")
+    assert assigned in line
+    assert CONTINUE_TEXT in rt.sent
 
 
 def test_tick_quiet_does_not_ask_for_ten_minutes(tmp_path: Path) -> None:
