@@ -62,6 +62,19 @@ def test_first_idle_sends_standing_once() -> None:
     assert rt.keys == ["enter"]
 
 
+def test_empty_pane_does_not_type() -> None:
+    rt = FakeRuntime(pane="")
+    assert tick(rt, "worker", {}) == "unobservable"
+    assert rt.texts == []
+    assert rt.keys == []
+
+
+def test_pane_without_composer_is_not_idle() -> None:
+    rt = FakeRuntime(pane="dashboard only\nShift+Tab:mode\n")
+    assert tick(rt, "worker", {}) == "working"
+    assert rt.texts == []
+
+
 def test_runtime_argv_unchanged_for_keep_working_helpers() -> None:
     # Keep the module importable next to Runtime without needing tmux.
     calls: list[list[str]] = []

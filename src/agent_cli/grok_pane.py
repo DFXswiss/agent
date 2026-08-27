@@ -11,10 +11,10 @@ import re
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 WORKING_RE = re.compile(
     r"Thinking…|Thinking\.\.\.|Waiting for response|"
-    r"\[stop\]|Esc:cancel|Preparing [A-Za-z0-9_]+|"
-    r"1/3:select|don't ask again for anything",
+    r"\[stop\]|Esc:cancel|Preparing [A-Za-z0-9_]+",
     re.IGNORECASE,
 )
+IDLE_RE = re.compile(r"❯")
 PERMISSION_RE = re.compile(r"1/3:select", re.IGNORECASE)
 PERMISSION_HINT = "Tab:next option"
 
@@ -34,4 +34,13 @@ def grok_permission_prompt(pane: str) -> bool:
     plain = strip_ansi(pane)
     if PERMISSION_RE.search(plain) is None:
         return False
-    return PERMISSION_HINT.lower() in plain.lower()
+    if PERMISSION_HINT.lower() in plain.lower():
+        return True
+    return "don't ask again for anything" in plain.lower()
+
+
+def grok_pane_is_idle(pane: str) -> bool:
+    """True when the composer is waiting for a prompt (caret visible)."""
+    if grok_pane_is_working(pane) or grok_permission_prompt(pane):
+        return False
+    return IDLE_RE.search(strip_ansi(pane)) is not None

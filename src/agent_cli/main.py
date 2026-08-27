@@ -1836,23 +1836,30 @@ def _session_keep_working(
 
     def _one() -> str:
         fresh = _need(store, "session", sid)
+        if fresh.get("status") != "active":
+            print(f"keep-working {sid} inactive")
+            return "inactive"
         raw = fresh.get("runtime")
         meta = dict(raw) if isinstance(raw, dict) else {}
         kw_raw = meta.get("keep_working")
         state = dict(kw_raw) if isinstance(kw_raw, dict) else {}
         status = tick(runtime, sid, state)
-        meta["keep_working"] = state
-        fresh["runtime"] = meta
-        store.write("session", "update", sid, _strip(fresh))
+        latest = _need(store, "session", sid)
+        latest_meta = dict(latest.get("runtime") or {}) if isinstance(latest.get("runtime"), dict) else {}
+        latest_meta["keep_working"] = state
+        latest["runtime"] = latest_meta
+        store.write("session", "update", sid, _strip(latest))
         print(f"keep-working {sid} {status}")
         return status
 
-    _one()
+    if _one() == "inactive":
+        return
     if once:
         return
     while True:
         time.sleep(sleep_s)
-        _one()
+        if _one() == "inactive":
+            return
 
 
 def _session_input(

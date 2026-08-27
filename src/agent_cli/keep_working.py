@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .grok_pane import grok_pane_is_working, grok_permission_prompt
+from .grok_pane import grok_pane_is_idle, grok_pane_is_working, grok_permission_prompt
 from .runtime import Runtime
 
 STANDING = (
@@ -25,10 +25,12 @@ def tick(runtime: Runtime, session_id: str, state: dict[str, Any]) -> str:
     if not runtime.exists(session_id):
         return "missing"
     pane = runtime.capture(session_id)
+    if pane.strip() == "":
+        return "unobservable"
     if grok_permission_prompt(pane):
         runtime.input_key(session_id, "enter")
         return "approved"
-    if grok_pane_is_working(pane):
+    if grok_pane_is_working(pane) or not grok_pane_is_idle(pane):
         return "working"
     if not state.get("standing_sent"):
         runtime.input_text(session_id, STANDING)

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from agent_cli.grok_pane import grok_pane_is_working, grok_permission_prompt
+from agent_cli.grok_pane import (
+    grok_pane_is_idle,
+    grok_pane_is_working,
+    grok_permission_prompt,
+)
 
 THINKING = """
   /agent-home/sessions/worker                                        15K / 500K
@@ -44,7 +48,7 @@ def test_permission_prompt_is_working() -> None:
         "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
         "  1/3:select  \u2502  Tab:next option\n"
     )
-    assert grok_pane_is_working(pane) is True
+    assert grok_pane_is_working(pane) is False
     assert grok_permission_prompt(pane) is True
 
 
@@ -55,6 +59,7 @@ def test_design_quote_is_not_a_permission_prompt() -> None:
         "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
     )
     assert grok_permission_prompt(pane) is False
+    assert grok_pane_is_working(pane) is False
 
 
 def test_always_approve_footer_is_not_working() -> None:
