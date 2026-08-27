@@ -80,3 +80,22 @@ def test_empty_is_not_working() -> None:
 def test_ansi_thinking_is_working() -> None:
     pane = "\x1b[32m  Thinking...\x1b[0m  2.0s   [stop]\n"
     assert grok_pane_is_working(pane) is True
+
+
+def test_command_still_running_is_working() -> None:
+    pane = (
+        "  ❙  ◆ Run Check host remotes\n"
+        "  ◎ 1 command still running · 1 queued — Enter to send now\n"
+        "  Shift+Tab:mode  │  Ctrl+;:queue  │  Ctrl+x:shortcuts\n"
+    )
+    assert grok_pane_is_working(pane) is True
+
+
+def test_task_started_in_history_is_not_working() -> None:
+    pane = (
+        "     ◆ Task started: Sync host app and run CI-equivalent Flutter tests\n"
+        "     ◆ Task completed in 5m48s\n"
+        "     Worked for 12m37s\n"
+        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    )
+    assert grok_pane_is_working(pane) is False

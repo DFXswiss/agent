@@ -11,7 +11,8 @@ import re
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 WORKING_RE = re.compile(
     r"Thinking…|Thinking\.\.\.|Waiting for response|"
-    r"\[stop\]|Esc:cancel|Preparing [A-Za-z0-9_]+",
+    r"\[stop\]|Esc:cancel|Preparing [A-Za-z0-9_]+|"
+    r"command still running",
     re.IGNORECASE,
 )
 IDLE_RE = re.compile(r"❯")
@@ -26,6 +27,9 @@ def strip_ansi(text: str) -> str:
 def grok_pane_is_working(pane: str) -> bool:
     """True only when the TUI shows an in-flight turn (thinking, tool, stop)."""
     plain = strip_ansi(pane)
+    # Queued follow-up: the current turn has not returned to the idle prompt.
+    if "queued" in plain.lower() and "enter to send now" in plain.lower():
+        return True
     return WORKING_RE.search(plain) is not None
 
 
