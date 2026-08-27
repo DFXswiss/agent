@@ -378,7 +378,7 @@ Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` w
 
 ```text
 agent init
-agent session register|heartbeat|list|close|start|stop|input|skill
+agent session register|heartbeat|list|close|start|stop|input|keep-working|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
 agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix
@@ -387,6 +387,9 @@ agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--col
 agent session stop --id ID
 agent session input --id ID --data TEXT
 agent session input --id ID --key enter|ctrl-c|tab
+agent session keep-working --id ID [--once|--follow]
+# first idle: one standing "work until complete" prompt; later idle: "Continue."
+# never types while the Grok pane shows an in-flight turn
 agent activity add --session ID --type TYPE --payload-file FILE
 agent task create|list|show|state|summary          # spine skill
 agent checklist set …                             # spine skill

@@ -45,6 +45,7 @@ agent session skill attach --id <session-id> --skill pr-review
 agent session start --id <session-id> [--provider grok] [--model TEXT] [--cmd TEXT] [--cols N] [--rows N]
 agent session input --id <session-id> --data TEXT
 agent session input --id <session-id> --key enter|ctrl-c|tab
+agent session keep-working --id <session-id> [--once|--follow]
 agent session stop --id <session-id>
 agent activity add --session <session-id> --type message --payload-file ./mail.json
 agent task create --session <session-id> --workflow implement --title "…"
@@ -118,9 +119,12 @@ agent session start --id <session-id> --provider grok
 # later starts resume that uuid; they do not reuse the store session id
 agent session input --id <session-id> --data "ls\n"
 agent session input --id <session-id> --key enter
+agent session keep-working --id <session-id> --once
 agent session stop --id <session-id>
 # → stopped <id>
 ```
+
+`agent session keep-working` is for a session whose standing job is already in the working directory. The Grok TUI stops after each turn; this command does not interrupt an in-flight turn. The first idle tick sends one standing instruction to keep going until the assignment is complete. Later idle ticks send only `Continue.`. `--once` is one tick; `--follow` loops. A missing tmux session is reported and left alone.
 
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
 
