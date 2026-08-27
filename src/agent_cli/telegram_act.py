@@ -64,6 +64,15 @@ def send_message(
         raise RuntimeError(f"telegram send failed: HTTP {status}")
 
 
+def reset_idle_clock(store: Store, *, working: bool, now: float | None = None) -> None:
+    """Follow start must not inherit a stale idle timestamp."""
+    if working:
+        store.sync_set(IDLE_AT_KEY, "")
+        return
+    clock = time.time() if now is None else now
+    store.sync_set(IDLE_AT_KEY, str(clock))
+
+
 def _idle_at(store: Store) -> float | None:
     raw = store.sync_get(IDLE_AT_KEY)
     if raw is None or raw == "":

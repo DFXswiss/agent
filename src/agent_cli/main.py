@@ -3083,6 +3083,11 @@ def cmd_supervise(args: list[str]) -> None:
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
         runtime = Runtime()
+        from .grok_pane import grok_pane_is_working
+        from .telegram_act import reset_idle_clock
+
+        startup_working = runtime.exists(sid) and grok_pane_is_working(runtime.capture(sid))
+        reset_idle_clock(store, working=startup_working)
 
         def start(session_id: str, cwd: Path) -> None:
             _session_start(
@@ -3106,22 +3111,27 @@ def cmd_supervise(args: list[str]) -> None:
                 assigned_id = enqueue_assigned(store, sid, repo, number, run_argv)
                 print(f"issue.assigned {assigned_id}")
                 queued = True
+            pane = runtime.capture(sid) if runtime.exists(sid) else ""
+            from .grok_pane import grok_pane_is_working
+            from .telegram_act import notify_status
+
+            working = grok_pane_is_working(pane)
             line = tick(
                 store,
                 runtime,
                 sid,
                 start=start,
                 knock=lambda activity_id: deliver(store, runtime, activity_id),
+                pane=pane,
+                working=working,
             )
             print(line)
-            from .telegram_act import notify_status
-
             try:
                 posted = notify_status(
                     store,
                     sid,
                     line,
-                    working=runtime.grok_working(sid),
+                    working=working,
                 )
                 if posted == "telegram sent":
                     print(posted)

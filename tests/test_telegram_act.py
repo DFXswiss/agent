@@ -100,6 +100,34 @@ def test_busy_clears_timer_so_short_gaps_do_not_page(tmp_path: Path) -> None:
     assert calls == []
 
 
+def test_reset_idle_clock_drops_stale_timestamp(tmp_path: Path) -> None:
+    from agent_cli.telegram_act import reset_idle_clock
+
+    store = Store(tmp_path)
+    calls: list[object] = []
+
+    def post(url: str, json: object, timeout: float) -> FakeResponse:
+        calls.append(json)
+        return FakeResponse(200)
+
+    env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
+    store.sync_set("supervise_telegram_idle_at", "1")
+    reset_idle_clock(store, working=False, now=10_000.0)
+    out = notify_status(
+        store,
+        "runner-1",
+        "supervise idle",
+        environ=env,
+        post=post,
+        now=10_000.0,
+        working=False,
+    )
+    assert out == "telegram skipped"
+    assert calls == []
+    reset_idle_clock(store, working=True, now=10_001.0)
+    assert store.sync_get("supervise_telegram_idle_at") == ""
+
+
 def test_notify_skipped_without_env(tmp_path: Path) -> None:
     store = Store(tmp_path)
     calls: list[object] = []

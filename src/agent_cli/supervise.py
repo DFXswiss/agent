@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .grok_pane import grok_permission_prompt, strip_ansi
+from .grok_pane import grok_pane_is_working, grok_permission_prompt, strip_ansi
 from .runtime import Completed, Runtime
 from .store import Store, StoreError, utcnow
 from .watch import (
@@ -292,6 +292,8 @@ def tick(
     quiet_seconds: int = QUIET_SECONDS,
     now: float | None = None,
     ask: bool = False,
+    pane: str | None = None,
+    working: bool | None = None,
 ) -> str:
     if SESSION_RE.match(session_id) is None:
         raise StoreError("session id may contain only A-Za-z0-9_-")
@@ -355,7 +357,25 @@ def tick(
         )
         _mark_working(store, clock)
         return f"supervise commission assigned={assigned_id} dispatch={dispatched}"
-    if runtime.is_busy(session_id):
+    if pane is None:
+        pane = runtime.capture(session_id) if runtime.exists(session_id) else ""
+    if grok_permission_prompt(pane):
+        runtime.input_key(session_id, "enter")
+        _log(
+            store,
+            session_id,
+            assigned_id,
+            kind="approve",
+            phase="work",
+            repo=repo,
+            number=number,
+        )
+        _mark_working(store, clock)
+        return f"supervise approve assigned={assigned_id}"
+    busy = working if working is not None else (
+        grok_pane_is_working(pane) or runtime.is_busy(session_id)
+    )
+    if busy:
         _mark_working(store, clock)
         return f"supervise busy assigned={assigned_id}"
     if _in_quiet(store, clock, quiet_seconds):
