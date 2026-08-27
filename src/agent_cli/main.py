@@ -117,6 +117,7 @@ ACTIVITY_TYPES = frozenset(
         "issue.assigned",
         "issue.assigned.ack",
         "comment.post",
+        "review.post",
         "mail.ingest",
         "mail.seen",
         "mail.reply",
@@ -1003,10 +1004,12 @@ def _queue_gate_findings(
     head: str,
     evidence: str,
 ) -> str | None:
-    """Queue a rejected gate's evidence as a pull-request comment.
+    """Queue a rejected gate's evidence as a pull-request review.
 
-    A rejection that is only recorded stops the task without telling the author
-    what was found. `agent github pending` performs the HTTP.
+    A rejection that is only recorded stops the task without telling the author what
+    was found. A review rather than a plain comment: it is where an author looks, and
+    it is the artefact a runner counts when asking whether a review happened at all.
+    `agent github pending` performs the HTTP.
     """
     pull_request = _task_pull_request(task)
     if pull_request is None:
@@ -1032,12 +1035,14 @@ def _queue_gate_findings(
     payload = {
         "id": activity_id,
         "session_id": task["session_id"],
-        "type": "comment.post",
+        "type": "review.post",
         "payload": {
             "repo": repo,
             "number": number,
-            "target": "pr",
-            "body": f"`{stage}` / `{dimension}` ({vendor}) rejected at `{head}`\n\n{evidence}",
+            "body": (
+                f"**{vendor.capitalize()} {dimension} — rejected** at `{head[:7]}`\n\n"
+                f"{evidence.strip()}"
+            ),
         },
         "execution_status": "pending",
     }
@@ -1164,7 +1169,7 @@ def cmd_gate(args: list[str]) -> None:
             )
         print(f"gate {stage}/{dimension}={verdict}")
         if queued is not None:
-            print(f"activity {queued} type=comment.post")
+            print(f"activity {queued} type=review.post")
         elif verdict == "rejected" and _task_pull_request(task) is None:
             print("no pull request on this task: findings not queued")
     finally:

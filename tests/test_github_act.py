@@ -804,3 +804,69 @@ def test_cli_github_pending_none(tmp_path: Path, capsys: pytest.CaptureFixture[s
     run(tmp_path, ["init"])
     run(tmp_path, ["github", "pending"])
     assert "github pending none" in capsys.readouterr().out
+
+
+def test_review_post_submits_a_comment_review_then_is_idempotent(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-1"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    review_url = "https://github.com/dfxswiss/agent/pull/3#pullrequestreview-77"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "dto.ts:91 wrong decorator"},
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            assert argv[-4] == "repos/dfxswiss/agent/pulls/3/reviews" or (
+                "repos/dfxswiss/agent/pulls/3/reviews" in argv
+            )
+            joined = " ".join(argv)
+            # A bot that can hold a merge closed is a different tool from one that reports.
+            assert "event=COMMENT" in joined
+            assert "event=REQUEST_CHANGES" not in joined
+            assert marker in joined
+            return Completed(0, json.dumps({"id": 77, "html_url": review_url}), "")
+        if argv[1] == "api":
+            assert argv[-1] == "repos/dfxswiss/agent/pulls/3/reviews"
+            return Completed(0, json.dumps([]), "")
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["url"] == review_url
+
+    # A second activity whose marker is already on the pull request must not post again.
+    act2 = "r-2"
+    _pending(
+        store,
+        act2,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "same finding"},
+    )
+    existing = [{"id": 77, "html_url": review_url, "body": ACTIVITY_MARKER.format(id=act2)}]
+    posts: list[list[str]] = []
+
+    def runner2(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posts.append(list(argv))
+            raise AssertionError("must not post twice")
+        return Completed(0, json.dumps([existing]), "")
+
+    assert scan_github(store, runner2) == [f"review.post {act2} done"]
+    assert posts == []
+
+
+def test_review_post_is_an_executable_activity_type() -> None:
+    # Without this the row is written, nothing ever runs it, and the findings never
+    # reach the pull request — silently, which is the defect this path exists to fix.
+    from agent_cli.store import EXECUTABLE_ACTIVITY_TYPES
+
+    assert "review.post" in EXECUTABLE_ACTIVITY_TYPES

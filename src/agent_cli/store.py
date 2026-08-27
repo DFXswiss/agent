@@ -78,6 +78,7 @@ EXECUTABLE_ACTIVITY_TYPES = frozenset(
         "issue.write",
         "pr.open",
         "comment.post",
+        "review.post",
         "mail.ingest",
         "mail.seen",
         "mail.reply",

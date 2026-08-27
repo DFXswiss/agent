@@ -2208,10 +2208,10 @@ def _mark_activity_error(tmp_path: Path, activity_id: str) -> None:
         store.close()
 
 
-def _comment_activities(tmp_path: Path) -> list[dict]:
+def _review_activities(tmp_path: Path) -> list[dict]:
     store = Store(tmp_path)
     try:
-        return [row for row in store.rows("activity") if row["type"] == "comment.post"]
+        return [row for row in store.rows("activity") if row["type"] == "review.post"]
     finally:
         store.close()
 
@@ -2220,7 +2220,7 @@ def test_rejected_gate_without_evidence_is_refused(tmp_path: Path, capsys: pytes
     tid, aid = _seed_pr_review_gate(tmp_path, capsys)
     with pytest.raises(SystemExit, match="--evidence is required"):
         run(tmp_path, _gate_argv(tid, aid, "rejected"))
-    assert _comment_activities(tmp_path) == []
+    assert _review_activities(tmp_path) == []
 
 
 def test_rejected_gate_queues_its_findings_for_the_pull_request(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2228,15 +2228,17 @@ def test_rejected_gate_queues_its_findings_for_the_pull_request(tmp_path: Path, 
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()"))
     out = capsys.readouterr().out
     assert "gate grok-pr/quality=rejected" in out
-    assert "type=comment.post" in out
-    rows = _comment_activities(tmp_path)
+    assert "type=review.post" in out
+    rows = _review_activities(tmp_path)
     assert len(rows) == 1
     payload = rows[0]["payload"]
     assert payload["repo"] == "owner/name"
     assert payload["number"] == 7
-    assert payload["target"] == "pr"
     assert "dto.ts:91 keeps @IsOptional()" in payload["body"]
-    assert _GATE_HEAD in payload["body"]
+    # Der Kopf zeigt den kurzen SHA; der Schluessel benutzt weiter den vollen.
+    # Auf das Praefix allein zu pruefen genuegt nicht: der volle SHA enthaelt es.
+    assert _GATE_HEAD[:7] in payload["body"]
+    assert _GATE_HEAD not in payload["body"]
     assert rows[0]["execution_status"] == "pending"
 
 
@@ -2245,8 +2247,8 @@ def test_approved_gate_queues_no_comment(tmp_path: Path, capsys: pytest.CaptureF
     run(tmp_path, _gate_argv(tid, aid, "approved"))
     out = capsys.readouterr().out
     assert "gate grok-pr/quality=approved" in out
-    assert "type=comment.post" not in out
-    assert _comment_activities(tmp_path) == []
+    assert "type=review.post" not in out
+    assert _review_activities(tmp_path) == []
 
 
 def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2254,16 +2256,16 @@ def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, cap
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "no pull request yet"))
     out = capsys.readouterr().out
     assert "gate grok-pr/quality=rejected" in out
-    assert "type=comment.post" not in out
+    assert "type=review.post" not in out
     assert "no pull request on this task: findings not queued" in out
-    assert _comment_activities(tmp_path) == []
+    assert _review_activities(tmp_path) == []
 
 
 def test_rejected_gate_with_blank_evidence_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     tid, aid = _seed_pr_review_gate(tmp_path, capsys)
     with pytest.raises(SystemExit, match="--evidence is required"):
         run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "   \t "))
-    assert _comment_activities(tmp_path) == []
+    assert _review_activities(tmp_path) == []
 
 
 def test_rejected_gate_recorded_twice_queues_one_comment(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2273,9 +2275,9 @@ def test_rejected_gate_recorded_twice_queues_one_comment(tmp_path: Path, capsys:
     first = capsys.readouterr().out
     run(tmp_path, argv)
     second = capsys.readouterr().out
-    assert "type=comment.post" in first
-    assert "type=comment.post" not in second
-    assert len(_comment_activities(tmp_path)) == 1
+    assert "type=review.post" in first
+    assert "type=review.post" not in second
+    assert len(_review_activities(tmp_path)) == 1
 
 
 def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2283,7 +2285,7 @@ def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path
     argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
     run(tmp_path, argv)
     capsys.readouterr()
-    rows = _comment_activities(tmp_path)
+    rows = _review_activities(tmp_path)
     assert len(rows) == 1
     activity_id = rows[0]["id"]
 
@@ -2293,8 +2295,8 @@ def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path
 
     run(tmp_path, argv)
     out = capsys.readouterr().out
-    assert "type=comment.post" in out
-    rows = _comment_activities(tmp_path)
+    assert "type=review.post" in out
+    rows = _review_activities(tmp_path)
     assert len(rows) == 1
     assert rows[0]["id"] == activity_id
     assert rows[0]["execution_status"] == "pending"
@@ -2310,7 +2312,7 @@ def test_rejected_gate_survives_a_stale_existence_read(
     argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
     run(tmp_path, argv)
     capsys.readouterr()
-    activity_id = _comment_activities(tmp_path)[0]["id"]
+    activity_id = _review_activities(tmp_path)[0]["id"]
 
     _mark_activity_error(tmp_path, activity_id)
 
@@ -2332,8 +2334,8 @@ def test_rejected_gate_survives_a_stale_existence_read(
 
     run(tmp_path, argv)
     out = capsys.readouterr().out
-    assert "type=comment.post" in out
-    rows = _comment_activities(tmp_path)
+    assert "type=review.post" in out
+    rows = _review_activities(tmp_path)
     assert len(rows) == 1
     assert rows[0]["execution_status"] == "pending"
 
@@ -2347,7 +2349,7 @@ def test_rejected_gate_does_not_retry_a_failed_update(
     argv = _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()")
     run(tmp_path, argv)
     capsys.readouterr()
-    activity_id = _comment_activities(tmp_path)[0]["id"]
+    activity_id = _review_activities(tmp_path)[0]["id"]
 
     _mark_activity_error(tmp_path, activity_id)
 
@@ -2373,7 +2375,7 @@ def test_a_second_rejection_with_new_findings_queues_its_own_comment(
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "first finding"))
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "corrected finding"))
     capsys.readouterr()
-    bodies = sorted(row["payload"]["body"] for row in _comment_activities(tmp_path))
+    bodies = sorted(row["payload"]["body"] for row in _review_activities(tmp_path))
     assert len(bodies) == 2
     assert any("first finding" in b for b in bodies)
     assert any("corrected finding" in b for b in bodies)
@@ -2390,11 +2392,11 @@ def test_the_same_finding_at_a_new_head_queues_its_own_comment(
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence, head=other_head))
     capsys.readouterr()
-    rows = _comment_activities(tmp_path)
+    rows = _review_activities(tmp_path)
     assert len(rows) == 2
     bodies = sorted(row["payload"]["body"] for row in rows)
-    assert any(_GATE_HEAD in b for b in bodies)
-    assert any(other_head in b for b in bodies)
+    assert any(_GATE_HEAD[:7] in b for b in bodies)
+    assert any(other_head[:7] in b for b in bodies)
 
 
 def test_a_retargeted_task_queues_a_comment_on_the_new_pull_request(
@@ -2426,7 +2428,7 @@ def test_a_retargeted_task_queues_a_comment_on_the_new_pull_request(
     _retarget("owner/other", "99")
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
     capsys.readouterr()
-    rows = _comment_activities(tmp_path)
+    rows = _review_activities(tmp_path)
     targets = sorted((row["payload"]["repo"], row["payload"]["number"]) for row in rows)
     assert targets == [("owner/name", 7), ("owner/name", 99), ("owner/other", 99)]
 
@@ -2442,4 +2444,4 @@ def test_a_malformed_repository_queues_no_comment(
     out = capsys.readouterr().out
     assert "gate grok-pr/quality=rejected" in out
     assert "no pull request on this task: findings not queued" in out
-    assert _comment_activities(tmp_path) == []
+    assert _review_activities(tmp_path) == []

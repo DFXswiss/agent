@@ -38,12 +38,21 @@ Review lanes execute no software (no tests, builds, or servers).
 
 - `approved` → close the matching checklist key with evidence.
 - `rejected` → do not treat the stage as passed. `--evidence` is required. On a
-  task that carries a pull request the evidence is queued as a comment there,
-  so the findings reach the author instead of stopping the task silently;
+  task that carries a pull request the evidence is queued as a review there, so
+  the findings reach the author instead of stopping the task silently; the review
+  is a `COMMENT`, never `REQUEST_CHANGES`, so it cannot hold a merge closed.
   `agent github pending` performs the HTTP. A task without a pull request
-  records the rejection and reports that nothing was queued. On implement /
-  resolve-conflicts, `agent gate record` returns the task to `implementing`.
-  On workflow `review`, the task stays in pr-review and is not `done`.
+  records the rejection and reports that nothing was queued.
+
+  On implement / resolve-conflicts, `agent gate record` returns the task to
+  `implementing`. On workflow `review`, the task stays in pr-review and is not
+  `done`.
+
+  The evidence is published verbatim to that pull request, so write it for the
+  author and not for the lane: one finding per line, `file:line` first, then what
+  is wrong in a sentence. Leave out `STATUS=`, session ids and anything else that
+  only means something inside the runner — it reaches a human who has none of that
+  context, and it buries the finding it is printed next to.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
   substitute another vendor.
 

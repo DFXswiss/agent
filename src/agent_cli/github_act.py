@@ -343,6 +343,75 @@ def _run_issue_write(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         return f"issue.write {rid} error"
 
 
+def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
+    """Submit a pull-request review of type COMMENT carrying the findings.
+
+    A rejected gate's findings are a review, not a remark: posting them as a review
+    puts them where an author looks and makes the work visible to anything counting
+    review artefacts. COMMENT rather than REQUEST_CHANGES, so a bot cannot hold a
+    merge closed through branch protection.
+    """
+    rid = str(row["id"])
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        _mark(store, row, status="error", error="payload must be an object")
+        return f"review.post {rid} error"
+    repo = _repo_ok(payload.get("repo"))
+    number = _as_int(payload.get("number"))
+    body = _nonempty_str(payload.get("body"))
+    if repo is None or number is None or number <= 0 or body is None:
+        _mark(store, row, status="error", error="review.post requires repo, number, body")
+        return f"review.post {rid} error"
+    marker = ACTIVITY_MARKER.format(id=rid)
+    owner, name = repo.split("/", 1)
+    try:
+        reviews_raw = _gh_json(
+            ["gh", "api", "--paginate", "--slurp", f"repos/{owner}/{name}/pulls/{number}/reviews"],
+            runner,
+        )
+        for review in _flatten_comment_pages(reviews_raw):
+            if not isinstance(review, dict):
+                continue
+            rbody = review.get("body")
+            if not isinstance(rbody, str) or marker not in rbody:
+                continue
+            url = review.get("html_url") or review.get("url")
+            if not isinstance(url, str) or url == "":
+                raise _GhError("review missing url")
+            result: dict[str, Any] = {"repo": repo, "number": number, "url": url}
+            if review.get("id") is not None:
+                result["id"] = review["id"]
+            _mark(store, row, status="done", result=result)
+            return f"review.post {rid} done"
+        created = _gh_json(
+            [
+                "gh",
+                "api",
+                "-X",
+                "POST",
+                f"repos/{owner}/{name}/pulls/{number}/reviews",
+                "-f",
+                f"body={_with_marker(body, rid)}",
+                "-f",
+                "event=COMMENT",
+            ],
+            runner,
+        )
+        if not isinstance(created, dict):
+            raise _GhError("review response is not an object")
+        url = created.get("html_url") or created.get("url")
+        if not isinstance(url, str) or url == "":
+            raise _GhError("review missing url")
+        result = {"repo": repo, "number": number, "url": url}
+        if created.get("id") is not None:
+            result["id"] = created["id"]
+        _mark(store, row, status="done", result=result)
+        return f"review.post {rid} done"
+    except _GhError as exc:
+        _mark(store, row, status="error", error=str(exc))
+        return f"review.post {rid} error"
+
+
 def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     rid = str(row["id"])
     payload = row.get("payload")
@@ -462,6 +531,8 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
                 lines.append(_run_issue_write(store, runner, row))
             elif typ == "comment.post":
                 lines.append(_run_comment_post(store, runner, row))
+            elif typ == "review.post":
+                lines.append(_run_review_post(store, runner, row))
         except Exception as exc:  # noqa: BLE001 — per-row isolation
             rid = str(row.get("id") or "?")
             _mark(store, row, status="error", error=str(exc))
