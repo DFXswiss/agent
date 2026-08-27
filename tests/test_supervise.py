@@ -10,7 +10,6 @@ from agent_cli.supervise import (
     ANSWER_CAN,
     ANSWER_NO,
     ANSWER_YES,
-    CONTINUE_TEXT,
     QUESTION_DONE,
     enqueue_assigned,
     parse_closed_answer,
@@ -318,7 +317,9 @@ def test_follow_does_not_ask_when_stalled(tmp_path: Path) -> None:
         now=1_000.0,
     )
     rt.sent.clear()
-    for i in range(1, 3):
+    from agent_cli.telegram_act import TELEGRAM_IDLE_TICKS
+
+    for i in range(1, TELEGRAM_IDLE_TICKS):
         line = tick(
             store,
             rt,
@@ -338,19 +339,8 @@ def test_follow_does_not_ask_when_stalled(tmp_path: Path) -> None:
         knock=lambda aid: "sent",
         ask=False,
     )
-    assert line.startswith("supervise continue")
-    assert assigned in line
-    assert CONTINUE_TEXT in rt.sent
-    rt.sent.clear()
-    line = tick(
-        store,
-        rt,
-        "runner-1",
-        start=lambda sid, cwd: None,
-        knock=lambda aid: "sent",
-        ask=False,
-    )
     assert line.startswith("supervise stalled")
+    assert assigned in line
     assert rt.sent == []
 
 

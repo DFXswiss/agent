@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .grok_pane import grok_pane_is_working, grok_permission_prompt, strip_ansi
+from .telegram_act import TELEGRAM_IDLE_TICKS
 from .runtime import Completed, Runtime
 from .store import Store, StoreError, utcnow
 from .watch import (
@@ -46,7 +47,6 @@ FOLLOW_SECONDS = 60
 QUIET_SECONDS = 120
 LAST_WORKING_KEY = "supervise_last_working_at"
 STREAK_KEY = "supervise_idle_streak"
-CONTINUE_TICKS = 3
 
 
 _CHROME = (
@@ -408,20 +408,8 @@ def tick(
             return f"supervise quiet assigned={assigned_id}"
     else:
         streak = _bump_idle_streak(store)
-        if streak < CONTINUE_TICKS:
+        if streak < TELEGRAM_IDLE_TICKS:
             return f"supervise quiet assigned={assigned_id} streak={streak}"
-        if streak == CONTINUE_TICKS:
-            _send(runtime, session_id, CONTINUE_TEXT)
-            _log(
-                store,
-                session_id,
-                assigned_id,
-                kind="continue",
-                phase="work",
-                repo=repo,
-                number=number,
-            )
-            return f"supervise continue assigned={assigned_id}"
         return f"supervise stalled assigned={assigned_id} streak={streak}"
     answer = parse_closed_answer(pane)
     if last_kind == "ask" and answer is not None:
