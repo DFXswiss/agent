@@ -50,10 +50,17 @@ def grok_model(raw: str | None) -> str:
 def grok_launch_argv(*, existing: str, model: str, new_id: str) -> list[str]:
     resolved = grok_model(model)
     if existing:
-        return ["grok", "--resume", existing, "--model", resolved]
+        return ["grok", "--always-approve", "--resume", existing, "--model", resolved]
     if not _UUID_RE.match(new_id):
         raise SystemExit("grok --session-id requires a UUID")
-    return ["grok", "--session-id", new_id, "--model", resolved]
+    return [
+        "grok",
+        "--always-approve",
+        "--session-id",
+        new_id,
+        "--model",
+        resolved,
+    ]
 
 
 def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[str]:

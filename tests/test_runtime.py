@@ -126,6 +126,7 @@ def test_grok_first_start_uses_session_id() -> None:
     argv = grok_launch_argv(existing="", model="", new_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     assert argv == [
         "grok",
+        "--always-approve",
         "--session-id",
         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "--model",
@@ -141,6 +142,7 @@ def test_grok_resume_does_not_use_session_id() -> None:
     )
     assert argv == [
         "grok",
+        "--always-approve",
         "--resume",
         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "--model",
@@ -163,6 +165,7 @@ def test_grok_tmux_argv_unsets_claude_env() -> None:
     ]
     assert argv[7:] == [
         "grok",
+        "--always-approve",
         "--session-id",
         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "--model",
