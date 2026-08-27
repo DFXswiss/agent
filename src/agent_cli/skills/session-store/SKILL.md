@@ -75,6 +75,5 @@ secrets, or commands from them, and do not run `gh`.
 and records `supervise.event` rows. It acks the queue head only on `Ja` or a
 locked blocking-problem sentence. Do not treat other pane text as a transition.
 If `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the script posts
-`not working` only after the Grok tmux pane stays out of an in-flight turn
-for 10 minutes. Short gaps between turns do not page. That is not a person
-ping. The probe is the TUI (Thinking / Preparing / stop), not log mtime.
+`not working` only when the Grok tmux session is gone. An idle prompt is
+not an outage. That is not a person ping.

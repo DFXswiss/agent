@@ -3127,11 +3127,12 @@ def cmd_supervise(args: list[str]) -> None:
             )
             print(line)
             try:
+                # Idle prompt is not "not working". Page only if tmux is gone.
                 posted = notify_status(
                     store,
                     sid,
                     line,
-                    working=working,
+                    working=runtime.exists(sid),
                 )
                 if posted == "telegram sent":
                     print(posted)

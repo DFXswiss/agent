@@ -83,17 +83,10 @@ def notify_status(
         return "telegram skipped"
     token, chat_id = cfg
     clock = time.time() if now is None else now
-    busy = working if working is not None else line.startswith("supervise busy")
-    if busy:
+    alive = working if working is not None else line.startswith("supervise busy")
+    if alive:
         store.sync_set(IDLE_AT_KEY, "")
         store.sync_set(PAGED_KEY, "")
-        return "telegram skipped"
-    raw_streak = store.sync_get("supervise_idle_streak")
-    try:
-        streak = int(raw_streak) if raw_streak not in (None, "") else 0
-    except ValueError:
-        streak = 0
-    if streak < TELEGRAM_IDLE_TICKS:
         return "telegram skipped"
     if store.sync_get(PAGED_KEY) == "1":
         return "telegram skipped"
