@@ -858,7 +858,9 @@ def test_review_post_submits_a_comment_review_then_is_idempotent(tmp_path: Path)
             "id": 77,
             "html_url": review_url,
             "body": ACTIVITY_MARKER.format(id=act2),
-            "user": {"login": "theo-vane"},
+            # Anders geschrieben als das Konto aus `gh api user`: GitHub-Logins sind
+            # nicht gross-/kleinschreibungsempfindlich, der Vergleich darf es auch nicht sein.
+            "user": {"login": "Theo-Vane"},
         }
     ]
     posts: list[list[str]] = []

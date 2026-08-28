@@ -400,7 +400,9 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             # author check a copied marker would suppress this review entirely.
             author = review.get("user")
             login = author.get("login") if isinstance(author, dict) else None
-            if login != me:
+            # Case-insensitive, as DESIGN.md requires of a GitHub login and as
+            # watch.py compares one: the same account can be spelled either way.
+            if not isinstance(login, str) or login.lower() != me.lower():
                 continue
             url = review.get("html_url") or review.get("url")
             if not isinstance(url, str) or url == "":
