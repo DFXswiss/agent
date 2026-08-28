@@ -999,14 +999,22 @@ def test_review_post_retries_when_identity_cannot_be_established(tmp_path: Path)
 
 
 def test_the_scanner_documents_every_type_it_executes() -> None:
-    # A docstring that lists the handled types is a claim about behaviour. This change
-    # has already corrected it in three places; a fourth was missed until a lens read it.
+    # A docstring that lists the handled types is a claim about behaviour, and this
+    # change already corrected it in four places. The types are read out of the
+    # dispatch itself rather than restated here: a hard-coded list would be the same
+    # duplication the test exists to catch, and would pass for a fifth type nobody
+    # documented.
     import inspect
+    import re
 
     from agent_cli import github_act
 
+    source = inspect.getsource(github_act.scan_github)
+    handled = set(re.findall(r'typ == "([^"]+)"', source))
+    assert handled, "keine Dispatch-Zweige gefunden — der Test misst nichts mehr"
+
     doc = inspect.getdoc(github_act.scan_github) or ""
     module_doc = inspect.getdoc(github_act) or ""
-    for typ in ("pr.open", "comment.post", "review.post", "issue.write"):
+    for typ in sorted(handled):
         assert typ in doc, f"{typ} fehlt im scan_github-Docstring"
         assert typ in module_doc, f"{typ} fehlt im Modul-Docstring"
