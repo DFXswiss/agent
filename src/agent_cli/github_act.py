@@ -379,18 +379,28 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             ["gh", "api", "--paginate", "--slurp", f"repos/{owner}/{name}/pulls/{number}/reviews"],
             runner,
         )
-        me = _login(runner)
+        me: str | None = None
+        asked_who_we_are = False
         for review in _flatten_comment_pages(reviews_raw):
             if not isinstance(review, dict):
                 continue
             rbody = review.get("body")
             if not isinstance(rbody, str) or marker not in rbody:
                 continue
+            # Only now: on the ordinary path no review carries this marker, and asking
+            # gh who we are would be a round trip to answer a question nobody asked.
+            if not asked_who_we_are:
+                me = _login(runner)
+                asked_who_we_are = True
+            if me is None:
+                # A candidate exists but the identity is unknown. Retrying later is
+                # right; posting a second review because a lookup flaked is not.
+                raise _GhError("cannot determine the authenticated account")
             # The marker is visible to anyone reading the pull request. Without the
             # author check a copied marker would suppress this review entirely.
             author = review.get("user")
             login = author.get("login") if isinstance(author, dict) else None
-            if me is None or login != me:
+            if login != me:
                 continue
             url = review.get("html_url") or review.get("url")
             if not isinstance(url, str) or url == "":

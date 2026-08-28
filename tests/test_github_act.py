@@ -945,3 +945,52 @@ def test_review_post_drops_an_unusable_review_id(tmp_path: Path) -> None:
     assert row is not None
     assert "id" not in row["result"]
     assert row["result"]["url"] == "https://example.invalid/ours"
+
+
+def test_review_post_does_not_ask_who_we_are_without_a_candidate(tmp_path: Path) -> None:
+    # On the ordinary path no review carries our marker, so identity is never needed.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-5"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+    seen: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        seen.append(argv[-1])
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            return Completed(0, json.dumps({"id": 9, "html_url": "https://example.invalid/x"}), "")
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    assert "user" not in seen, "identity was fetched although no marker matched"
+
+
+def test_review_post_retries_when_identity_cannot_be_established(tmp_path: Path) -> None:
+    # A flaked identity lookup must not turn into a second review on the pull request.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-6"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+    ours = [{"id": 4, "html_url": "https://example.invalid/ours",
+             "body": ACTIVITY_MARKER.format(id=act_id), "user": {"login": "theo-vane"}}]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            return Completed(0, json.dumps({"id": 9, "html_url": "https://example.invalid/dup"}), "")
+        if argv[-1] == "user":
+            return Completed(1, "", "gh: transient failure")
+        return Completed(0, json.dumps([ours]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == [], "a flaked identity lookup posted a duplicate review"
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
