@@ -102,4 +102,15 @@ not mark ready if it denies. Then one comment whose review-pass count
 is those four `approved` verdicts on this head, then mark the GitHub
 pull request ready.
 
+## Approving
+
+Once all four lane verdicts on **this** head are `approved` and CI on this head is
+green, insert a `review.post` with `event: APPROVE` alongside the pass-count comment.
+That is a review this account submits on the pull request, not a merge: the agent
+still does not merge, and a human still does.
+
+`APPROVE` is only for that state. A rejected gate publishes `COMMENT`, never
+`APPROVE` and never `REQUEST_CHANGES` — the executor refuses the last one, because an
+account that can request changes can hold a merge closed through branch protection.
+
 Locate these files with `agent skills path`.

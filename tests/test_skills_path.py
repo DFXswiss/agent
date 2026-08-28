@@ -134,3 +134,19 @@ def test_the_contract_separates_introduced_from_inherited_findings() -> None:
     # What this cannot check: that no later passage contradicts the rule. It holds
     # that all four statements live in one paragraph, so a partial rule fails here
     # rather than reading as complete.
+
+
+def test_the_contract_states_when_approving_is_allowed() -> None:
+    # Approving is a merge authorisation on a protected branch, so the state that
+    # justifies it has to be written down, not inferred from the executor accepting it.
+    contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
+    start = contract.index("## Approving")
+    # Collapse the wrapping: a phrase split across two lines is the same rule, and a
+    # test that fails on a reflow measures the line width rather than the contract.
+    rule = " ".join(contract[start : contract.index("Locate these files", start)].split())
+    assert "all four lane verdicts" in rule
+    assert "CI on this head is green" in rule
+    assert "event: APPROVE" in rule
+    # The two events this account must never submit, and why.
+    assert "never `REQUEST_CHANGES`" in rule
+    assert "a human still does" in rule

@@ -372,6 +372,14 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     if repo is None or number is None or number <= 0 or body is None:
         _mark(store, row, status="error", error="review.post requires repo, number, body")
         return f"review.post {rid} error"
+    # COMMENT reports; APPROVE is a merge authorisation and is only inserted once the
+    # gates on this head are approved. REQUEST_CHANGES is refused here rather than left
+    # to convention: it would let this account hold a merge closed through branch
+    # protection, which is a different tool from the one this is.
+    event = payload.get("event", "COMMENT")
+    if event not in ("COMMENT", "APPROVE"):
+        _mark(store, row, status="error", error="review.post event must be COMMENT or APPROVE")
+        return f"review.post {rid} error"
     marker = ACTIVITY_MARKER.format(id=rid)
     owner, name = repo.split("/", 1)
     try:
@@ -423,7 +431,7 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 "-f",
                 f"body={_with_marker(body, rid)}",
                 "-f",
-                "event=COMMENT",
+                f"event={event}",
             ],
             runner,
         )

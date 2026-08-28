@@ -1018,3 +1018,60 @@ def test_the_scanner_documents_every_type_it_executes() -> None:
     for typ in sorted(handled):
         assert typ in doc, f"{typ} missing from the scan_github docstring"
         assert typ in module_doc, f"{typ} missing from the module docstring"
+
+
+def test_review_post_submits_an_approve_when_asked(tmp_path: Path) -> None:
+    # Approving is what a passing review looks like on GitHub. It is a review this
+    # account submits, not a merge — the agent still does not merge.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "four approved verdicts",
+         "event": "APPROVE"},
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            assert "event=APPROVE" in " ".join(argv)
+            return Completed(0, json.dumps({"id": 12, "html_url": "https://example.invalid/a"}), "")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+
+
+def test_review_post_refuses_request_changes(tmp_path: Path) -> None:
+    # An account that can request changes can hold a merge closed through branch
+    # protection. Refused in the executor, not left to whoever writes the payload.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-8"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "no",
+         "event": "REQUEST_CHANGES"},
+    )
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        posted.append(list(argv))
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == [], "REQUEST_CHANGES reached GitHub"
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+
+
+def test_a_rejected_gate_never_approves(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The findings path must not be able to approve, whatever the evidence says.
+    from agent_cli.main import _queue_gate_findings  # noqa: PLC0415
+
+    import inspect
+
+    src = inspect.getsource(_queue_gate_findings)
+    assert "APPROVE" not in src
