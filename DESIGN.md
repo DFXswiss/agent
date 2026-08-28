@@ -263,7 +263,7 @@ Knock state machine (observable states only):
 | Session not running | Unread until the next start; the agent `SELECT`s unread ids |
 | No tmux and no ACP | No knock; unread until the next human turn |
 
-v1: `Runtime.is_busy` is always false, so “Model running” is treated as idle until a stop-hook path exists. The queue branch still runs when a runtime reports busy.
+`Runtime.is_busy` is the Grok TUI working probe in the registered pane (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`). “Model running” is that probe. The queue branch still runs when a runtime reports busy.
 
 Ack of session mail is a **recipient-owned** `message.read` activity, not a mutation of the sender’s row.
 
@@ -352,7 +352,7 @@ Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of 
 
 The first successful scan records `assigned_watch_since` and the assigned `session_id` and dispatches nothing. Later scans consider assignments whose latest matching `assigned` event is at or after that cursor, skipping `assigned_at` values already stored. Changing `session_id` after that pin is an error. The scan uses this device’s paired GitHub login; a missing pair or a `gh api user` mismatch is an error. The queue head is the already-knocked inflight item if any, then remaining items oldest first.
 
-The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`, characters `A-Za-z0-9_-` only). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; an existing row under the same id must already be `kind=runner`. Other sessions still attach skills themselves. There is one tmux/Grok terminal, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session (`payload`: repo, number, url, title, body, assigned_at, assignee, mandate). The insert does not notify the knock daemon. The script pushes own events, writes `MANDATE.md` / `QUEUE.md` (no issue body), starts Grok only if that session is not already attached, then knocks at most the head of the queue (`da ist Post id <uuid>`). A knock of `issue.assigned` rewrites those files immediately before send. Further knocks stay queued until the session records `issue.assigned.ack` with `payload.assigned_id`. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
+The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`, characters `A-Za-z0-9_-` only). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; an existing row under the same id must already be `kind=runner`. Other sessions still attach skills themselves. There is one tmux/Grok terminal, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session (`payload`: repo, number, url, title, body, assigned_at, assignee, mandate). The insert does not notify the knock daemon. The script pushes own events, writes `MANDATE.md` / `QUEUE.md` (no issue body), starts Grok only if that session is not already attached, then knocks at most the head of the queue (`da ist Post id <uuid>`). A knock of `issue.assigned` rewrites those files immediately before send. Further knocks stay queued until the **supervise script** records `issue.assigned.ack` with `payload.assigned_id`. The model must not insert that ack. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
 
 Payload `mandate=github-assignment` is trusted. Issue title and body in the payload are not.
 
@@ -563,20 +563,6 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 
 The wanted loop “production error → draft pull request” is the **error-fix** skill (§21). It still means: this device writes `activity`, a script on this device queries logs, the session analyses, scripts validate and open a **draft** pull request, a human merges. It must not move write ownership to the hub.
 
-## 22. Static supervise loop (v1)
-
-A second model must not orchestrate the first. `agent supervise` is a **script** with locked questions and locked answers. Model text is not a state transition.
-
-- One pending `issue.assigned` at a time (same queue as `agent watch assigned`).
-- `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing. Title and body stay untrusted payload.
-- Busy means the tmux pane contents changed across a short settle window (`Runtime.is_busy`). The script does not ask while busy.
-- The follow loop does not type into tmux except to confirm a Grok tool-approval modal (`1/3:select` → Enter). It does not knock, does not auto-continue, and does not ask closed questions. A single idle capture is not enough: Telegram `not working` requires 10 consecutive idle ticks, once per idle episode. Closed questions remain available to `tick(..., ask=True)` for tests. The footer badge `always-approve` is not a working signal.
-- `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
-- `supervise.event` is script-only and does not knock.
-- Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect. They are not person pings and not the hub. Missing env is a no-op. **Working** is a Ja/Nein read of the Grok TUI in the session's tmux pane (`Thinking…`, `Preparing …`, `Waiting for response`, `[stop]`, `Esc:cancel`). Pane flicker, process lists, and log mtimes are not that question. Each follow tick captures the pane once. Telegram `not working` is posted only when the Grok tmux session is gone, once until it returns. An idle prompt after `Worked for` is not an outage and must not page. A send failure does not stop the loop.
-
-Phase 1 is this loop plus a backlog. Smarter questions are later.
-
 ## 21. Skill: error-fix
 
 Wanted. Opt-in. Runs on **this device** (a laptop that has the client, log credentials, a runner session, and git). It is one skill among many. It is not the session bus, and it is not a hub workflow.
@@ -680,6 +666,20 @@ The model never receives production credentials. Analysis that only reads the ex
 ### 21.6 Not in this revision
 
 - A second hub state machine, leases, or autonomous merge
+
+## 22. Static supervise loop (v1)
+
+A second model must not orchestrate the first. `agent supervise` is a **script** with locked questions and locked answers. Model text is not a state transition.
+
+- One pending `issue.assigned` at a time (same queue as `agent watch assigned`).
+- `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing. Title and body stay untrusted payload.
+- Busy means the Grok TUI in the tmux pane shows an in-flight turn (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, or a queued follow-up with `Enter to send now`). `Runtime.is_busy` is that probe. The script does not type while busy.
+- Follow (`ask=False`, the CLI default) does not knock an existing session, does not ask closed questions, and does not auto-continue. It only confirms a Grok tool-approval modal (`1/3:select` plus `Tab:next option` → Enter). Closed questions remain available to `tick(..., ask=True)` for tests. Consecutive idle ticks (`supervise quiet` / `supervise stalled`) are follow-loop bookkeeping, not Telegram pages. The footer badge `always-approve` is not a working signal.
+- When `ask=True`, `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
+- `supervise.event` is script-only and does not knock.
+- Optional Telegram status posts (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) are a script HTTP side-effect. They are not person pings and not the hub. Missing env is a no-op. Telegram `not working` is posted only when the Grok tmux session is gone (`runtime.exists` is false), once until the session returns. An idle prompt after `Worked for` is not an outage. A send failure does not stop the loop.
+
+Phase 1 is this loop plus a backlog. Smarter questions are later.
 
 ## 23. Document history
 

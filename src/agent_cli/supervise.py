@@ -1,7 +1,9 @@
-"""Static closed-question loop over one assigned work item.
+"""Static supervise loop over one assigned work item.
 
-The model never chooses the next state. The script asks locked questions,
-parses only locked answer tokens, writes supervise.event rows, and acks.
+The model never chooses the next state. The shipped CLI follow loop
+(`ask=False`) watches the pane, confirms a tool-approval modal, and pages
+Telegram only when the Grok tmux session is gone. Locked closed questions
+and acks exist for `tick(..., ask=True)` (tests).
 """
 
 from __future__ import annotations
@@ -285,12 +287,6 @@ def _bump_idle_streak(store: Store) -> int:
     n = idle_streak(store) + 1
     store.sync_set(STREAK_KEY, str(n))
     return n
-
-
-def reset_idle_tracking(store: Store) -> None:
-    store.sync_set(STREAK_KEY, "0")
-    store.sync_set("supervise_telegram_paged", "")
-    store.sync_set("supervise_telegram_idle_at", "")
 
 
 def _in_quiet(store: Store, now: float, quiet_seconds: int) -> bool:

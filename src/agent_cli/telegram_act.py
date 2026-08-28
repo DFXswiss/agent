@@ -74,9 +74,9 @@ def notify_status(
     now: float | None = None,
     working: bool | None = None,
 ) -> str:
-    """Post not-working only after a full idle window of grok_working False.
+    """Post not-working only when `working` is False (tmux session gone).
 
-    Turn gaps of a few seconds must not page the operator.
+    An idle composer between turns must not page. One page until the session returns.
     """
     cfg = telegram_config(environ)
     if cfg is None:
