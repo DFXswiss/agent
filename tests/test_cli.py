@@ -2445,3 +2445,15 @@ def test_a_malformed_repository_queues_no_comment(
     assert "gate grok-pr/quality=rejected" in out
     assert "no pull request on this task: findings not queued" in out
     assert _review_activities(tmp_path) == []
+
+
+def test_the_evidence_reaches_the_review_unaltered(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The contract says the evidence becomes the review body unaltered. Trimming it
+    # would silently reflow an indented block, and Markdown reads indentation.
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    evidence = "\n    dto.ts:91 wrong decorator\n        nested detail\n"
+    run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
+    capsys.readouterr()
+    body = _review_activities(tmp_path)[0]["payload"]["body"]
+    assert evidence in body, "die Evidenz wurde veraendert"
+    assert body.endswith(evidence)

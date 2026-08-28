@@ -832,6 +832,8 @@ def test_review_post_submits_a_comment_review_then_is_idempotent(tmp_path: Path)
             assert "event=REQUEST_CHANGES" not in joined
             assert marker in joined
             return Completed(0, json.dumps({"id": 77, "html_url": review_url}), "")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
         if argv[1] == "api":
             assert argv[-1] == "repos/dfxswiss/agent/pulls/3/reviews"
             return Completed(0, json.dumps([]), "")
@@ -851,13 +853,22 @@ def test_review_post_submits_a_comment_review_then_is_idempotent(tmp_path: Path)
         "review.post",
         {"repo": "dfxswiss/agent", "number": 3, "body": "same finding"},
     )
-    existing = [{"id": 77, "html_url": review_url, "body": ACTIVITY_MARKER.format(id=act2)}]
+    existing = [
+        {
+            "id": 77,
+            "html_url": review_url,
+            "body": ACTIVITY_MARKER.format(id=act2),
+            "user": {"login": "theo-vane"},
+        }
+    ]
     posts: list[list[str]] = []
 
     def runner2(argv: list[str]) -> Completed:
         if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
             posts.append(list(argv))
             raise AssertionError("must not post twice")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
         return Completed(0, json.dumps([existing]), "")
 
     assert scan_github(store, runner2) == [f"review.post {act2} done"]
@@ -870,3 +881,67 @@ def test_review_post_is_an_executable_activity_type() -> None:
     from agent_cli.store import EXECUTABLE_ACTIVITY_TYPES
 
     assert "review.post" in EXECUTABLE_ACTIVITY_TYPES
+
+
+def test_review_post_ignores_a_marker_in_someone_elses_review(tmp_path: Path) -> None:
+    # The marker is visible to anyone reading the pull request. Treating a copy of it
+    # as our own delivery would suppress the findings entirely.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-3"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+    foreign = [
+        {
+            "id": 5,
+            "html_url": "https://example.invalid/x",
+            "body": "copied " + ACTIVITY_MARKER.format(id=act_id),
+            "user": {"login": "somebody-else"},
+        }
+    ]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            return Completed(0, json.dumps({"id": 9, "html_url": "https://example.invalid/ours"}), "")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([foreign]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    assert len(posted) == 1, "a foreign marker must not stand in for our own review"
+
+
+def test_review_post_drops_an_unusable_review_id(tmp_path: Path) -> None:
+    # jq/gh can hand back anything; an id is a positive integer or it is not recorded.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-4"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            return Completed(
+                0,
+                json.dumps({"id": {"nope": 1}, "html_url": "https://example.invalid/ours"}),
+                "",
+            )
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert "id" not in row["result"]
+    assert row["result"]["url"] == "https://example.invalid/ours"

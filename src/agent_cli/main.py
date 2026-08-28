@@ -1041,7 +1041,7 @@ def _queue_gate_findings(
             "number": number,
             "body": (
                 f"**{vendor.capitalize()} {dimension} — rejected** at `{head[:7]}`\n\n"
-                f"{evidence.strip()}"
+                f"{evidence}"
             ),
         },
         "execution_status": "pending",

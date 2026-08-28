@@ -97,11 +97,11 @@ def test_the_documented_rejected_gate_command_carries_evidence() -> None:
 
 
 def test_the_contract_says_what_evidence_should_look_like() -> None:
-    # The evidence is published verbatim to the pull request. Without this the
+    # The evidence becomes the review body unaltered. Without this the
     # contract specified the mechanism and left the presentation unsaid, and what
     # reached one author was lane bookkeeping wrapped around two findings.
     contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
-    assert "published verbatim" in contract
+    assert "becomes the body of that review unaltered" in contract
     assert "one finding per line" in contract
     assert "`file:line` first" in contract
     assert "STATUS=" in contract

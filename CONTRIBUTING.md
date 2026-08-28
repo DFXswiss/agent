@@ -25,7 +25,7 @@ Done is all of:
 7. Stay draft until the reviews and CI above hold on this head. Then one comment whose review-pass count is those four `approved` verdicts on this head, then mark the GitHub pull request ready. When spine and pr-review are attached, `agent allow --action pr-ready` only checks task state (`pushing` or `pr-review`); it is not the leave-draft verdict. Do not mark ready if it denies.
 8. A human merges. When spine is attached, `agent allow --action task-done` still needs the workflow checklist and both summary sentences.
 
-The AI inserts `pr.open` / `comment.post`. `agent github pending` performs GitHub HTTP. A retry reuses the existing draft.
+The AI inserts `pr.open` / `comment.post`; a rejected review gate inserts `review.post`. `agent github pending` performs GitHub HTTP. A retry reuses the existing draft.
 
 ## Pull request text
 

@@ -48,7 +48,8 @@ Review lanes execute no software (no tests, builds, or servers).
   `implementing`. On workflow `review`, the task stays in pr-review and is not
   `done`.
 
-  The evidence is published verbatim to that pull request, so write it for the
+  The evidence becomes the body of that review unaltered, under a generated
+  heading naming vendor, dimension and head. Write it for the
   author and not for the lane: one finding per line, `file:line` first, then what
   is wrong in a sentence. Leave out `STATUS=`, session ids and anything else that
   only means something inside the runner — it reaches a human who has none of that

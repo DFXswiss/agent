@@ -1,4 +1,4 @@
-"""Execute pending pr.open, comment.post, and issue.write activities via gh."""
+"""Execute pending pr.open, comment.post, review.post, and issue.write activities via gh."""
 
 from __future__ import annotations
 
@@ -343,6 +343,16 @@ def _run_issue_write(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         return f"issue.write {rid} error"
 
 
+def _login(runner: Runner) -> str | None:
+    """The account gh is authenticated as, or None when it cannot be determined."""
+    data, _err = _gh_json_result(["gh", "api", "user"], runner)
+    if isinstance(data, dict):
+        login = data.get("login")
+        if isinstance(login, str) and login != "":
+            return login
+    return None
+
+
 def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     """Submit a pull-request review of type COMMENT carrying the findings.
 
@@ -369,18 +379,26 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             ["gh", "api", "--paginate", "--slurp", f"repos/{owner}/{name}/pulls/{number}/reviews"],
             runner,
         )
+        me = _login(runner)
         for review in _flatten_comment_pages(reviews_raw):
             if not isinstance(review, dict):
                 continue
             rbody = review.get("body")
             if not isinstance(rbody, str) or marker not in rbody:
                 continue
+            # The marker is visible to anyone reading the pull request. Without the
+            # author check a copied marker would suppress this review entirely.
+            author = review.get("user")
+            login = author.get("login") if isinstance(author, dict) else None
+            if me is None or login != me:
+                continue
             url = review.get("html_url") or review.get("url")
             if not isinstance(url, str) or url == "":
                 raise _GhError("review missing url")
             result: dict[str, Any] = {"repo": repo, "number": number, "url": url}
-            if review.get("id") is not None:
-                result["id"] = review["id"]
+            rev_id = _as_int(review.get("id"))
+            if rev_id is not None and rev_id > 0:
+                result["id"] = rev_id
             _mark(store, row, status="done", result=result)
             return f"review.post {rid} done"
         created = _gh_json(
@@ -403,8 +421,9 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         if not isinstance(url, str) or url == "":
             raise _GhError("review missing url")
         result = {"repo": repo, "number": number, "url": url}
-        if created.get("id") is not None:
-            result["id"] = created["id"]
+        new_id = _as_int(created.get("id"))
+        if new_id is not None and new_id > 0:
+            result["id"] = new_id
         _mark(store, row, status="done", result=result)
         return f"review.post {rid} done"
     except _GhError as exc:
