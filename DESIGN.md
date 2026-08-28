@@ -330,7 +330,7 @@ v1 types (mechanism only):
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
-| `supervise.event` | `supervise` | script | — (closed-question loop; no TUI knock; payload tokens only) |
+| `supervise.event` | `supervise` | script | — (supervise follow bookkeeping / approve; optional closed-question path in tests; no TUI knock; payload tokens only) |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
 

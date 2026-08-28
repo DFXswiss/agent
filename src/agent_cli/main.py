@@ -515,12 +515,6 @@ def cmd_activity(args: list[str]) -> None:
                 )
             print(f"activity {activity_id} type={typ}")
             return
-        if typ == "issue.assigned.ack":
-            assigned_id = raw.get("assigned_id")
-            pending = pending_assigned(store, sid)
-            head = pending[0].get("id") if pending else None
-            if not isinstance(assigned_id, str) or assigned_id == "" or assigned_id != head:
-                die("issue.assigned.ack assigned_id must be the queue head")
         status = "pending" if typ in ACTIVITY_TYPES else "error"
         activity_id = str(uuid.uuid4())
         store.write(
