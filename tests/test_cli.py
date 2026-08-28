@@ -2235,8 +2235,8 @@ def test_rejected_gate_queues_its_findings_for_the_pull_request(tmp_path: Path, 
     assert payload["repo"] == "owner/name"
     assert payload["number"] == 7
     assert "dto.ts:91 keeps @IsOptional()" in payload["body"]
-    # Der Kopf zeigt den kurzen SHA; der Schluessel benutzt weiter den vollen.
-    # Auf das Praefix allein zu pruefen genuegt nicht: der volle SHA enthaelt es.
+    # The heading shows the short SHA; the identity key still uses the full one.
+    # Checking the prefix alone would not do: the full SHA contains it.
     assert _GATE_HEAD[:7] in payload["body"]
     assert _GATE_HEAD not in payload["body"]
     assert rows[0]["execution_status"] == "pending"
@@ -2455,5 +2455,5 @@ def test_the_evidence_reaches_the_review_unaltered(tmp_path: Path, capsys: pytes
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", evidence))
     capsys.readouterr()
     body = _review_activities(tmp_path)[0]["payload"]["body"]
-    assert evidence in body, "die Evidenz wurde veraendert"
+    assert evidence in body, "the evidence was altered"
     assert body.endswith(evidence)

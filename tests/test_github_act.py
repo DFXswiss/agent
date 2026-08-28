@@ -858,8 +858,8 @@ def test_review_post_submits_a_comment_review_then_is_idempotent(tmp_path: Path)
             "id": 77,
             "html_url": review_url,
             "body": ACTIVITY_MARKER.format(id=act2),
-            # Anders geschrieben als das Konto aus `gh api user`: GitHub-Logins sind
-            # nicht gross-/kleinschreibungsempfindlich, der Vergleich darf es auch nicht sein.
+            # Cased differently from the account `gh api user` returns: GitHub logins
+            # are case-insensitive, so the comparison must be too.
             "user": {"login": "Theo-Vane"},
         }
     ]
@@ -1011,10 +1011,10 @@ def test_the_scanner_documents_every_type_it_executes() -> None:
 
     source = inspect.getsource(github_act.scan_github)
     handled = set(re.findall(r'typ == "([^"]+)"', source))
-    assert handled, "keine Dispatch-Zweige gefunden — der Test misst nichts mehr"
+    assert handled, "no dispatch branches found — this test measures nothing"
 
     doc = inspect.getdoc(github_act.scan_github) or ""
     module_doc = inspect.getdoc(github_act) or ""
     for typ in sorted(handled):
-        assert typ in doc, f"{typ} fehlt im scan_github-Docstring"
-        assert typ in module_doc, f"{typ} fehlt im Modul-Docstring"
+        assert typ in doc, f"{typ} missing from the scan_github docstring"
+        assert typ in module_doc, f"{typ} missing from the module docstring"
