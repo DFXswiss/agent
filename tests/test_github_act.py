@@ -996,3 +996,17 @@ def test_review_post_retries_when_identity_cannot_be_established(tmp_path: Path)
     row = store.row("activity", act_id)
     assert row is not None
     assert row["execution_status"] == "error"
+
+
+def test_the_scanner_documents_every_type_it_executes() -> None:
+    # A docstring that lists the handled types is a claim about behaviour. This change
+    # has already corrected it in three places; a fourth was missed until a lens read it.
+    import inspect
+
+    from agent_cli import github_act
+
+    doc = inspect.getdoc(github_act.scan_github) or ""
+    module_doc = inspect.getdoc(github_act) or ""
+    for typ in ("pr.open", "comment.post", "review.post", "issue.write"):
+        assert typ in doc, f"{typ} fehlt im scan_github-Docstring"
+        assert typ in module_doc, f"{typ} fehlt im Modul-Docstring"

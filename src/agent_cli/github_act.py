@@ -547,7 +547,7 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
 
 
 def scan_github(store: Store, runner: Runner) -> list[str]:
-    """Execute pending pr.open, comment.post, issue.write owned by this device.
+    """Execute pending pr.open, comment.post, review.post, issue.write owned by this device.
 
     Other pending types (subscription.set, query.request, …) are skipped.
     Returns human-readable status lines, one per handled row.
