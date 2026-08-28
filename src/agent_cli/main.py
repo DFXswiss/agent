@@ -297,7 +297,10 @@ def cmd_init(_: list[str]) -> None:
 
 def cmd_session(args: list[str]) -> None:
     if not args:
-        die("Usage: agent session register|heartbeat|list|close|start|stop|input|skill")
+        die(
+            "Usage: agent session register|heartbeat|list|close|start|stop|"
+            "input|keep-working|skill"
+        )
     store = open_store()
     try:
         sub, rest = args[0], args[1:]
@@ -421,6 +424,15 @@ def cmd_session(args: list[str]) -> None:
             runtime = Runtime()
             _session_input(store, runtime, sid, data, key)
             print(f"input {sid}")
+            return
+        if sub == "keep-working":
+            sid = require_flag(rest, "--id")
+            once = "--once" in rest
+            follow = "--follow" in rest
+            if once and follow:
+                die("keep-working takes at most one of --once or --follow")
+            runtime = Runtime()
+            _session_keep_working(store, runtime, sid, once=once or not follow)
             return
         if sub == "skill":
             if not rest:
@@ -1803,6 +1815,51 @@ def _session_stop(store: Store, runtime: Runtime, sid: str) -> None:
     meta["control"] = "stopped"
     row["runtime"] = meta
     store.write("session", "update", sid, _strip(row))
+
+
+def _session_keep_working(
+    store: Store,
+    runtime: Runtime,
+    sid: str,
+    *,
+    once: bool,
+) -> None:
+    from .keep_working import tick
+
+    row = _need(store, "session", sid)
+    _require_owned(store, row, "session")
+    if row.get("status") != "active":
+        die(f"session {sid} is not active")
+    if not runtime.available():
+        die("tmux is not installed")
+    sleep_s = 30
+
+    def _one() -> str:
+        fresh = _need(store, "session", sid)
+        if fresh.get("status") != "active":
+            print(f"keep-working {sid} inactive")
+            return "inactive"
+        raw = fresh.get("runtime")
+        meta = dict(raw) if isinstance(raw, dict) else {}
+        kw_raw = meta.get("keep_working")
+        state = dict(kw_raw) if isinstance(kw_raw, dict) else {}
+        status = tick(runtime, sid, state)
+        latest = _need(store, "session", sid)
+        latest_meta = dict(latest.get("runtime") or {}) if isinstance(latest.get("runtime"), dict) else {}
+        latest_meta["keep_working"] = state
+        latest["runtime"] = latest_meta
+        store.write("session", "update", sid, _strip(latest))
+        print(f"keep-working {sid} {status}")
+        return status
+
+    if _one() == "inactive":
+        return
+    if once:
+        return
+    while True:
+        time.sleep(sleep_s)
+        if _one() == "inactive":
+            return
 
 
 def _session_input(

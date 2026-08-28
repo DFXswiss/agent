@@ -378,7 +378,7 @@ Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` w
 
 ```text
 agent init
-agent session register|heartbeat|list|close|start|stop|input|skill
+agent session register|heartbeat|list|close|start|stop|input|keep-working|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
 agent session skill attach --id ID --skill spine|review-loop|pr-review|error-fix
@@ -387,6 +387,10 @@ agent session start --id ID [--provider grok] [--model TEXT] [--cmd TEXT] [--col
 agent session stop --id ID
 agent session input --id ID --data TEXT
 agent session input --id ID --key enter|ctrl-c|tab
+agent session keep-working --id ID [--once|--follow]
+# permission modal: Enter. first idle composer: standing "work until complete";
+# later idle: "Continue.". never types while in-flight or when the pane is empty.
+# default / --once is one tick; --follow polls every 30s.
 agent activity add --session ID --type TYPE --payload-file FILE
 agent task create|list|show|state|summary          # spine skill
 agent checklist set …                             # spine skill
@@ -428,7 +432,7 @@ One product with the hub. The team reads every visible session; **this device wr
 
 **tmux is the process holder; the hub is not.** The local client is the only place that starts, stops, or types into a live terminal. The hub may send `control` frames (`start` / `stop` / `input` / `resize`); this device executes them only when it owns the session row, then replies with `control-ack`. After connect, the client sends `control-ready`. Control and terminal message types must not trigger push+pull.
 
-Owned-row runtime fields (updated on start/stop only; not a new vendor):
+Owned-row runtime fields (start/stop set control and tmux; `keep-working` may also update `keep_working`; not a new vendor):
 
 ```json
 "runtime": {
@@ -438,11 +442,12 @@ Owned-row runtime fields (updated on start/stop only; not a new vendor):
   "rows": 24,
   "provider": "grok",
   "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  "model": "grok-4.6"
+  "model": "grok-4.6",
+  "keep_working": { "standing_sent": true }
 }
 ```
 
-Start sets `control=attached` and the tmux name. Stop sets `control=stopped` and keeps the name. Session `status` (`active` / `closed`) is separate; `session close` stays as it is.
+Start sets `control=attached` and the tmux name. Stop sets `control=stopped` and keeps the name. `agent session keep-working` updates `runtime.keep_working.standing_sent` on idle ticks so the standing instruction is sent once. Session `status` (`active` / `closed`) is separate; `session close` stays as it is.
 
 **Grok Build launch** (`--provider grok` or control `{provider: "grok"}`) is not the store session id. The Grok CLI `--session-id` flag accepts only a UUID (`8-4-4-4-12`). A caller-chosen session id (including a ULID) is never passed through. First start mints `runtime.grok_session_id` and runs `grok --session-id <uuid> --model grok-4.6`. Later starts, if that field is set, run `grok --resume <uuid>`. An empty model becomes `grok-4.6`; it must not inherit a Claude default. The pane is started with `env -u ANTHROPIC_API_KEY -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT` so Claude credentials do not leak into the Grok process. `--provider` and `--cmd` cannot be combined.
 
