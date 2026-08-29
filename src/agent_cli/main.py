@@ -3077,11 +3077,9 @@ def cmd_supervise(args: list[str]) -> None:
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
         runtime = Runtime()
-        from .grok_pane import grok_pane_is_working
         from .telegram_act import reset_idle_clock
 
-        startup_working = runtime.exists(sid) and grok_pane_is_working(runtime.capture(sid))
-        reset_idle_clock(store, working=startup_working)
+        reset_idle_clock(store, working=runtime.exists(sid))
 
         def start(session_id: str, cwd: Path) -> None:
             _session_start(

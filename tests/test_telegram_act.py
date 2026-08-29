@@ -109,6 +109,13 @@ def test_reset_idle_clock_clears_page_flag(tmp_path: Path) -> None:
     assert store.sync_get("supervise_telegram_paged") == ""
 
 
+def test_reset_idle_clock_keeps_page_flag_when_session_gone(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.sync_set("supervise_telegram_paged", "1")
+    reset_idle_clock(store, working=False)
+    assert store.sync_get("supervise_telegram_paged") == "1"
+
+
 def test_httpx_timeout_becomes_runtime_error(tmp_path: Path) -> None:
     import httpx
 

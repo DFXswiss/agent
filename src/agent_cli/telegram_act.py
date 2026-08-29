@@ -56,12 +56,12 @@ def send_message(
 
 
 def reset_idle_clock(store: Store, *, working: bool, now: float | None = None) -> None:
-    """Follow start must not inherit a stale idle streak or page flag."""
-    del working
+    """Clear follow bookkeeping. Keep the page latch if the tmux session is still gone."""
     del now
     store.sync_set(IDLE_AT_KEY, "")
-    store.sync_set(PAGED_KEY, "")
     store.sync_set("supervise_idle_streak", "0")
+    if working:
+        store.sync_set(PAGED_KEY, "")
 
 
 def notify_status(
