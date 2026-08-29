@@ -168,7 +168,7 @@ def test_pg_stop_without_cluster_dies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("AGENT_PG_DSN", raising=False)
-    with pytest.raises(SystemExit, match="no local postgres cluster"):
+    with pytest.raises(SystemExit, match=r"no local postgres cluster .*; run agent init"):
         run(tmp_path, ["pg", "stop"])
 
 
@@ -821,7 +821,7 @@ def test_service_home_rejects_unreadable_unit(
 
 
 @pytest.mark.no_pg
-def test_daemon_uninstall_refuses_unparseable_unit(
+def test_daemon_uninstall_refuses_unit_without_agent_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("AGENT_PG_DSN", raising=False)
@@ -843,7 +843,7 @@ def test_daemon_uninstall_refuses_unparseable_unit(
 
 
 @pytest.mark.no_pg
-def test_pg_stop_refuses_unparseable_unit(
+def test_pg_stop_refuses_unit_without_agent_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("AGENT_PG_DSN", raising=False)
