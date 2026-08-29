@@ -34,7 +34,7 @@ from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, launch
-from .pg import PgError, ensure_cluster, require_loopback_dsn
+from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
     Runtime,
     grok_model,
@@ -165,10 +165,15 @@ GATE_PAIRS = (
     ("codex-pr", "logic", "codex"),
 )
 STATIC = Path(__file__).resolve().parent / "static" / "index.html"
+LEGACY_DFX_LEDGER = Path.home() / ".local" / "share" / "dfx-ledger"
 
 
 def die(msg: str) -> None:
     raise SystemExit(f"agent: {msg}")
+
+
+def default_home() -> Path:
+    return Path.home() / ".local" / "share" / "agent"
 
 
 def home() -> Path:
@@ -177,10 +182,20 @@ def home() -> Path:
         die("AGENT_HOME is set but empty")
     if override:
         return Path(override)
-    return Path.home() / ".local" / "share" / "agent"
+    return default_home()
 
 
-def open_store(*, allow_legacy_sqlite: bool = False) -> Store:
+def _warn_legacy_store() -> None:
+    if LEGACY_DFX_LEDGER.is_dir():
+        print(
+            f"agent: legacy dfx-ledger store at {LEGACY_DFX_LEDGER} is unused; stop it with "
+            f"pg_ctl -D {LEGACY_DFX_LEDGER / 'pgdata'} stop and delete the directory",
+            file=sys.stderr,
+        )
+
+
+def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> Store:
+    _warn_legacy_store()
     h = home()
     sqlite_legacy = h / "ledger.sqlite"
     if sqlite_legacy.is_file() and not allow_legacy_sqlite:
@@ -190,7 +205,7 @@ def open_store(*, allow_legacy_sqlite: bool = False) -> Store:
         die("AGENT_PG_DSN is set but empty")
     if not dsn:
         try:
-            dsn = ensure_cluster(h / "pg")
+            dsn = ensure_cluster(h / "pg", create=create)
         except PgError as exc:
             die(str(exc))
     try:
@@ -287,9 +302,17 @@ def cmd_skills(args: list[str]) -> None:
 
 
 def cmd_init(_: list[str]) -> None:
-    from .daemon import agent_argv, install_and_start_service
+    from .daemon import SERVICE_LABEL, agent_argv, install_and_start_service
 
-    store = open_store()
+    override = os.environ.get("AGENT_HOME")
+    if override and Path(override) != default_home():
+        print(
+            f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
+            f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; stop the "
+            f"cluster with agent pg stop",
+            file=sys.stderr,
+        )
+    store = open_store(create=True)
     try:
         install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
         daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
@@ -2921,8 +2944,34 @@ def cmd_daemon(args: list[str]) -> None:
         return
     if args == ["--uninstall"]:
         uninstall_service(home=home())
+        if not os.environ.get("AGENT_PG_DSN") and cluster_exists(home() / "pg"):
+            stop_cluster(home() / "pg")
+            print(f"stopped {home() / 'pg'}")
         return
     die("Usage: agent daemon [--install|--uninstall]")
+
+
+def cmd_pg(args: list[str]) -> None:
+    if args not in (["status"], ["stop"]):
+        die("Usage: agent pg status|stop")
+    data_dir = home() / "pg"
+    if args == ["status"]:
+        if os.environ.get("AGENT_PG_DSN"):
+            print(f"home={home()} dsn=external")
+            return
+        port_file = data_dir / "port"
+        port = port_file.read_text(encoding="utf-8").strip() if port_file.is_file() else "-"
+        print(
+            f"home={home()} cluster={data_dir} exists={'yes' if cluster_exists(data_dir) else 'no'} "
+            f"running={'yes' if cluster_running(data_dir) else 'no'} port={port}"
+        )
+        return
+    if os.environ.get("AGENT_PG_DSN"):
+        die("AGENT_PG_DSN is set; nothing to stop")
+    if not cluster_exists(data_dir):
+        die(f"no local postgres cluster under {data_dir}")
+    stop_cluster(data_dir)
+    print(f"stopped {data_dir}")
 
 
 def cmd_watch(args: list[str]) -> None:
@@ -3162,6 +3211,7 @@ COMMANDS = {
     "status": cmd_status,
     "dashboard": cmd_dashboard,
     "daemon": cmd_daemon,
+    "pg": cmd_pg,
     "knock": cmd_knock,
     "lane": cmd_lane,
     "watch": cmd_watch,

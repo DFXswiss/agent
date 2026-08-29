@@ -211,7 +211,26 @@ def wait_ready(dsn: str, timeout: float = 10.0) -> None:
     raise PgError(f"postgres did not become ready: {last}")
 
 
-def ensure_cluster(data_dir: Path) -> str:
+def cluster_exists(data_dir: Path) -> bool:
+    """True when data_dir/data/PG_VERSION is a file."""
+    return (data_dir / "data" / "PG_VERSION").is_file()
+
+
+def cluster_running(data_dir: Path) -> bool:
+    """False when the cluster does not exist; otherwise pg_ctl status == 0 (reuse _running)."""
+    if not cluster_exists(data_dir):
+        return False
+    return _running(data_dir / "data")
+
+
+def ensure_cluster(data_dir: Path, *, create: bool = True) -> str:
+    """Start the local cluster, creating it only when create is True.
+
+    When create is False and the cluster does not exist, raise before calling
+    start_cluster so nothing is created and no directory is made.
+    """
+    if not create and not cluster_exists(data_dir):
+        raise PgError(f"no local postgres cluster under {data_dir}; run agent init")
     dsn = start_cluster(data_dir)
     wait_ready(dsn)
     return dsn

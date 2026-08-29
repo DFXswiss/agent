@@ -15,7 +15,7 @@ pip install -e ".[test]"
 agent init
 ```
 
-`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock and the local dashboard immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid).
+`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock and the local dashboard immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Every other command starts it again if it is stopped, but fails with `run agent init` when it does not exist and never runs `initdb` on its own. `agent pg status` shows it, `agent pg stop` stops it, and `agent daemon --uninstall` stops it together with the user service.
 
 ## Pair and sync
 
@@ -73,6 +73,8 @@ agent ping send --to some-login --kind review-request --task <uuid> --note "read
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard
+agent pg status
+agent pg stop
 ```
 
 `agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`.
@@ -132,6 +134,19 @@ agent session stop --id <session-id>
 
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
 
+## Testing against another hub
+
+Do not point `AGENT_HOME` at a scratch directory and run `agent init` there. That creates a second cluster and a second device identity, and the user service label is shared, so the daemon would be repointed at the scratch home. Use a throwaway database on the existing cluster instead:
+
+```bash
+PORT=$(cat ~/.local/share/agent/pg/port)
+psql -h 127.0.0.1 -p "$PORT" -U agent -d postgres -c 'CREATE DATABASE hubtest'
+export AGENT_HOME=~/hubtest-home          # holds the second device.json only
+export AGENT_PG_DSN="host=127.0.0.1 port=$PORT user=agent dbname=hubtest"
+agent pair --hub https://hub.example      # no agent init
+```
+
+`AGENT_PG_DSN` bypasses the cluster logic entirely; `agent pg stop` refuses to run while it is set. Drop the database when you are done.
 
 ## Tests
 

@@ -187,6 +187,7 @@ The website is the full-replica view (summaries first; thick logs on demand). La
 
 - Home: `$AGENT_HOME` if set and non-empty, otherwise `~/.local/share/agent`. Directory mode `0700`.
 - Database: PostgreSQL bound to `127.0.0.1` and/or a Unix socket under `$AGENT_HOME`. Data directory mode `0700`.
+- Lifecycle: only `agent init` runs `initdb`. Other commands start an existing stopped cluster and otherwise exit with `run agent init`; they never create one. `agent pg stop` and `agent daemon --uninstall` stop it. `AGENT_PG_DSN` bypasses all of this.
 - Identity: `device.json` next to it (`device_id`, token, login, hub URL, pending challenge). Wiping only the database must not mint a new device.
 - All **own** local mutations go through an append-only event log (`event_log`) with `origin_seq` starting at 1 on **this** device. Own seqs stay gapless (`last+1` or a hard error).
 - Materialized tables (`session`, `activity`, and skill tables when a skill is on) are what the dashboard, CLI, and the AI read.
