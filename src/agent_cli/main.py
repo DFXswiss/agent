@@ -130,6 +130,7 @@ ACTIVITY_TYPES = frozenset(
         "query.result",
         "subscription.set",
         "usage.snapshot",
+        "supervise.event",
     }
 )
 SCRIPT_ONLY_ACTIVITY = frozenset(
@@ -141,6 +142,8 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "session.register",
         "usage.snapshot",
         "error.seen",
+        "supervise.event",
+        "issue.assigned.ack",
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
@@ -512,12 +515,6 @@ def cmd_activity(args: list[str]) -> None:
                 )
             print(f"activity {activity_id} type={typ}")
             return
-        if typ == "issue.assigned.ack":
-            assigned_id = raw.get("assigned_id")
-            pending = pending_assigned(store, sid)
-            head = pending[0].get("id") if pending else None
-            if not isinstance(assigned_id, str) or assigned_id == "" or assigned_id != head:
-                die("issue.assigned.ack assigned_id must be the queue head")
         status = "pending" if typ in ACTIVITY_TYPES else "error"
         activity_id = str(uuid.uuid4())
         store.write(
@@ -3048,6 +3045,100 @@ def cmd_watch(args: list[str]) -> None:
         store.close()
 
 
+def cmd_supervise(args: list[str]) -> None:
+    import fcntl
+
+    from .knock import deliver
+    from .supervise import FOLLOW_SECONDS, SESSION_RE, enqueue_assigned, tick
+
+    if "--session" not in args:
+        die("Usage: agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]")
+    sid = require_flag(args, "--session")
+    if SESSION_RE.match(sid) is None:
+        die("session id may contain only A-Za-z0-9_-")
+    repo = flag(args, "--repo")
+    number_raw = flag(args, "--number")
+    if (repo is None) != (number_raw is None):
+        die("--repo and --number must be used together")
+    follow = "--follow" in args
+    if "--once" in args and follow:
+        die("use only one of --once or --follow")
+    store = open_store()
+    lock_fh = None
+    try:
+        if follow:
+            lock_path = store.home / f"supervise-{sid}.lock"
+            lock_fh = lock_path.open("w")
+            try:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                lock_fh.close()
+                die(f"supervise --follow already running for session {sid}")
+            lock_fh.write(str(os.getpid()))
+            lock_fh.flush()
+        runtime = Runtime()
+        from .telegram_act import reset_idle_clock
+
+        reset_idle_clock(store, working=runtime.exists(sid))
+
+        def start(session_id: str, cwd: Path) -> None:
+            _session_start(
+                store,
+                runtime,
+                session_id,
+                None,
+                None,
+                None,
+                provider="grok",
+                cwd=str(cwd),
+            )
+
+        queued = False
+        while True:
+            if repo is not None and number_raw is not None and not queued:
+                try:
+                    number = int(number_raw)
+                except ValueError:
+                    die("--number must be a positive integer")
+                assigned_id = enqueue_assigned(store, sid, repo, number, run_argv)
+                print(f"issue.assigned {assigned_id}")
+                queued = True
+            pane = runtime.capture(sid) if runtime.exists(sid) else ""
+            from .grok_pane import grok_pane_is_working
+            from .telegram_act import notify_status
+
+            working = grok_pane_is_working(pane)
+            line = tick(
+                store,
+                runtime,
+                sid,
+                start=start,
+                knock=lambda activity_id: deliver(store, runtime, activity_id),
+                pane=pane,
+                working=working,
+            )
+            print(line)
+            try:
+                # Idle prompt is not "not working". Page only if tmux is gone.
+                posted = notify_status(
+                    store,
+                    sid,
+                    line,
+                    working=runtime.exists(sid),
+                )
+                if posted == "telegram sent":
+                    print(posted)
+            except RuntimeError as exc:
+                print(f"telegram error: {exc}", file=sys.stderr)
+            if not follow:
+                return
+            time.sleep(FOLLOW_SECONDS)
+    finally:
+        if lock_fh is not None:
+            lock_fh.close()
+        store.close()
+
+
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
@@ -3074,6 +3165,7 @@ COMMANDS = {
     "knock": cmd_knock,
     "lane": cmd_lane,
     "watch": cmd_watch,
+    "supervise": cmd_supervise,
     "github": cmd_github,
     "query": cmd_query,
     "subscribe": cmd_subscribe,
@@ -3087,7 +3179,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|"
-            "github|query|subscribe|mail> …"
+            "github|query|subscribe|mail|supervise> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .grok_pane import grok_pane_is_working
 from .store import StoreError
 
 GROK_DEFAULT_MODEL = "grok-4.6"
@@ -49,10 +50,17 @@ def grok_model(raw: str | None) -> str:
 def grok_launch_argv(*, existing: str, model: str, new_id: str) -> list[str]:
     resolved = grok_model(model)
     if existing:
-        return ["grok", "--resume", existing, "--model", resolved]
+        return ["grok", "--always-approve", "--resume", existing, "--model", resolved]
     if not _UUID_RE.match(new_id):
         raise SystemExit("grok --session-id requires a UUID")
-    return ["grok", "--session-id", new_id, "--model", resolved]
+    return [
+        "grok",
+        "--always-approve",
+        "--session-id",
+        new_id,
+        "--model",
+        resolved,
+    ]
 
 
 def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[str]:
@@ -93,8 +101,15 @@ class Runtime:
         name = target or tmux_name(session_id)
         return self._run(["tmux", "has-session", "-t", name]).returncode == 0
 
-    def is_busy(self, session_id: str) -> bool:
-        return False
+    def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
+        """True when Grok's TUI in this tmux pane shows an in-flight turn."""
+        del settle
+        return self.grok_working(session_id)
+
+    def grok_working(self, session_id: str) -> bool:
+        if not self.exists(session_id):
+            return False
+        return grok_pane_is_working(self.capture(session_id))
 
     def start(
         self,
