@@ -3004,7 +3004,7 @@ def cmd_pg(args: list[str]) -> None:
 
     unit = service_path(sys.platform, home())
     recorded = service_home(unit, sys.platform)
-    if unit.is_file() and (recorded is None or _same_home(recorded, home())):
+    if recorded is not None and _same_home(recorded, home()):
         die(f"the device daemon is installed ({unit}) and would start the cluster again; run agent daemon --uninstall instead")
     if not _cluster_running(data_dir):
         print(f"not running {data_dir}")

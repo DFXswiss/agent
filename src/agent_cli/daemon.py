@@ -307,17 +307,22 @@ _PLIST_HOME_RE = re.compile(r"<key>AGENT_HOME</key>\s*<string>([^<]*)</string>")
 
 
 def service_home(path: Path, platform: str) -> Path | None:
-    """AGENT_HOME recorded in an installed unit file, or None when the file or the entry is missing."""
-    if not path.is_file():
-        return None
+    """AGENT_HOME recorded in an installed unit file; None when there is no unit file.
+
+    A unit file that exists but records no AGENT_HOME, or that cannot be read or parsed,
+    raises StoreError so that callers fail closed.
+    """
     try:
         text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
     except (OSError, UnicodeDecodeError) as exc:
         raise StoreError(f"cannot read service unit {path}: {exc}") from exc
+    recorded: str | None = None
     if platform == "darwin":
         match = _PLIST_HOME_RE.search(text)
-        return Path(html.unescape(match.group(1))) if match else None
-    if platform == "linux":
+        recorded = html.unescape(match.group(1)) if match else None
+    elif platform == "linux":
         for line in text.splitlines():
             if not line.startswith("Environment="):
                 continue
@@ -325,12 +330,15 @@ def service_home(path: Path, platform: str) -> Path | None:
                 tokens = shlex.split(line[len("Environment="):])
             except ValueError as exc:
                 raise StoreError(f"malformed Environment entry in service unit {path}: {exc}") from exc
+            if not tokens:
+                recorded = None
+                continue
             for token in tokens:
                 if token.startswith("AGENT_HOME="):
-                    value = token[len("AGENT_HOME="):]
-                    return Path(value) if value else None
-        return None
-    return None
+                    recorded = token[len("AGENT_HOME="):]
+    if not recorded:
+        raise StoreError(f"service unit {path} records no AGENT_HOME")
+    return Path(recorded)
 
 
 def _runner_result(result: Completed | object) -> Completed:

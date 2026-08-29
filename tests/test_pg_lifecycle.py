@@ -14,6 +14,17 @@ def run(home: Path, argv: list[str]) -> None:
     main(argv)
 
 
+def _write_unit(target: Path, home: Path) -> None:
+    import sys
+
+    from agent_cli.daemon import service_unit_text
+
+    target.write_text(
+        service_unit_text(program=["/usr/bin/agent", "daemon"], home=home, platform=sys.platform, extra_env={}),
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.no_pg
 def test_status_without_cluster_dies_and_creates_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -172,7 +183,7 @@ def test_pg_stop_refuses_while_daemon_installed(
     pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
     pg_version.parent.mkdir(parents=True)
     pg_version.write_text("17", encoding="utf-8")
-    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    _write_unit(tmp_path / "daemon.service", tmp_path)
     stopped: list[Path] = []
     monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
     with pytest.raises(SystemExit, match="daemon --uninstall"):
@@ -429,7 +440,7 @@ def test_daemon_uninstall_reports_missing_pg_ctl(
     pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
     pg_version.parent.mkdir(parents=True)
     pg_version.write_text("17", encoding="utf-8")
-    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    _write_unit(tmp_path / "daemon.service", tmp_path)
     stopped: list[Path] = []
     monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
 
@@ -457,7 +468,7 @@ def test_daemon_uninstall_surfaces_pg_ctl_failure(
     pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
     pg_version.parent.mkdir(parents=True)
     pg_version.write_text("17", encoding="utf-8")
-    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    _write_unit(tmp_path / "daemon.service", tmp_path)
 
     def boom(_argv: list[str]) -> None:
         raise AssertionError("run_argv must not be called under pytest")
@@ -502,7 +513,7 @@ def test_empty_pg_dsn_is_an_error_everywhere(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_PG_DSN", "")
-    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    _write_unit(tmp_path / "daemon.service", tmp_path)
     for argv in (["status"], ["pg", "status"], ["pg", "stop"], ["daemon", "--uninstall"]):
         with pytest.raises(SystemExit, match="set but empty"):
             run(tmp_path, argv)
@@ -515,7 +526,7 @@ def test_daemon_uninstall_checks_dsn_before_mutating(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_PG_DSN", "")
-    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    _write_unit(tmp_path / "daemon.service", tmp_path)
     pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
     pg_version.parent.mkdir(parents=True)
     pg_version.write_text("17", encoding="utf-8")
@@ -750,6 +761,7 @@ def test_service_home_rejects_unbalanced_quote(tmp_path: Path) -> None:
 @pytest.mark.no_pg
 def test_service_home_accepts_whole_assignment_quoting(tmp_path: Path) -> None:
     from agent_cli.daemon import service_home
+    from agent_cli.store import StoreError
 
     unit = tmp_path / "unit"
     unit.write_text(
@@ -760,11 +772,13 @@ def test_service_home_accepts_whole_assignment_quoting(tmp_path: Path) -> None:
 
     plain_unit = tmp_path / "plain_unit"
     plain_unit.write_text("[Service]\nEnvironment=PATH=/usr/bin\n", encoding="utf-8")
-    assert service_home(plain_unit, "linux") is None
+    with pytest.raises(StoreError, match="records no AGENT_HOME"):
+        service_home(plain_unit, "linux")
 
     empty_unit = tmp_path / "empty_unit"
     empty_unit.write_text("[Service]\nEnvironment=AGENT_HOME=\n", encoding="utf-8")
-    assert service_home(empty_unit, "linux") is None
+    with pytest.raises(StoreError, match="records no AGENT_HOME"):
+        service_home(empty_unit, "linux")
 
 
 @pytest.mark.no_pg
@@ -778,6 +792,85 @@ def test_pg_stop_reports_unreadable_unit_via_die(
     (tmp_path / "daemon.service").write_bytes(b"\xff\xfe\x00broken")
     with pytest.raises(SystemExit, match=r"^agent: cannot read service unit"):
         run(tmp_path, ["pg", "stop"])
+
+
+@pytest.mark.no_pg
+def test_service_home_last_assignment_wins(tmp_path: Path) -> None:
+    from agent_cli.daemon import service_home
+    from agent_cli.store import StoreError
+
+    unit = tmp_path / "unit"
+    unit.write_text(
+        "[Service]\nEnvironment=AGENT_HOME=/old\nEnvironment='AGENT_HOME=/current home'\n",
+        encoding="utf-8",
+    )
+    assert service_home(unit, "linux") == Path("/current home")
+
+    reset_unit = tmp_path / "reset_unit"
+    reset_unit.write_text(
+        "[Service]\nEnvironment=AGENT_HOME=/old\nEnvironment=\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(StoreError, match="records no AGENT_HOME"):
+        service_home(reset_unit, "linux")
+
+
+@pytest.mark.no_pg
+def test_service_home_rejects_unreadable_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.daemon import service_home
+    from agent_cli.store import StoreError
+
+    unit = tmp_path / "unit"
+    unit.write_text("[Service]\n", encoding="utf-8")
+
+    def denied(self, *args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(StoreError, match="cannot read service unit") as info:
+        service_home(unit, "linux")
+    assert isinstance(info.value.__cause__, PermissionError)
+
+
+@pytest.mark.no_pg
+def test_daemon_uninstall_refuses_unparseable_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+
+    def boom(_argv: list[str]) -> None:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    with pytest.raises(SystemExit, match=r"^agent: service unit .* records no AGENT_HOME$"):
+        run(tmp_path, ["daemon", "--uninstall"])
+    assert (tmp_path / "daemon.service").is_file()
+    assert stopped == []
+
+
+@pytest.mark.no_pg
+def test_pg_stop_refuses_unparseable_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: True)
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    with pytest.raises(SystemExit, match=r"^agent: service unit .* records no AGENT_HOME$"):
+        run(tmp_path, ["pg", "stop"])
+    assert stopped == []
 
 
 @pytest.mark.no_pg
