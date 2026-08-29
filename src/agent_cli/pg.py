@@ -223,8 +223,11 @@ def wait_ready(dsn: str, timeout: float = 10.0) -> None:
 
 
 def cluster_exists(data_dir: Path) -> bool:
-    """True when data_dir/data/PG_VERSION is a file."""
-    return (data_dir / "data" / "PG_VERSION").is_file()
+    """True when data_dir/data/PG_VERSION is a file; PgError when the probe fails for another reason."""
+    try:
+        return (data_dir / "data" / "PG_VERSION").is_file()
+    except OSError as exc:
+        raise PgError(f"cannot inspect cluster under {data_dir}: {exc}") from exc
 
 
 def cluster_running(data_dir: Path) -> bool:

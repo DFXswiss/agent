@@ -206,6 +206,15 @@ def _cluster_running(data_dir: Path) -> bool:
         return False
 
 
+def _cluster_exists(data_dir: Path) -> bool:
+    """cluster_exists() with PgError routed through die()."""
+    try:
+        return cluster_exists(data_dir)
+    except PgError as exc:
+        die(str(exc))
+        return False
+
+
 def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> Store:
     h = home()
     sqlite_legacy = h / "ledger.sqlite"
@@ -2990,16 +2999,22 @@ def cmd_pg(args: list[str]) -> None:
             print(f"home={home()} dsn=external")
             return
         port_file = data_dir / "port"
-        port = port_file.read_text(encoding="utf-8").strip() if port_file.is_file() else "-"
+        try:
+            port = port_file.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            port = "-"
+        except OSError as exc:
+            die(f"cannot read {port_file}: {exc}")
+        exists = _cluster_exists(data_dir)
         print(
-            f"home={home()} cluster={data_dir} exists={'yes' if cluster_exists(data_dir) else 'no'} "
+            f"home={home()} cluster={data_dir} exists={'yes' if exists else 'no'} "
             f"running={'yes' if _cluster_running(data_dir) else 'no'} port={port}"
         )
         return
     if external:
         die("AGENT_PG_DSN is set; nothing to stop")
-    if not cluster_exists(data_dir):
-        die(f"no local postgres cluster under {data_dir}")
+    if not _cluster_exists(data_dir):
+        die(f"no local postgres cluster under {data_dir}; run agent init")
     from .daemon import service_home, service_path
 
     unit = service_path(sys.platform, home())

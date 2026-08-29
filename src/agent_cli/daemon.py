@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import fcntl
-import html
 import json
 import os
-import re
+import plistlib
 import shlex
 import signal
 import subprocess
@@ -15,6 +14,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from .runtime import Completed, run_argv as _default_run_argv
 from .store import StoreError
@@ -303,9 +303,6 @@ def service_path(platform: str, home: Path) -> Path:
     raise StoreError(f"daemon install unsupported on {platform}")
 
 
-_PLIST_HOME_RE = re.compile(r"<key>AGENT_HOME</key>\s*<string>([^<]*)</string>")
-
-
 def service_home(path: Path, platform: str) -> Path | None:
     """AGENT_HOME recorded in an installed unit file; None when there is no unit file.
 
@@ -320,8 +317,13 @@ def service_home(path: Path, platform: str) -> Path | None:
         raise StoreError(f"cannot read service unit {path}: {exc}") from exc
     recorded: str | None = None
     if platform == "darwin":
-        match = _PLIST_HOME_RE.search(text)
-        recorded = html.unescape(match.group(1)) if match else None
+        try:
+            data = plistlib.loads(text.encode("utf-8"))
+        except (plistlib.InvalidFileException, ValueError, ExpatError) as exc:
+            raise StoreError(f"malformed service unit {path}: {exc}") from exc
+        env = data.get("EnvironmentVariables") if isinstance(data, dict) else None
+        value = env.get("AGENT_HOME") if isinstance(env, dict) else None
+        recorded = value if isinstance(value, str) else None
     elif platform == "linux":
         for line in text.splitlines():
             if not line.startswith("Environment="):
