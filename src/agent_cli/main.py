@@ -2958,10 +2958,12 @@ def cmd_daemon(args: list[str]) -> None:
             store.close()
         return
     if args == ["--uninstall"]:
+        external = pg_dsn_from_env()
+        data_dir = home() / "pg"
         uninstall_service(home=home())
-        if pg_dsn_from_env() is None and cluster_exists(home() / "pg"):
-            stop_cluster(home() / "pg")
-            print(f"stopped {home() / 'pg'}")
+        if external is None and cluster_exists(data_dir):
+            stop_cluster(data_dir)
+            print(f"stopped {data_dir}")
         return
     die("Usage: agent daemon [--install|--uninstall]")
 

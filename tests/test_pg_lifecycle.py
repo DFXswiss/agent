@@ -182,10 +182,29 @@ def test_empty_pg_dsn_is_an_error_everywhere(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AGENT_PG_DSN", "")
+    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
     for argv in (["status"], ["pg", "status"], ["pg", "stop"], ["daemon", "--uninstall"]):
         with pytest.raises(SystemExit, match="set but empty"):
             run(tmp_path, argv)
+    assert (tmp_path / "daemon.service").is_file()
     assert not (tmp_path / "pg").exists()
+
+
+@pytest.mark.no_pg
+def test_daemon_uninstall_checks_dsn_before_mutating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_PG_DSN", "")
+    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    with pytest.raises(SystemExit, match="set but empty"):
+        run(tmp_path, ["daemon", "--uninstall"])
+    assert (tmp_path / "daemon.service").is_file()
+    assert stopped == []
 
 
 @pytest.mark.no_pg
@@ -207,6 +226,25 @@ def test_stopped_cluster_is_started_without_init(
         ensure_cluster(tmp_path / "pg", create=False)
         == "host=127.0.0.1 port=1 user=agent dbname=postgres"
     )
+    assert started == [tmp_path / "pg"]
+
+
+def test_status_starts_stopped_cluster_via_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], pg_dsn: str
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN")
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    started: list[Path] = []
+    monkeypatch.setattr(
+        "agent_cli.pg.start_cluster",
+        lambda data_dir: (started.append(data_dir), pg_dsn)[1],
+    )
+    monkeypatch.setattr("agent_cli.pg.wait_ready", lambda dsn, timeout=10.0: None)
+    run(tmp_path, ["status"])
+    out = capsys.readouterr().out
+    assert "tasks_open=" in out
     assert started == [tmp_path / "pg"]
 
 
