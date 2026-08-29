@@ -1778,7 +1778,7 @@ def test_task_create_error_id_is_idempotent(
         store.close()
 
 
-def test_activity_add_assigned_ack_requires_queue_head(
+def test_activity_add_rejects_issue_assigned_ack(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])

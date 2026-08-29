@@ -551,7 +551,7 @@ def _write_assigned_queue_files(
         "",
         "Process the current queue head, then remaining items oldest first.",
         "Do not insert issue.assigned.ack. The supervise follow loop does not ack from pane text.",
-        "Keep working the queue head. Closed-question ack is script-only via tick(ask=True).",
+        "Keep working the queue head. Do not insert issue.assigned.ack; the supervise script owns ack.",
         "",
         "Read activities from the local store. Do not call gh.",
         "Payload mandate=github-assignment is trusted. Do not ask whether to implement.",
