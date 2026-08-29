@@ -389,6 +389,30 @@ def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
     return None
 
 
+def kept_service_agent_pg_bin(home: Path, platform: str | None = None) -> str | None:
+    """AGENT_PG_BIN recorded in the installed unit, or None (missing, unreadable or malformed unit)."""
+    plat = sys.platform if platform is None else platform
+    path = service_path(plat, home)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return existing_service_agent_pg_bin(text, plat)
+
+
+def adopt_kept_agent_pg_bin(home: Path, platform: str | None = None) -> str | None:
+    """When AGENT_PG_BIN is not in the environment, export the value kept in the installed unit.
+
+    Returns the adopted value, or None when nothing was adopted.
+    """
+    if "AGENT_PG_BIN" in os.environ:
+        return None
+    kept = kept_service_agent_pg_bin(home, platform)
+    if kept:
+        os.environ["AGENT_PG_BIN"] = kept
+    return kept
+
+
 def service_extra_env(*, existing_pg_bin: str | None = None) -> dict[str, str]:
     env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
     if "AGENT_PG_BIN" in os.environ:
@@ -413,9 +437,7 @@ def install_and_start_service(
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
     path = service_path(plat, home)
-    kept: str | None = None
-    if path.is_file():
-        kept = existing_service_agent_pg_bin(path.read_text(encoding="utf-8"), plat)
+    kept = kept_service_agent_pg_bin(home, plat)
     text = service_unit_text(
         program=program,
         home=home,
