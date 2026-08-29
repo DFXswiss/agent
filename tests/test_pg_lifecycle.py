@@ -673,6 +673,10 @@ def test_real_cluster_stop_roundtrip(tmp_path: Path) -> None:
         assert cluster_running(data) is True
         stop_cluster(data)
         assert cluster_running(data) is False
+        ensure_cluster(data, create=False)
+        assert cluster_running(data) is True
+        stop_cluster(data)
+        assert cluster_running(data) is False
         stop_cluster(data)
     finally:
         stop_cluster(data)
@@ -719,6 +723,61 @@ def test_init_warning_uses_same_home(
     main(["init"])
     err = capsys.readouterr().err
     assert "is not the default" not in err
+
+
+@pytest.mark.no_pg
+def test_service_home_rejects_non_utf8_unit(tmp_path: Path) -> None:
+    from agent_cli.daemon import service_home
+    from agent_cli.store import StoreError
+
+    unit = tmp_path / "unit"
+    unit.write_bytes(b"\xff\xfe\x00broken")
+    with pytest.raises(StoreError, match="cannot read service unit"):
+        service_home(unit, "darwin")
+
+
+@pytest.mark.no_pg
+def test_service_home_rejects_unbalanced_quote(tmp_path: Path) -> None:
+    from agent_cli.daemon import service_home
+    from agent_cli.store import StoreError
+
+    unit = tmp_path / "unit"
+    unit.write_text("[Service]\nEnvironment=AGENT_HOME='/srv/agent\n", encoding="utf-8")
+    with pytest.raises(StoreError, match="malformed Environment entry"):
+        service_home(unit, "linux")
+
+
+@pytest.mark.no_pg
+def test_service_home_accepts_whole_assignment_quoting(tmp_path: Path) -> None:
+    from agent_cli.daemon import service_home
+
+    unit = tmp_path / "unit"
+    unit.write_text(
+        "[Service]\nEnvironment=PATH=/usr/bin\nEnvironment='AGENT_HOME=/srv/agent home'\n",
+        encoding="utf-8",
+    )
+    assert service_home(unit, "linux") == Path("/srv/agent home")
+
+    plain_unit = tmp_path / "plain_unit"
+    plain_unit.write_text("[Service]\nEnvironment=PATH=/usr/bin\n", encoding="utf-8")
+    assert service_home(plain_unit, "linux") is None
+
+    empty_unit = tmp_path / "empty_unit"
+    empty_unit.write_text("[Service]\nEnvironment=AGENT_HOME=\n", encoding="utf-8")
+    assert service_home(empty_unit, "linux") is None
+
+
+@pytest.mark.no_pg
+def test_pg_stop_reports_unreadable_unit_via_die(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    (tmp_path / "daemon.service").write_bytes(b"\xff\xfe\x00broken")
+    with pytest.raises(SystemExit, match=r"^agent: cannot read service unit"):
+        run(tmp_path, ["pg", "stop"])
 
 
 @pytest.mark.no_pg

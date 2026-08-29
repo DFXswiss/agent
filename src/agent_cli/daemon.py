@@ -304,23 +304,32 @@ def service_path(platform: str, home: Path) -> Path:
 
 
 _PLIST_HOME_RE = re.compile(r"<key>AGENT_HOME</key>\s*<string>([^<]*)</string>")
-_UNIT_HOME_RE = re.compile(r"^Environment=AGENT_HOME=(.*)$", re.MULTILINE)
 
 
 def service_home(path: Path, platform: str) -> Path | None:
     """AGENT_HOME recorded in an installed unit file, or None when the file or the entry is missing."""
     if not path.is_file():
         return None
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise StoreError(f"cannot read service unit {path}: {exc}") from exc
     if platform == "darwin":
         match = _PLIST_HOME_RE.search(text)
         return Path(html.unescape(match.group(1))) if match else None
     if platform == "linux":
-        match = _UNIT_HOME_RE.search(text)
-        if not match or not match.group(1):
-            return None
-        parts = shlex.split(match.group(1))
-        return Path(parts[0]) if parts else None
+        for line in text.splitlines():
+            if not line.startswith("Environment="):
+                continue
+            try:
+                tokens = shlex.split(line[len("Environment="):])
+            except ValueError as exc:
+                raise StoreError(f"malformed Environment entry in service unit {path}: {exc}") from exc
+            for token in tokens:
+                if token.startswith("AGENT_HOME="):
+                    value = token[len("AGENT_HOME="):]
+                    return Path(value) if value else None
+        return None
     return None
 
 
