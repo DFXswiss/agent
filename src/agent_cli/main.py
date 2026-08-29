@@ -175,6 +175,11 @@ def default_home() -> Path:
     return Path.home() / ".local" / "share" / "agent"
 
 
+def _same_home(a: Path, b: Path) -> bool:
+    """True when both paths name the same directory after ~ expansion and symlink resolution."""
+    return a.expanduser().resolve() == b.expanduser().resolve()
+
+
 def home() -> Path:
     override = os.environ.get("AGENT_HOME")
     if override == "":
@@ -2962,7 +2967,7 @@ def cmd_daemon(args: list[str]) -> None:
         data_dir = home() / "pg"
         unit = service_path(sys.platform, home())
         recorded = service_home(unit, sys.platform)
-        if recorded is not None and recorded != home():
+        if recorded is not None and not _same_home(recorded, home()):
             die(f"the service unit at {unit} was installed for AGENT_HOME={recorded}; run agent daemon --uninstall with that AGENT_HOME")
         uninstall_service(home=home())
         if external is None and _cluster_running(data_dir):
@@ -2999,7 +3004,7 @@ def cmd_pg(args: list[str]) -> None:
 
     unit = service_path(sys.platform, home())
     recorded = service_home(unit, sys.platform)
-    if unit.is_file() and (recorded is None or recorded == home()):
+    if unit.is_file() and (recorded is None or _same_home(recorded, home())):
         die(f"the device daemon is installed ({unit}) and would start the cluster again; run agent daemon --uninstall instead")
     if not _cluster_running(data_dir):
         print(f"not running {data_dir}")
