@@ -34,7 +34,7 @@ from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, launch
-from .pg import PgError, ensure_cluster, require_loopback_dsn
+from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
     Runtime,
     grok_model,
@@ -171,26 +171,59 @@ def die(msg: str) -> None:
     raise SystemExit(f"agent: {msg}")
 
 
+def default_home() -> Path:
+    return Path.home() / ".local" / "share" / "agent"
+
+
+def _same_home(a: Path, b: Path) -> bool:
+    """True when both paths name the same directory after ~ expansion and symlink resolution."""
+    return a.expanduser().resolve() == b.expanduser().resolve()
+
+
 def home() -> Path:
     override = os.environ.get("AGENT_HOME")
     if override == "":
         die("AGENT_HOME is set but empty")
     if override:
-        return Path(override)
-    return Path.home() / ".local" / "share" / "agent"
+        return Path(override).expanduser()
+    return default_home()
 
 
-def open_store(*, allow_legacy_sqlite: bool = False) -> Store:
+def pg_dsn_from_env() -> str | None:
+    """Return AGENT_PG_DSN, None when unset; die("AGENT_PG_DSN is set but empty") when it is the empty string."""
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn == "":
+        die("AGENT_PG_DSN is set but empty")
+    return dsn
+
+
+def _cluster_running(data_dir: Path) -> bool:
+    """cluster_running() with PgError (e.g. missing pg_ctl) routed through die()."""
+    try:
+        return cluster_running(data_dir)
+    except PgError as exc:
+        die(str(exc))
+        return False
+
+
+def _cluster_exists(data_dir: Path) -> bool:
+    """cluster_exists() with PgError routed through die()."""
+    try:
+        return cluster_exists(data_dir)
+    except PgError as exc:
+        die(str(exc))
+        return False
+
+
+def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> Store:
     h = home()
     sqlite_legacy = h / "ledger.sqlite"
     if sqlite_legacy.is_file() and not allow_legacy_sqlite:
         die("found ledger.sqlite; move it aside then run agent restore")
-    dsn = os.environ.get("AGENT_PG_DSN")
-    if dsn == "":
-        die("AGENT_PG_DSN is set but empty")
+    dsn = pg_dsn_from_env()
     if not dsn:
         try:
-            dsn = ensure_cluster(h / "pg")
+            dsn = ensure_cluster(h / "pg", create=create)
         except PgError as exc:
             die(str(exc))
     try:
@@ -287,9 +320,26 @@ def cmd_skills(args: list[str]) -> None:
 
 
 def cmd_init(_: list[str]) -> None:
-    from .daemon import agent_argv, install_and_start_service
+    from .daemon import SERVICE_LABEL, agent_argv, install_and_start_service
 
-    store = open_store()
+    external = pg_dsn_from_env()
+    override = os.environ.get("AGENT_HOME")
+    if override and not _same_home(home(), default_home()):
+        if external is None:
+            print(
+                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
+                f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; agent "
+                f"daemon --uninstall stops that cluster and removes the service again, the device.json stays",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init writes a separate device "
+                f"identity there and repoints the user service {SERVICE_LABEL} at it; the cluster logic is "
+                f"bypassed by AGENT_PG_DSN",
+                file=sys.stderr,
+            )
+    store = open_store(create=True)
     try:
         install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
         daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
@@ -2906,6 +2956,8 @@ def cmd_daemon(args: list[str]) -> None:
         agent_argv,
         install_and_start_service,
         run_supervisor,
+        service_home,
+        service_path,
         uninstall_service,
     )
 
@@ -2920,9 +2972,63 @@ def cmd_daemon(args: list[str]) -> None:
             store.close()
         return
     if args == ["--uninstall"]:
+        external = pg_dsn_from_env()
+        data_dir = home() / "pg"
+        unit = service_path(sys.platform, home())
+        recorded = service_home(unit, sys.platform)
+        if recorded is not None and not _same_home(recorded, home()):
+            die(f"the service unit at {unit} was installed for AGENT_HOME={recorded}; run agent daemon --uninstall with that AGENT_HOME")
         uninstall_service(home=home())
+        if external is None and _cluster_running(data_dir):
+            try:
+                stop_cluster(data_dir)
+            except PgError as exc:
+                die(str(exc))
+            print(f"stopped {data_dir}")
         return
     die("Usage: agent daemon [--install|--uninstall]")
+
+
+def cmd_pg(args: list[str]) -> None:
+    if args not in (["status"], ["stop"]):
+        die("Usage: agent pg status|stop")
+    external = pg_dsn_from_env()
+    data_dir = home() / "pg"
+    if args == ["status"]:
+        if external:
+            print(f"home={home()} dsn=external")
+            return
+        port_file = data_dir / "port"
+        try:
+            port = port_file.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            port = "-"
+        except OSError as exc:
+            die(f"cannot read {port_file}: {exc}")
+        exists = _cluster_exists(data_dir)
+        print(
+            f"home={home()} cluster={data_dir} exists={'yes' if exists else 'no'} "
+            f"running={'yes' if _cluster_running(data_dir) else 'no'} port={port}"
+        )
+        return
+    if external:
+        die("AGENT_PG_DSN is set; nothing to stop")
+    if not _cluster_exists(data_dir):
+        die(f"no local postgres cluster under {data_dir}; run agent init")
+    from .daemon import service_home, service_path
+
+    unit = service_path(sys.platform, home())
+    recorded = service_home(unit, sys.platform)
+    if recorded is not None and _same_home(recorded, home()):
+        die(f"the device daemon is installed ({unit}) and would start the cluster again; run agent daemon --uninstall instead")
+    if not _cluster_running(data_dir):
+        print(f"not running {data_dir}")
+        return
+    try:
+        stop_cluster(data_dir)
+    except PgError as exc:
+        die(str(exc))
+    print(f"stopped {data_dir}")
 
 
 def cmd_watch(args: list[str]) -> None:
@@ -3162,6 +3268,7 @@ COMMANDS = {
     "status": cmd_status,
     "dashboard": cmd_dashboard,
     "daemon": cmd_daemon,
+    "pg": cmd_pg,
     "knock": cmd_knock,
     "lane": cmd_lane,
     "watch": cmd_watch,
@@ -3178,7 +3285,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|pg|knock|lane|watch|"
             "github|query|subscribe|mail|supervise> …"
         )
     cmd = args[0]

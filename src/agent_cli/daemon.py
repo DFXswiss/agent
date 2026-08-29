@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import plistlib
 import shlex
 import signal
 import subprocess
@@ -13,6 +14,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from .runtime import Completed, run_argv as _default_run_argv
 from .store import StoreError
@@ -301,6 +303,46 @@ def service_path(platform: str, home: Path) -> Path:
     raise StoreError(f"daemon install unsupported on {platform}")
 
 
+def service_home(path: Path, platform: str) -> Path | None:
+    """AGENT_HOME recorded in an installed unit file; None when there is no unit file.
+
+    A unit file that exists but records no AGENT_HOME, or that cannot be read or parsed,
+    raises StoreError so that callers fail closed.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as exc:
+        raise StoreError(f"cannot read service unit {path}: {exc}") from exc
+    recorded: str | None = None
+    if platform == "darwin":
+        try:
+            data = plistlib.loads(text.encode("utf-8"))
+        except (plistlib.InvalidFileException, ValueError, ExpatError) as exc:
+            raise StoreError(f"malformed service unit {path}: {exc}") from exc
+        env = data.get("EnvironmentVariables") if isinstance(data, dict) else None
+        value = env.get("AGENT_HOME") if isinstance(env, dict) else None
+        recorded = value if isinstance(value, str) else None
+    elif platform == "linux":
+        for line in text.splitlines():
+            if not line.startswith("Environment="):
+                continue
+            try:
+                tokens = shlex.split(line[len("Environment="):])
+            except ValueError as exc:
+                raise StoreError(f"malformed Environment entry in service unit {path}: {exc}") from exc
+            if not tokens:
+                recorded = None
+                continue
+            for token in tokens:
+                if token.startswith("AGENT_HOME="):
+                    recorded = token[len("AGENT_HOME="):]
+    if not recorded:
+        raise StoreError(f"service unit {path} records no AGENT_HOME")
+    return Path(recorded)
+
+
 def _runner_result(result: Completed | object) -> Completed:
     if isinstance(result, Completed):
         return result
@@ -332,11 +374,15 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
+    extra_env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn:
+        extra_env["AGENT_PG_DSN"] = dsn
     text = service_unit_text(
         program=program,
         home=home,
         platform=plat,
-        extra_env={"PATH": os.environ.get("PATH") or "/usr/bin:/bin"},
+        extra_env=extra_env,
     )
     path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)
