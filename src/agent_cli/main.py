@@ -2960,6 +2960,7 @@ def cmd_knock(args: list[str]) -> None:
 
 def cmd_daemon(args: list[str]) -> None:
     from .daemon import (
+        adopt_kept_agent_pg_bin,
         agent_argv,
         install_and_start_service,
         run_supervisor,
@@ -2985,6 +2986,7 @@ def cmd_daemon(args: list[str]) -> None:
         recorded = service_home(unit, sys.platform)
         if recorded is not None and not _same_home(recorded, home()):
             die(f"the service unit at {unit} was installed for AGENT_HOME={recorded}; run agent daemon --uninstall with that AGENT_HOME")
+        adopt_kept_agent_pg_bin(home())
         uninstall_service(home=home())
         if external is None and _cluster_running(data_dir):
             try:
@@ -2999,6 +3001,9 @@ def cmd_daemon(args: list[str]) -> None:
 def cmd_pg(args: list[str]) -> None:
     if args not in (["status"], ["stop"]):
         die("Usage: agent pg status|stop")
+    from .daemon import adopt_kept_agent_pg_bin, service_home, service_path
+
+    adopt_kept_agent_pg_bin(home())
     external = pg_dsn_from_env()
     data_dir = home() / "pg"
     if args == ["status"]:
@@ -3022,7 +3027,6 @@ def cmd_pg(args: list[str]) -> None:
         die("AGENT_PG_DSN is set; nothing to stop")
     if not _cluster_exists(data_dir):
         die(f"no local postgres cluster under {data_dir}; run agent init")
-    from .daemon import service_home, service_path
 
     unit = service_path(sys.platform, home())
     recorded = service_home(unit, sys.platform)

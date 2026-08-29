@@ -879,6 +879,72 @@ def test_open_store_adopts_kept_agent_pg_bin_before_cluster_access(
 
 
 @pytest.mark.no_pg
+def test_daemon_uninstall_adopts_kept_agent_pg_bin_before_removing_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    pg_data = tmp_path / "pg" / "data"
+    pg_data.mkdir(parents=True)
+    (pg_data / "PG_VERSION").write_text("17", encoding="utf-8")
+
+    seen: list[str | None] = []
+
+    def fake_cluster_running(data_dir: Path) -> bool:
+        seen.append(os.environ.get("AGENT_PG_BIN"))
+        return False
+
+    monkeypatch.setattr("agent_cli.main.cluster_running", fake_cluster_running)
+
+    def boom(_argv: list[str]) -> Any:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+
+    run(tmp_path, ["daemon", "--uninstall"])
+
+    assert seen == ["/opt/pg/bin"]
+    assert not (tmp_path / "daemon.service").exists()
+
+
+@pytest.mark.no_pg
+def test_pg_status_adopts_kept_agent_pg_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    pg_data = tmp_path / "pg" / "data"
+    pg_data.mkdir(parents=True)
+    (pg_data / "PG_VERSION").write_text("17", encoding="utf-8")
+
+    seen: list[str | None] = []
+
+    def fake_cluster_running(data_dir: Path) -> bool:
+        seen.append(os.environ.get("AGENT_PG_BIN"))
+        return False
+
+    monkeypatch.setattr("agent_cli.main.cluster_running", fake_cluster_running)
+
+    run(tmp_path, ["pg", "status"])
+
+    assert seen == ["/opt/pg/bin"]
+
+
+@pytest.mark.no_pg
 def test_kept_service_agent_pg_bin_ignores_other_homes_unit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
