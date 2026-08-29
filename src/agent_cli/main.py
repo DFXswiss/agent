@@ -192,6 +192,15 @@ def pg_dsn_from_env() -> str | None:
     return dsn
 
 
+def _cluster_running(data_dir: Path) -> bool:
+    """cluster_running() with PgError (e.g. missing pg_ctl) routed through die()."""
+    try:
+        return cluster_running(data_dir)
+    except PgError as exc:
+        die(str(exc))
+        return False
+
+
 def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> Store:
     h = home()
     sqlite_legacy = h / "ledger.sqlite"
@@ -305,8 +314,8 @@ def cmd_init(_: list[str]) -> None:
         if external is None:
             print(
                 f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
-                f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; stop the "
-                f"cluster with agent pg stop",
+                f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; remove both "
+                f"again with agent daemon --uninstall",
                 file=sys.stderr,
             )
         else:
@@ -2950,7 +2959,7 @@ def cmd_daemon(args: list[str]) -> None:
         external = pg_dsn_from_env()
         data_dir = home() / "pg"
         uninstall_service(home=home())
-        if external is None and cluster_running(data_dir):
+        if external is None and _cluster_running(data_dir):
             try:
                 stop_cluster(data_dir)
             except PgError as exc:
@@ -2973,7 +2982,7 @@ def cmd_pg(args: list[str]) -> None:
         port = port_file.read_text(encoding="utf-8").strip() if port_file.is_file() else "-"
         print(
             f"home={home()} cluster={data_dir} exists={'yes' if cluster_exists(data_dir) else 'no'} "
-            f"running={'yes' if cluster_running(data_dir) else 'no'} port={port}"
+            f"running={'yes' if _cluster_running(data_dir) else 'no'} port={port}"
         )
         return
     if external:
@@ -2985,7 +2994,7 @@ def cmd_pg(args: list[str]) -> None:
     unit = service_path(sys.platform, home())
     if unit.is_file():
         die(f"the device daemon is installed ({unit}) and would start the cluster again; run agent daemon --uninstall instead")
-    if not cluster_running(data_dir):
+    if not _cluster_running(data_dir):
         print(f"not running {data_dir}")
         return
     try:

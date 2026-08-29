@@ -79,7 +79,8 @@ def test_init_warns_on_non_default_home(
     run(tmp_path, ["init"])
     err = capsys.readouterr().err
     assert "is not the default" in err
-    assert "agent pg stop" in err
+    assert "agent daemon --uninstall" in err
+    assert "agent pg stop" not in err
 
 
 def test_init_warning_with_external_dsn_mentions_no_cluster(
@@ -113,6 +114,25 @@ def test_pg_status_reports_missing_cluster(
     assert not (tmp_path / "pg").exists()
 
 
+@pytest.mark.no_pg
+def test_pg_status_reports_missing_pg_ctl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.pg import PgError
+
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+
+    def boom(data_dir: Path) -> bool:
+        raise PgError("pg_ctl is not installed")
+
+    monkeypatch.setattr("agent_cli.main.cluster_running", boom)
+    with pytest.raises(SystemExit, match=r"^agent: pg_ctl is not installed$"):
+        run(tmp_path, ["pg", "status"])
+
+
 def test_pg_stop_refuses_external_dsn(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="AGENT_PG_DSN"):
         run(tmp_path, ["pg", "stop"])
@@ -128,7 +148,7 @@ def test_pg_stop_without_cluster_dies(
 
 
 @pytest.mark.no_pg
-def test_pg_stop_stops_existing_cluster(
+def test_pg_stop_calls_stop_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("AGENT_PG_DSN", raising=False)
@@ -208,7 +228,8 @@ def test_stop_cluster_raises_on_nonzero_exit(
     monkeypatch.setattr("agent_cli.pg._bin", lambda name: "/bin/false")
 
     def fake_run(args, **kwargs):
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="pg_ctl: could not stop")
+        rc = 0 if "status" in args else 1
+        return subprocess.CompletedProcess(args, rc, stdout="", stderr="pg_ctl: could not stop")
 
     monkeypatch.setattr("agent_cli.pg.subprocess.run", fake_run)
     with pytest.raises(PgError, match="could not stop"):
@@ -216,7 +237,31 @@ def test_stop_cluster_raises_on_nonzero_exit(
 
 
 @pytest.mark.no_pg
-def test_daemon_uninstall_stops_cluster(
+def test_stop_cluster_is_noop_when_not_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from agent_cli.pg import stop_cluster
+
+    (tmp_path / "pg" / "data").mkdir(parents=True)
+    monkeypatch.setattr("agent_cli.pg._bin", lambda name: "/bin/false")
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        rc = 3 if "status" in args else 0
+        return subprocess.CompletedProcess(args, rc, stdout="", stderr="")
+
+    monkeypatch.setattr("agent_cli.pg.subprocess.run", fake_run)
+    stop_cluster(tmp_path / "pg")
+    assert len(calls) == 1
+    assert "status" in calls[0]
+    assert not any("stop" in call for call in calls)
+
+
+@pytest.mark.no_pg
+def test_daemon_uninstall_calls_stop_cluster(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("AGENT_PG_DSN", raising=False)
@@ -233,6 +278,34 @@ def test_daemon_uninstall_stops_cluster(
     monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
     run(tmp_path, ["daemon", "--uninstall"])
     assert stopped == [tmp_path / "pg"]
+
+
+@pytest.mark.no_pg
+def test_daemon_uninstall_reports_missing_pg_ctl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.pg import PgError
+
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+
+    def boom(_argv: list[str]) -> None:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+
+    def boom_running(data_dir: Path) -> bool:
+        raise PgError("pg_ctl is not installed")
+
+    monkeypatch.setattr("agent_cli.main.cluster_running", boom_running)
+    with pytest.raises(SystemExit, match=r"^agent: pg_ctl is not installed$"):
+        run(tmp_path, ["daemon", "--uninstall"])
+    assert stopped == []
 
 
 def test_daemon_uninstall_leaves_external_dsn_alone(

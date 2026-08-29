@@ -187,6 +187,8 @@ def stop_cluster(data_dir: Path) -> None:
     pgdata = data_dir / "data"
     if not pgdata.is_dir():
         return
+    if not _running(pgdata):
+        return
     completed = subprocess.run(  # noqa: S603
         [_bin("pg_ctl"), "-D", str(pgdata), "-m", "fast", "stop"],
         check=False,
