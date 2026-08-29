@@ -185,6 +185,14 @@ def home() -> Path:
     return default_home()
 
 
+def pg_dsn_from_env() -> str | None:
+    """Return AGENT_PG_DSN, None when unset; die("AGENT_PG_DSN is set but empty") when it is the empty string."""
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn == "":
+        die("AGENT_PG_DSN is set but empty")
+    return dsn
+
+
 def _warn_legacy_store() -> None:
     if LEGACY_DFX_LEDGER.is_dir():
         print(
@@ -200,9 +208,7 @@ def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> St
     sqlite_legacy = h / "ledger.sqlite"
     if sqlite_legacy.is_file() and not allow_legacy_sqlite:
         die("found ledger.sqlite; move it aside then run agent restore")
-    dsn = os.environ.get("AGENT_PG_DSN")
-    if dsn == "":
-        die("AGENT_PG_DSN is set but empty")
+    dsn = pg_dsn_from_env()
     if not dsn:
         try:
             dsn = ensure_cluster(h / "pg", create=create)
@@ -304,14 +310,23 @@ def cmd_skills(args: list[str]) -> None:
 def cmd_init(_: list[str]) -> None:
     from .daemon import SERVICE_LABEL, agent_argv, install_and_start_service
 
+    external = pg_dsn_from_env()
     override = os.environ.get("AGENT_HOME")
     if override and Path(override) != default_home():
-        print(
-            f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
-            f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; stop the "
-            f"cluster with agent pg stop",
-            file=sys.stderr,
-        )
+        if external is None:
+            print(
+                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
+                f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; stop the "
+                f"cluster with agent pg stop",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init writes a separate device "
+                f"identity there and repoints the user service {SERVICE_LABEL} at it; the cluster logic is "
+                f"bypassed by AGENT_PG_DSN",
+                file=sys.stderr,
+            )
     store = open_store(create=True)
     try:
         install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
@@ -2944,7 +2959,7 @@ def cmd_daemon(args: list[str]) -> None:
         return
     if args == ["--uninstall"]:
         uninstall_service(home=home())
-        if not os.environ.get("AGENT_PG_DSN") and cluster_exists(home() / "pg"):
+        if pg_dsn_from_env() is None and cluster_exists(home() / "pg"):
             stop_cluster(home() / "pg")
             print(f"stopped {home() / 'pg'}")
         return
@@ -2954,9 +2969,10 @@ def cmd_daemon(args: list[str]) -> None:
 def cmd_pg(args: list[str]) -> None:
     if args not in (["status"], ["stop"]):
         die("Usage: agent pg status|stop")
+    external = pg_dsn_from_env()
     data_dir = home() / "pg"
     if args == ["status"]:
-        if os.environ.get("AGENT_PG_DSN"):
+        if external:
             print(f"home={home()} dsn=external")
             return
         port_file = data_dir / "port"
@@ -2966,7 +2982,7 @@ def cmd_pg(args: list[str]) -> None:
             f"running={'yes' if cluster_running(data_dir) else 'no'} port={port}"
         )
         return
-    if os.environ.get("AGENT_PG_DSN"):
+    if external:
         die("AGENT_PG_DSN is set; nothing to stop")
     if not cluster_exists(data_dir):
         die(f"no local postgres cluster under {data_dir}")
@@ -3228,7 +3244,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|knock|lane|watch|"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|pg|knock|lane|watch|"
             "github|query|subscribe|mail|supervise> …"
         )
     cmd = args[0]
