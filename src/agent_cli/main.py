@@ -217,6 +217,9 @@ def _cluster_exists(data_dir: Path) -> bool:
 
 def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> Store:
     h = home()
+    from .daemon import adopt_kept_agent_pg_bin
+
+    adopt_kept_agent_pg_bin(h)
     sqlite_legacy = h / "ledger.sqlite"
     if sqlite_legacy.is_file() and not allow_legacy_sqlite:
         die("found ledger.sqlite; move it aside then run agent restore")
@@ -322,12 +325,9 @@ def cmd_skills(args: list[str]) -> None:
 def cmd_init(_: list[str]) -> None:
     from .daemon import (
         SERVICE_LABEL,
-        adopt_kept_agent_pg_bin,
         agent_argv,
         install_and_start_service,
     )
-
-    adopt_kept_agent_pg_bin(home())
 
     external = pg_dsn_from_env()
     override = os.environ.get("AGENT_HOME")
@@ -2960,7 +2960,6 @@ def cmd_knock(args: list[str]) -> None:
 
 def cmd_daemon(args: list[str]) -> None:
     from .daemon import (
-        adopt_kept_agent_pg_bin,
         agent_argv,
         install_and_start_service,
         run_supervisor,
@@ -2973,7 +2972,6 @@ def cmd_daemon(args: list[str]) -> None:
         run_supervisor(home=home(), argv_prefix=agent_argv())
         return
     if args == ["--install"]:
-        adopt_kept_agent_pg_bin(home())
         store = open_store()
         try:
             install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])

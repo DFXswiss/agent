@@ -835,7 +835,7 @@ def test_adopt_kept_agent_pg_bin_exports_when_env_unset(
 
 
 @pytest.mark.no_pg
-def test_daemon_install_adopts_kept_agent_pg_bin_before_open_store(
+def test_open_store_adopts_kept_agent_pg_bin_before_cluster_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("AGENT_PG_DSN", raising=False)
@@ -853,11 +853,14 @@ def test_daemon_install_adopts_kept_agent_pg_bin_before_open_store(
 
     seen: list[str | None] = []
 
-    def fake_open_store(*args: object, **kwargs: object) -> Any:
+    def fake_ensure_cluster(*args: object, **kwargs: object) -> Any:
         seen.append(os.environ.get("AGENT_PG_BIN"))
         raise SystemExit("agent: stop here")
 
-    monkeypatch.setattr("agent_cli.main.open_store", fake_open_store)
+    monkeypatch.setattr("agent_cli.main.ensure_cluster", fake_ensure_cluster)
+
+    seen.clear()
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
     with pytest.raises(SystemExit, match="stop here"):
         run(tmp_path, ["daemon", "--install"])
     assert seen == ["/opt/pg/bin"]
@@ -866,6 +869,12 @@ def test_daemon_install_adopts_kept_agent_pg_bin_before_open_store(
     monkeypatch.delenv("AGENT_PG_BIN", raising=False)
     with pytest.raises(SystemExit, match="stop here"):
         run(tmp_path, ["init"])
+    assert seen == ["/opt/pg/bin"]
+
+    seen.clear()
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    with pytest.raises(SystemExit, match="stop here"):
+        run(tmp_path, ["status"])
     assert seen == ["/opt/pg/bin"]
 
 
