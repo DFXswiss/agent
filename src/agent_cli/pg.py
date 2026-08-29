@@ -122,13 +122,20 @@ def cluster_dsn(data_dir: Path) -> str | None:
 
 
 def _running(pgdata: Path) -> bool:
+    """True when pg_ctl reports a running server, False when it reports a stopped one; PgError otherwise."""
     status = subprocess.run(  # noqa: S603
         [_bin("pg_ctl"), "-D", str(pgdata), "status"],
         check=False,
         capture_output=True,
         text=True,
     )
-    return status.returncode == 0
+    if status.returncode == 0:
+        return True
+    if status.returncode == 3:
+        return False
+    raise PgError(
+        (status.stderr or status.stdout or f"pg_ctl status failed with exit code {status.returncode}").strip()
+    )
 
 
 def start_cluster(data_dir: Path) -> str:
@@ -187,12 +194,16 @@ def stop_cluster(data_dir: Path) -> None:
     pgdata = data_dir / "data"
     if not pgdata.is_dir():
         return
-    subprocess.run(  # noqa: S603
+    if not _running(pgdata):
+        return
+    completed = subprocess.run(  # noqa: S603
         [_bin("pg_ctl"), "-D", str(pgdata), "-m", "fast", "stop"],
         check=False,
         capture_output=True,
         text=True,
     )
+    if completed.returncode != 0:
+        raise PgError((completed.stderr or completed.stdout or "pg_ctl stop failed").strip())
 
 
 def wait_ready(dsn: str, timeout: float = 10.0) -> None:
@@ -211,7 +222,26 @@ def wait_ready(dsn: str, timeout: float = 10.0) -> None:
     raise PgError(f"postgres did not become ready: {last}")
 
 
-def ensure_cluster(data_dir: Path) -> str:
+def cluster_exists(data_dir: Path) -> bool:
+    """True when data_dir/data/PG_VERSION is a file."""
+    return (data_dir / "data" / "PG_VERSION").is_file()
+
+
+def cluster_running(data_dir: Path) -> bool:
+    """False when the cluster does not exist; otherwise pg_ctl status == 0 (reuse _running)."""
+    if not cluster_exists(data_dir):
+        return False
+    return _running(data_dir / "data")
+
+
+def ensure_cluster(data_dir: Path, *, create: bool = True) -> str:
+    """Start the local cluster, creating it only when create is True.
+
+    When create is False and the cluster does not exist, raise before calling
+    start_cluster so nothing is created and no directory is made.
+    """
+    if not create and not cluster_exists(data_dir):
+        raise PgError(f"no local postgres cluster under {data_dir}; run agent init")
     dsn = start_cluster(data_dir)
     wait_ready(dsn)
     return dsn

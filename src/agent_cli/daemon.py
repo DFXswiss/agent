@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import fcntl
+import html
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -301,6 +303,27 @@ def service_path(platform: str, home: Path) -> Path:
     raise StoreError(f"daemon install unsupported on {platform}")
 
 
+_PLIST_HOME_RE = re.compile(r"<key>AGENT_HOME</key>\s*<string>([^<]*)</string>")
+_UNIT_HOME_RE = re.compile(r"^Environment=AGENT_HOME=(.*)$", re.MULTILINE)
+
+
+def service_home(path: Path, platform: str) -> Path | None:
+    """AGENT_HOME recorded in an installed unit file, or None when the file or the entry is missing."""
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    if platform == "darwin":
+        match = _PLIST_HOME_RE.search(text)
+        return Path(html.unescape(match.group(1))) if match else None
+    if platform == "linux":
+        match = _UNIT_HOME_RE.search(text)
+        if not match or not match.group(1):
+            return None
+        parts = shlex.split(match.group(1))
+        return Path(parts[0]) if parts else None
+    return None
+
+
 def _runner_result(result: Completed | object) -> Completed:
     if isinstance(result, Completed):
         return result
@@ -332,11 +355,15 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
+    extra_env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn:
+        extra_env["AGENT_PG_DSN"] = dsn
     text = service_unit_text(
         program=program,
         home=home,
         platform=plat,
-        extra_env={"PATH": os.environ.get("PATH") or "/usr/bin:/bin"},
+        extra_env=extra_env,
     )
     path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)

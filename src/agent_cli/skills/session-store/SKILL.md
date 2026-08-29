@@ -37,7 +37,7 @@ agent session skill attach --id <session-id> --skill pr-review
 agent session skill attach --id <session-id> --skill error-fix
 ```
 
-Data lives under `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`.
+Data lives under `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Only `agent init` creates the cluster; commands that open the store start it again if it is stopped and fail with `run agent init` when it is missing, and `agent pg status` reports it without starting it.
 Kind is `human`, `runner`, or `other`.
 
 ## Hub query / subscribe / mail
