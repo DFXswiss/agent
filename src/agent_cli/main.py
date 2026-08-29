@@ -165,7 +165,6 @@ GATE_PAIRS = (
     ("codex-pr", "logic", "codex"),
 )
 STATIC = Path(__file__).resolve().parent / "static" / "index.html"
-LEGACY_DFX_LEDGER = Path.home() / ".local" / "share" / "dfx-ledger"
 
 
 def die(msg: str) -> None:
@@ -193,17 +192,7 @@ def pg_dsn_from_env() -> str | None:
     return dsn
 
 
-def _warn_legacy_store() -> None:
-    if LEGACY_DFX_LEDGER.is_dir():
-        print(
-            f"agent: legacy dfx-ledger store at {LEGACY_DFX_LEDGER} is unused; stop it with "
-            f"pg_ctl -D {LEGACY_DFX_LEDGER / 'pgdata'} stop and delete the directory",
-            file=sys.stderr,
-        )
-
-
 def open_store(*, allow_legacy_sqlite: bool = False, create: bool = False) -> Store:
-    _warn_legacy_store()
     h = home()
     sqlite_legacy = h / "ledger.sqlite"
     if sqlite_legacy.is_file() and not allow_legacy_sqlite:
@@ -2961,8 +2950,11 @@ def cmd_daemon(args: list[str]) -> None:
         external = pg_dsn_from_env()
         data_dir = home() / "pg"
         uninstall_service(home=home())
-        if external is None and cluster_exists(data_dir):
-            stop_cluster(data_dir)
+        if external is None and cluster_running(data_dir):
+            try:
+                stop_cluster(data_dir)
+            except PgError as exc:
+                die(str(exc))
             print(f"stopped {data_dir}")
         return
     die("Usage: agent daemon [--install|--uninstall]")
@@ -2988,7 +2980,18 @@ def cmd_pg(args: list[str]) -> None:
         die("AGENT_PG_DSN is set; nothing to stop")
     if not cluster_exists(data_dir):
         die(f"no local postgres cluster under {data_dir}")
-    stop_cluster(data_dir)
+    from .daemon import service_path
+
+    unit = service_path(sys.platform, home())
+    if unit.is_file():
+        die(f"the device daemon is installed ({unit}) and would start the cluster again; run agent daemon --uninstall instead")
+    if not cluster_running(data_dir):
+        print(f"not running {data_dir}")
+        return
+    try:
+        stop_cluster(data_dir)
+    except PgError as exc:
+        die(str(exc))
     print(f"stopped {data_dir}")
 
 

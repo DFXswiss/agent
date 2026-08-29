@@ -187,12 +187,14 @@ def stop_cluster(data_dir: Path) -> None:
     pgdata = data_dir / "data"
     if not pgdata.is_dir():
         return
-    subprocess.run(  # noqa: S603
+    completed = subprocess.run(  # noqa: S603
         [_bin("pg_ctl"), "-D", str(pgdata), "-m", "fast", "stop"],
         check=False,
         capture_output=True,
         text=True,
     )
+    if completed.returncode != 0:
+        raise PgError((completed.stderr or completed.stdout or "pg_ctl stop failed").strip())
 
 
 def wait_ready(dsn: str, timeout: float = 10.0) -> None:

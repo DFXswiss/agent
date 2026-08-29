@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -39,6 +38,30 @@ def test_only_init_creates_the_cluster(
     run(tmp_path, ["init"])
     run(tmp_path, ["status"])
     assert calls == [True, False]
+
+
+def test_init_writes_pg_dsn_into_service_unit(
+    tmp_path: Path, pg_dsn: str
+) -> None:
+    import os
+
+    run(tmp_path, ["init"])
+    text = (tmp_path / "daemon.service").read_text(encoding="utf-8")
+    assert "AGENT_PG_DSN" in text
+    assert os.environ["AGENT_PG_DSN"] in text
+
+
+def test_init_without_pg_dsn_leaves_unit_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pg_dsn: str
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN")
+
+    def fake(data_dir, *, create=True):
+        return pg_dsn
+
+    monkeypatch.setattr("agent_cli.main.ensure_cluster", fake)
+    run(tmp_path, ["init"])
+    assert "AGENT_PG_DSN" not in (tmp_path / "daemon.service").read_text(encoding="utf-8")
 
 
 def test_init_warns_on_non_default_home(
@@ -114,9 +137,82 @@ def test_pg_stop_stops_existing_cluster(
     pg_version.write_text("17", encoding="utf-8")
     stopped: list[Path] = []
     monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: True)
     run(tmp_path, ["pg", "stop"])
     assert stopped == [tmp_path / "pg"]
     assert "stopped" in capsys.readouterr().out
+
+
+@pytest.mark.no_pg
+def test_pg_stop_refuses_while_daemon_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    (tmp_path / "daemon.service").write_text("unit", encoding="utf-8")
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    with pytest.raises(SystemExit, match="daemon --uninstall"):
+        run(tmp_path, ["pg", "stop"])
+    assert stopped == []
+
+
+@pytest.mark.no_pg
+def test_pg_stop_reports_not_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: False)
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    run(tmp_path, ["pg", "stop"])
+    out = capsys.readouterr().out
+    assert "not running" in out
+    assert stopped == []
+
+
+@pytest.mark.no_pg
+def test_pg_stop_surfaces_pg_ctl_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.pg import PgError
+
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: True)
+
+    def boom(data_dir: Path) -> None:
+        raise PgError("pg_ctl: boom")
+
+    monkeypatch.setattr("agent_cli.main.stop_cluster", boom)
+    with pytest.raises(SystemExit, match="boom"):
+        run(tmp_path, ["pg", "stop"])
+
+
+@pytest.mark.no_pg
+def test_stop_cluster_raises_on_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from agent_cli.pg import PgError, stop_cluster
+
+    (tmp_path / "pg" / "data").mkdir(parents=True)
+    monkeypatch.setattr("agent_cli.pg._bin", lambda name: "/bin/false")
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="pg_ctl: could not stop")
+
+    monkeypatch.setattr("agent_cli.pg.subprocess.run", fake_run)
+    with pytest.raises(PgError, match="could not stop"):
+        stop_cluster(tmp_path / "pg")
 
 
 @pytest.mark.no_pg
@@ -129,6 +225,7 @@ def test_daemon_uninstall_stops_cluster(
     pg_version.write_text("17", encoding="utf-8")
     stopped: list[Path] = []
     monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: True)
 
     def boom(_argv: list[str]) -> None:
         raise AssertionError("run_argv must not be called under pytest")
@@ -148,22 +245,6 @@ def test_daemon_uninstall_leaves_external_dsn_alone(
     monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
     run(tmp_path, ["daemon", "--uninstall"])
     assert stopped == []
-
-
-def test_legacy_dfx_ledger_warning(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    fake_legacy = tmp_path / "dfx-ledger"
-    fake_legacy.mkdir()
-    monkeypatch.setattr("agent_cli.main.LEGACY_DFX_LEDGER", fake_legacy)
-    run(tmp_path, ["status"])
-    err = capsys.readouterr().err
-    assert "legacy dfx-ledger store" in err
-
-    monkeypatch.setattr("agent_cli.main.LEGACY_DFX_LEDGER", tmp_path / "does-not-exist")
-    run(tmp_path, ["status"])
-    err2 = capsys.readouterr().err
-    assert "legacy dfx-ledger store" not in err2
 
 
 @pytest.mark.no_pg

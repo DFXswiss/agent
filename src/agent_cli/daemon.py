@@ -332,11 +332,15 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
+    extra_env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn:
+        extra_env["AGENT_PG_DSN"] = dsn
     text = service_unit_text(
         program=program,
         home=home,
         platform=plat,
-        extra_env={"PATH": os.environ.get("PATH") or "/usr/bin:/bin"},
+        extra_env=extra_env,
     )
     path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)

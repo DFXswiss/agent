@@ -15,7 +15,7 @@ pip install -e ".[test]"
 agent init
 ```
 
-`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock and the local dashboard immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Commands that open the store start it again if it is stopped and fail with `run agent init` when it does not exist; they never run `initdb`. `agent pg status` reports the cluster without starting it, `agent pg stop` stops it, and `agent daemon --uninstall` stops it together with the user service.
+`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock and the local dashboard immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Commands that open the store start it again if it is stopped and fail with `run agent init` when it does not exist; they never run `initdb`. `agent pg status` reports the cluster without starting it, `agent pg stop` stops it (refused while the device daemon is installed, because the daemon would start it again), and `agent daemon --uninstall` stops it together with the user service. When `AGENT_PG_DSN` is set, `agent init` writes it into the user service so the daemon uses the same server.
 
 ## Pair and sync
 
@@ -139,7 +139,8 @@ agent session stop --id <session-id>
 Do not point `AGENT_HOME` at a scratch directory and run `agent init` there. That creates a second cluster and a second device identity, and the user service label is shared, so the daemon would be repointed at the scratch home. Use a throwaway database on the existing cluster instead:
 
 ```bash
-PORT=$(cat ~/.local/share/agent/pg/port)
+CLUSTER_HOME=${AGENT_HOME:-"$HOME/.local/share/agent"}   # the home of the existing cluster
+PORT=$(cat "$CLUSTER_HOME/pg/port")
 psql -h 127.0.0.1 -p "$PORT" -U agent -d postgres -c 'CREATE DATABASE hubtest'
 export AGENT_HOME=~/hubtest-home          # holds the second device.json only
 export AGENT_PG_DSN="host=127.0.0.1 port=$PORT user=agent dbname=hubtest"
