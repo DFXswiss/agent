@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fcntl
-import html
 import json
 import os
 import plistlib
@@ -368,16 +367,13 @@ def _already_unloaded(stderr: str, stdout: str) -> bool:
 
 def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
     if platform == "darwin":
-        marker = "<key>AGENT_PG_BIN</key>"
-        start = text.find(marker)
-        if start < 0:
+        try:
+            data = plistlib.loads(text.encode("utf-8"))
+        except (plistlib.InvalidFileException, ValueError, ExpatError):
             return None
-        open_tag = text.find("<string>", start)
-        close_tag = text.find("</string>", open_tag)
-        if open_tag < 0 or close_tag < 0:
-            return None
-        value = html.unescape(text[open_tag + len("<string>") : close_tag].strip())
-        return value or None
+        env = data.get("EnvironmentVariables") if isinstance(data, dict) else None
+        value = env.get("AGENT_PG_BIN") if isinstance(env, dict) else None
+        return value.strip() or None if isinstance(value, str) else None
     if platform == "linux":
         prefix = "Environment=AGENT_PG_BIN="
         for line in text.splitlines():
