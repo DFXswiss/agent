@@ -679,6 +679,49 @@ def test_real_cluster_stop_roundtrip(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_pg
+def test_home_expands_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli.main import home
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("AGENT_HOME", "~/alt")
+    assert home() == tmp_path / "alt"
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path / "plain"))
+    assert home() == tmp_path / "plain"
+
+
+@pytest.mark.no_pg
+def test_pg_status_with_tilde_home_reports_real_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pg_version = tmp_path / "alt" / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: False)
+    monkeypatch.setenv("AGENT_HOME", "~/alt")
+    main(["pg", "status"])
+    out = capsys.readouterr().out
+    assert f"cluster={tmp_path / 'alt' / 'pg'}" in out
+    assert "exists=yes" in out
+    assert "~" not in out
+
+
+def test_init_warning_uses_same_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default = tmp_path / ".local" / "share" / "agent"
+    default.mkdir(parents=True)
+    monkeypatch.setenv("AGENT_HOME", "~/.local/share/agent")
+    main(["init"])
+    err = capsys.readouterr().err
+    assert "is not the default" not in err
+
+
+@pytest.mark.no_pg
 def test_usage_lists_pg() -> None:
     with pytest.raises(SystemExit, match=r"daemon\|pg\|knock"):
         main(["--help"])

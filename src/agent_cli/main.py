@@ -185,7 +185,7 @@ def home() -> Path:
     if override == "":
         die("AGENT_HOME is set but empty")
     if override:
-        return Path(override)
+        return Path(override).expanduser()
     return default_home()
 
 
@@ -315,7 +315,7 @@ def cmd_init(_: list[str]) -> None:
 
     external = pg_dsn_from_env()
     override = os.environ.get("AGENT_HOME")
-    if override and Path(override) != default_home():
+    if override and not _same_home(home(), default_home()):
         if external is None:
             print(
                 f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
