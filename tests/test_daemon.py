@@ -867,3 +867,36 @@ def test_daemon_install_adopts_kept_agent_pg_bin_before_open_store(
     with pytest.raises(SystemExit, match="stop here"):
         run(tmp_path, ["init"])
     assert seen == ["/opt/pg/bin"]
+
+
+@pytest.mark.no_pg
+def test_kept_service_agent_pg_bin_ignores_other_homes_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/elsewhere"),
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    assert kept_service_agent_pg_bin(tmp_path) is None
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    assert adopt_kept_agent_pg_bin(tmp_path) is None
+    assert "AGENT_PG_BIN" not in os.environ
+
+
+@pytest.mark.no_pg
+def test_kept_service_agent_pg_bin_accepts_symlinked_own_home(tmp_path: Path) -> None:
+    real = tmp_path / "realhome"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=link,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (real / "daemon.service").write_text(unit, encoding="utf-8")
+    assert kept_service_agent_pg_bin(real) == "/opt/pg/bin"

@@ -389,10 +389,23 @@ def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
     return None
 
 
+def _unit_belongs_to(path: Path, platform: str, home: Path) -> bool:
+    """True when the installed unit at path records this home (after ~ expansion and symlink resolution)."""
+    try:
+        recorded = service_home(path, platform)
+    except StoreError:
+        return False
+    if recorded is None:
+        return False
+    return recorded.expanduser().resolve() == home.expanduser().resolve()
+
+
 def kept_service_agent_pg_bin(home: Path, platform: str | None = None) -> str | None:
-    """AGENT_PG_BIN recorded in the installed unit, or None (missing, unreadable or malformed unit)."""
+    """AGENT_PG_BIN recorded in the installed unit of THIS home, or None (missing, unreadable, malformed, or another home's unit)."""
     plat = sys.platform if platform is None else platform
     path = service_path(plat, home)
+    if not _unit_belongs_to(path, plat, home):
+        return None
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
