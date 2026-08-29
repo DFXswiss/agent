@@ -43,7 +43,7 @@ def test_idle_prompt_is_not_working() -> None:
     assert grok_pane_is_working(IDLE) is False
 
 
-def test_permission_prompt_is_working() -> None:
+def test_permission_prompt_is_not_working() -> None:
     pane = (
         "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
         "  1/3:select  \u2502  Tab:next option\n"
@@ -85,7 +85,15 @@ def test_ansi_thinking_is_working() -> None:
 def test_command_still_running_is_working() -> None:
     pane = (
         "  ❙  ◆ Run Check host remotes\n"
-        "  ◎ 1 command still running · 1 queued — Enter to send now\n"
+        "  ◎ 1 command still running\n"
+        "  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    )
+    assert grok_pane_is_working(pane) is True
+
+
+def test_queued_follow_up_is_working() -> None:
+    pane = (
+        "  ◎ 1 queued — Enter to send now\n"
         "  Shift+Tab:mode  │  Ctrl+;:queue  │  Ctrl+x:shortcuts\n"
     )
     assert grok_pane_is_working(pane) is True
