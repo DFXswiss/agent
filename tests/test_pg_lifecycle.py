@@ -181,6 +181,33 @@ def test_pg_stop_refuses_while_daemon_installed(
 
 
 @pytest.mark.no_pg
+def test_pg_stop_allowed_when_daemon_belongs_to_other_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import sys
+
+    from agent_cli.daemon import service_unit_text
+
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    pg_version = tmp_path / "pg" / "data" / "PG_VERSION"
+    pg_version.parent.mkdir(parents=True)
+    pg_version.write_text("17", encoding="utf-8")
+    text = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/elsewhere"),
+        platform=sys.platform,
+        extra_env={},
+    )
+    (tmp_path / "daemon.service").write_text(text, encoding="utf-8")
+    monkeypatch.setattr("agent_cli.main.cluster_running", lambda data_dir: True)
+    stopped: list[Path] = []
+    monkeypatch.setattr("agent_cli.main.stop_cluster", lambda data_dir: stopped.append(data_dir))
+    run(tmp_path, ["pg", "stop"])
+    assert stopped == [tmp_path / "pg"]
+    assert "stopped" in capsys.readouterr().out
+
+
+@pytest.mark.no_pg
 def test_pg_stop_reports_not_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

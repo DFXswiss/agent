@@ -2995,10 +2995,11 @@ def cmd_pg(args: list[str]) -> None:
         die("AGENT_PG_DSN is set; nothing to stop")
     if not cluster_exists(data_dir):
         die(f"no local postgres cluster under {data_dir}")
-    from .daemon import service_path
+    from .daemon import service_home, service_path
 
     unit = service_path(sys.platform, home())
-    if unit.is_file():
+    recorded = service_home(unit, sys.platform)
+    if unit.is_file() and (recorded is None or recorded == home()):
         die(f"the device daemon is installed ({unit}) and would start the cluster again; run agent daemon --uninstall instead")
     if not _cluster_running(data_dir):
         print(f"not running {data_dir}")
