@@ -375,17 +375,21 @@ def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
         value = env.get("AGENT_PG_BIN") if isinstance(env, dict) else None
         return value.strip() or None if isinstance(value, str) else None
     if platform == "linux":
-        prefix = "Environment=AGENT_PG_BIN="
+        recorded: str | None = None
         for line in text.splitlines():
-            if line.startswith(prefix):
-                raw = line[len(prefix) :].strip()
-                try:
-                    parts = shlex.split(raw, posix=True)
-                except ValueError:
-                    return raw or None
-                value = parts[0].strip() if parts else ""
-                return value or None
-        return None
+            if not line.startswith("Environment="):
+                continue
+            try:
+                tokens = shlex.split(line[len("Environment="):])
+            except ValueError:
+                return None
+            if not tokens:
+                recorded = None
+                continue
+            for token in tokens:
+                if token.startswith("AGENT_PG_BIN="):
+                    recorded = token[len("AGENT_PG_BIN="):].strip()
+        return recorded or None
     return None
 
 

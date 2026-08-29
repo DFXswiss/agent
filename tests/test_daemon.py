@@ -900,3 +900,19 @@ def test_kept_service_agent_pg_bin_accepts_symlinked_own_home(tmp_path: Path) ->
     )
     (real / "daemon.service").write_text(unit, encoding="utf-8")
     assert kept_service_agent_pg_bin(real) == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_linux_whole_assignment_quoting() -> None:
+    text = "[Service]\nEnvironment=PATH=/usr/bin\nEnvironment='AGENT_PG_BIN=/opt/Custom Postgres/bin'\n"
+    assert existing_service_agent_pg_bin(text, "linux") == "/opt/Custom Postgres/bin"
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_linux_last_assignment_wins_and_reset() -> None:
+    text = "[Service]\nEnvironment=AGENT_PG_BIN=/old\nEnvironment='AGENT_PG_BIN=/new bin'\n"
+    assert existing_service_agent_pg_bin(text, "linux") == "/new bin"
+    text2 = "[Service]\nEnvironment=AGENT_PG_BIN=/old\nEnvironment=\n"
+    assert existing_service_agent_pg_bin(text2, "linux") is None
+    text3 = "[Service]\nEnvironment=AGENT_PG_BIN='/unterminated\n"
+    assert existing_service_agent_pg_bin(text3, "linux") is None
