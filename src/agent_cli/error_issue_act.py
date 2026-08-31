@@ -1,12 +1,27 @@
 """Apply pending error.issue activities: file or update a GitHub issue for a
 normalized error template, grouped by template_fingerprint rather than the
 finer-grained per-variant fingerprint — or, under dry_run, just log the intended
-action instead of calling gh for real."""
+action instead of calling gh for real.
+
+Two throttles sit in front of the per-template logic:
+
+- Burst detection: if one run resolves more distinct new templates than
+  storm_threshold, that is treated as one anomaly (a likely shared root cause)
+  rather than N unrelated problems — all of them fold into a single, reused
+  "burst" issue instead of N individual ones.
+- Cooldown: a template that was already touched (created, updated, or folded
+  into a burst) within cooldown_minutes is skipped entirely — checked against
+  local history, not a live gh call, so a fast-recurring error does not cost a
+  round trip or an issue edit every time it repeats.
+
+Both are plain comparisons against local state; neither involves model
+judgment."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .errors import known_asset_in, known_chain_in
@@ -20,6 +35,10 @@ _MARKER_PREFIX = "<!-- error-log-template:"
 _MARKER_SUFFIX = " -->"
 _VARIANTS_START = "<!-- variants:start -->"
 _VARIANTS_END = "<!-- variants:end -->"
+STORM_MARKER = "<!-- error-log-storm -->"
+
+DEFAULT_COOLDOWN_MINUTES = 60
+DEFAULT_STORM_THRESHOLD = 8
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -120,6 +139,47 @@ def splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     return body[:start] + section + body[end + len(_VARIANTS_END) :]
 
 
+def _parse_iso(ts: str) -> datetime:
+    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _recently_touched(
+    store: Store, template_fingerprint: str, now: str, cooldown_minutes: int
+) -> bool:
+    """Whether this template's issue was already touched (created, updated, or
+    folded into a burst — but not merely skipped by a prior cooldown check,
+    which must not renew its own window) within cooldown_minutes. Checked
+    against local activity history, not a live gh call, so a fast-recurring
+    error costs no round trip and no issue edit on every repeat."""
+    if cooldown_minutes <= 0:
+        return False
+    try:
+        now_dt = _parse_iso(now)
+    except ValueError:
+        return False
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin or row.get("type") != "error.issue":
+            continue
+        if row.get("execution_status") != "done":
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict) or result.get("skipped"):
+            continue
+        if result.get("template_fingerprint") != template_fingerprint:
+            continue
+        touched_at = result.get("at")
+        if not isinstance(touched_at, str):
+            continue
+        try:
+            touched_dt = _parse_iso(touched_at)
+        except ValueError:
+            continue
+        if now_dt - touched_dt < timedelta(minutes=cooldown_minutes):
+            return True
+    return False
+
+
 def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     payload = row.get("payload")
     if not isinstance(payload, dict):
@@ -140,9 +200,9 @@ def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[st
     return error_id, template_fp, seen_payload
 
 
-def find_issue_number(runner: Runner, issue_repo: str, template_fingerprint: str) -> int | None:
-    """Search issue_repo for an open, labeled issue carrying this template's
-    hidden marker. None if no such issue exists yet."""
+def find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | None:
+    """Search issue_repo for an open, labeled issue carrying this marker. None
+    if no such issue exists yet."""
     completed = runner(
         [
             "gh",
@@ -155,7 +215,7 @@ def find_issue_number(runner: Runner, issue_repo: str, template_fingerprint: str
             "--state",
             "open",
             "--search",
-            marker_for(template_fingerprint),
+            marker,
             "--json",
             "number",
         ]
@@ -259,15 +319,155 @@ def _update_issue(
     return is_new
 
 
+def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str:
+    service = seen_payload.get("service")
+    service = service if isinstance(service, str) and service else "unknown"
+    cls = seen_payload.get("class")
+    cls = cls if isinstance(cls, str) and cls else "error"
+    parts = template_fingerprint.split("|")
+    short = parts[2][:8] if len(parts) >= 3 and parts[2] else template_fingerprint[:8]
+    return f"{service}: {cls} ({short})"
+
+
+def _create_storm_issue(
+    runner: Runner, *, issue_repo: str, templates: dict[str, dict[str, str]], now: str
+) -> str:
+    body = (
+        f"{STORM_MARKER}\n\n"
+        "Automated burst finding: this run saw more distinct new error templates "
+        "than usual in one pass. That is more likely one shared root cause than "
+        "many unrelated bugs — investigate the cause, not each row below "
+        "individually.\n\n"
+        + render_variants_section(templates)
+        + "\n"
+    )
+    completed = runner(
+        [
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            issue_repo,
+            "--label",
+            ISSUE_LABEL,
+            "--title",
+            f"Error-log burst: {len(templates)} new templates in one run",
+            "--body",
+            body,
+        ]
+    )
+    if completed.returncode != 0:
+        raise StoreError((completed.stderr or completed.stdout or "gh issue create failed").strip())
+    return completed.stdout.strip()
+
+
+def _update_storm_issue(
+    runner: Runner, *, issue_repo: str, number: int, templates: dict[str, dict[str, str]]
+) -> None:
+    body = _issue_body(runner, issue_repo, number)
+    existing = parse_variants_section(body)
+    for name, entry in templates.items():
+        if name in existing:
+            existing[name]["last_seen"] = entry["last_seen"]
+        else:
+            existing[name] = dict(entry)
+    edit = runner(
+        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", splice_variants(body, existing)]
+    )
+    if edit.returncode != 0:
+        raise StoreError((edit.stderr or edit.stdout or "gh issue edit failed").strip())
+
+
+def _process_storm(
+    store: Store,
+    runner: Runner,
+    *,
+    issue_repo: str,
+    dry_run: bool,
+    resolved: list[tuple[dict[str, Any], str, str, dict[str, Any]]],
+    now: str,
+) -> list[str]:
+    templates: dict[str, dict[str, str]] = {}
+    for _row, _error_id, template_fp, seen_payload in resolved:
+        label = _storm_label(template_fp, seen_payload)
+        if label in templates:
+            templates[label]["last_seen"] = now
+        else:
+            templates[label] = {"first_seen": now, "last_seen": now}
+
+    lines: list[str] = []
+
+    if dry_run:
+        for row, _error_id, template_fp, _seen_payload in resolved:
+            rid = str(row.get("id") or "?")
+            result = {
+                "mode": "storm-dry-run",
+                "issue_repo": issue_repo,
+                "template_fingerprint": template_fp,
+                "at": now,
+                "storm_size": len(templates),
+            }
+            _mark(store, row, status="done", result=result)
+            lines.append(f"error.issue {rid} storm-dry-run size={len(templates)}")
+        return lines
+
+    try:
+        number = find_issue_number(runner, issue_repo, STORM_MARKER)
+        if number is None:
+            url = _create_storm_issue(runner, issue_repo=issue_repo, templates=templates, now=now)
+            extra: dict[str, Any] = {"url": url, "created": True}
+        else:
+            _update_storm_issue(runner, issue_repo=issue_repo, number=number, templates=templates)
+            extra = {"number": number, "created": False}
+    except StoreError as exc:
+        for row, _error_id, _template_fp, _seen_payload in resolved:
+            rid = str(row.get("id") or "?")
+            _mark(store, row, status="error", error=str(exc))
+            lines.append(f"error.issue {rid} error")
+        return lines
+
+    for row, _error_id, template_fp, _seen_payload in resolved:
+        rid = str(row.get("id") or "?")
+        result = {
+            "mode": "storm",
+            "issue_repo": issue_repo,
+            "template_fingerprint": template_fp,
+            "at": now,
+            **extra,
+        }
+        _mark(store, row, status="done", result=result)
+        lines.append(f"error.issue {rid} storm size={len(templates)}")
+    return lines
+
+
 def scan_error_issue(
-    store: Store, runner: Runner, *, issue_repo: str, dry_run: bool
+    store: Store,
+    runner: Runner,
+    *,
+    issue_repo: str,
+    dry_run: bool,
+    cooldown_minutes: int = DEFAULT_COOLDOWN_MINUTES,
+    storm_threshold: int = DEFAULT_STORM_THRESHOLD,
 ) -> list[str]:
     with store.exclusive("error-issue-act:" + store.device_id()):
-        return _scan_error_issue(store, runner, issue_repo=issue_repo, dry_run=dry_run)
+        return _scan_error_issue(
+            store,
+            runner,
+            issue_repo=issue_repo,
+            dry_run=dry_run,
+            cooldown_minutes=cooldown_minutes,
+            storm_threshold=storm_threshold,
+        )
 
 
 def _scan_error_issue(
-    store: Store, runner: Runner, *, issue_repo: str, dry_run: bool
+    store: Store,
+    runner: Runner,
+    *,
+    issue_repo: str,
+    dry_run: bool,
+    cooldown_minutes: int,
+    storm_threshold: int,
 ) -> list[str]:
     rows = [
         row
@@ -277,26 +477,53 @@ def _scan_error_issue(
         and row.get("execution_status") == "pending"
     ]
     rows.sort(key=lambda row: str(row.get("id") or ""))
+
     lines: list[str] = []
+    resolved: list[tuple[dict[str, Any], str, str, dict[str, Any]]] = []
     for row in rows:
         rid = str(row.get("id") or "?")
         try:
-            _error_id, template_fp, seen_payload = _pending_issue(store, row)
+            error_id, template_fp, seen_payload = _pending_issue(store, row)
         except StoreError as exc:
             _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.issue {rid} error")
             continue
+        resolved.append((row, error_id, template_fp, seen_payload))
 
+    if not resolved:
+        return lines
+
+    now = utcnow()
+    distinct_templates = {template_fp for _row, _error_id, template_fp, _seen_payload in resolved}
+    if len(distinct_templates) > storm_threshold:
+        lines.extend(
+            _process_storm(store, runner, issue_repo=issue_repo, dry_run=dry_run, resolved=resolved, now=now)
+        )
+        return lines
+
+    for row, _error_id, template_fp, seen_payload in resolved:
+        rid = str(row.get("id") or "?")
         excerpt = seen_payload.get("excerpt")
         excerpt = excerpt if isinstance(excerpt, str) else ""
         variant = extract_variant(excerpt)
-        now = utcnow()
+
+        if _recently_touched(store, template_fp, now, cooldown_minutes):
+            result = {
+                "issue_repo": issue_repo,
+                "template_fingerprint": template_fp,
+                "at": now,
+                "skipped": "cooldown",
+            }
+            _mark(store, row, status="done", result=result)
+            lines.append(f"error.issue {rid} skipped-cooldown")
+            continue
 
         if dry_run:
             result = {
                 "mode": "dry-run",
                 "issue_repo": issue_repo,
                 "template_fingerprint": template_fp,
+                "at": now,
                 "variant": variant,
                 "excerpt": excerpt[:300],
             }
@@ -305,7 +532,7 @@ def _scan_error_issue(
             continue
 
         try:
-            number = find_issue_number(runner, issue_repo, template_fp)
+            number = find_issue_number(runner, issue_repo, marker_for(template_fp))
         except StoreError as exc:
             _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.issue {rid} error")
@@ -332,6 +559,8 @@ def _scan_error_issue(
                 continue
             result = {
                 "issue_repo": issue_repo,
+                "template_fingerprint": template_fp,
+                "at": now,
                 "url": url,
                 "variant": variant,
                 "created": True,
@@ -350,6 +579,8 @@ def _scan_error_issue(
             continue
         result = {
             "issue_repo": issue_repo,
+            "template_fingerprint": template_fp,
+            "at": now,
             "number": number,
             "variant": variant,
             "created": False,

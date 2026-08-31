@@ -6,6 +6,8 @@ import pytest
 
 from agent_cli.error_issue_act import (
     ISSUE_LABEL,
+    STORM_MARKER,
+    _recently_touched,
     extract_variant,
     find_issue_number,
     marker_for,
@@ -15,7 +17,7 @@ from agent_cli.error_issue_act import (
     splice_variants,
 )
 from agent_cli.runtime import Completed
-from agent_cli.store import Store, StoreError
+from agent_cli.store import Store, StoreError, utcnow
 
 
 def _runner_session(store: Store) -> None:
@@ -367,3 +369,295 @@ def test_scan_leaves_non_pending_rows_alone(tmp_path: Path) -> None:
 
     assert scan_error_issue(store, fail_if_called, issue_repo="org/intern", dry_run=False) == []
     assert calls == []
+
+
+def _prior_touch(
+    store: Store,
+    *,
+    template_fingerprint: str,
+    at: str,
+    activity_id: str,
+    skipped: bool = False,
+) -> None:
+    result: dict[str, object] = {
+        "issue_repo": "org/intern",
+        "template_fingerprint": template_fingerprint,
+        "at": at,
+    }
+    if skipped:
+        result["skipped"] = "cooldown"
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": "runner-1",
+            "type": "error.issue",
+            "payload": {"error_id": "irrelevant"},
+            "execution_status": "done",
+            "result": result,
+        },
+    )
+
+
+def _seen_and_issue(
+    store: Store, *, index: int, template_fingerprint: str, service: str = "api", cls: str = "error"
+) -> None:
+    seen_id = f"seen-{index}"
+    issue_id = f"storm-issue-{index}"
+    store.write(
+        "activity",
+        "insert",
+        seen_id,
+        {
+            "id": seen_id,
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {
+                "fingerprint": f"fp-{index}",
+                "template_fingerprint": template_fingerprint,
+                "excerpt": f"Some error number {index}",
+                "service": service,
+                "class": cls,
+            },
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        issue_id,
+        {
+            "id": issue_id,
+            "session_id": "runner-1",
+            "type": "error.issue",
+            "payload": {"error_id": seen_id},
+            "execution_status": "pending",
+        },
+    )
+
+
+# ---- cooldown ----
+
+
+def test_recently_touched_false_with_no_history(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    assert _recently_touched(store, "api|error|abc|prod", utcnow(), 60) is False
+
+
+def test_recently_touched_true_within_window(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-1",
+    )
+    assert _recently_touched(store, "api|error|abc|prod", "2026-08-31T10:30:00Z", 60) is True
+
+
+def test_recently_touched_false_after_expiry(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-1",
+    )
+    assert _recently_touched(store, "api|error|abc|prod", "2026-08-31T11:30:00Z", 60) is False
+
+
+def test_recently_touched_ignores_skipped_results(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:29:00Z",
+        activity_id="prior-1",
+        skipped=True,
+    )
+    # A skip-only history must not itself extend the cooldown window.
+    assert _recently_touched(store, "api|error|abc|prod", "2026-08-31T10:30:00Z", 60) is False
+
+
+def test_scan_skips_recently_touched_template_without_gh_calls(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+    _prior_touch(
+        store, template_fingerprint="api|error|abc123|prod", at=utcnow(), activity_id="prior-1"
+    )
+    calls: list[list[str]] = []
+
+    def fail_if_called(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(
+        store, fail_if_called, issue_repo="org/intern", dry_run=False, cooldown_minutes=60
+    )
+    assert lines == ["error.issue issue-1 skipped-cooldown"]
+    assert calls == []
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["skipped"] == "cooldown"
+
+
+def test_scan_processes_normally_after_cooldown_expires(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc123|prod",
+        at="2020-01-01T00:00:00Z",
+        activity_id="prior-1",
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "create"]:
+            return Completed(0, "https://github.com/org/intern/issues/1\n", "")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/intern", dry_run=False, cooldown_minutes=60
+    )
+    assert lines == ["error.issue issue-1 created variant=Ethereum"]
+
+
+# ---- burst / storm detection ----
+
+
+def test_scan_does_not_storm_at_or_below_threshold(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(2):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "create"]:
+            return Completed(0, "https://github.com/org/intern/issues/1\n", "")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    assert len(lines) == 2
+    assert all("created" in line for line in lines)
+    create_calls = [c for c in calls if c[:3] == ["gh", "issue", "create"]]
+    assert len(create_calls) == 2  # two separate issues, not folded
+
+
+def test_scan_folds_burst_into_one_storm_issue(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "create"]:
+            return Completed(0, "https://github.com/org/intern/issues/99\n", "")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    assert len(lines) == 3
+    assert all("storm" in line for line in lines)
+    create_calls = [c for c in calls if c[:3] == ["gh", "issue", "create"]]
+    assert len(create_calls) == 1
+    body = create_calls[0][create_calls[0].index("--body") + 1]
+    assert STORM_MARKER in body
+    for i in range(3):
+        row = store.row("activity", f"storm-issue-{i}")
+        assert row is not None
+        assert row["execution_status"] == "done"
+        assert row["result"]["mode"] == "storm"
+
+
+def test_scan_storm_dry_run_never_calls_gh(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=True, storm_threshold=2)
+    assert calls == []
+    assert len(lines) == 3
+    assert all("storm-dry-run" in line for line in lines)
+
+
+def test_scan_storm_reuses_existing_open_storm_issue(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    existing_body = (
+        STORM_MARKER
+        + "\n\n"
+        + render_variants_section({"api: error (oldhash)": {"first_seen": "t0", "last_seen": "t0"}})
+        + "\n"
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, '[{"number": 55}]', "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            import json
+
+            return Completed(0, json.dumps({"body": existing_body}), "")
+        if argv[:3] == ["gh", "issue", "edit"]:
+            return Completed(0, "", "")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    assert len(lines) == 3
+    assert [c for c in calls if c[:3] == ["gh", "issue", "create"]] == []
+    edit_calls = [c for c in calls if c[:3] == ["gh", "issue", "edit"]]
+    assert len(edit_calls) == 1
+    body = edit_calls[0][edit_calls[0].index("--body") + 1]
+    assert "api: error (oldhash)" in body
+    assert body.count(STORM_MARKER) == 1
+
+
+def test_scan_storm_marks_all_rows_error_on_create_failure(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "create"]:
+            return Completed(1, "", "permission denied")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    assert len(lines) == 3
+    assert all(line.endswith("error") for line in lines)
+    for i in range(3):
+        row = store.row("activity", f"storm-issue-{i}")
+        assert row is not None
+        assert row["execution_status"] == "error"
