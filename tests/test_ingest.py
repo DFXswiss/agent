@@ -392,3 +392,30 @@ def test_admits_rejects_a_missing_job_type_on_its_own() -> None:
     v = admits(POLICY, actor="davidleomay", repo="owner/name", job_type="", private=False)
     assert not v.admitted
     assert "job type" in v.reason
+
+
+def test_a_mention_shown_as_code_is_an_example_not_an_address() -> None:
+    # Documenting how to call this bot must not call it. A fenced block and an
+    # inline span are both ways of displaying a handle rather than using it.
+    fenced = "call it like this:\n```\n@theo-vane please review\n```\nthat is all"
+    assert not mentions(fenced, "theo-vane")
+    assert not mentions("write ~~~\n@theo-vane pr-ready\n~~~ to ask", "theo-vane")
+    assert not mentions("the handle is `@theo-vane`, use it in a comment", "theo-vane")
+    # A real request alongside an example still counts.
+    assert mentions("`@theo-vane` is the handle — @theo-vane please review", "theo-vane")
+
+
+def test_a_job_type_named_only_inside_code_does_not_count() -> None:
+    body = "the type is `pr-ready` — @theo-vane please review"
+    assert requested_job_type(body, POLICY, POLICY["job_types_allow"]) == "pr-review"
+
+
+def test_a_longer_job_type_is_not_matched_by_its_prefix() -> None:
+    # `pr-review` must not match inside `pr-review-deep`, whatever order the
+    # allow-list happens to be in.
+    allowed = ["pr-review", "pr-review-deep"]
+    assert requested_job_type("@x pr-review-deep please", POLICY, allowed) == "pr-review-deep"
+    assert (
+        requested_job_type("@x pr-review-deep please", POLICY, list(reversed(allowed)))
+        == "pr-review-deep"
+    )

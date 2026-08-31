@@ -24,13 +24,24 @@ from .store import Store, utcnow
 # A mention inside a markdown quote is a citation, not an address. Someone
 # quoting an earlier request must not trigger a second run of it.
 _QUOTE = re.compile(r"^\s*>.*$", re.MULTILINE)
+# The same holds for code: a handle shown in a fenced block or an inline span is
+# an example being displayed, not somebody being addressed. Documenting how to
+# call this bot would otherwise call it.
+_FENCE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+
+
+def _addressing_text(body: str) -> str:
+    """`body` with everything that quotes or displays rather than says it removed."""
+    without_code = _CODE_SPAN.sub("", _FENCE.sub("", body))
+    return _QUOTE.sub("", without_code).lower()
 
 
 def mentions(body: Any, login: str) -> bool:
-    """Whether `body` addresses `login`, ignoring quoted lines."""
+    """Whether `body` addresses `login`, ignoring quotes and code."""
     if not isinstance(body, str) or not isinstance(login, str) or not login:
         return False
-    stripped = _QUOTE.sub("", body).lower()
+    stripped = _addressing_text(body)
     # The trailing group stops `@theo-vane-bot` from answering for `@theo-vane`.
     return re.search(rf"@{re.escape(login.lower())}([^a-z0-9-]|$)", stripped) is not None
 
@@ -49,7 +60,9 @@ def requested_job_type(body: Any, policy: Any, allowed: Any = None) -> str | Non
     if not isinstance(body, str):
         return default
     known = [t.lower() for t in allowed] if isinstance(allowed, list) else []
-    text = _QUOTE.sub("", body).lower()
+    # Same treatment as the mention itself: a type shown as an example is not a
+    # type being asked for.
+    text = _addressing_text(body)
     for candidate in known:
         if re.search(rf"(^|[^a-z0-9-]){re.escape(candidate)}([^a-z0-9-]|$)", text):
             return candidate
