@@ -12,6 +12,7 @@ from agent_cli.errors import (
     error_class,
     fingerprint,
     is_incident_line,
+    known_asset_in,
     known_chain_in,
     line_fingerprint,
     load_config,
@@ -180,6 +181,27 @@ def test_template_signature_masks_known_chains() -> None:
     # stack_sig stays fine-grained: chain name is not masked there, so the two
     # lines keep separate error.seen identity even though they share a template.
     assert stack_sig(ethereum) != stack_sig(polygon)
+
+
+def test_template_signature_masks_known_assets() -> None:
+    usdc = "Balance for Arbitrum/USDC went low"
+    wbtc = "Balance for Arbitrum/WBTC went low"
+    assert template_signature(usdc) == template_signature(wbtc)
+    assert stack_sig(usdc) != stack_sig(wbtc)
+
+
+def test_asset_token_regex_masks_longest_match_first() -> None:
+    from agent_cli.errors import _ASSET_TOKEN
+
+    # "USD" is a literal prefix of "USDC" — an unsorted alternation would match
+    # "USD" first and leave "C" dangling in the masked output.
+    assert _ASSET_TOKEN.sub("<ASSET>", "balance in USDC today") == "balance in <ASSET> today"
+    assert _ASSET_TOKEN.sub("<ASSET>", "balance in USD today") == "balance in <ASSET> today"
+
+
+def test_known_asset_in_finds_and_omits() -> None:
+    assert known_asset_in("Balance for Arbitrum/USDC went low") == "USDC"
+    assert known_asset_in("Failed to get price for token tether -> usd") is None
 
 
 def test_chain_token_regex_masks_longest_match_first() -> None:

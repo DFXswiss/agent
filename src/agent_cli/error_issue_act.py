@@ -9,7 +9,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from .errors import known_chain_in
+from .errors import known_asset_in, known_chain_in
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
@@ -68,10 +68,15 @@ def marker_for(template_fingerprint: str) -> str:
 
 
 def extract_variant(excerpt: str) -> str:
-    """Best-effort concrete detail for the variant table: the known chain name
-    present in the excerpt, or "generic" if none. Most error lines don't name a
-    chain — those never fragment, so there is only ever one variant."""
-    return known_chain_in(excerpt) or "generic"
+    """Best-effort concrete detail for the variant table: "Chain/Asset" if both
+    are present in the excerpt, whichever one is present if only one is, or
+    "generic" if neither. Most error lines don't name either — those never
+    fragment, so there is only ever one variant."""
+    chain = known_chain_in(excerpt)
+    asset = known_asset_in(excerpt)
+    if chain is not None and asset is not None:
+        return f"{chain}/{asset}"
+    return chain or asset or "generic"
 
 
 def render_variants_section(variants: dict[str, dict[str, str]]) -> str:

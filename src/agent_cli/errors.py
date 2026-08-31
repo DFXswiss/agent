@@ -61,6 +61,33 @@ _KNOWN_CHAINS = frozenset(
 _CHAIN_TOKEN = re.compile(
     "|".join(re.escape(name) for name in sorted(_KNOWN_CHAINS, key=len, reverse=True))
 )
+# Asset tickers from DFX's own asset enum (prod DB, checked 2026-08-31), masked the
+# same way as chains — e.g. "Balance for Arbitrum/USDC went..." vs ".../WBTC went..."
+# would otherwise stay separate templates. Kept to tickers seen on 2+ chains (a
+# defensible cut against one-off/legacy DeFiChain stock-tokenization artifacts like
+# "dAAPL" or internal numeric-ID-prefixed rows), plus two single-chain tickers
+# (GMX, TGT) confirmed present in real production balance-check errors that day —
+# the 2+-chains cut alone would otherwise have missed them. Refresh from prod if
+# this drifts; there is no automated sync.
+_KNOWN_ASSETS = frozenset(
+    {
+        "1INCH", "AAVE", "ADA", "APE", "ARB", "AXS",
+        "BAT", "BNB", "BTC", "CHF", "CHZ", "COMP",
+        "CRV", "DAI", "DEPS", "DFI", "ENJ", "ETH",
+        "EUR", "EURC", "EURS", "EURt", "GRT", "JUSD",
+        "LINK", "MANA", "MATIC", "MKR", "ONDO", "POL",
+        "QNT", "REALU", "RPL", "SAND", "SNX", "SOL",
+        "SUSHI", "TRX", "TUSD", "UNI", "USD", "USDC",
+        "USDC.e", "USDT", "WBTC", "WETH", "WFPS", "XCHF",
+        "XMR", "ZANO", "ZCHF", "cBTC", "dEURO", "GMX",
+        "TGT",
+    }
+)
+# Longest-first for the same reason as _CHAIN_TOKEN — e.g. "USD" is a literal
+# prefix of "USDC"/"USDT", "EUR" of "EURC"/"EURS"/"EURt".
+_ASSET_TOKEN = re.compile(
+    "|".join(re.escape(name) for name in sorted(_KNOWN_ASSETS, key=len, reverse=True))
+)
 _DIGITS = re.compile(r"\d+")
 _SPACE = re.compile(r"\s+")
 _CREDENTIAL_KEYS = frozenset(
@@ -228,15 +255,17 @@ def stack_sig(line: str) -> str:
 
 
 def template_signature(line: str) -> str:
-    """Coarser than stack_sig: also masks known blockchain names (see
-    _KNOWN_CHAINS), so a per-chain error variant groups under one issue-filing
-    template instead of fragmenting into one fingerprint per chain. Used only for
-    grouping which GitHub issue a variant belongs to — error.seen identity keeps
-    using the finer-grained fingerprint()/stack_sig() so per-variant count/last_seen
+    """Coarser than stack_sig: also masks known blockchain names and asset
+    tickers (see _KNOWN_CHAINS/_KNOWN_ASSETS), so a per-chain or per-token error
+    variant groups under one issue-filing template instead of fragmenting into
+    one fingerprint per chain/token pair. Used only for grouping which GitHub
+    issue a variant belongs to — error.seen identity keeps using the
+    finer-grained fingerprint()/stack_sig() so per-variant count/last_seen
     tracking stays exact."""
     norm = redact(strip_ansi(line))
     norm = _UUID.sub("", norm)
     norm = _CHAIN_TOKEN.sub("<CHAIN>", norm)
+    norm = _ASSET_TOKEN.sub("<ASSET>", norm)
     norm = _DIGITS.sub("", norm)
     norm = _SPACE.sub(" ", norm).strip().lower()
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
@@ -253,6 +282,13 @@ def known_chain_in(line: str) -> str | None:
     label which concrete variant a template_fingerprint incident belongs to.
     Most error lines don't name a chain; those return None."""
     match = _CHAIN_TOKEN.search(line)
+    return match.group(0) if match is not None else None
+
+
+def known_asset_in(line: str) -> str | None:
+    """The first known asset ticker present in the line, if any — same purpose
+    as known_chain_in, for the token half of a chain/token variant label."""
+    match = _ASSET_TOKEN.search(line)
     return match.group(0) if match is not None else None
 
 

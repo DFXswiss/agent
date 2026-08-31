@@ -87,6 +87,11 @@ def test_extract_variant_finds_known_chain_or_falls_back_to_generic() -> None:
     assert extract_variant("Failed to get price for token tether -> usd") == "generic"
 
 
+def test_extract_variant_combines_chain_and_asset() -> None:
+    assert extract_variant("Balance for Arbitrum/USDC went low") == "Arbitrum/USDC"
+    assert extract_variant("Balance for Base/WBTC went low") == "Base/WBTC"
+
+
 def test_marker_for_embeds_template_fingerprint() -> None:
     marker = marker_for("api|error|abc123|prod")
     assert marker == "<!-- error-log-template:api|error|abc123|prod -->"
