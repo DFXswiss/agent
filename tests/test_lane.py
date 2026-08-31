@@ -9,6 +9,7 @@ import pytest
 
 from agent_cli.lane import (
     GROK_STRIP_ENV,
+    LaneResult,
     _run_in_tmux,
     codex_argv,
     grok_argv,
@@ -16,7 +17,7 @@ from agent_cli.lane import (
     parse_status,
     tmux_wrap_argv,
 )
-from agent_cli.main import main
+from agent_cli.main import _sanitize_lane_output, main
 
 pytestmark = pytest.mark.no_pg
 
@@ -500,6 +501,108 @@ def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) ->
     result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
     assert result.returncode == 3
     assert any("kill-session" in c for c in calls)
+
+
+def test_cli_lane_run_prints_vendor_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role="pr-reviewer-quality",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="no quality findings, distinctive-marker-abc123\nSTATUS: complete\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    run(
+        [
+            "lane",
+            "run",
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "grok",
+            "--spec-file",
+            str(spec),
+            "--cwd",
+            str(tmp_path),
+            "--no-tmux",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "distinctive-marker-abc123" in out
+    assert "STATUS=complete" in out
+    assert out.index("distinctive-marker-abc123") < out.index("STATUS=complete")
+
+
+def test_cli_lane_run_prints_vendor_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role="pr-reviewer-quality",
+            vendor="grok",
+            status="unavailable",
+            argv=["grok"],
+            returncode=1,
+            stdout="",
+            stderr="grok: rate limited, distinctive-marker-xyz789",
+        )
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    with pytest.raises(SystemExit):
+        run(
+            [
+                "lane",
+                "run",
+                "--role",
+                "pr-reviewer-quality",
+                "--vendor",
+                "grok",
+                "--spec-file",
+                str(spec),
+                "--cwd",
+                str(tmp_path),
+                "--no-tmux",
+            ]
+        )
+    err = capsys.readouterr().err
+    assert "distinctive-marker-xyz789" in err
+
+
+def test_sanitize_lane_output_strips_escape_sequences_keeps_text() -> None:
+    raw = "before\x1b[31mred\x1b[0m after\x07\ttab\nline2"
+    cleaned = _sanitize_lane_output(raw)
+    assert "\x1b" not in cleaned
+    assert "\x07" not in cleaned
+    assert "red" in cleaned and "after" in cleaned
+    assert "\ttab\nline2" in cleaned
+
+
+def test_sanitize_lane_output_strips_c1_control_bytes() -> None:
+    raw = "before\x9b2Jafter"
+    cleaned = _sanitize_lane_output(raw)
+    assert "\x9b" not in cleaned
+    assert "before" in cleaned and "after" in cleaned
+
+
+def test_sanitize_lane_output_strips_exact_range_boundaries() -> None:
+    stripped = "\x00\x08\x0b\x0c\x0e\x1f\x7f\x80\x9f"
+    cleaned = _sanitize_lane_output(stripped)
+    assert cleaned == ""
+
+    kept = "\t\n\r"
+    assert _sanitize_lane_output(kept) == kept
 
 
 def test_cli_dry_run_implementer_grok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
