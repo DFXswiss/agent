@@ -67,6 +67,7 @@ OWNED_TABLES = frozenset(
         "review_gate",
         "open_work",
         "ping",
+        "job",
     }
 )
 
