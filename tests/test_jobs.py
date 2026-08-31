@@ -35,9 +35,9 @@ def test_the_same_request_keeps_the_same_identity() -> None:
 @pytest.mark.parametrize(
     "left,right",
     [
-        # Der lesbare Slug allein ist nicht injektiv: Laeufe von Satzzeichen fallen
-        # zu einem _ zusammen und die Raender werden getrimmt. Ohne den Digest
-        # traefen sich diese Paare, und die Queue verlöre einen Auftrag.
+        # The readable slug alone is not injective: runs of punctuation collapse
+        # to a single _ and the edges are trimmed. Without the digest these pairs
+        # would meet, and the queue would lose one of the two jobs.
         (("a/b", "1", "x"), ("a/b", "_1", "x")),
         (("a/b", "1_2", "x"), ("a/b", "1__2", "x")),
         (("a/b", "_1", "x"), ("a_b", "1", "x")),
@@ -159,8 +159,8 @@ def test_a_private_exception_does_not_bypass_the_other_lists() -> None:
 
 
 def test_private_has_no_default() -> None:
-    # Ein Aufrufer, der `private` vergisst, bekaeme sonst den oeffentlichen Pfad
-    # fuer ein privates Repository — genau der Fehler, den dieses Gate ausschliesst.
+    # A caller who forgets `private` would otherwise get the public path for a
+    # private repository — the one mistake this gate exists to make impossible.
     import inspect
 
     sig = inspect.signature(admits)
