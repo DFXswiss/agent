@@ -12,6 +12,7 @@ missing is worse than one that stops.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -28,9 +29,13 @@ TRANSITIONS: dict[str, tuple[str, ...]] = {
 }
 
 # The identity has to survive a retry: the same pull request reviewed again is
-# the same job, not a second one. Anything outside this set would make a retry
-# look like new work and defeat the de-duplication the queue depends on.
+# the same job, not a second one. The queue de-duplicates on this, so it has to
+# be injective — a readable slug alone is not, because collapsing runs of
+# punctuation and trimming the edges both lose information (`a/b` + `_1` and
+# `a_b` + `1` would slug identically). The slug stays for the eye; the digest
+# over the exact inputs is what makes the identity a key.
 _ID_SAFE = re.compile(r"[^a-z0-9]+")
+_DIGEST_LEN = 12
 
 
 def job_id(repo: str, ref: str, job_type: str) -> str:
@@ -38,10 +43,16 @@ def job_id(repo: str, ref: str, job_type: str) -> str:
     parts = [repo, ref, job_type]
     if not all(isinstance(p, str) and p.strip() for p in parts):
         raise ValueError("job_id requires repo, ref and job_type")
-    slug = "__".join(_ID_SAFE.sub("_", p.strip().lower()).strip("_") for p in parts)
+    # Lowercased before both: the same repository spelled differently is the same
+    # job, so the digest has to agree with the slug about that or one request
+    # would land twice in the queue.
+    cleaned = [p.strip().lower() for p in parts]
+    slug = "__".join(_ID_SAFE.sub("_", p).strip("_") for p in cleaned)
+    # NUL cannot occur in any of the three, so it separates without ambiguity.
+    digest = hashlib.sha256("\x00".join(cleaned).encode()).hexdigest()[:_DIGEST_LEN]
     if not slug.strip("_"):
         raise ValueError("job_id produced an empty identity")
-    return slug
+    return f"{slug}__{digest}"
 
 
 def transition_allowed(old: str, new: str) -> bool:
@@ -73,12 +84,18 @@ def admits(
     actor: str,
     repo: str,
     job_type: str,
-    private: bool = False,
+    private: bool,
 ) -> Verdict:
     """Whether this instance answers to this request.
 
     Deny-lists win over allow-lists, comparison is case-insensitive, and every
     allow-list must name the value — an empty one admits nothing.
+
+    `private` has no default on purpose: a caller who forgets it would hand a
+    private repository the public path, and that is the one mistake this gate
+    exists to make impossible. Comparison uses `lower()`, matching `watch.py`;
+    GitHub logins and repository names are ASCII, so `casefold()` would buy
+    nothing and diverge from the rest of the codebase.
     """
     if not isinstance(policy, dict):
         return Verdict(False, "policy is not an object")

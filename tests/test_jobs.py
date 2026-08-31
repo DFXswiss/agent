@@ -29,7 +29,25 @@ def test_the_same_request_keeps_the_same_identity() -> None:
     first = job_id("DFXswiss/backend", "5178", "pr-review")
     again = job_id("dfxswiss/BACKEND", "5178", "pr-review")
     assert first == again
-    assert first == "dfxswiss_backend__5178__pr_review"
+    assert first.startswith("dfxswiss_backend__5178__pr_review__")
+
+
+@pytest.mark.parametrize(
+    "left,right",
+    [
+        # Der lesbare Slug allein ist nicht injektiv: Laeufe von Satzzeichen fallen
+        # zu einem _ zusammen und die Raender werden getrimmt. Ohne den Digest
+        # traefen sich diese Paare, und die Queue verlöre einen Auftrag.
+        (("a/b", "1", "x"), ("a/b", "_1", "x")),
+        (("a/b", "1_2", "x"), ("a/b", "1__2", "x")),
+        (("a/b", "_1", "x"), ("a_b", "1", "x")),
+        (("a/b_c", "1", "x"), ("a/b__c", "1", "x")),
+    ],
+)
+def test_two_requests_that_slug_alike_still_differ(
+    left: tuple[str, str, str], right: tuple[str, str, str]
+) -> None:
+    assert job_id(*left) != job_id(*right)
 
 
 def test_different_requests_keep_different_identities() -> None:
@@ -61,12 +79,12 @@ def test_the_lifecycle_moves_only_forward() -> None:
 
 
 def test_a_named_actor_repo_and_job_type_are_admitted() -> None:
-    v = admits(_policy(), actor="davidleomay", repo="owner/name", job_type="pr-review")
+    v = admits(_policy(), actor="davidleomay", repo="owner/name", job_type="pr-review", private=False)
     assert v == Verdict(True, "admitted")
 
 
 def test_admission_ignores_case() -> None:
-    v = admits(_policy(), actor="DavidLeoMay", repo="Owner/Name", job_type="PR-Review")
+    v = admits(_policy(), actor="DavidLeoMay", repo="Owner/Name", job_type="PR-Review", private=False)
     assert v.admitted, v.reason
 
 
@@ -77,7 +95,7 @@ def test_admission_ignores_case() -> None:
 def test_an_empty_allow_list_admits_nothing(field: str) -> None:
     # Fail-closed. A policy that loses a list must not start answering to
     # everyone; that is the failure worth being loud about.
-    v = admits(_policy(**{field: []}), actor="davidleomay", repo="owner/name", job_type="pr-review")
+    v = admits(_policy(**{field: []}), actor="davidleomay", repo="owner/name", job_type="pr-review", private=False)
     assert not v.admitted
     assert "not allowed" in v.reason
 
@@ -89,13 +107,13 @@ def test_an_empty_allow_list_admits_nothing(field: str) -> None:
 def test_a_missing_allow_list_admits_nothing(field: str) -> None:
     policy = _policy()
     del policy[field]
-    v = admits(policy, actor="davidleomay", repo="owner/name", job_type="pr-review")
+    v = admits(policy, actor="davidleomay", repo="owner/name", job_type="pr-review", private=False)
     assert not v.admitted
 
 
 @pytest.mark.parametrize("junk", [None, [], "everyone", {"actors_allow": "davidleomay"}])
 def test_a_malformed_policy_admits_nothing(junk: object) -> None:
-    v = admits(junk, actor="davidleomay", repo="owner/name", job_type="pr-review")
+    v = admits(junk, actor="davidleomay", repo="owner/name", job_type="pr-review", private=False)
     assert not v.admitted
 
 
@@ -106,6 +124,7 @@ def test_a_deny_beats_an_allow() -> None:
             actor="davidleomay",
             repo="owner/name",
             job_type="pr-review",
+            private=False,
         )
         assert not v.admitted
         assert "denied" in v.reason
@@ -114,7 +133,7 @@ def test_a_deny_beats_an_allow() -> None:
 def test_a_disabled_instance_admits_nothing() -> None:
     v = admits(
         _policy(enabled=False), actor="davidleomay", repo="owner/name", job_type="pr-review"
-    )
+    , private=False)
     assert not v.admitted
     assert "disabled" in v.reason
 
@@ -137,3 +156,12 @@ def test_a_private_exception_does_not_bypass_the_other_lists() -> None:
     policy = _policy(repos_allow=[], agent_identity={"private_repos_allow": ["owner/name"]})
     v = admits(policy, actor="davidleomay", repo="owner/name", job_type="pr-review", private=True)
     assert not v.admitted
+
+
+def test_private_has_no_default() -> None:
+    # Ein Aufrufer, der `private` vergisst, bekaeme sonst den oeffentlichen Pfad
+    # fuer ein privates Repository — genau der Fehler, den dieses Gate ausschliesst.
+    import inspect
+
+    sig = inspect.signature(admits)
+    assert sig.parameters["private"].default is inspect.Parameter.empty
