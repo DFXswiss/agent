@@ -12,11 +12,14 @@ from agent_cli.errors import (
     error_class,
     fingerprint,
     is_incident_line,
+    known_chain_in,
     line_fingerprint,
     load_config,
     redact,
     scan_errors,
     stack_sig,
+    template_fingerprint,
+    template_signature,
 )
 from agent_cli.store import Store, StoreError
 
@@ -170,6 +173,43 @@ def test_redact_and_fingerprint() -> None:
     assert fp.endswith("|prod")
 
 
+def test_template_signature_masks_known_chains() -> None:
+    ethereum = "Timeout updating balances for Ethereum: Error: Timeout"
+    polygon = "Timeout updating balances for Polygon: Error: Timeout"
+    assert template_signature(ethereum) == template_signature(polygon)
+    # stack_sig stays fine-grained: chain name is not masked there, so the two
+    # lines keep separate error.seen identity even though they share a template.
+    assert stack_sig(ethereum) != stack_sig(polygon)
+
+
+def test_chain_token_regex_masks_longest_match_first() -> None:
+    from agent_cli.errors import _CHAIN_TOKEN
+
+    # "Bitcoin" is a prefix of "BitcoinTestnet4" — an unsorted alternation would
+    # match "Bitcoin" first and leave "Testnet4" dangling in the masked output.
+    assert _CHAIN_TOKEN.sub("<CHAIN>", "check failed for BitcoinTestnet4 today") == (
+        "check failed for <CHAIN> today"
+    )
+    assert _CHAIN_TOKEN.sub("<CHAIN>", "check failed for Bitcoin today") == (
+        "check failed for <CHAIN> today"
+    )
+
+
+def test_known_chain_in_finds_and_omits() -> None:
+    assert known_chain_in("Timeout updating balances for Ethereum") == "Ethereum"
+    assert known_chain_in("balance check failed for BitcoinTestnet4") == "BitcoinTestnet4"
+    assert known_chain_in("Failed to check Bank Frick order status") == "Frick"
+    assert known_chain_in("Failed to get price for token tether -> usd") is None
+
+
+def test_template_fingerprint_format() -> None:
+    sig = template_signature("Timeout updating balances for Ethereum")
+    tfp = template_fingerprint(
+        service="api", error_class="error", template_sig=sig, environment="prod"
+    )
+    assert tfp == f"api|error|{sig}|prod"
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
@@ -195,6 +235,7 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert payload["evidence"] is None
     assert "SECRETTOKENVALUE0123456789" not in payload["excerpt"]
     assert "fingerprint" in payload
+    assert "template_fingerprint" in payload
     wakes = store.pending_wakes()
     assert any(w["activity_id"] == created[0] for w in wakes)
 
@@ -204,6 +245,7 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     again = store.row("activity", created[0])
     assert again is not None
     assert again["payload"]["count"] == 2
+    assert again["payload"]["template_fingerprint"] == payload["template_fingerprint"]
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
     assert "line_fingerprint" not in payload
 

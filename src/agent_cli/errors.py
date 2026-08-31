@@ -42,6 +42,25 @@ _ERROR_LEVEL = re.compile(r"\b(?:ERROR|FATAL|PANIC|CRITICAL)\b")
 _UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+# Blockchain names from DFX's own asset/blockchain enum (prod DB, checked
+# 2026-08-31) — masked in the template signature so a per-chain error
+# variant ("Timeout updating balances for Ethereum" vs "...for Polygon") groups
+# under one issue-filing template instead of fragmenting one issue per chain.
+# Refresh from prod if this drifts; there is no automated sync.
+_KNOWN_CHAINS = frozenset(
+    {
+        "DeFiChain", "Ethereum", "Arbitrum", "Polygon", "BinanceSmartChain", "Binance",
+        "Kraken", "Base", "Optimism", "Citrea", "MEXC", "XT", "Railgun", "Sumixx",
+        "InternetComputer", "Scrypt", "Sepolia", "MaerkiBaumann", "Checkout", "Kaleido",
+        "Solana", "Zano", "Frick", "Tron", "Yapeal", "Talium", "OlkyFrozen", "Haqq",
+        "Bitcoin", "CitreaTestnet", "Gnosis", "KucoinPay", "Spark", "Lightning", "Firo",
+        "Olkypay", "BitcoinTestnet4", "BinancePay", "Arkade", "Cardano", "Monero",
+    }
+)
+# Longest-first so e.g. "Bitcoin" cannot shadow-match a prefix of "BitcoinTestnet4".
+_CHAIN_TOKEN = re.compile(
+    "|".join(re.escape(name) for name in sorted(_KNOWN_CHAINS, key=len, reverse=True))
+)
 _DIGITS = re.compile(r"\d+")
 _SPACE = re.compile(r"\s+")
 _CREDENTIAL_KEYS = frozenset(
@@ -206,6 +225,35 @@ def stack_sig(line: str) -> str:
     norm = _DIGITS.sub("", norm)
     norm = _SPACE.sub(" ", norm).strip().lower()
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def template_signature(line: str) -> str:
+    """Coarser than stack_sig: also masks known blockchain names (see
+    _KNOWN_CHAINS), so a per-chain error variant groups under one issue-filing
+    template instead of fragmenting into one fingerprint per chain. Used only for
+    grouping which GitHub issue a variant belongs to — error.seen identity keeps
+    using the finer-grained fingerprint()/stack_sig() so per-variant count/last_seen
+    tracking stays exact."""
+    norm = redact(strip_ansi(line))
+    norm = _UUID.sub("", norm)
+    norm = _CHAIN_TOKEN.sub("<CHAIN>", norm)
+    norm = _DIGITS.sub("", norm)
+    norm = _SPACE.sub(" ", norm).strip().lower()
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def template_fingerprint(
+    *, service: str, error_class: str, template_sig: str, environment: str
+) -> str:
+    return f"{service}|{error_class}|{template_sig}|{environment}"
+
+
+def known_chain_in(line: str) -> str | None:
+    """The first known blockchain name present in the line, if any — used to
+    label which concrete variant a template_fingerprint incident belongs to.
+    Most error lines don't name a chain; those return None."""
+    match = _CHAIN_TOKEN.search(line)
+    return match.group(0) if match is not None else None
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -472,6 +520,12 @@ def _apply_lines(
             stack_sig=stack_sig(redacted),
             environment=environment,
         )
+        template_fp = template_fingerprint(
+            service=service,
+            error_class=cls,
+            template_sig=template_signature(redacted),
+            environment=environment,
+        )
         server = item.get("server")
         container = item.get("container")
         line_fp = None
@@ -490,6 +544,7 @@ def _apply_lines(
             payload_obj["count"] = count + 1
             payload_obj["last_seen"] = ts
             payload_obj["excerpt"] = excerpt
+            payload_obj["template_fingerprint"] = template_fp
             if line_fp is not None:
                 payload_obj["line_fingerprint"] = line_fp
             else:
@@ -503,6 +558,7 @@ def _apply_lines(
         aid = str(uuid.uuid4())
         payload_obj = {
             "fingerprint": fp,
+            "template_fingerprint": template_fp,
             "service": service,
             "environment": environment,
             "class": cls,
