@@ -43,7 +43,9 @@ def mentions(body: Any, login: str) -> bool:
         return False
     stripped = _addressing_text(body)
     # The trailing group stops `@theo-vane-bot` from answering for `@theo-vane`.
-    return re.search(rf"@{re.escape(login.lower())}([^a-z0-9-]|$)", stripped) is not None
+    # The leading group stops a handle sitting at the end of a longer word — an
+    # e-mail address — from counting as an address either.
+    return re.search(rf"(^|[^a-z0-9-])@{re.escape(login.lower())}([^a-z0-9-]|$)", stripped) is not None
 
 
 def requested_job_type(body: Any, policy: Any, allowed: Any = None) -> str | None:

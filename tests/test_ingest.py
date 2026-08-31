@@ -419,3 +419,21 @@ def test_a_longer_job_type_is_not_matched_by_its_prefix() -> None:
         requested_job_type("@x pr-review-deep please", POLICY, list(reversed(allowed)))
         == "pr-review-deep"
     )
+
+
+def test_an_email_address_whose_domain_begins_with_the_handle_is_not_an_address() -> None:
+    # A mailbox at a domain that starts with this login is not a mention of it:
+    # the `@` sits at the end of a longer word, the local part.
+    assert not mentions("write to support@theo-vane.example", "theo-vane")
+
+
+def test_a_handle_preceded_directly_by_a_word_character_is_not_an_address() -> None:
+    # The same shape without the rest of an e-mail: a letter glued to the `@`
+    # means the handle is not a token of its own.
+    assert not mentions("see x@theo-vane please review", "theo-vane")
+
+
+def test_a_real_mention_in_running_text_still_addresses_us() -> None:
+    # A space is outside `[a-z0-9-]`, so a genuine mention still matches once
+    # the leading bound is in place.
+    assert mentions("please review @theo-vane thanks", "theo-vane")
