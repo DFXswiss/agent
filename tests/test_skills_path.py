@@ -96,6 +96,19 @@ def test_the_documented_rejected_gate_command_carries_evidence() -> None:
     assert any('--evidence "' in ln for ln in rejected), rejected
 
 
+def test_the_contract_says_what_evidence_should_look_like() -> None:
+    # The evidence becomes the review body unaltered. Without this the
+    # contract specified the mechanism and left the presentation unsaid, and what
+    # reached one author was lane bookkeeping wrapped around two findings.
+    contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
+    assert "becomes the body of that review unaltered" in contract
+    assert "one finding per line" in contract
+    assert "`file:line` first" in contract
+    assert "STATUS=" in contract
+    # A COMMENT review reports; REQUEST_CHANGES would let a bot hold a merge closed.
+    assert "never `REQUEST_CHANGES`" in contract
+
+
 def test_the_contract_separates_introduced_from_inherited_findings() -> None:
     # A reviewer that gates on debt the change did not create blocks clean pull
     # requests, which is how a review bot stops being read. The rule has to be in
@@ -121,3 +134,19 @@ def test_the_contract_separates_introduced_from_inherited_findings() -> None:
     # What this cannot check: that no later passage contradicts the rule. It holds
     # that all four statements live in one paragraph, so a partial rule fails here
     # rather than reading as complete.
+
+
+def test_the_contract_states_when_approving_is_allowed() -> None:
+    # Approving is a merge authorisation on a protected branch, so the state that
+    # justifies it has to be written down, not inferred from the executor accepting it.
+    contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
+    start = contract.index("## Approving")
+    # Collapse the wrapping: a phrase split across two lines is the same rule, and a
+    # test that fails on a reflow measures the line width rather than the contract.
+    rule = " ".join(contract[start : contract.index("Locate these files", start)].split())
+    assert "all four lane verdicts" in rule
+    assert "CI on this head is green" in rule
+    assert "event: APPROVE" in rule
+    # The two events this account must never submit, and why.
+    assert "never `REQUEST_CHANGES`" in rule
+    assert "a human still does" in rule

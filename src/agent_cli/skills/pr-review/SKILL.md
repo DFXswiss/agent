@@ -38,12 +38,22 @@ Review lanes execute no software (no tests, builds, or servers).
 
 - `approved` → close the matching checklist key with evidence.
 - `rejected` → do not treat the stage as passed. `--evidence` is required. On a
-  task that carries a pull request the evidence is queued as a comment there,
-  so the findings reach the author instead of stopping the task silently;
+  task that carries a pull request the evidence is queued as a review there, so
+  the findings reach the author instead of stopping the task silently; the review
+  is a `COMMENT`, never `REQUEST_CHANGES`, so it cannot hold a merge closed.
   `agent github pending` performs the HTTP. A task without a pull request
-  records the rejection and reports that nothing was queued. On implement /
-  resolve-conflicts, `agent gate record` returns the task to `implementing`.
-  On workflow `review`, the task stays in pr-review and is not `done`.
+  records the rejection and reports that nothing was queued.
+
+  On implement / resolve-conflicts, `agent gate record` returns the task to
+  `implementing`. On workflow `review`, the task stays in pr-review and is not
+  `done`.
+
+  The evidence becomes the body of that review unaltered, under a generated
+  heading naming vendor, dimension and head. Write it for the
+  author and not for the lane: one finding per line, `file:line` first, then what
+  is wrong in a sentence. Leave out `STATUS=`, session ids and anything else that
+  only means something inside the runner — it reaches a human who has none of that
+  context, and it buries the finding it is printed next to.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
   substitute another vendor.
 
@@ -91,5 +101,16 @@ that skip). `agent allow --action pr-ready` only checks task state; do
 not mark ready if it denies. Then one comment whose review-pass count
 is those four `approved` verdicts on this head, then mark the GitHub
 pull request ready.
+
+## Approving
+
+Once all four lane verdicts on **this** head are `approved` and CI on this head is
+green, insert a `review.post` with `event: APPROVE` alongside the pass-count comment.
+That is a review this account submits on the pull request, not a merge: the agent
+still does not merge, and a human still does.
+
+`APPROVE` is only for that state. A rejected gate publishes `COMMENT`, never
+`APPROVE` and never `REQUEST_CHANGES` — the executor refuses the last one, because an
+account that can request changes can hold a merge closed through branch protection.
 
 Locate these files with `agent skills path`.

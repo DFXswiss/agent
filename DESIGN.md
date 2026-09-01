@@ -321,6 +321,7 @@ v1 types (mechanism only):
 | `issue.assigned` | `issue` | script | — (no `NOTIFY` on insert; watch script knocks queue head / one Grok terminal) |
 | `issue.assigned.ack` | `issue` | script | — (releases the next queued knock; supervise only) |
 | `comment.post` | — | AI (target + body) | script |
+| `review.post` | — | gate record (repo, number, body) | script |
 | `mail.ingest` / `mail.seen` / `mail.reply` | — | script / AI | script (external mailbox) |
 | `investigate.step` | `investigate` | AI (every step, immediately) | — |
 | `message` | — | AI | hub + daemon + knock (session mail, §10) |
@@ -402,7 +403,7 @@ agent check record …                              # spine skill
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
 agent allow|next|close-step|run …                 # spine skill; run: [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
-agent github pending                           # one scan; pr.open, comment.post, issue.write via gh
+agent github pending                           # one scan; pr.open, comment.post, review.post, issue.write via gh
 agent query --match-file PATH                  # hub POST /sync/query; prints {"rows":[…]}
 agent subscribe list|set --file PATH|clear     # hub GET/PUT /sync/subscriptions
 agent mail pending|ingest                      # mail.reply / mail.seen via himalaya; envelope ingest
@@ -425,7 +426,7 @@ agent dashboard [--port 7845]
 
 Local dashboard binds `127.0.0.1` only.
 
-The AI is not expected to type hub HTTP, `gh`, or himalaya. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
+The AI is not expected to type hub HTTP, `gh`, or himalaya. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
 
 ## 17. Control
 

@@ -804,3 +804,274 @@ def test_cli_github_pending_none(tmp_path: Path, capsys: pytest.CaptureFixture[s
     run(tmp_path, ["init"])
     run(tmp_path, ["github", "pending"])
     assert "github pending none" in capsys.readouterr().out
+
+
+def test_review_post_submits_a_comment_review_then_is_idempotent(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-1"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    review_url = "https://github.com/dfxswiss/agent/pull/3#pullrequestreview-77"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "dto.ts:91 wrong decorator"},
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            assert argv[-4] == "repos/dfxswiss/agent/pulls/3/reviews" or (
+                "repos/dfxswiss/agent/pulls/3/reviews" in argv
+            )
+            joined = " ".join(argv)
+            # A bot that can hold a merge closed is a different tool from one that reports.
+            assert "event=COMMENT" in joined
+            assert "event=REQUEST_CHANGES" not in joined
+            assert marker in joined
+            return Completed(0, json.dumps({"id": 77, "html_url": review_url}), "")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        if argv[1] == "api":
+            assert argv[-1] == "repos/dfxswiss/agent/pulls/3/reviews"
+            return Completed(0, json.dumps([]), "")
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["url"] == review_url
+
+    # A second activity whose marker is already on the pull request must not post again.
+    act2 = "r-2"
+    _pending(
+        store,
+        act2,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "same finding"},
+    )
+    existing = [
+        {
+            "id": 77,
+            "html_url": review_url,
+            "body": ACTIVITY_MARKER.format(id=act2),
+            # Cased differently from the account `gh api user` returns: GitHub logins
+            # are case-insensitive, so the comparison must be too.
+            "user": {"login": "Theo-Vane"},
+        }
+    ]
+    posts: list[list[str]] = []
+
+    def runner2(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posts.append(list(argv))
+            raise AssertionError("must not post twice")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([existing]), "")
+
+    assert scan_github(store, runner2) == [f"review.post {act2} done"]
+    assert posts == []
+
+
+def test_review_post_is_an_executable_activity_type() -> None:
+    # Without this the row is written, nothing ever runs it, and the findings never
+    # reach the pull request — silently, which is the defect this path exists to fix.
+    from agent_cli.store import EXECUTABLE_ACTIVITY_TYPES
+
+    assert "review.post" in EXECUTABLE_ACTIVITY_TYPES
+
+
+def test_review_post_ignores_a_marker_in_someone_elses_review(tmp_path: Path) -> None:
+    # The marker is visible to anyone reading the pull request. Treating a copy of it
+    # as our own delivery would suppress the findings entirely.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-3"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+    foreign = [
+        {
+            "id": 5,
+            "html_url": "https://example.invalid/x",
+            "body": "copied " + ACTIVITY_MARKER.format(id=act_id),
+            "user": {"login": "somebody-else"},
+        }
+    ]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            return Completed(0, json.dumps({"id": 9, "html_url": "https://example.invalid/ours"}), "")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([foreign]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    assert len(posted) == 1, "a foreign marker must not stand in for our own review"
+
+
+def test_review_post_drops_an_unusable_review_id(tmp_path: Path) -> None:
+    # jq/gh can hand back anything; an id is a positive integer or it is not recorded.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-4"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            return Completed(
+                0,
+                json.dumps({"id": {"nope": 1}, "html_url": "https://example.invalid/ours"}),
+                "",
+            )
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert "id" not in row["result"]
+    assert row["result"]["url"] == "https://example.invalid/ours"
+
+
+def test_review_post_does_not_ask_who_we_are_without_a_candidate(tmp_path: Path) -> None:
+    # On the ordinary path no review carries our marker, so identity is never needed.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-5"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+    seen: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        seen.append(argv[-1])
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            return Completed(0, json.dumps({"id": 9, "html_url": "https://example.invalid/x"}), "")
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    assert "user" not in seen, "identity was fetched although no marker matched"
+
+
+def test_review_post_retries_when_identity_cannot_be_established(tmp_path: Path) -> None:
+    # A flaked identity lookup must not turn into a second review on the pull request.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-6"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "a finding"},
+    )
+    ours = [{"id": 4, "html_url": "https://example.invalid/ours",
+             "body": ACTIVITY_MARKER.format(id=act_id), "user": {"login": "theo-vane"}}]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            return Completed(0, json.dumps({"id": 9, "html_url": "https://example.invalid/dup"}), "")
+        if argv[-1] == "user":
+            return Completed(1, "", "gh: transient failure")
+        return Completed(0, json.dumps([ours]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == [], "a flaked identity lookup posted a duplicate review"
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+
+
+def test_the_scanner_documents_every_type_it_executes() -> None:
+    # A docstring that lists the handled types is a claim about behaviour, and this
+    # change already corrected it in four places. The types are read out of the
+    # dispatch itself rather than restated here: a hard-coded list would be the same
+    # duplication the test exists to catch, and would pass for a fifth type nobody
+    # documented.
+    import inspect
+    import re
+
+    from agent_cli import github_act
+
+    source = inspect.getsource(github_act.scan_github)
+    handled = set(re.findall(r'typ == "([^"]+)"', source))
+    assert handled, "no dispatch branches found — this test measures nothing"
+
+    doc = inspect.getdoc(github_act.scan_github) or ""
+    module_doc = inspect.getdoc(github_act) or ""
+    for typ in sorted(handled):
+        assert typ in doc, f"{typ} missing from the scan_github docstring"
+        assert typ in module_doc, f"{typ} missing from the module docstring"
+
+
+def test_review_post_submits_an_approve_when_asked(tmp_path: Path) -> None:
+    # Approving is what a passing review looks like on GitHub. It is a review this
+    # account submits, not a merge — the agent still does not merge.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "four approved verdicts",
+         "event": "APPROVE"},
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            assert "event=APPROVE" in " ".join(argv)
+            return Completed(0, json.dumps({"id": 12, "html_url": "https://example.invalid/a"}), "")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+
+
+def test_review_post_refuses_request_changes(tmp_path: Path) -> None:
+    # An account that can request changes can hold a merge closed through branch
+    # protection. Refused in the executor, not left to whoever writes the payload.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-8"
+    _pending(
+        store, act_id, "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "no",
+         "event": "REQUEST_CHANGES"},
+    )
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        posted.append(list(argv))
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == [], "REQUEST_CHANGES reached GitHub"
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+
+
+def test_a_rejected_gate_never_approves(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The findings path must not be able to approve, whatever the evidence says.
+    from agent_cli.main import _queue_gate_findings  # noqa: PLC0415
+
+    import inspect
+
+    src = inspect.getsource(_queue_gate_findings)
+    assert "APPROVE" not in src

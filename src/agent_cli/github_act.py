@@ -1,4 +1,4 @@
-"""Execute pending pr.open, comment.post, and issue.write activities via gh."""
+"""Execute pending pr.open, comment.post, review.post, and issue.write activities via gh."""
 
 from __future__ import annotations
 
@@ -343,6 +343,114 @@ def _run_issue_write(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         return f"issue.write {rid} error"
 
 
+def _login(runner: Runner) -> str | None:
+    """The account gh is authenticated as, or None when it cannot be determined."""
+    data, _err = _gh_json_result(["gh", "api", "user"], runner)
+    if isinstance(data, dict):
+        login = data.get("login")
+        if isinstance(login, str) and login != "":
+            return login
+    return None
+
+
+def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
+    """Submit a pull-request review of type COMMENT carrying the findings.
+
+    A rejected gate's findings are a review, not a remark: posting them as a review
+    puts them where an author looks and makes the work visible to anything counting
+    review artefacts. COMMENT rather than REQUEST_CHANGES, so a bot cannot hold a
+    merge closed through branch protection.
+    """
+    rid = str(row["id"])
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        _mark(store, row, status="error", error="payload must be an object")
+        return f"review.post {rid} error"
+    repo = _repo_ok(payload.get("repo"))
+    number = _as_int(payload.get("number"))
+    body = _nonempty_str(payload.get("body"))
+    if repo is None or number is None or number <= 0 or body is None:
+        _mark(store, row, status="error", error="review.post requires repo, number, body")
+        return f"review.post {rid} error"
+    # COMMENT reports; APPROVE is a merge authorisation and is only inserted once the
+    # gates on this head are approved. REQUEST_CHANGES is refused here rather than left
+    # to convention: it would let this account hold a merge closed through branch
+    # protection, which is a different tool from the one this is.
+    event = payload.get("event", "COMMENT")
+    if event not in ("COMMENT", "APPROVE"):
+        _mark(store, row, status="error", error="review.post event must be COMMENT or APPROVE")
+        return f"review.post {rid} error"
+    marker = ACTIVITY_MARKER.format(id=rid)
+    owner, name = repo.split("/", 1)
+    try:
+        reviews_raw = _gh_json(
+            ["gh", "api", "--paginate", "--slurp", f"repos/{owner}/{name}/pulls/{number}/reviews"],
+            runner,
+        )
+        me: str | None = None
+        asked_who_we_are = False
+        for review in _flatten_comment_pages(reviews_raw):
+            if not isinstance(review, dict):
+                continue
+            rbody = review.get("body")
+            if not isinstance(rbody, str) or marker not in rbody:
+                continue
+            # Only now: on the ordinary path no review carries this marker, and asking
+            # gh who we are would be a round trip to answer a question nobody asked.
+            if not asked_who_we_are:
+                me = _login(runner)
+                asked_who_we_are = True
+            if me is None:
+                # A candidate exists but the identity is unknown. Retrying later is
+                # right; posting a second review because a lookup flaked is not.
+                raise _GhError("cannot determine the authenticated account")
+            # The marker is visible to anyone reading the pull request. Without the
+            # author check a copied marker would suppress this review entirely.
+            author = review.get("user")
+            login = author.get("login") if isinstance(author, dict) else None
+            # Case-insensitive, as DESIGN.md requires of a GitHub login and as
+            # watch.py compares one: the same account can be spelled either way.
+            if not isinstance(login, str) or login.lower() != me.lower():
+                continue
+            url = review.get("html_url") or review.get("url")
+            if not isinstance(url, str) or url == "":
+                raise _GhError("review missing url")
+            result: dict[str, Any] = {"repo": repo, "number": number, "url": url}
+            rev_id = _as_int(review.get("id"))
+            if rev_id is not None and rev_id > 0:
+                result["id"] = rev_id
+            _mark(store, row, status="done", result=result)
+            return f"review.post {rid} done"
+        created = _gh_json(
+            [
+                "gh",
+                "api",
+                "-X",
+                "POST",
+                f"repos/{owner}/{name}/pulls/{number}/reviews",
+                "-f",
+                f"body={_with_marker(body, rid)}",
+                "-f",
+                f"event={event}",
+            ],
+            runner,
+        )
+        if not isinstance(created, dict):
+            raise _GhError("review response is not an object")
+        url = created.get("html_url") or created.get("url")
+        if not isinstance(url, str) or url == "":
+            raise _GhError("review missing url")
+        result = {"repo": repo, "number": number, "url": url}
+        new_id = _as_int(created.get("id"))
+        if new_id is not None and new_id > 0:
+            result["id"] = new_id
+        _mark(store, row, status="done", result=result)
+        return f"review.post {rid} done"
+    except _GhError as exc:
+        _mark(store, row, status="error", error=str(exc))
+        return f"review.post {rid} error"
+
+
 def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     rid = str(row["id"])
     payload = row.get("payload")
@@ -447,7 +555,7 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
 
 
 def scan_github(store: Store, runner: Runner) -> list[str]:
-    """Execute pending pr.open, comment.post, issue.write owned by this device.
+    """Execute pending pr.open, comment.post, review.post, issue.write owned by this device.
 
     Other pending types (subscription.set, query.request, …) are skipped.
     Returns human-readable status lines, one per handled row.
@@ -462,6 +570,8 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
                 lines.append(_run_issue_write(store, runner, row))
             elif typ == "comment.post":
                 lines.append(_run_comment_post(store, runner, row))
+            elif typ == "review.post":
+                lines.append(_run_review_post(store, runner, row))
         except Exception as exc:  # noqa: BLE001 — per-row isolation
             rid = str(row.get("id") or "?")
             _mark(store, row, status="error", error=str(exc))
