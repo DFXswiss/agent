@@ -10,6 +10,7 @@ from agent_cli.error_issue_act import (
     MAX_ISSUE_BODY,
     MAX_TRACKED_VARIANTS,
     STORM_MARKER,
+    burst_folded_templates,
     _VARIANTS_END,
     _VARIANTS_START,
     _storm_label,
@@ -444,6 +445,7 @@ def _prior_touch(
     activity_id: str,
     skipped: bool = False,
     mode: str | None = None,
+    number: int | None = None,
 ) -> None:
     result: dict[str, object] = {
         "issue_repo": "org/tracker",
@@ -454,6 +456,8 @@ def _prior_touch(
         result["skipped"] = "cooldown"
     if mode is not None:
         result["mode"] = mode
+    if number is not None:
+        result["number"] = number
     store.write(
         "activity",
         "insert",
@@ -1213,6 +1217,7 @@ def test_evicted_burst_label_still_blocks_a_second_issue(tmp_path: Path) -> None
         at="2026-08-01T10:00:00Z",
         activity_id="prior-storm",
         mode="storm",
+        number=99,
     )
 
     def runner(argv: list[str]) -> Completed:
@@ -1248,6 +1253,7 @@ def test_a_closed_burst_lets_the_template_get_its_own_issue(tmp_path: Path) -> N
         at="2026-08-01T10:00:00Z",
         activity_id="prior-storm",
         mode="storm",
+        number=42,
     )
     created: list[list[str]] = []
 
@@ -1262,3 +1268,64 @@ def test_a_closed_burst_lets_the_template_get_its_own_issue(tmp_path: Path) -> N
     )
     assert lines == ["error.issue issue-1 created variant=Ethereum"]
     assert any(c[:3] == ["gh", "issue", "create"] for c in created)
+
+
+def test_a_fold_into_a_closed_burst_does_not_count_for_a_different_one(tmp_path: Path) -> None:
+    """A template folded into a burst that has since been closed must not be
+    marked as handled by whatever burst happens to be open now — that burst does
+    not list it, so the error would be swallowed with no issue mentioning it."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, template_fingerprint="api|error|old|prod")
+    _issue(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|old|prod",
+        at="2026-08-01T10:00:00Z",
+        activity_id="prior-storm",
+        mode="storm",
+        number=42,
+    )
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            # A different burst issue is open now; it does not list this template.
+            return Completed(0, json.dumps([{"number": 777, "body": STORM_MARKER}]), "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            body = f"{STORM_MARKER}\n\n" + render_variants_section(
+                {"other/prod: error (unrelated)": {"first_seen": "t1", "last_seen": "t1"}}
+            )
+            return Completed(0, json.dumps({"body": body}), "")
+        return Completed(0, "https://github.com/org/tracker/issues/5\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
+    )
+    assert lines == ["error.issue issue-1 created variant=Ethereum"]
+    assert any(c[:3] == ["gh", "issue", "create"] for c in created)
+
+
+def test_a_created_burst_records_its_issue_number(tmp_path: Path) -> None:
+    """The number is what later scans match a fold against, so a burst that was
+    created rather than reused has to record it too."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/99\n", "")
+
+    scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2)
+    for i in range(3):
+        row = store.row("activity", f"storm-issue-{i}")
+        assert row is not None
+        assert row["result"]["created"] is True
+        assert row["result"]["number"] == 99
+    assert burst_folded_templates(store) == {
+        f"api|error|t{i}|prod": {99} for i in range(3)
+    }

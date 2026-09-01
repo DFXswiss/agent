@@ -27,6 +27,7 @@ judgment."""
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -56,6 +57,9 @@ _ISSUE_LIST_LIMIT = 100
 # Keep the variants table bounded so normal growth can never walk an issue into
 # MAX_ISSUE_BODY and wedge every later update on it.
 MAX_TRACKED_VARIANTS = 200
+# Same shape github_act parses, so a created issue's number can be recorded next
+# to its url.
+_ISSUE_URL = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/issues/(\d+)")
 # Result modes that never touched GitHub, so they must not start a cooldown
 # window: a dry run is a preview, not a touch.
 _DRY_RUN_MODES = frozenset({"dry-run", "storm-dry-run"})
@@ -255,14 +259,15 @@ def touch_history(store: Store) -> dict[str, datetime]:
     return history
 
 
-def burst_folded_templates(store: Store) -> set[str]:
-    """Templates this device already folded into a burst issue.
+def burst_folded_templates(store: Store) -> dict[str, set[int]]:
+    """Which burst issues this device folded each template into.
 
     The burst table is capped, so a long-lived burst issue can evict an older
-    label from its body. Local history still remembers the fold, and that is
-    what keeps such a template from being filed a second time while its burst
-    issue is open."""
-    folded: set[str] = set()
+    label from its body; local history still remembers the fold. It is keyed by
+    issue number on purpose: a template folded into a burst that has since been
+    closed must not count as covered by whatever burst is open now, or it would
+    be marked handled while no issue mentions it at all."""
+    folded: dict[str, set[int]] = {}
     origin = store.device_id()
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin or row.get("type") != "error.issue":
@@ -273,8 +278,12 @@ def burst_folded_templates(store: Store) -> set[str]:
         if not isinstance(result, dict) or result.get("mode") != "storm":
             continue
         template_fingerprint = result.get("template_fingerprint")
-        if isinstance(template_fingerprint, str):
-            folded.add(template_fingerprint)
+        number = result.get("number")
+        if not isinstance(template_fingerprint, str):
+            continue
+        if isinstance(number, bool) or not isinstance(number, int):
+            continue
+        folded.setdefault(template_fingerprint, set()).add(number)
     return folded
 
 
@@ -607,7 +616,10 @@ def _process_storm(
         number = find_issue_number(runner, issue_repo, STORM_MARKER)
         if number is None:
             url = _create_storm_issue(runner, issue_repo=issue_repo, templates=templates, now=now)
-            extra: dict[str, Any] = {"url": url, "created": True}
+            match = _ISSUE_URL.search(url)
+            if match is None:
+                raise StoreError("gh issue create returned no issue URL")
+            extra: dict[str, Any] = {"url": url, "number": int(match.group(1)), "created": True}
         else:
             _update_storm_issue(runner, issue_repo=issue_repo, number=number, templates=templates)
             extra = {"number": number, "created": False}
@@ -742,7 +754,7 @@ class _OpenBurst:
     lookup the retry would file a second, individual issue for a template the
     burst issue already covers, splitting one template across two issues."""
 
-    def __init__(self, runner: Runner, issue_repo: str, folded: set[str]) -> None:
+    def __init__(self, runner: Runner, issue_repo: str, folded: dict[str, set[int]]) -> None:
         self._runner = runner
         self._issue_repo = issue_repo
         self._folded = folded
@@ -765,7 +777,7 @@ class _OpenBurst:
                 self._labels = set(parse_variants_section(body))
         if self._number is None:
             return None
-        if label in self._labels or template_fingerprint in self._folded:
+        if label in self._labels or self._number in self._folded.get(template_fingerprint, set()):
             return self._number
         return None
 
