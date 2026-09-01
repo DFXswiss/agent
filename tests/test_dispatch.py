@@ -422,3 +422,45 @@ def test_zero_capacity_is_rejected(tmp_path: Path) -> None:
         assert calls == []
     finally:
         store.close()
+
+
+
+# ----------------------------------------------------- exception paths
+
+
+def test_write_update_failure_triggers_worktree_and_session_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failed state transition must still clean the prepared workspace.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        original_write = store.write
+
+        def raising_write(op: str, action: str, key: str, value: object) -> None:
+            if action == "update":
+                raise RuntimeError("db unavailable")
+            original_write(op, action, key, value)
+
+        monkeypatch.setattr(store, "write", raising_write)
+
+        started, skipped = _dispatch(store, _runner(calls=calls))
+
+        assert started == []
+        assert skipped == 1
+        joined = [" ".join(argv) for argv in calls]
+        remove_at = next(i for i, c in enumerate(joined) if "worktree remove" in c)
+        prune_at = next(i for i, c in enumerate(joined) if "worktree prune" in c)
+        kill_at = next(i for i, c in enumerate(joined) if "kill-session" in c)
+        assert remove_at < prune_at < kill_at
+    finally:
+        store.close()

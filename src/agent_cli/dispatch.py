@@ -161,6 +161,10 @@ def dispatch_queued(
             store.write("job", "update", job_id, updated)
             started_ids.append(job_id)
         except Exception:
+            # The row never reached running, so leaving the worktree would make
+            # the next pass find the path already present and fail the job.
+            runner(workspace.worktree_remove_argv(bare, worktree))
+            runner(workspace.worktree_prune_argv(bare))
             runner(workspace.kill_session_argv(socket, session))
             skipped += 1
 
