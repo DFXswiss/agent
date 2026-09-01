@@ -1329,3 +1329,80 @@ def test_a_created_burst_records_its_issue_number(tmp_path: Path) -> None:
     assert burst_folded_templates(store) == {
         f"api|error|t{i}|prod": {99} for i in range(3)
     }
+
+
+def test_storm_label_is_unique_per_template_despite_separators(tmp_path: Path) -> None:
+    """service, class and environment are free text from the log source, so they
+    can contain the separators the fingerprint joins on and the table renders
+    with. Two different templates must still get two rows, or one goes missing
+    from the burst issue while a row claims to cover it."""
+    first = _storm_label(
+        "api|error|abc123def|prod/eu",
+        {"service": "api", "class": "error", "environment": "prod/eu"},
+    )
+    second = _storm_label(
+        "api/prod|error|abc123def|eu",
+        {"service": "api/prod", "class": "error", "environment": "eu"},
+    )
+    assert first != second
+
+    # A pipe inside a component must not shift which field the label reports.
+    shifted = _storm_label(
+        "api|x|error|sigAAAA|prod",
+        {"service": "api|x", "class": "error", "environment": "prod"},
+    )
+    assert shifted.startswith("api/x/prod: error (")
+
+
+def test_storm_issue_keeps_a_row_per_colliding_template(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for index, (service, environment) in enumerate(
+        (("api", "prod/eu"), ("api/prod", "eu"), ("api", "eu"))
+    ):
+        seen_id, issue_id = f"seen-{index}", f"storm-issue-{index}"
+        store.write(
+            "activity",
+            "insert",
+            seen_id,
+            {
+                "id": seen_id,
+                "session_id": "runner-1",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": f"fp-{index}",
+                    "template_fingerprint": f"{service}|error|abc123def|{environment}",
+                    "excerpt": "Some error",
+                    "service": service,
+                    "class": "error",
+                    "environment": environment,
+                },
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            issue_id,
+            {
+                "id": issue_id,
+                "session_id": "runner-1",
+                "type": "error.issue",
+                "payload": {"error_id": seen_id},
+                "execution_status": "pending",
+            },
+        )
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/99\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2
+    )
+    assert all("storm size=3" in line for line in lines)
+    body = created[-1][created[-1].index("--body") + 1]
+    assert len(parse_variants_section(body)) == 3

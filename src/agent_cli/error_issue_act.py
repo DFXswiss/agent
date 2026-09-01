@@ -26,6 +26,7 @@ judgment."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -508,18 +509,25 @@ def _update_issue(
 
 
 def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str:
+    """One burst-table row per template: readable text plus a digest that makes
+    it unique.
+
+    The readable half is display only. service, class and environment are free
+    text from the log source, so they may contain the separators this module
+    renders with and that template_fingerprint joins on; splitting the
+    fingerprint on "|" would then read the wrong fields, and two different
+    templates could render identical text. The digest is taken over the whole
+    fingerprint rather than a slice of it, so distinct templates keep distinct
+    rows whatever the text does — otherwise one of them would be missing from
+    the burst issue while a row still claimed to cover it."""
     service = seen_payload.get("service")
     service = service if isinstance(service, str) and service else "unknown"
     cls = seen_payload.get("class")
     cls = cls if isinstance(cls, str) and cls else "error"
-    parts = template_fingerprint.split("|")
-    short = parts[2][:8] if len(parts) >= 3 and parts[2] else template_fingerprint[:8]
-    # The environment belongs in the label: a template_fingerprint is
-    # service|class|template-sig|environment, so the same error in two
-    # environments is two templates. Without it both would share one row, the
-    # burst issue would hide one of them and storm_size would undercount.
-    environment = parts[3] if len(parts) >= 4 and parts[3] else "unknown"
-    return _inert_cell(f"{service}/{environment}: {cls} ({short})")
+    environment = seen_payload.get("environment")
+    environment = environment if isinstance(environment, str) and environment else "unknown"
+    digest = hashlib.sha256(template_fingerprint.encode("utf-8")).hexdigest()[:12]
+    return _inert_cell(f"{service}/{environment}: {cls} ({digest})")
 
 
 def _create_storm_issue(
@@ -745,14 +753,21 @@ def _scan_error_issue(
 
 
 class _OpenBurst:
-    """The templates the currently open burst issue already lists, fetched once
-    per scan and only when a template is about to get its own issue.
+    """Whether the currently open burst issue already covers a template, from
+    two sources, fetched once per scan and only when a template is about to get
+    its own issue.
 
-    A burst writes its issue in one gh call but marks its rows one at a time, so
-    a process that dies mid-loop leaves rows pending for templates that carry no
-    local history at all — the fold is recorded only in the issue. Without this
-    lookup the retry would file a second, individual issue for a template the
-    burst issue already covers, splitting one template across two issues."""
+    The issue body's labels are the primary source. A burst writes its issue in
+    one gh call but marks its rows one at a time, so a process that dies mid-loop
+    leaves rows pending for templates that carry no local history at all — the
+    fold is then recorded only in the issue. Without this lookup the retry would
+    file a second, individual issue for a template the burst already covers,
+    splitting one template across two issues.
+
+    Local fold history, keyed by issue number, is the second source: the body's
+    table is capped, so an older fold can have been evicted from it. Keying by
+    number is what keeps a fold into a since-closed burst from counting as
+    coverage by whatever burst happens to be open now."""
 
     def __init__(self, runner: Runner, issue_repo: str, folded: dict[str, set[int]]) -> None:
         self._runner = runner
