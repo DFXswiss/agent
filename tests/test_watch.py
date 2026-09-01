@@ -13,6 +13,7 @@ from agent_cli.watch import (
     load_policy,
     load_watch_config,
     pending_assigned,
+    policy_present,
     scan_assigned,
     scan_merged,
 )
@@ -320,6 +321,7 @@ def test_scan_assigned_missing_actor_skips_without_persisting(tmp_path: Path) ->
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
     _write_assigned_repos(tmp_path)
+    _write_admit_policy(tmp_path)
     store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
 
     def runner(argv: list[str]) -> Completed:
@@ -359,6 +361,60 @@ def test_scan_assigned_missing_actor_skips_without_persisting(tmp_path: Path) ->
     created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
     assert created == []
     assert skipped == 0
+
+
+def test_scan_assigned_missing_actor_still_persists_without_a_policy(
+    tmp_path: Path,
+) -> None:
+    # Same fixture as test_scan_assigned_missing_actor_skips_without_persisting,
+    # minus the policy.json: without an active policy there is nothing to jam,
+    # so this must keep the pre-policy behavior of enqueueing what GitHub
+    # reported as assigned, even with a blank assigned_by.
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
 
 
 def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
@@ -424,6 +480,7 @@ def test_scan_assigned_same_second_unresolvable_tie_skips_without_persisting(
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
     _write_assigned_repos(tmp_path)
+    _write_admit_policy(tmp_path)
     store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
 
     def runner(argv: list[str]) -> Completed:
@@ -1149,6 +1206,16 @@ def test_load_policy_raises_on_invalid_json(tmp_path: Path) -> None:
     (tmp_path / "policy.json").write_text("{not valid json", encoding="utf-8")
     with pytest.raises(StoreError, match="invalid JSON"):
         load_policy(tmp_path)
+
+
+def test_policy_present_false_when_absent(tmp_path: Path) -> None:
+    assert policy_present(tmp_path) is False
+
+
+def test_policy_present_raises_when_policy_json_is_a_directory(tmp_path: Path) -> None:
+    (tmp_path / "policy.json").mkdir()
+    with pytest.raises(StoreError, match="not a regular file"):
+        policy_present(tmp_path)
 
 
 def test_dispatch_assigned_raises_when_policy_json_is_invalid(tmp_path: Path) -> None:

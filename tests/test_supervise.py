@@ -139,6 +139,7 @@ def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
 def test_enqueue_broken_pairing_raises_without_writing(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
+    (store.home / "policy.json").write_text("{}", encoding="utf-8")
 
     def runner(argv: list[str]) -> Completed:
         return Completed(1, "", "no gh")
@@ -159,6 +160,7 @@ def test_enqueue_broken_pairing_on_new_session_writes_no_session_row(
     # not exist yet, so a broken pairing must raise before ANY store write —
     # including the session row itself.
     store = Store(tmp_path)
+    (store.home / "policy.json").write_text("{}", encoding="utf-8")
 
     def runner(argv: list[str]) -> Completed:
         return Completed(1, "", "no gh")
@@ -169,6 +171,24 @@ def test_enqueue_broken_pairing_on_new_session_writes_no_session_row(
     assert [
         row for row in store.rows("activity") if row.get("type") == "issue.assigned"
     ] == []
+
+
+def test_enqueue_broken_pairing_without_a_policy_degrades_instead_of_raising(
+    tmp_path: Path,
+) -> None:
+    # Mirrors test_enqueue_broken_pairing_raises_without_writing but with no
+    # policy.json: without an active policy, a broken pairing must not block
+    # manual enqueue at all (DESIGN.md: enqueues "without hub pairing").
+    store = Store(tmp_path)
+    _session(store)
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(1, "", "no gh")
+
+    aid = enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
+    row = store.row("activity", aid)
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
 
 
 def test_enqueue_uses_gh_json(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from .watch import (
     assigned_workspace_root,
     dispatch_assigned,
     pending_assigned,
+    policy_present,
 )
 
 ANSWER_YES = "Ja"
@@ -217,7 +218,19 @@ def enqueue_assigned(
     if existing is not None:
         return existing
     now = utcnow()
-    assigned_by = _paired_login(store, runner)
+    # Pairing is only load-bearing once a policy is active to check the
+    # actor against — without one, requiring it would break manual enqueue
+    # for operators who never opted into policy.json (DESIGN.md: enqueues
+    # "without hub pairing"). Still resolve it best-effort either way; only
+    # a policy in play makes a broken pairing fatal.
+    if policy_present(store.home):
+        assigned_by = _paired_login(store, runner)
+    else:
+        assigned_by = ""
+        try:
+            assigned_by = _paired_login(store, runner)
+        except StoreError:
+            pass
     _ensure_assigned_session(store, session_id, now)
     url = f"https://github.com/{repo}/issues/{number}"
     title = ""

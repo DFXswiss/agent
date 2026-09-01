@@ -222,11 +222,24 @@ def load_watch_config(home: Path) -> tuple[list[str], str]:
     return list(repos), session_id
 
 
+def policy_present(home: Path) -> bool:
+    """Whether `home / "policy.json"` exists as something readable as a
+    policy. A directory, broken symlink, or other non-regular entry at that
+    path is a misconfiguration, not "no policy" — callers must not treat it
+    as the backward-compatible absent case."""
+    path = home / "policy.json"
+    if path.is_file():
+        return True
+    if path.exists() or path.is_symlink():
+        raise StoreError(f"{path} exists but is not a regular file")
+    return False
+
+
 def load_policy(home: Path) -> Any:
     """The parsed `home / "policy.json"` object, or None if the file does not exist."""
-    path = home / "policy.json"
-    if not path.is_file():
+    if not policy_present(home):
         return None
+    path = home / "policy.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -473,7 +486,12 @@ def scan_assigned(
                         newest_id = None
             if newest_at is None or newest_dt is None:
                 continue
-            if newest_by == "":
+            # An unresolvable actor only jams the queue once a policy is
+            # active to reject it (admits() denies on a missing actor and
+            # nothing acks a denial). Without a policy, drop nothing that
+            # GitHub reported as assigned — that would be a needless
+            # behavior change for operators who never opted into policy.json.
+            if newest_by == "" and policy_present(store.home):
                 continue
             previous = _latest_assigned_marker(store, repo, number)
             if not _assignment_is_newer(newest_dt, newest_id, previous):
@@ -656,7 +674,7 @@ def _policy_admits(
     """Whether `head` (an issue.assigned activity row) is admitted by the
     policy at `store.home / "policy.json"`. No policy file present admits
     unconditionally — this is what keeps the gate backward-compatible."""
-    if not (store.home / "policy.json").is_file():
+    if not policy_present(store.home):
         return True
     policy = load_policy(store.home)
     payload = head.get("payload")
