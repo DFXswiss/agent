@@ -40,7 +40,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
-| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
+| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls, plus a hub push of new local activity each cycle once paired) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |

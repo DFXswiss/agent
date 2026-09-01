@@ -66,7 +66,7 @@ def test_knock_scan_cycle_skips_sync_when_unpaired(
 
 
 def test_knock_scan_cycle_logs_and_continues_on_malformed_pull_response(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression test: _sync_once() calls die() (bare SystemExit, not a HubError/
     StoreError) when the hub returns a malformed pull payload. A narrow except that
@@ -80,9 +80,13 @@ def test_knock_scan_cycle_logs_and_continues_on_malformed_pull_response(
     monkeypatch.setattr(main_mod, "_sync_once", _raise)
     _stub_scans(monkeypatch)
     _init_paired_store(tmp_path)
+    capsys.readouterr()
 
     store = open_store()
     try:
         main_mod._knock_scan_cycle(store, lambda _argv: None)
     finally:
         store.close()
+
+    captured = capsys.readouterr()
+    assert "sync error: agent: pull response missing events" in captured.err
