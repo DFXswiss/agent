@@ -759,9 +759,10 @@ def test_scan_storm_marks_all_rows_error_on_create_failure(tmp_path: Path) -> No
 
 
 def test_scan_merges_two_variants_of_one_template_into_one_issue(tmp_path: Path) -> None:
-    """Two variants of the same template in one scan belong in one issue, written
-    once with a single comment rather than one round trip each. Cooldown safety
-    comes from the history snapshot, not from this grouping."""
+    """Two variants of the same template in one scan belong in one issue. Here
+    that issue does not exist yet, so both land in the opening table of a single
+    create — no update and no comment. Cooldown safety comes from the history
+    snapshot, not from this grouping."""
     store = Store(tmp_path)
     _runner_session(store)
     _seen(

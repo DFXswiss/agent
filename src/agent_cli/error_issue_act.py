@@ -18,9 +18,10 @@ Two throttles sit in front of the per-template logic:
   never opens that window.
 
 All pending rows of one template are handled together, so two variants seen in
-the same run land in one issue with one comment instead of one issue write and
-one comment each. The cooldown cannot mistake them for repeats either way: the
-history snapshot is taken before the scan marks anything.
+the same run land in one issue write instead of one each — a create carries them
+in its opening table, an update splices them in and announces the genuinely new
+ones in a single comment. The cooldown cannot mistake them for repeats either
+way: the history snapshot is taken before the scan marks anything.
 
 Both are plain comparisons against local state; neither involves model
 judgment."""
@@ -849,8 +850,8 @@ class _OpenBurst:
         gap. Both only count while a burst issue is actually open: once a human
         closes it, a template that recurs has earned its own issue."""
         if self._failure is not None:
-            # Cache the failure too, or the guard below would send every later
-            # template through the same two gh calls to the same broken body.
+            # Re-raise a remembered failure rather than repeating the fetch for
+            # every later template against the same broken body.
             raise self._failure
         if self._labels is None:
             try:
@@ -865,6 +866,8 @@ class _OpenBurst:
                     _require_intact_section(body)
                     self._labels = set(_parse_variants_section(body))
             except StoreError as exc:
+                # Remember it: the guard above turns this into one failed lookup
+                # per scan instead of one per template.
                 self._failure = exc
                 raise
         if self._number is None:
@@ -890,9 +893,11 @@ def _process_template(
     """Handle every pending row of one template together.
 
     Two variants of the same template in one scan belong in one issue, so they
-    are collected into a single create or update and a single comment rather
-    than one round trip each. Cooldown safety is not what grouping buys: the
-    history snapshot is taken before the scan marks anything."""
+    are collected into a single create or update rather than one round trip
+    each. A create writes them straight into its opening table; an update
+    splices them in and announces the genuinely new ones in one comment.
+    Cooldown safety is not what grouping buys: the history snapshot is taken
+    before the scan marks anything."""
     lines: list[str] = []
     excerpts: list[str] = []
     for _row, seen_payload in members:
