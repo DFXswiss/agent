@@ -460,17 +460,18 @@ def _prior_touch(
     mode: str | None = None,
     number: int | None = None,
 ) -> None:
+    # A real touch always names the issue it touched; touch history ignores rows
+    # that do not, so the default here has to carry one too.
     result: dict[str, object] = {
         "issue_repo": "org/tracker",
         "template_fingerprint": template_fingerprint,
         "at": at,
+        "number": number if number is not None else 7,
     }
     if skipped:
         result["skipped"] = "cooldown"
     if mode is not None:
         result["mode"] = mode
-    if number is not None:
-        result["number"] = number
     store.write(
         "activity",
         "insert",
@@ -1665,3 +1666,92 @@ def test_an_issue_that_lost_its_marker_is_not_edited(tmp_path: Path) -> None:
     row = store.row("activity", "issue-1")
     assert row is not None
     assert "carries its marker 0 times" in row["execution_error"]
+
+
+def test_a_marker_moved_into_the_section_is_not_spliced_away(tmp_path: Path) -> None:
+    """The marker is checked on the body we read; it has to hold on the body we
+    write too. One hand-moved inside the machine-owned section would otherwise be
+    deleted by the splice, leaving an issue this module can never find again."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+    marker = _marker_for("api|error|abc123|prod")
+    # A human moved the marker inside the tracked section.
+    body = (
+        "notes\n\n"
+        f"{_VARIANTS_START}\n\n"
+        "| variant | first seen | last seen |\n|---|---|---|\n"
+        f"| Ethereum | t1 | t1 |\n\n{marker}\n\n"
+        f"{_VARIANTS_END}\n"
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, json.dumps([{"number": 12, "body": marker}]), "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, json.dumps({"body": body}), "")
+        if argv[:3] == ["gh", "issue", "edit"]:
+            raise AssertionError(f"must not write a body that lost its marker: {argv}")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    assert lines == ["error.issue issue-1 error"]
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert "carries its marker 0 times" in row["execution_error"]
+
+
+def test_a_result_naming_no_issue_is_not_a_touch(tmp_path: Path) -> None:
+    """A corrupted or partial row would otherwise open a cooldown window with no
+    issue behind it and silently swallow the next real occurrence."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "partial-1",
+        {
+            "id": "partial-1",
+            "session_id": "runner-1",
+            "type": "error.issue",
+            "payload": {"error_id": "irrelevant"},
+            "execution_status": "done",
+            # done, right repo, parseable timestamp — but names no issue.
+            "result": {
+                "issue_repo": "org/tracker",
+                "template_fingerprint": "api|error|abc|prod",
+                "at": "2026-08-31T10:00:00Z",
+            },
+        },
+    )
+    assert _touch_history(store, "org/tracker") == {}
+
+
+def test_public_issue_text_redacts_the_unredacted_fields(tmp_path: Path) -> None:
+    """class comes from an already-redacted line, but service and environment are
+    stream labels that never passed through redact() — and both reach a public
+    issue title or table row."""
+    label = _storm_label(
+        "api|error|abc|prod",
+        {"service": "api-alice@example.com", "class": "error", "environment": "prod"},
+    )
+    assert "alice@example.com" not in label
+    assert "[redacted]" in label
+
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, service="api-alice@example.com")
+    _issue(store)
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+
+    scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    title = created[-1][created[-1].index("--title") + 1]
+    assert "alice@example.com" not in title
+    assert title.startswith("[redacted]")

@@ -35,7 +35,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .errors import known_asset_in, known_chain_in
+from .errors import known_asset_in, known_chain_in, redact
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
@@ -316,6 +316,10 @@ def _touch_history(store: Store, issue_repo: str) -> dict[str, datetime]:
         template_fingerprint = result.get("template_fingerprint")
         if not isinstance(template_fingerprint, str):
             continue
+        # A row that names no issue never touched one; a corrupted or partial
+        # result must not open a cooldown window with nothing behind it.
+        if result.get("number") is None and result.get("url") is None:
+            continue
         touched_at = result.get("at")
         if not isinstance(touched_at, str):
             continue
@@ -557,18 +561,15 @@ def _update_issue(
             tracked[variant]["last_seen"] = now
         else:
             tracked[variant] = {"first_seen": now, "last_seen": now}
+    spliced = _splice_variants(body, tracked)
+    # The marker was checked on the body we read; check it again on the body we
+    # are about to write. A marker hand-moved inside the machine-owned section
+    # would otherwise be deleted by the splice, leaving an issue this module can
+    # never find again.
+    _require_marker(spliced, marker)
     _gh(
         runner,
-        [
-            "gh",
-            "issue",
-            "edit",
-            str(number),
-            "--repo",
-            issue_repo,
-            "--body",
-            _splice_variants(body, tracked),
-        ],
+        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", spliced],
         "gh issue edit failed",
     )
     if not new_variants:
@@ -593,6 +594,11 @@ def _update_issue(
     return new_variants, None
 
 
+def _field(seen_payload: dict[str, Any], key: str, fallback: str) -> str:
+    value = seen_payload.get(key)
+    return value if isinstance(value, str) and value else fallback
+
+
 def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str:
     """One burst-table row per template: readable text plus a digest that makes
     it unique.
@@ -605,12 +611,12 @@ def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str
     fingerprint rather than a slice of it, so distinct templates keep distinct
     rows whatever the text does — otherwise one of them would be missing from
     the burst issue while a row still claimed to cover it."""
-    service = seen_payload.get("service")
-    service = service if isinstance(service, str) and service else "unknown"
-    cls = seen_payload.get("class")
-    cls = cls if isinstance(cls, str) and cls else "error"
-    environment = seen_payload.get("environment")
-    environment = environment if isinstance(environment, str) and environment else "unknown"
+    # class is already derived from a redacted line; service and environment are
+    # stream labels that never went through redact(), and both end up in a public
+    # issue. Redact them here rather than trust their source.
+    service = redact(_field(seen_payload, "service", "unknown"))
+    cls = _field(seen_payload, "class", "error")
+    environment = redact(_field(seen_payload, "environment", "unknown"))
     digest = hashlib.sha256(template_fingerprint.encode("utf-8")).hexdigest()[:12]
     return _inert_cell(f"{service}/{environment}: {cls} ({digest})")
 
@@ -657,18 +663,11 @@ def _update_storm_issue(
             existing[name]["last_seen"] = entry["last_seen"]
         else:
             existing[name] = dict(entry)
+    spliced = _splice_variants(body, existing)
+    _require_marker(spliced, STORM_MARKER)
     _gh(
         runner,
-        [
-            "gh",
-            "issue",
-            "edit",
-            str(number),
-            "--repo",
-            issue_repo,
-            "--body",
-            _splice_variants(body, existing),
-        ],
+        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", spliced],
         "gh issue edit failed",
     )
 
@@ -1006,10 +1005,9 @@ def _process_template(
                 )
                 lines.append(f"error.issue {rid} already-in-burst number={burst_number}")
             return lines
-        service = first_payload.get("service")
-        service = service if isinstance(service, str) and service else "unknown"
-        cls = first_payload.get("class")
-        cls = cls if isinstance(cls, str) and cls else "error"
+        # Same reasoning as _storm_label: this title is public.
+        service = redact(_field(first_payload, "service", "unknown"))
+        cls = _field(first_payload, "class", "error")
         try:
             url = _create_issue(
                 runner,
