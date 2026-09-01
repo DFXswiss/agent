@@ -208,6 +208,19 @@ def _render_variants_section(variants: dict[str, dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _require_marker(body: str, marker: str) -> None:
+    """Raise unless this body still carries its marker exactly once.
+
+    The marker was matched on the body from the issue list, but the body about
+    to be spliced is fetched again. If it lost its marker in between — a hand
+    edit, or the wrong issue coming back — writing to it anyway would leave an
+    issue this module can never find again, and the next scan would open a
+    second one for the same template."""
+    found = body.count(marker)
+    if found != 1:
+        raise StoreError(f"issue body carries its marker {found} times, expected 1")
+
+
 def _require_intact_section(body: str) -> None:
     """Raise unless the body has no section at all or exactly one well-ordered
     marker pair. Shared so a reader and a writer judge damage the same way."""
@@ -517,7 +530,13 @@ def _create_issue(
 
 
 def _update_issue(
-    runner: Runner, *, issue_repo: str, number: int, variants: list[str], now: str
+    runner: Runner,
+    *,
+    issue_repo: str,
+    number: int,
+    marker: str,
+    variants: list[str],
+    now: str,
 ) -> tuple[list[str], str | None]:
     """Splice these variants into the issue's tracked table; comment once for the
     ones that are genuinely new. Returns the new variants and, if the comment
@@ -530,6 +549,7 @@ def _update_issue(
     send that comment again (the variant is no longer new). So a comment failure
     is reported on the row instead of discarding the successful edit."""
     body = _issue_body(runner, issue_repo, number)
+    _require_marker(body, marker)
     tracked = _parse_variants_section(body)
     new_variants = [v for v in variants if v not in tracked]
     for variant in variants:
@@ -630,6 +650,7 @@ def _update_storm_issue(
     runner: Runner, *, issue_repo: str, number: int, templates: dict[str, dict[str, str]]
 ) -> None:
     body = _issue_body(runner, issue_repo, number)
+    _require_marker(body, STORM_MARKER)
     existing = _parse_variants_section(body)
     for name, entry in templates.items():
         if name in existing:
@@ -860,6 +881,7 @@ class _OpenBurst:
                     self._labels = set()
                 else:
                     body = _issue_body(self._runner, self._issue_repo, self._number)
+                    _require_marker(body, STORM_MARKER)
                     # A damaged section parses to nothing, which would read as
                     # "this burst covers no template" and file duplicates. Fail
                     # loud on it, exactly as a splice would.
@@ -1021,7 +1043,12 @@ def _process_template(
 
     try:
         new_variants, comment_error = _update_issue(
-            runner, issue_repo=issue_repo, number=number, variants=variants, now=now
+            runner,
+            issue_repo=issue_repo,
+            number=number,
+            marker=_marker_for(template_fp),
+            variants=variants,
+            now=now,
         )
     except StoreError as exc:
         return fail_all(exc)

@@ -829,7 +829,11 @@ def test_scan_comments_once_for_several_new_variants(tmp_path: Path) -> None:
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
-            return Completed(0, '{"body": "text\\n"}', "")
+            return Completed(
+                0,
+                json.dumps({"body": f'{_marker_for("api|error|same|prod")}\n\ntext\n'}),
+                "",
+            )
         return Completed(0, "", "")
 
     calls: list[list[str]] = []
@@ -863,7 +867,11 @@ def test_scan_keeps_the_edit_when_the_comment_fails(tmp_path: Path) -> None:
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
-            return Completed(0, '{"body": "text\\n"}', "")
+            return Completed(
+                0,
+                json.dumps({"body": f'{_marker_for("api|error|abc123|prod")}\n\ntext\n'}),
+                "",
+            )
         if argv[:3] == ["gh", "issue", "comment"]:
             return Completed(1, "", "rate limited")
         return Completed(0, "", "")
@@ -1626,3 +1634,34 @@ def test_a_damaged_burst_body_is_only_fetched_once(tmp_path: Path) -> None:
     # One list + one view for the burst issue, plus the per-template marker
     # lookups; the damaged body must not be re-fetched per template.
     assert len([c for c in calls if c[:3] == ["gh", "issue", "view"]]) == 1
+
+
+def test_an_issue_that_lost_its_marker_is_not_edited(tmp_path: Path) -> None:
+    """The marker is matched on the listed body, but the body that gets spliced
+    is fetched again. If it lost the marker in between, writing to it would
+    leave an issue this module can never find again and the next scan would open
+    a second one for the same template."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps([{"number": 12, "body": _marker_for("api|error|abc123|prod")}]),
+                "",
+            )
+        if argv[:3] == ["gh", "issue", "view"]:
+            # Someone edited the marker away between the two calls.
+            return Completed(0, json.dumps({"body": "human rewrote this\n"}), "")
+        if argv[:3] == ["gh", "issue", "edit"]:
+            raise AssertionError(f"must not edit an issue that lost its marker: {argv}")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    assert lines == ["error.issue issue-1 error"]
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert "carries its marker 0 times" in row["execution_error"]
