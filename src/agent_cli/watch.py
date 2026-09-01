@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .jobs import Verdict, admits
 from .runtime import Completed
 from .store import Store, StoreError
 
@@ -220,6 +221,17 @@ def load_watch_config(home: Path) -> tuple[list[str], str]:
     return list(repos), session_id
 
 
+def load_policy(home: Path) -> Any:
+    """The parsed `home / "policy.json"` object, or None if the file does not exist."""
+    path = home / "policy.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise StoreError(f"{path} is invalid JSON") from exc
+
+
 def assigned_session_id(home: Path) -> str:
     _repos, sid = load_watch_config(home)
     return sid
@@ -384,6 +396,7 @@ def scan_assigned(
                 continue
             newest_at: str | None = None
             newest_dt: datetime | None = None
+            newest_by = ""
             for event in events:
                 if not isinstance(event, dict):
                     continue
@@ -404,9 +417,16 @@ def scan_assigned(
                     continue
                 if event_dt < cursor_dt:
                     continue
+                actor = event.get("actor")
+                assigned_by = ""
+                if isinstance(actor, dict):
+                    actor_login = actor.get("login")
+                    if isinstance(actor_login, str):
+                        assigned_by = actor_login
                 if newest_dt is None or event_dt > newest_dt:
                     newest_dt = event_dt
                     newest_at = created_at
+                    newest_by = assigned_by
             if newest_at is None or newest_dt is None:
                 continue
             previous_at = _latest_assigned_at(store, repo, number)
@@ -423,6 +443,7 @@ def scan_assigned(
                     "title": title if isinstance(title, str) else "",
                     "body": body if isinstance(body, str) else "",
                     "assigned_at": newest_at,
+                    "assigned_by": newest_by,
                 }
             )
     found.sort(key=lambda item: (str(item["assigned_at"]), str(item["repo"]).lower(), int(item["number"])))
@@ -458,6 +479,7 @@ def scan_assigned(
                     "title": item["title"],
                     "body": item["body"],
                     "assigned_at": assigned_at,
+                    "assigned_by": item["assigned_by"],
                     "assignee": login,
                     "mandate": "github-assignment",
                 },
@@ -615,6 +637,29 @@ def dispatch_assigned(
     head_id = head.get("id")
     if not isinstance(head_id, str) or head_id == "":
         raise StoreError(f"session {sid} queue head is missing an id")
+    # Denial must not touch store or workspace so the same head re-evaluates next tick.
+    policy = load_policy(store.home)
+    if policy is not None:
+        payload = head.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        repo = payload.get("repo")
+        repo = repo if isinstance(repo, str) else ""
+        assigned_by = payload.get("assigned_by")
+        assigned_by = assigned_by if isinstance(assigned_by, str) else ""
+        private_repos = {
+            r.lower()
+            for r in (policy.get("repos_private") if isinstance(policy, dict) else None) or []
+            if isinstance(r, str)
+        }
+        verdict: Verdict = admits(
+            policy,
+            actor=assigned_by,
+            repo=repo,
+            job_type="implement",
+            private=repo.lower() in private_repos,
+        )
+        if not verdict.admitted:
+            return "denied"
     cwd = workspace_root / sid
     cwd.mkdir(parents=True, exist_ok=True)
     _write_assigned_queue_files(cwd, sid, head, pending)

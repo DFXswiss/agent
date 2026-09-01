@@ -10,6 +10,7 @@ from agent_cli.store import Store, StoreError
 from agent_cli.watch import (
     ISSUE_LIST_LIMIT,
     dispatch_assigned,
+    load_policy,
     load_watch_config,
     pending_assigned,
     scan_assigned,
@@ -288,6 +289,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "bob"},
                         }
                     ]
                 ),
@@ -303,6 +305,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     assert row["type"] == "issue.assigned"
     assert row["payload"]["number"] == 8
     assert row["payload"]["mandate"] == "github-assignment"
+    assert row["payload"]["assigned_by"] == "bob"
     assert row["session_id"] == "assigned"
     session = store.row("session", row["session_id"])
     assert session is not None
@@ -311,6 +314,54 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     again, skipped_again = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
     assert skipped_again == 0
     assert again == []
+
+
+def test_scan_assigned_missing_actor_sets_assigned_by_empty(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
 
 
 def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) -> None:
@@ -614,6 +665,213 @@ def test_dispatch_assigned_writes_mandate_and_starts(tmp_path: Path) -> None:
     queue = (workspace_root / sid / "QUEUE.md").read_text(encoding="utf-8")
     assert "asg-1" in queue
     assert "SECRET_BODY_DO_NOT_COPY" not in queue
+
+
+def test_dispatch_assigned_without_policy_json_is_unchanged(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    sid = "assigned"
+    store.write(
+        "session",
+        "insert",
+        sid,
+        {"id": sid, "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": sid,
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "url": "https://github.com/Owner/repo/issues/8",
+                "title": "t",
+                "body": "SECRET_BODY_DO_NOT_COPY",
+                "mandate": "github-assignment",
+            },
+            "execution_status": "done",
+        },
+    )
+    assert load_policy(store.home) is None
+    assert not (store.home / "policy.json").exists()
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "started"
+    assert start_log == [(sid, tmp_path / "sessions" / sid)]
+    assert knock_log == ["asg-1"]
+
+
+def _write_admit_policy(home: Path, **over: object) -> None:
+    policy: dict = {
+        "actors_allow": ["bob"],
+        "repos_allow": ["Owner/repo"],
+        "job_types_allow": ["implement"],
+    }
+    policy.update(over)
+    (home / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
+
+
+def _insert_assigned_activity(
+    store: Store,
+    *,
+    sid: str = "assigned",
+    aid: str = "asg-1",
+    attached: bool = False,
+    assigned_by: str = "bob",
+    repo: str = "Owner/repo",
+) -> None:
+    session: dict = {"id": sid, "kind": "runner", "status": "active"}
+    if attached:
+        session["runtime"] = {"control": "attached"}
+    store.write("session", "insert", sid, session)
+    store.write(
+        "activity",
+        "insert",
+        aid,
+        {
+            "id": aid,
+            "session_id": sid,
+            "type": "issue.assigned",
+            "payload": {
+                "repo": repo,
+                "number": 8,
+                "url": f"https://github.com/{repo}/issues/8",
+                "title": "t",
+                "body": "SECRET_BODY_DO_NOT_COPY",
+                "assigned_by": assigned_by,
+                "mandate": "github-assignment",
+            },
+            "execution_status": "done",
+        },
+    )
+
+
+def test_dispatch_assigned_denies_when_policy_rejects_actor(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path, actors_allow=["alice"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+    assert not (workspace_root / "assigned" / "MANDATE.md").exists()
+    assert store.row("activity", "asg-1") is not None
+    assert not store.wake_delivered("asg-1")
+
+
+def test_dispatch_assigned_denies_when_policy_rejects_attached(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store, attached=True)
+    _write_admit_policy(tmp_path, actors_allow=["alice"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+
+
+def test_dispatch_assigned_starts_when_policy_admits(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert status == "started"
+    assert start_log == [("assigned", workspace_root / "assigned")]
+    assert knock_log == ["asg-1"]
+
+
+def test_dispatch_assigned_kicks_when_policy_admits_attached(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store, attached=True)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "kicked"
+    assert start_log == []
+    assert knock_log == ["asg-1"]
+
+
+def test_dispatch_assigned_repos_private_needs_naming_twice(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path, repos_private=["Owner/repo"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+    denied = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert denied == "denied"
+    assert start_log == []
+    assert knock_log == []
+    _write_admit_policy(
+        tmp_path,
+        repos_private=["Owner/repo"],
+        agent_identity={"private_repos_allow": ["Owner/repo"]},
+    )
+    admitted = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert admitted == "started"
+    assert start_log == [("assigned", workspace_root / "assigned")]
+    assert knock_log == ["asg-1"]
 
 
 def test_dispatch_assigned_kicks_when_attached(tmp_path: Path) -> None:
