@@ -1218,6 +1218,14 @@ def test_policy_present_raises_when_policy_json_is_a_directory(tmp_path: Path) -
         policy_present(tmp_path)
 
 
+def test_policy_present_raises_when_policy_json_is_a_broken_symlink(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "policy.json").symlink_to(tmp_path / "missing-target")
+    with pytest.raises(StoreError, match="not a regular file"):
+        policy_present(tmp_path)
+
+
 def test_dispatch_assigned_raises_when_policy_json_is_invalid(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _insert_assigned_activity(store)

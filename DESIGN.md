@@ -692,7 +692,7 @@ The model never receives production credentials. Analysis that only reads the ex
 A second model must not orchestrate the first. `agent supervise` is a **script** with locked questions and locked answers. Model text is not a state transition.
 
 - One pending `issue.assigned` at a time (same queue as `agent watch assigned`).
-- `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing. Title and body stay untrusted payload.
+- `--repo` / `--number` enqueues that issue as `github-assignment` without hub pairing when no `$AGENT_HOME/policy.json` is present; with one, pairing is required so the enqueued `assigned_by` can be checked against it (§14). Title and body stay untrusted payload.
 - Busy means the Grok TUI in the tmux pane shows an in-flight turn (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, or a queued follow-up with `Enter to send now`). `Runtime.is_busy` is that probe. The script does not type while busy.
 - Follow (`ask=False`, the CLI default) does not knock an existing session, does not ask closed questions, and does not auto-continue. It only confirms a Grok tool-approval modal (`1/3:select` plus `Tab:next option` → Enter). Closed questions remain available to `tick(..., ask=True)` for tests. Consecutive idle ticks (`supervise quiet` / `supervise stalled`) are follow-loop bookkeeping, not Telegram pages. The footer badge `always-approve` is not a working signal.
 - When `ask=True`, `Ja` or a blocking problem → `issue.assigned.ack` and the next queue item. A blocking problem also stores a truncated pane excerpt on `supervise.event` (`kind=skip`).
