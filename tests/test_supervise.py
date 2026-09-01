@@ -150,6 +150,27 @@ def test_enqueue_broken_pairing_raises_without_writing(tmp_path: Path) -> None:
     ] == []
 
 
+def test_enqueue_broken_pairing_on_new_session_writes_no_session_row(
+    tmp_path: Path,
+) -> None:
+    # Distinct from test_enqueue_broken_pairing_raises_without_writing: that
+    # test pre-creates the session, so _ensure_assigned_session is a no-op
+    # and can never catch a leak there. This one uses a session id that does
+    # not exist yet, so a broken pairing must raise before ANY store write —
+    # including the session row itself.
+    store = Store(tmp_path)
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(1, "", "no gh")
+
+    with pytest.raises(StoreError):
+        enqueue_assigned(store, "brand-new", "octo/app", 3, runner)
+    assert store.row("session", "brand-new") is None
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "issue.assigned"
+    ] == []
+
+
 def test_enqueue_uses_gh_json(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)

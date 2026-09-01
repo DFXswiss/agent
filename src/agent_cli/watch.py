@@ -712,8 +712,8 @@ def dispatch_assigned(
         raise StoreError(f"session {sid} queue head is missing an id")
     # Denial must not create this head's workspace files, claim its wake entry, or
     # start a session, so the same head re-evaluates identically next tick — this
-    # does not cover the unconditional per-tick sync() housekeeping above, which
-    # runs regardless of the outcome.
+    # does not cover the sync() call above, which is local to dispatch_assigned
+    # and always runs before the policy check regardless of the denial outcome.
     if not _policy_admits(store, head, runner):
         return "denied"
     cwd = workspace_root / sid

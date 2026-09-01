@@ -217,6 +217,7 @@ def enqueue_assigned(
     if existing is not None:
         return existing
     now = utcnow()
+    assigned_by = _paired_login(store, runner)
     _ensure_assigned_session(store, session_id, now)
     url = f"https://github.com/{repo}/issues/{number}"
     title = ""
@@ -245,7 +246,6 @@ def enqueue_assigned(
                     assignee = data["assignee"]
     except (OSError, json.JSONDecodeError):
         pass
-    assigned_by = _paired_login(store, runner)
     activity_id = str(uuid.uuid4())
     store.write(
         "activity",
