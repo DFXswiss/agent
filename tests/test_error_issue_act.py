@@ -6,7 +6,10 @@ import pytest
 
 from agent_cli.error_issue_act import (
     ISSUE_LABEL,
+    MAX_ISSUE_BODY,
     STORM_MARKER,
+    _create_issue,
+    _create_storm_issue,
     _recently_touched,
     extract_variant,
     find_issue_number,
@@ -15,6 +18,7 @@ from agent_cli.error_issue_act import (
     render_variants_section,
     scan_error_issue,
     splice_variants,
+    touch_history,
 )
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, utcnow
@@ -859,3 +863,78 @@ def test_splice_variants_refuses_a_body_over_the_github_limit() -> None:
     variants = {f"chain-{i}": {"first_seen": "t1", "last_seen": "t1"} for i in range(6000)}
     with pytest.raises(StoreError):
         splice_variants("Human notes.\n", variants)
+
+
+def test_create_paths_apply_the_same_body_ceiling() -> None:
+    """The ceiling is a property of every body sent to gh, not just of a splice
+    into an existing issue."""
+    huge = "x" * (MAX_ISSUE_BODY + 1)
+    with pytest.raises(StoreError):
+        _create_issue(
+            _unreachable_runner,
+            issue_repo="org/tracker",
+            title="api: error",
+            template_fingerprint="api|error|abc|prod",
+            excerpt=huge,
+            variants=["generic"],
+            now="2026-08-31T10:00:00Z",
+        )
+    templates = {f"t-{i}": {"first_seen": "t1", "last_seen": "t1"} for i in range(6000)}
+    with pytest.raises(StoreError):
+        _create_storm_issue(
+            _unreachable_runner,
+            issue_repo="org/tracker",
+            templates=templates,
+            now="2026-08-31T10:00:00Z",
+        )
+
+
+def _unreachable_runner(argv: list[str]) -> Completed:
+    raise AssertionError(f"gh must not be called: {argv}")
+
+
+# ---- touch history ----
+
+
+def test_touch_history_keeps_the_newest_touch_per_template(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-old",
+    )
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T12:00:00Z",
+        activity_id="prior-new",
+    )
+    history = touch_history(store)
+    assert history["api|error|abc|prod"].isoformat() == "2026-08-31T12:00:00+00:00"
+
+
+def test_touch_history_ignores_unusable_rows(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for activity_id, result in (
+        ("bad-1", "not-a-dict"),
+        ("bad-2", {"template_fingerprint": "api|error|abc|prod"}),  # no "at"
+        ("bad-3", {"template_fingerprint": "api|error|abc|prod", "at": "not-a-date"}),
+        ("bad-4", {"at": "2026-08-31T10:00:00Z"}),  # no template_fingerprint
+    ):
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "runner-1",
+                "type": "error.issue",
+                "payload": {"error_id": "irrelevant"},
+                "execution_status": "done",
+                "result": result,
+            },
+        )
+    assert touch_history(store) == {}

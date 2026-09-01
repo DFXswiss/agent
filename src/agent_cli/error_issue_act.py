@@ -141,6 +141,14 @@ def parse_variants_section(body: str) -> dict[str, dict[str, str]]:
     return variants
 
 
+def _ensure_issue_body(body: str) -> str:
+    """One ceiling for every body this module sends to gh, whether it is spliced
+    into an existing issue or built for a new one."""
+    if len(body) > MAX_ISSUE_BODY:
+        raise StoreError("issue body would exceed the GitHub body limit")
+    return body
+
+
 def splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     """Replace only the delimited variants section; never touch the rest of the
     body — that is human territory. A body carrying exactly one of the two
@@ -157,9 +165,7 @@ def splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
         raise StoreError("issue body has a damaged variants section")
     else:
         spliced = body[:start] + section + body[end + len(_VARIANTS_END) :]
-    if len(spliced) > MAX_ISSUE_BODY:
-        raise StoreError("issue body would exceed the GitHub body limit")
-    return spliced
+    return _ensure_issue_body(spliced)
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -308,7 +314,7 @@ def _create_issue(
     variants: list[str],
     now: str,
 ) -> str:
-    body = (
+    body = _ensure_issue_body(
         f"{marker_for(template_fingerprint)}\n\n"
         "Automated error-log finding.\n\n"
         f"```\n{excerpt}\n```\n\n"
@@ -395,7 +401,7 @@ def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str
 def _create_storm_issue(
     runner: Runner, *, issue_repo: str, templates: dict[str, dict[str, str]], now: str
 ) -> str:
-    body = (
+    body = _ensure_issue_body(
         f"{STORM_MARKER}\n\n"
         "Automated burst finding: this run saw more distinct new error templates "
         "than usual in one pass. That is more likely one shared root cause than "
