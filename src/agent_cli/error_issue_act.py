@@ -141,7 +141,12 @@ def render_variants_section(variants: dict[str, dict[str, str]]) -> str:
     where every later update would fail and the template would be stuck erroring
     for good. The most recently seen variants are the ones worth keeping; the
     dropped count stays visible in the section so the table never silently
-    understates what was seen."""
+    understates what was seen.
+
+    Accepted trade-off: an evicted variant that recurs later reads as new again
+    and is announced a second time. The cooldown keeps that from becoming a
+    tight loop, and an occasional repeat comment is the cheaper failure than an
+    issue that grows past the body limit and can never be updated again."""
     kept = variants
     dropped = 0
     if len(variants) > MAX_TRACKED_VARIANTS:
@@ -248,6 +253,29 @@ def touch_history(store: Store) -> dict[str, datetime]:
         if previous is None or touched_dt > previous:
             history[template_fingerprint] = touched_dt
     return history
+
+
+def burst_folded_templates(store: Store) -> set[str]:
+    """Templates this device already folded into a burst issue.
+
+    The burst table is capped, so a long-lived burst issue can evict an older
+    label from its body. Local history still remembers the fold, and that is
+    what keeps such a template from being filed a second time while its burst
+    issue is open."""
+    folded: set[str] = set()
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin or row.get("type") != "error.issue":
+            continue
+        if row.get("execution_status") != "done":
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict) or result.get("mode") != "storm":
+            continue
+        template_fingerprint = result.get("template_fingerprint")
+        if isinstance(template_fingerprint, str):
+            folded.add(template_fingerprint)
+    return folded
 
 
 def _within_cooldown(
@@ -685,7 +713,7 @@ def _scan_error_issue(
         for template_fp in new_templates:
             del groups[template_fp]
 
-    open_burst = _OpenBurst(runner, issue_repo)
+    open_burst = _OpenBurst(runner, issue_repo, burst_folded_templates(store))
     for template_fp, members in groups.items():
         lines.extend(
             _process_template(
@@ -714,14 +742,20 @@ class _OpenBurst:
     lookup the retry would file a second, individual issue for a template the
     burst issue already covers, splitting one template across two issues."""
 
-    def __init__(self, runner: Runner, issue_repo: str) -> None:
+    def __init__(self, runner: Runner, issue_repo: str, folded: set[str]) -> None:
         self._runner = runner
         self._issue_repo = issue_repo
+        self._folded = folded
         self._number: int | None = None
         self._labels: set[str] | None = None
 
-    def covers(self, label: str) -> int | None:
-        """The open burst issue's number when it already lists this label."""
+    def covers(self, label: str, template_fingerprint: str) -> int | None:
+        """The open burst issue's number when this template is already in it.
+
+        The issue body is the primary source, but its table is capped, so an
+        older fold can be missing from it. Local history covers exactly that
+        gap. Both only count while a burst issue is actually open: once a human
+        closes it, a template that recurs has earned its own issue."""
         if self._labels is None:
             self._number = find_issue_number(self._runner, self._issue_repo, STORM_MARKER)
             if self._number is None:
@@ -729,7 +763,9 @@ class _OpenBurst:
             else:
                 body = _issue_body(self._runner, self._issue_repo, self._number)
                 self._labels = set(parse_variants_section(body))
-        if label in self._labels:
+        if self._number is None:
+            return None
+        if label in self._labels or template_fingerprint in self._folded:
             return self._number
         return None
 
@@ -814,7 +850,9 @@ def _process_template(
     first_payload = members[0][1]
     if number is None:
         try:
-            burst_number = open_burst.covers(_storm_label(template_fp, first_payload))
+            burst_number = open_burst.covers(
+                _storm_label(template_fp, first_payload), template_fp
+            )
         except StoreError as exc:
             return fail_all(exc)
         if burst_number is not None:

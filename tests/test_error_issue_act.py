@@ -443,6 +443,7 @@ def _prior_touch(
     at: str,
     activity_id: str,
     skipped: bool = False,
+    mode: str | None = None,
 ) -> None:
     result: dict[str, object] = {
         "issue_repo": "org/tracker",
@@ -451,6 +452,8 @@ def _prior_touch(
     }
     if skipped:
         result["skipped"] = "cooldown"
+    if mode is not None:
+        result["mode"] = mode
     store.write(
         "activity",
         "insert",
@@ -1194,3 +1197,68 @@ def test_storm_issue_lists_each_environment_separately(tmp_path: Path) -> None:
     assert all("storm size=3" in line for line in lines)
     body = created[-1][created[-1].index("--body") + 1]
     assert len(parse_variants_section(body)) == 3
+
+
+def test_evicted_burst_label_still_blocks_a_second_issue(tmp_path: Path) -> None:
+    """The burst table is capped, so an old fold can drop out of the issue body.
+    Local history has to cover that gap, or the template gets a second issue and
+    ends up split across two."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, template_fingerprint="api|error|old|prod")
+    _issue(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|old|prod",
+        at="2026-08-01T10:00:00Z",
+        activity_id="prior-storm",
+        mode="storm",
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "create"]:
+            raise AssertionError(f"must not open a second issue: {argv}")
+        if argv[:3] == ["gh", "issue", "list"]:
+            marker = STORM_MARKER if "--search" not in argv else ""
+            return Completed(0, json.dumps([{"number": 99, "body": STORM_MARKER}]), marker)
+        if argv[:3] == ["gh", "issue", "view"]:
+            # The burst issue is open, but this template's row was evicted.
+            body = f"{STORM_MARKER}\n\n" + render_variants_section(
+                {"other/prod: error (zzzzzzzz)": {"first_seen": "t1", "last_seen": "t1"}}
+            )
+            return Completed(0, json.dumps({"body": body}), "")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
+    )
+    assert lines == ["error.issue issue-1 already-in-burst number=99"]
+
+
+def test_a_closed_burst_lets_the_template_get_its_own_issue(tmp_path: Path) -> None:
+    """Once a human closes the burst issue, a template that recurs has earned an
+    issue of its own — history alone must not suppress it forever."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, template_fingerprint="api|error|old|prod")
+    _issue(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|old|prod",
+        at="2026-08-01T10:00:00Z",
+        activity_id="prior-storm",
+        mode="storm",
+    )
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/5\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
+    )
+    assert lines == ["error.issue issue-1 created variant=Ethereum"]
+    assert any(c[:3] == ["gh", "issue", "create"] for c in created)
