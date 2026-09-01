@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from agent_cli.error_issue_act import (
     STORM_MARKER,
     _create_issue,
     _create_storm_issue,
-    _recently_touched,
+    _within_cooldown,
     extract_variant,
     find_issue_number,
     marker_for,
@@ -144,11 +145,38 @@ def test_find_issue_number_none_when_empty(tmp_path: Path) -> None:
     assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
 
 
-def test_find_issue_number_parses_first_match() -> None:
+def test_find_issue_number_matches_the_marker_in_the_body() -> None:
     def runner(argv: list[str]) -> Completed:
-        return Completed(0, '[{"number": 42}, {"number": 43}]', "")
+        assert "--search" not in argv
+        return Completed(
+            0,
+            json.dumps(
+                [
+                    {"number": 42, "body": "another template <!-- error-log-template:x -->"},
+                    {"number": 43, "body": "carries api|error|abc|prod here"},
+                ]
+            ),
+            "",
+        )
 
-    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") == 42
+    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") == 43
+
+
+def test_find_issue_number_ignores_issues_without_the_marker() -> None:
+    """A labeled issue that search might surface but that does not carry this
+    template's marker must not be adopted as its issue."""
+    def runner(argv: list[str]) -> Completed:
+        return Completed(0, json.dumps([{"number": 42, "body": "unrelated"}]), "")
+
+    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
+
+
+def test_find_issue_number_raises_when_gh_is_missing() -> None:
+    def runner(argv: list[str]) -> Completed:
+        raise OSError("No such file or directory: 'gh'")
+
+    with pytest.raises(StoreError, match="gh issue list failed"):
+        find_issue_number(runner, "org/tracker", "api|error|abc|prod")
 
 
 def test_find_issue_number_raises_on_gh_failure() -> None:
@@ -252,10 +280,12 @@ def test_scan_updates_existing_issue_same_variant_no_comment(tmp_path: Path) -> 
     def runner(argv: list[str]) -> Completed:
         calls.append(list(argv))
         if argv[:3] == ["gh", "issue", "list"]:
-            return Completed(0, '[{"number": 9}]', "")
+            return Completed(
+                0,
+                json.dumps([{"number": 9, "body": marker_for("api|error|abc123|prod")}]),
+                "",
+            )
         if argv[:3] == ["gh", "issue", "view"]:
-            import json
-
             return Completed(0, json.dumps({"body": existing_body}), "")
         if argv[:3] == ["gh", "issue", "edit"]:
             return Completed(0, "", "")
@@ -295,10 +325,12 @@ def test_scan_updates_existing_issue_new_variant_posts_comment(tmp_path: Path) -
     def runner(argv: list[str]) -> Completed:
         calls.append(list(argv))
         if argv[:3] == ["gh", "issue", "list"]:
-            return Completed(0, '[{"number": 9}]', "")
+            return Completed(
+                0,
+                json.dumps([{"number": 9, "body": marker_for("api|error|abc123|prod")}]),
+                "",
+            )
         if argv[:3] == ["gh", "issue", "view"]:
-            import json
-
             return Completed(0, json.dumps({"body": existing_body}), "")
         if argv[:3] in (["gh", "issue", "edit"], ["gh", "issue", "comment"]):
             return Completed(0, "", "")
@@ -445,25 +477,13 @@ def _seen_and_issue(
 # ---- cooldown ----
 
 
-def test_recently_touched_false_with_no_history(tmp_path: Path) -> None:
+def test_cooldown_false_with_no_history(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
-    assert _recently_touched(store, "api|error|abc|prod", utcnow(), 60) is False
+    assert _within_cooldown(touch_history(store), "api|error|abc|prod", utcnow(), 60) is False
 
 
-def test_recently_touched_true_within_window(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    _runner_session(store)
-    _prior_touch(
-        store,
-        template_fingerprint="api|error|abc|prod",
-        at="2026-08-31T10:00:00Z",
-        activity_id="prior-1",
-    )
-    assert _recently_touched(store, "api|error|abc|prod", "2026-08-31T10:30:00Z", 60) is True
-
-
-def test_recently_touched_false_after_expiry(tmp_path: Path) -> None:
+def test_cooldown_true_within_window(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
     _prior_touch(
@@ -472,10 +492,28 @@ def test_recently_touched_false_after_expiry(tmp_path: Path) -> None:
         at="2026-08-31T10:00:00Z",
         activity_id="prior-1",
     )
-    assert _recently_touched(store, "api|error|abc|prod", "2026-08-31T11:30:00Z", 60) is False
+    assert (
+        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T10:30:00Z", 60)
+        is True
+    )
 
 
-def test_recently_touched_ignores_skipped_results(tmp_path: Path) -> None:
+def test_cooldown_false_after_expiry(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-1",
+    )
+    assert (
+        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T11:30:00Z", 60)
+        is False
+    )
+
+
+def test_cooldown_ignores_skipped_results(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
     _prior_touch(
@@ -486,7 +524,10 @@ def test_recently_touched_ignores_skipped_results(tmp_path: Path) -> None:
         skipped=True,
     )
     # A skip-only history must not itself extend the cooldown window.
-    assert _recently_touched(store, "api|error|abc|prod", "2026-08-31T10:30:00Z", 60) is False
+    assert (
+        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T10:30:00Z", 60)
+        is False
+    )
 
 
 def test_scan_skips_recently_touched_template_without_gh_calls(tmp_path: Path) -> None:
@@ -626,10 +667,8 @@ def test_scan_storm_reuses_existing_open_storm_issue(tmp_path: Path) -> None:
     def runner(argv: list[str]) -> Completed:
         calls.append(list(argv))
         if argv[:3] == ["gh", "issue", "list"]:
-            return Completed(0, '[{"number": 55}]', "")
+            return Completed(0, json.dumps([{"number": 55, "body": STORM_MARKER}]), "")
         if argv[:3] == ["gh", "issue", "view"]:
-            import json
-
             return Completed(0, json.dumps({"body": existing_body}), "")
         if argv[:3] == ["gh", "issue", "edit"]:
             return Completed(0, "", "")
@@ -734,7 +773,11 @@ def test_scan_comments_once_for_several_new_variants(tmp_path: Path) -> None:
 
     def runner(argv: list[str]) -> Completed:
         if argv[:3] == ["gh", "issue", "list"]:
-            return Completed(0, '[{"number": 12}]', "")
+            return Completed(
+                0,
+                json.dumps([{"number": 12, "body": marker_for("api|error|same|prod")}]),
+                "",
+            )
         if argv[:3] == ["gh", "issue", "view"]:
             return Completed(0, '{"body": "text\\n"}', "")
         return Completed(0, "", "")
@@ -764,7 +807,11 @@ def test_scan_keeps_the_edit_when_the_comment_fails(tmp_path: Path) -> None:
 
     def runner(argv: list[str]) -> Completed:
         if argv[:3] == ["gh", "issue", "list"]:
-            return Completed(0, '[{"number": 12}]', "")
+            return Completed(
+                0,
+                json.dumps([{"number": 12, "body": marker_for("api|error|abc123|prod")}]),
+                "",
+            )
         if argv[:3] == ["gh", "issue", "view"]:
             return Completed(0, '{"body": "text\\n"}', "")
         if argv[:3] == ["gh", "issue", "comment"]:

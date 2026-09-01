@@ -228,14 +228,6 @@ def _within_cooldown(
     return now_dt - touched_dt < timedelta(minutes=cooldown_minutes)
 
 
-def _recently_touched(
-    store: Store, template_fingerprint: str, now: str, cooldown_minutes: int
-) -> bool:
-    """Single-template convenience over touch_history/_within_cooldown."""
-    return _within_cooldown(
-        touch_history(store), template_fingerprint, now, cooldown_minutes
-    )
-
 
 def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     payload = row.get("payload")
@@ -257,10 +249,39 @@ def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[st
     return error_id, template_fp, seen_payload
 
 
+def _gh(runner: Runner, argv: list[str], fallback: str) -> str:
+    """Run one gh command and return its stdout. A missing or broken binary
+    raises the same StoreError as a non-zero exit, so it stays a per-row failure
+    instead of aborting the whole scan (same contract as error_fix_act and
+    github_act)."""
+    try:
+        completed = runner(argv)
+    except OSError as exc:
+        raise StoreError(f"{fallback}: {exc}") from exc
+    if completed.returncode != 0:
+        raise StoreError((completed.stderr or completed.stdout or fallback).strip())
+    return completed.stdout
+
+
+def _gh_json(runner: Runner, argv: list[str], fallback: str) -> Any:
+    stdout = _gh(runner, argv, fallback)
+    try:
+        return json.loads(stdout)
+    except ValueError as exc:
+        raise StoreError(f"{fallback}: invalid JSON") from exc
+
+
 def find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | None:
-    """Search issue_repo for an open, labeled issue carrying this marker. None
-    if no such issue exists yet."""
-    completed = runner(
+    """The open, labeled issue whose body carries this marker, or None if none
+    exists yet.
+
+    The label bounds the candidates and the marker is matched against the body
+    here rather than handed to `--search`: GitHub's search is full-text and
+    tokenizing, so it can both miss the marker and return an issue that does not
+    carry it, and the returned candidate's body would never be checked. This
+    mirrors the find-or-create in github_act."""
+    listed = _gh_json(
+        runner,
         [
             "gh",
             "issue",
@@ -271,36 +292,38 @@ def find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | Non
             ISSUE_LABEL,
             "--state",
             "open",
-            "--search",
-            marker,
+            "--limit",
+            "100",
             "--json",
-            "number",
-        ]
+            "number,body",
+        ],
+        "gh issue list failed",
     )
-    if completed.returncode != 0:
-        raise StoreError((completed.stderr or completed.stdout or "gh issue list failed").strip())
-    try:
-        found = json.loads(completed.stdout)
-    except ValueError as exc:
-        raise StoreError("gh issue list returned invalid JSON") from exc
-    if not isinstance(found, list) or not found:
-        return None
-    first = found[0]
-    number = first.get("number") if isinstance(first, dict) else None
-    if isinstance(number, bool) or not isinstance(number, int):
-        raise StoreError("gh issue list returned a non-integer number")
-    return number
+    if not isinstance(listed, list):
+        raise StoreError("gh issue list is not an array")
+    for issue in listed:
+        if not isinstance(issue, dict):
+            continue
+        body = issue.get("body")
+        if not isinstance(body, str) or marker not in body:
+            continue
+        number = issue.get("number")
+        if isinstance(number, bool) or not isinstance(number, int):
+            raise StoreError("gh issue list returned a non-integer number")
+        return number
+    return None
 
 
 def _issue_body(runner: Runner, issue_repo: str, number: int) -> str:
-    completed = runner(["gh", "issue", "view", str(number), "--repo", issue_repo, "--json", "body"])
-    if completed.returncode != 0:
-        raise StoreError((completed.stderr or completed.stdout or "gh issue view failed").strip())
-    try:
-        data = json.loads(completed.stdout)
-    except ValueError as exc:
-        raise StoreError("gh issue view returned invalid JSON") from exc
-    body = data.get("body") if isinstance(data, dict) else None
+    data = _gh_json(
+        runner,
+        ["gh", "issue", "view", str(number), "--repo", issue_repo, "--json", "body"],
+        "gh issue view failed",
+    )
+    if not isinstance(data, dict):
+        raise StoreError("gh issue view did not return an object")
+    body = data.get("body")
+    # An issue that never had a description reports null; that is genuinely empty.
     return body if isinstance(body, str) else ""
 
 
@@ -321,7 +344,8 @@ def _create_issue(
         + render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
         + "\n"
     )
-    completed = runner(
+    return _gh(
+        runner,
         [
             "gh",
             "issue",
@@ -334,11 +358,9 @@ def _create_issue(
             title,
             "--body",
             body,
-        ]
-    )
-    if completed.returncode != 0:
-        raise StoreError((completed.stderr or completed.stdout or "gh issue create failed").strip())
-    return completed.stdout.strip()
+        ],
+        "gh issue create failed",
+    ).strip()
 
 
 def _update_issue(
@@ -362,29 +384,39 @@ def _update_issue(
             tracked[variant]["last_seen"] = now
         else:
             tracked[variant] = {"first_seen": now, "last_seen": now}
-    edit = runner(
-        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", splice_variants(body, tracked)]
-    )
-    if edit.returncode != 0:
-        raise StoreError((edit.stderr or edit.stdout or "gh issue edit failed").strip())
-    if not new_variants:
-        return new_variants, None
-    comment = runner(
+    _gh(
+        runner,
         [
             "gh",
             "issue",
-            "comment",
+            "edit",
             str(number),
             "--repo",
             issue_repo,
             "--body",
-            f"Also seen on: {', '.join(new_variants)} ({now}).",
-        ]
+            splice_variants(body, tracked),
+        ],
+        "gh issue edit failed",
     )
-    if comment.returncode != 0:
-        return new_variants, (
-            comment.stderr or comment.stdout or "gh issue comment failed"
-        ).strip()
+    if not new_variants:
+        return new_variants, None
+    try:
+        _gh(
+            runner,
+            [
+                "gh",
+                "issue",
+                "comment",
+                str(number),
+                "--repo",
+                issue_repo,
+                "--body",
+                f"Also seen on: {', '.join(new_variants)} ({now}).",
+            ],
+            "gh issue comment failed",
+        )
+    except StoreError as exc:
+        return new_variants, str(exc)
     return new_variants, None
 
 
@@ -410,7 +442,8 @@ def _create_storm_issue(
         + render_variants_section(templates)
         + "\n"
     )
-    completed = runner(
+    return _gh(
+        runner,
         [
             "gh",
             "issue",
@@ -423,11 +456,9 @@ def _create_storm_issue(
             f"Error-log burst: {len(templates)} new templates in one run",
             "--body",
             body,
-        ]
-    )
-    if completed.returncode != 0:
-        raise StoreError((completed.stderr or completed.stdout or "gh issue create failed").strip())
-    return completed.stdout.strip()
+        ],
+        "gh issue create failed",
+    ).strip()
 
 
 def _update_storm_issue(
@@ -440,11 +471,20 @@ def _update_storm_issue(
             existing[name]["last_seen"] = entry["last_seen"]
         else:
             existing[name] = dict(entry)
-    edit = runner(
-        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", splice_variants(body, existing)]
+    _gh(
+        runner,
+        [
+            "gh",
+            "issue",
+            "edit",
+            str(number),
+            "--repo",
+            issue_repo,
+            "--body",
+            splice_variants(body, existing),
+        ],
+        "gh issue edit failed",
     )
-    if edit.returncode != 0:
-        raise StoreError((edit.stderr or edit.stdout or "gh issue edit failed").strip())
 
 
 def _process_storm(
