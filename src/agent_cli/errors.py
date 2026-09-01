@@ -60,9 +60,16 @@ _KNOWN_CHAINS = frozenset(
 
 
 def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
-    """Alternation over known names, longest-first so e.g. "Bitcoin" cannot
-    shadow-match a prefix of "BitcoinTestnet4" and "USD" cannot shadow-match
-    "USDC". Anchored on both sides so a name only matches as a whole token:
+    """Alternation over known names, longest-first, anchored on both sides.
+
+    The anchors alone settle names made only of word characters: "Bitcoin"
+    inside "BitcoinTestnet4" fails its own trailing look-ahead, so the engine
+    backtracks to the longer alternative whatever the order. Ordering is what
+    settles the rest — "USDC" inside "USDC.e" is followed by ".", which is not a
+    word character, so the short alternative would match and strip the ticker
+    down to the wrong asset unless the longer one is tried first.
+
+    Anchored on both sides so a name only matches as a whole token:
     without that, "Base" matches inside "Based", "SOL" inside "RESOLVE", "COMP"
     inside "COMPLETE" and "DAI" inside "DAILY", which would mask unrelated words
     and label an unrelated error as a chain/asset variant. The anchors are

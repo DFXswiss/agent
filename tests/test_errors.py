@@ -995,3 +995,11 @@ def test_template_fingerprint_fields_cannot_collide() -> None:
     assert template_fingerprint(
         service="a%7Cb", error_class="c", template_sig="sig", environment="e"
     ) != second
+
+
+def test_asset_alternation_must_try_the_longest_name_first() -> None:
+    """The boundary anchors settle word-character names on their own, but not a
+    ticker containing punctuation: "." is not a word character, so "USDC" would
+    match inside "USDC.e" and strip it down to the wrong asset."""
+    assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
+    assert known_asset_in("USDC drift on Arbitrum") == "USDC"

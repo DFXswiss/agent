@@ -638,7 +638,9 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 
 `template_fingerprint` is `fingerprint` one step coarser: known blockchain and
 payment-rail names and asset tickers are masked before hashing, so per-chain and
-per-token variants of one error share it. Names are masked only as whole tokens
+per-token variants of one error share it. `service`, `class` and `environment`
+are percent-escaped (`%`→`%25`, `|`→`%7C`) before the join, so two different
+field tuples cannot serialize to one fingerprint. Names are masked only as whole tokens
 and case-sensitively, so prose like "Based" or lowercase "usd" is not mistaken
 for a chain or a ticker. It groups which issue a variant belongs to (§21.6);
 `fingerprint` stays the finer-grained identity used for `count` / `last_seen`,
@@ -692,8 +694,11 @@ The model never receives production credentials. Analysis that only reads the ex
 concrete variants live in a machine-owned, delimited section of the issue body;
 nothing outside that section is ever rewritten. A body carrying only one of the
 two markers, or a duplicated marker, is treated as damaged rather than appended
-to. Two throttles sit in front: a burst fold, counted over templates never filed
-before so a backlog draining after downtime is not mistaken for a burst, and a
+to. A genuinely new variant is also announced with one `Also seen on: …`
+comment; that comment is best effort, so a comment that fails after the body
+edit landed is recorded on the row rather than discarding the edit. Two
+throttles sit in front: a burst fold, counted over templates never filed before
+so a backlog draining after downtime is not mistaken for a burst, and a
 per-template cooldown read from local history — a dry run is a preview and never
 opens that window.
 
