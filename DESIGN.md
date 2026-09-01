@@ -677,13 +677,14 @@ The model never receives production credentials. Analysis that only reads the ex
 ### 21.6 Not in this revision
 
 - A second hub state machine, leases, or autonomous merge
-- Dispatch for `error.issue`. The grouping and throttling logic ships as
-  `error_issue_act` with its tests, but the type is deliberately not yet in the
-  `agent activity add` allowlist and no watch command calls the scan, so nothing
-  files an issue yet. Wiring it means adding the type to that allowlist, an
-  `agent watch error-issue` one-scan command next to `agent watch error-fix`, and
-  `issue_repo` / `dry_run` / `cooldown_minutes` / `storm_threshold` in
-  `error-fix.json`.
+- Dispatch for `error.issue`. Its payload is `{ "error_id": "<error.seen-id>" }`;
+  the scan reads the template and the excerpt from that `error.seen` row. The
+  grouping and throttling logic ships as `error_issue_act` with its tests, but
+  the type is deliberately not yet in the `agent activity add` allowlist and no
+  watch command calls the scan, so nothing files an issue yet. Wiring it means
+  adding the type to that allowlist, an `agent watch error-issue` one-scan
+  command next to `agent watch error-fix`, and `issue_repo` / `dry_run` /
+  `cooldown_minutes` / `storm_threshold` in `error-fix.json`.
 
 `error.issue` groups by `template_fingerprint` (§21.3), not by the per-variant
 `fingerprint`, so one issue covers every chain/token variant of one error. The
