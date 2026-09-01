@@ -279,16 +279,35 @@ def template_signature(line: str) -> str:
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
 
 
+def _escape_field(value: str) -> str:
+    """Make a field safe to join with "|".
+
+    service, error_class and environment are free text from the log source, so
+    an unescaped join is ambiguous: service="a", error_class="b|c" and
+    service="a|b", error_class="c" would produce the same fingerprint and group
+    two unrelated errors under one template. Percent-escaping "%" first and then
+    "|" is reversible, so distinct field tuples stay distinct."""
+    return value.replace("%", "%25").replace("|", "%7C")
+
+
 def template_fingerprint(
     *, service: str, error_class: str, template_sig: str, environment: str
 ) -> str:
-    return f"{service}|{error_class}|{template_sig}|{environment}"
+    return "|".join(
+        (
+            _escape_field(service),
+            _escape_field(error_class),
+            template_sig,
+            _escape_field(environment),
+        )
+    )
 
 
 def known_chain_in(line: str) -> str | None:
-    """The first known blockchain name present in the line, if any — used to
-    label which concrete variant a template_fingerprint incident belongs to.
-    Most error lines don't name a chain; those return None."""
+    """The first known chain or payment-rail name present in the line, if any —
+    used to label which concrete variant a template_fingerprint incident belongs
+    to. _KNOWN_CHAINS covers both, since the platform exposes them as one set of
+    transfer options. Most error lines name neither; those return None."""
     match = _CHAIN_TOKEN.search(line)
     return match.group(0) if match is not None else None
 

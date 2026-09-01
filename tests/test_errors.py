@@ -977,3 +977,21 @@ def test_template_signature_does_not_group_unrelated_words_with_assets() -> None
     assert template_signature("UNIQUE constraint failed") != template_signature(
         "UNI constraint failed"
     )
+
+
+def test_template_fingerprint_fields_cannot_collide() -> None:
+    """service, error_class and environment are free text from the log source.
+    An unescaped join would let two different field tuples produce one
+    fingerprint and group unrelated errors under a single template."""
+    first = template_fingerprint(
+        service="a", error_class="b|c", template_sig="sig", environment="e"
+    )
+    second = template_fingerprint(
+        service="a|b", error_class="c", template_sig="sig", environment="e"
+    )
+    assert first != second
+
+    # The escape itself must not become a new collision route.
+    assert template_fingerprint(
+        service="a%7Cb", error_class="c", template_sig="sig", environment="e"
+    ) != second
