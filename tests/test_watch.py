@@ -1622,6 +1622,62 @@ def test_pending_assigned_keeps_delivered_inflight_as_head(tmp_path: Path) -> No
     assert [row["id"] for row in pending] == ["asg-old"]
 
 
+def test_pending_assigned_orders_same_timestamp_rows_by_event_id(
+    tmp_path: Path,
+) -> None:
+    # Two rows can share an assigned_at when a later scan adds a genuinely
+    # later same-second event (see _assignment_is_newer) — order those by
+    # event_id, not by the random activity uuid. Ids are chosen so that
+    # sorting by id alone (the pre-fix behavior) would give the WRONG
+    # order, so this genuinely fails without the event_id-aware sort key.
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-aaa-higher-event-id",
+        {
+            "id": "asg-aaa-higher-event-id",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "assigned_at": "2026-06-01T00:00:00Z",
+                "event_id": 200,
+            },
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-zzz-lower-event-id",
+        {
+            "id": "asg-zzz-lower-event-id",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "assigned_at": "2026-06-01T00:00:00Z",
+                "event_id": 100,
+            },
+            "execution_status": "done",
+        },
+    )
+    pending = pending_assigned(store, "assigned")
+    assert [row["id"] for row in pending] == [
+        "asg-zzz-lower-event-id",
+        "asg-aaa-higher-event-id",
+    ]
+
+
 def test_scan_assigned_reassignment_while_pending_enqueues(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")

@@ -598,7 +598,7 @@ def acked_assigned_ids(store: Store, session_id: str) -> set[str]:
 
 def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
     acked = acked_assigned_ids(store, session_id)
-    ranked: list[tuple[str, str, dict[str, Any]]] = []
+    ranked: list[tuple[str, int, str, dict[str, Any]]] = []
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
             continue
@@ -611,13 +611,22 @@ def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
             continue
         payload = row.get("payload")
         assigned_at = ""
-        if isinstance(payload, dict) and isinstance(payload.get("assigned_at"), str):
-            assigned_at = payload["assigned_at"]
-        ranked.append((assigned_at, aid, row))
+        event_id = -1
+        if isinstance(payload, dict):
+            if isinstance(payload.get("assigned_at"), str):
+                assigned_at = payload["assigned_at"]
+            raw_id = payload.get("event_id")
+            if isinstance(raw_id, int) and not isinstance(raw_id, bool):
+                event_id = raw_id
+        # Same-timestamp rows can coexist (a later scan may add one for a
+        # genuinely later same-second GitHub event, see _assignment_is_newer)
+        # — order those by event_id, not by the random activity uuid, so the
+        # chronologically later one is processed after the earlier one.
+        ranked.append((assigned_at, event_id, aid, row))
     ranked.sort()
     inflight: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
-    for _assigned_at, aid, row in ranked:
+    for _assigned_at, _event_id, aid, row in ranked:
         if store.wake_delivered(aid):
             inflight.append(row)
         else:
