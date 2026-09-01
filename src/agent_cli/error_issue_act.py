@@ -393,10 +393,12 @@ def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, dict[str, An
 
 
 def _gh(runner: Runner, argv: list[str], fallback: str) -> str:
-    """Run one gh command and return its stdout. A missing or broken binary
-    raises the same StoreError as a non-zero exit, so it stays a per-row failure
-    instead of aborting the whole scan (same contract as error_fix_act and
-    github_act)."""
+    """Run one gh command and return its stdout.
+
+    A missing or broken binary, and subprocess refusing an argument outright
+    (a NUL byte carried in from a log line), both raise the same StoreError as a
+    non-zero exit, so either stays a per-row failure instead of aborting the
+    whole scan (same contract as error_fix_act and github_act)."""
     try:
         completed = runner(argv)
     except (OSError, ValueError) as exc:
@@ -837,6 +839,7 @@ class _OpenBurst:
         self._folded = folded
         self._number: int | None = None
         self._labels: set[str] | None = None
+        self._failure: StoreError | None = None
 
     def covers(self, label: str, template_fingerprint: str) -> int | None:
         """The open burst issue's number when this template is already in it.
@@ -845,17 +848,25 @@ class _OpenBurst:
         older fold can be missing from it. Local history covers exactly that
         gap. Both only count while a burst issue is actually open: once a human
         closes it, a template that recurs has earned its own issue."""
+        if self._failure is not None:
+            # Cache the failure too, or the guard below would send every later
+            # template through the same two gh calls to the same broken body.
+            raise self._failure
         if self._labels is None:
-            self._number = _find_issue_number(self._runner, self._issue_repo, STORM_MARKER)
-            if self._number is None:
-                self._labels = set()
-            else:
-                body = _issue_body(self._runner, self._issue_repo, self._number)
-                # A damaged section parses to nothing, which would read as "this
-                # burst covers no template" and file duplicates. Fail loud on it,
-                # exactly as a splice would.
-                _require_intact_section(body)
-                self._labels = set(_parse_variants_section(body))
+            try:
+                self._number = _find_issue_number(self._runner, self._issue_repo, STORM_MARKER)
+                if self._number is None:
+                    self._labels = set()
+                else:
+                    body = _issue_body(self._runner, self._issue_repo, self._number)
+                    # A damaged section parses to nothing, which would read as
+                    # "this burst covers no template" and file duplicates. Fail
+                    # loud on it, exactly as a splice would.
+                    _require_intact_section(body)
+                    self._labels = set(_parse_variants_section(body))
+            except StoreError as exc:
+                self._failure = exc
+                raise
         if self._number is None:
             return None
         if label in self._labels or self._number in self._folded.get(template_fingerprint, set()):
@@ -876,10 +887,12 @@ def _process_template(
     cooldown_minutes: int,
     open_burst: _OpenBurst,
 ) -> list[str]:
-    """Handle every pending row of one template together. Rows are grouped
-    because two variants of the same template in one scan belong in one issue:
-    processing them one by one would make the first a cooldown touch for the
-    second and silently drop that variant."""
+    """Handle every pending row of one template together.
+
+    Two variants of the same template in one scan belong in one issue, so they
+    are collected into a single create or update and a single comment rather
+    than one round trip each. Cooldown safety is not what grouping buys: the
+    history snapshot is taken before the scan marks anything."""
     lines: list[str] = []
     excerpts: list[str] = []
     for _row, seen_payload in members:

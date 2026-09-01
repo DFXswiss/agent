@@ -759,9 +759,9 @@ def test_scan_storm_marks_all_rows_error_on_create_failure(tmp_path: Path) -> No
 
 
 def test_scan_merges_two_variants_of_one_template_into_one_issue(tmp_path: Path) -> None:
-    """Two variants of the same template in one scan belong in one issue. Handled
-    row by row, the first would become a cooldown touch for the second and that
-    variant would be dropped."""
+    """Two variants of the same template in one scan belong in one issue, written
+    once with a single comment rather than one round trip each. Cooldown safety
+    comes from the history snapshot, not from this grouping."""
     store = Store(tmp_path)
     _runner_session(store)
     _seen(
@@ -1597,3 +1597,31 @@ def test_burst_lookup_fails_loud_on_a_damaged_body(tmp_path: Path) -> None:
     row = store.row("activity", "issue-1")
     assert row is not None
     assert "damaged variants section" in row["execution_error"]
+
+
+def test_a_damaged_burst_body_is_only_fetched_once(tmp_path: Path) -> None:
+    """The lookup promises one fetch per scan. Without caching the failure, every
+    later template would repeat both gh calls against the same broken body."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    damaged = f"{STORM_MARKER}\n\n{_VARIANTS_START}\n\n| a | t1 | t1 |\n"
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, json.dumps([{"number": 99, "body": STORM_MARKER}]), "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, json.dumps({"body": damaged}), "")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
+    )
+    assert len(lines) == 3
+    assert all(line.endswith("error") for line in lines)
+    # One list + one view for the burst issue, plus the per-template marker
+    # lookups; the damaged body must not be re-fetched per template.
+    assert len([c for c in calls if c[:3] == ["gh", "issue", "view"]]) == 1
