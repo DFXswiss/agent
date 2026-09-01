@@ -611,15 +611,11 @@ def _apply_lines(
             stack_sig=stack_sig(redacted),
             environment=environment,
         )
-        # Redacted here, not just where these reach a public issue: the marker in
-        # a public issue body is a digest of this fingerprint, so hashing the raw
-        # value would let a reader confirm a guessed one. fingerprint() keeps the
-        # raw value — it is local identity for already-stored error.seen rows.
         template_fp = template_fingerprint(
-            service=redact(service),
+            service=service,
             error_class=cls,
             template_sig=template_signature(redacted),
-            environment=redact(environment),
+            environment=environment,
         )
         server = item.get("server")
         container = item.get("container")

@@ -640,14 +640,16 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 payment-rail names and asset tickers are masked before hashing, so per-chain and
 per-token variants of one error share it. Names are masked only as whole tokens
 and case-sensitively, so prose like "Based" or lowercase "usd" is not mistaken
-for a chain or a ticker. `service` and `environment` go through `redact()` first
-— the hidden marker in a public issue is a digest of this fingerprint, so
-hashing a raw stream label would let a reader confirm a guessed one — and then
-`service`, `class` and `environment` are percent-escaped (`%`→`%25`, `|`→`%7C`)
-before the join, so two different field tuples cannot serialize to one
-fingerprint. It groups which issue a variant belongs to (§21.6); `fingerprint`
-keeps the raw values and stays the finer-grained identity used for `count` /
-`last_seen`, so per-variant dedup remains exact.
+for a chain or a ticker. `service`, `class` and `environment` are
+percent-escaped (`%`→`%25`, `|`→`%7C`) before the join, so two different field
+tuples cannot serialize to one fingerprint. They keep their raw values:
+grouping has to stay injective, or two
+tenants whose labels merely look alike after redaction would file into one
+issue. The hidden marker in a public issue is a digest of this fingerprint
+salted with the device id, so a reader cannot confirm a guessed stream label by
+recomputing it. It groups which issue a variant belongs to (§21.6);
+`fingerprint` stays the finer-grained identity used for `count` / `last_seen`,
+so per-variant dedup remains exact.
 
 `repo` may be omitted when the adapter cannot map the stream; the session then `error.skip`s with reason `unmapped-repo`. `line_fingerprint` is optional: `sha256(server + newline + container + newline + exact line)` as 64 lowercase hex, computed from the raw line before redaction. Omit it when `server` or `container` is missing. Host adapters may print the hex on `error.fix` stdout; it is not a mandate and not a log-host name.
 

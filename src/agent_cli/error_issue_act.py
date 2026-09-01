@@ -143,16 +143,27 @@ def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
     return row
 
 
-def _marker_for(template_fingerprint: str) -> str:
+def _marker_for(template_fingerprint: str, salt: str) -> str:
     """The hidden marker that identifies a template's issue.
 
     It carries a digest rather than the fingerprint itself: service, class and
     environment are free text from the log source, so a raw fingerprint could
     close the HTML comment early or embed this module's own section markers,
     which would corrupt the body and lose the marker the next lookup needs. The
-    marker is invisible to readers anyway, so nothing is lost by hashing it."""
-    digest = hashlib.sha256(template_fingerprint.encode("utf-8")).hexdigest()[:32]
-    return f"{_MARKER_PREFIX}{digest}{_MARKER_SUFFIX}"
+    marker is invisible to readers anyway, so nothing is lost by hashing it.
+
+    The digest is salted with the device id. The fingerprint stays injective —
+    grouping must not merge two services — but an unsalted digest of it sits in
+    a public issue, where a reader could confirm a guessed stream label by
+    recomputing it. The salt is local, so the marker stays stable for the one
+    device that owns this loop (§21.1) and tells a reader nothing."""
+    try:
+        seed = f"{salt}\x00{template_fingerprint}".encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # A lone surrogate can reach here from an untrusted stream label. Fail
+        # this row rather than the scan, as line_fingerprint already does.
+        raise StoreError(f"template fingerprint is not encodable: {exc}") from exc
+    return f"{_MARKER_PREFIX}{hashlib.sha256(seed).hexdigest()[:32]}{_MARKER_SUFFIX}"
 
 
 def _extract_variant(excerpt: str) -> str:
@@ -301,6 +312,35 @@ def _names_an_issue(result: dict[str, Any]) -> bool:
         return True
     url = result.get("url")
     return isinstance(url, str) and _ISSUE_URL.search(url) is not None
+
+
+def _filed_templates(store: Store, issue_repo: str) -> set[str]:
+    """Templates this device has ever filed an issue for in this repo.
+
+    Deliberately independent of whether the row carries a parseable timestamp:
+    a row with a damaged `at` still proves an issue exists. Treating such a
+    template as never filed would let a burst fold it in without ever looking
+    up the issue it already has, orphaning that issue for good."""
+    filed: set[str] = set()
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin or row.get("type") != "error.issue":
+            continue
+        if row.get("execution_status") != "done":
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict) or result.get("skipped"):
+            continue
+        if result.get("mode") in _DRY_RUN_MODES:
+            continue
+        if result.get("issue_repo") != issue_repo:
+            continue
+        if not _names_an_issue(result):
+            continue
+        template_fingerprint = result.get("template_fingerprint")
+        if isinstance(template_fingerprint, str):
+            filed.add(template_fingerprint)
+    return filed
 
 
 def _touch_history(store: Store, issue_repo: str) -> dict[str, datetime]:
@@ -517,13 +557,13 @@ def _create_issue(
     *,
     issue_repo: str,
     title: str,
-    template_fingerprint: str,
+    marker: str,
     excerpt: str,
     variants: list[str],
     now: str,
 ) -> str:
     body = _ensure_issue_body(
-        f"{_marker_for(template_fingerprint)}\n\n"
+        f"{marker}\n\n"
         "Automated error-log finding.\n\n"
         f"{_fenced(_inert_block(excerpt))}\n\n"
         + _render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
@@ -823,7 +863,11 @@ def _scan_error_issue(
     # Burst detection counts only templates never filed before. A backlog of
     # already-tracked templates draining after downtime is a volume spike, not a
     # burst of new problems, and must keep updating its own issues normally.
-    new_templates = [fp for fp in groups if fp not in history]
+    # Asked of the filed set rather than the cooldown history: a row whose
+    # timestamp is unparseable still proves an issue exists, and folding that
+    # template into a burst would orphan it.
+    filed = _filed_templates(store, issue_repo)
+    new_templates = [fp for fp in groups if fp not in filed]
     if len(new_templates) > storm_threshold:
         storm_rows = [
             (row, template_fp, seen_payload)
@@ -940,6 +984,14 @@ def _process_template(
     Cooldown safety is not what grouping buys: the history snapshot is taken
     before the scan marks anything."""
     lines: list[str] = []
+    try:
+        marker = _marker_for(template_fp, store.device_id())
+    except StoreError as exc:
+        for row, _seen_payload in members:
+            rid = str(row.get("id") or "?")
+            _mark(store, row, status="error", error=str(exc))
+            lines.append(f"error.issue {rid} error")
+        return lines
     excerpts: list[str] = []
     for _row, seen_payload in members:
         excerpt = seen_payload.get("excerpt")
@@ -995,7 +1047,7 @@ def _process_template(
         return lines
 
     try:
-        number = _find_issue_number(runner, issue_repo, _marker_for(template_fp))
+        number = _find_issue_number(runner, issue_repo, marker)
     except StoreError as exc:
         return fail_all(exc)
 
@@ -1033,7 +1085,7 @@ def _process_template(
                 runner,
                 issue_repo=issue_repo,
                 title=f"{service}: {cls}",
-                template_fingerprint=template_fp,
+                marker=marker,
                 excerpt=excerpts[0][:1000],
                 variants=variants,
                 now=now,
@@ -1064,7 +1116,7 @@ def _process_template(
             runner,
             issue_repo=issue_repo,
             number=number,
-            marker=_marker_for(template_fp),
+            marker=marker,
             variants=variants,
             now=now,
         )

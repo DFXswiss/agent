@@ -24,6 +24,7 @@ from agent_cli.error_issue_act import (
     _render_variants_section,
     scan_error_issue,
     _splice_variants,
+    _filed_templates,
     _touch_history,
 )
 from agent_cli.runtime import Completed
@@ -106,20 +107,46 @@ def test_extract_variant_combines_chain_and_asset() -> None:
     assert _extract_variant("Balance for Base/WBTC went low") == "Base/WBTC"
 
 
-def test_marker_is_a_digest_and_never_carries_raw_text() -> None:
+def test_marker_is_a_salted_digest_and_never_carries_raw_text() -> None:
     """service, class and environment are free text from the log source. A raw
     fingerprint in the marker could close the HTML comment early or embed the
-    section markers, corrupting the body and losing the marker the next lookup
-    needs."""
-    marker = _marker_for("api|error|abc123|prod")
+    section markers. The digest is salted because it sits in a public issue: an
+    unsalted one would let a reader confirm a guessed stream label."""
+    marker = _marker_for("api|error|abc123|prod", "device-1")
     assert marker.startswith("<!-- error-log-template:")
     assert marker.endswith(" -->")
-    assert _marker_for("api|error|abc123|prod") == marker
-    assert _marker_for("api|error|abc123|staging") != marker
+    assert _marker_for("api|error|abc123|prod", "device-1") == marker
+    assert _marker_for("api|error|abc123|staging", "device-1") != marker
+    assert _marker_for("api|error|abc123|prod", "device-2") != marker
 
-    hostile = _marker_for(f"api --> {_VARIANTS_START}|error|abc|prod")
+    hostile = _marker_for(f"api --> {_VARIANTS_START}|error|abc|prod", "device-1")
     assert hostile.count("-->") == 1
     assert _VARIANTS_START not in hostile
+
+
+def test_a_marker_that_cannot_be_encoded_fails_the_row(tmp_path: Path) -> None:
+    """A lone surrogate can reach the fingerprint from an untrusted stream label.
+    Unguarded it would abort the whole scan and recur on every later one, leaving
+    this and every following template pending for good."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, template_fingerprint="api|error|abc|\ud800")
+    _issue(store)
+    _seen(store, template_fingerprint="api|error|fine|prod", activity_id="seen-ok")
+    _issue(store, error_id="seen-ok", activity_id="issue-ok")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    # The bad row fails; the good one is still processed.
+    assert "error.issue issue-1 error" in lines
+    assert any("issue-ok created" in line for line in lines)
+    bad = store.row("activity", "issue-1")
+    assert bad is not None
+    assert "not encodable" in bad["execution_error"]
 
 
 def test_variants_section_round_trips() -> None:
@@ -295,7 +322,7 @@ def test_scan_creates_issue_when_none_exists(tmp_path: Path) -> None:
     assert "--repo" in create_call and "org/tracker" in create_call
     assert "--label" in create_call and ISSUE_LABEL in create_call
     body = create_call[create_call.index("--body") + 1]
-    assert _marker_for("api|error|abc123|prod") in body
+    assert _marker_for("api|error|abc123|prod", store.device_id()) in body
     assert "Ethereum" in body
     row = store.row("activity", "issue-1")
     assert row is not None
@@ -313,7 +340,7 @@ def test_scan_updates_existing_issue_same_variant_no_comment(tmp_path: Path) -> 
     _seen(store)
     _issue(store)
     existing_body = (
-        _marker_for("api|error|abc123|prod")
+        _marker_for("api|error|abc123|prod", store.device_id())
         + "\n\nAutomated error-log finding.\n\n"
         + _render_variants_section({"Ethereum": {"first_seen": "t0", "last_seen": "t0"}})
         + "\n"
@@ -325,7 +352,7 @@ def test_scan_updates_existing_issue_same_variant_no_comment(tmp_path: Path) -> 
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 9, "body": _marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 9, "body": _marker_for("api|error|abc123|prod", store.device_id())}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -358,7 +385,7 @@ def test_scan_updates_existing_issue_new_variant_posts_comment(tmp_path: Path) -
     )
     _issue(store)
     existing_body = (
-        _marker_for("api|error|abc123|prod")
+        _marker_for("api|error|abc123|prod", store.device_id())
         + "\n\nAutomated error-log finding.\n\n"
         + _render_variants_section({"Ethereum": {"first_seen": "t0", "last_seen": "t0"}})
         + "\n"
@@ -370,7 +397,7 @@ def test_scan_updates_existing_issue_new_variant_posts_comment(tmp_path: Path) -
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 9, "body": _marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 9, "body": _marker_for("api|error|abc123|prod", store.device_id())}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -826,13 +853,13 @@ def test_scan_comments_once_for_several_new_variants(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 12, "body": _marker_for("api|error|same|prod")}]),
+                json.dumps([{"number": 12, "body": _marker_for("api|error|same|prod", store.device_id())}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
             return Completed(
                 0,
-                json.dumps({"body": f'{_marker_for("api|error|same|prod")}\n\ntext\n'}),
+                json.dumps({"body": f'{_marker_for("api|error|same|prod", store.device_id())}\n\ntext\n'}),
                 "",
             )
         return Completed(0, "", "")
@@ -864,13 +891,13 @@ def test_scan_keeps_the_edit_when_the_comment_fails(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 12, "body": _marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 12, "body": _marker_for("api|error|abc123|prod", store.device_id())}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
             return Completed(
                 0,
-                json.dumps({"body": f'{_marker_for("api|error|abc123|prod")}\n\ntext\n'}),
+                json.dumps({"body": f'{_marker_for("api|error|abc123|prod", store.device_id())}\n\ntext\n'}),
                 "",
             )
         if argv[:3] == ["gh", "issue", "comment"]:
@@ -1006,7 +1033,7 @@ def test_create_paths_apply_the_same_body_ceiling() -> None:
             _unreachable_runner,
             issue_repo="org/tracker",
             title="api: error",
-            template_fingerprint="api|error|abc|prod",
+            marker=_marker_for("api|error|abc|prod", "device-1"),
             excerpt=huge,
             variants=["generic"],
             now="2026-08-31T10:00:00Z",
@@ -1651,7 +1678,7 @@ def test_an_issue_that_lost_its_marker_is_not_edited(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 12, "body": _marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 12, "body": _marker_for("api|error|abc123|prod", store.device_id())}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -1676,7 +1703,7 @@ def test_a_marker_moved_into_the_section_is_not_spliced_away(tmp_path: Path) -> 
     _runner_session(store)
     _seen(store)
     _issue(store)
-    marker = _marker_for("api|error|abc123|prod")
+    marker = _marker_for("api|error|abc123|prod", store.device_id())
     # A human moved the marker inside the tracked section.
     body = (
         "notes\n\n"
@@ -1875,3 +1902,48 @@ def test_a_result_with_an_implausible_issue_reference_is_not_a_touch(tmp_path: P
             },
         )
     assert _touch_history(store, "org/tracker") == {}
+
+
+def test_a_filed_template_is_never_folded_into_a_burst(tmp_path: Path) -> None:
+    """A row with a damaged timestamp still proves an issue exists. Judging
+    "never filed" by the cooldown history would fold that template into a burst
+    without ever looking up the issue it already has, orphaning it."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    # t0 was filed before, but its timestamp is unusable.
+    store.write(
+        "activity",
+        "insert",
+        "prior-damaged",
+        {
+            "id": "prior-damaged",
+            "session_id": "runner-1",
+            "type": "error.issue",
+            "payload": {"error_id": "irrelevant"},
+            "execution_status": "done",
+            "result": {
+                "issue_repo": "org/tracker",
+                "template_fingerprint": "api|error|t0|prod",
+                "at": "not-a-date",
+                "number": 5,
+                "created": True,
+            },
+        },
+    )
+    assert "api|error|t0|prod" in _filed_templates(store, "org/tracker")
+    assert "api|error|t0|prod" not in _touch_history(store, "org/tracker")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/9\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2
+    )
+    # Only t1 and t2 are new, so the threshold is not crossed and nothing folds.
+    assert all("storm" not in (store.row("activity", f"storm-issue-{i}") or {})
+               .get("result", {}).get("mode", "") for i in range(3))
+    assert len(lines) == 3

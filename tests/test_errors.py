@@ -1036,12 +1036,12 @@ def test_a_prefix_name_does_not_survive_its_longer_form_losing_the_boundary() ->
     assert known_asset_in("balance in USDC.") == "USDC"
 
 
-def test_the_template_fingerprint_hashes_redacted_metadata(tmp_path: Path) -> None:
-    """The marker in a public issue body is a digest of this fingerprint, so
-    hashing a raw stream label would let a reader confirm a guessed one by
-    recomputing it — exactly what redacting the visible text prevents. The
-    finer-grained fingerprint keeps the raw value: it is local identity for
-    already-stored error.seen rows."""
+def test_the_template_fingerprint_keeps_services_apart(tmp_path: Path) -> None:
+    """Grouping must stay injective: two tenants whose service labels differ are
+    two templates, even where a coarse redaction would render both the same.
+    Keeping the raw value here is safe because the digest that reaches a public
+    issue is salted (see _marker_for); redacting the grouping key instead would
+    file two tenants' errors into one issue."""
     store = Store(tmp_path)
     _runner_session(store)
     _write_config(tmp_path, service="api-alice@example.com")
@@ -1050,8 +1050,20 @@ def test_the_template_fingerprint_hashes_redacted_metadata(tmp_path: Path) -> No
         return ([{"ts": "2026-08-23T16:00:00Z", "line": "TimeoutError boom"}], None)
 
     created, _ = scan_errors(store, fetch)
-    row = store.row("activity", created[0])
-    assert row is not None
-    payload = row["payload"]
-    assert "alice@example.com" not in payload["template_fingerprint"]
-    assert "alice@example.com" in payload["fingerprint"]
+    alice = store.row("activity", created[0])
+    assert alice is not None
+
+    bob = template_fingerprint(
+        service="api-bob@example.com",
+        error_class="TimeoutError",
+        template_sig="sig",
+        environment="prod",
+    )
+    alice_fp = template_fingerprint(
+        service="api-alice@example.com",
+        error_class="TimeoutError",
+        template_sig="sig",
+        environment="prod",
+    )
+    assert alice_fp != bob
+    assert alice["payload"]["template_fingerprint"].startswith("api-alice@example.com|")
