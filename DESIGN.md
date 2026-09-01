@@ -694,13 +694,14 @@ The model never receives production credentials. Analysis that only reads the ex
 concrete variants live in a machine-owned, delimited section of the issue body;
 nothing outside that section is ever rewritten. A body carrying only one of the
 two markers, or a duplicated marker, is treated as damaged rather than appended
-to. A genuinely new variant is also announced with one `Also seen on: …`
-comment; that comment is best effort, so a comment that fails after the body
-edit landed is recorded on the row rather than discarding the edit. Two
-throttles sit in front: a burst fold, counted over templates never filed before
-so a backlog draining after downtime is not mistaken for a burst, and a
-per-template cooldown read from local history — a dry run is a preview and never
-opens that window.
+to. Creating an issue writes its variants straight into that opening table and
+posts no comment; updating one splices them in and announces the genuinely new
+ones in a single `Also seen on: …` comment. That comment is best effort, so one
+that fails after the body edit landed is recorded on the row rather than
+discarding the edit. Two throttles sit in front: a burst fold, counted over
+templates never filed before so a backlog draining after downtime is not
+mistaken for a burst, and a per-template cooldown read from local history — a
+dry run is a preview and never opens that window.
 
 ## 22. Static supervise loop (v1)
 
