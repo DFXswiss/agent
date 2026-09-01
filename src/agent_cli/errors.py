@@ -78,8 +78,22 @@ def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
     explicit look-arounds rather than \b because several names are not
     word-character-only ("USDC.e"). Matching stays case-sensitive on purpose:
     lowercase prose words like "usd" in "token tether -> usd" are not tickers."""
-    alternation = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
-    return re.compile(rf"(?<!\w)(?:{alternation})(?!\w)")
+    ordered = sorted(names, key=len, reverse=True)
+    alternatives: list[str] = []
+    for name in ordered:
+        # A shorter name that merely prefixes a longer one is normally settled by
+        # trying the longer one first. That breaks when the longer one continues
+        # with a non-word character: "USDC.e" glued to more text fails its own
+        # trailing boundary, and the engine falls back to "USDC", whose boundary
+        # passes because "." is not a word character. Block those continuations
+        # so the short name loses too, exactly as it would inside "USDC_balance".
+        blockers = "".join(
+            f"(?!{re.escape(longer[len(name):])})"
+            for longer in ordered
+            if longer.startswith(name) and len(longer) > len(name) and not longer[len(name)].isalnum()
+        )
+        alternatives.append(re.escape(name) + blockers)
+    return re.compile(rf"(?<!\w)(?:{'|'.join(alternatives)})(?!\w)")
 
 
 _CHAIN_TOKEN = _token_pattern(_KNOWN_CHAINS)

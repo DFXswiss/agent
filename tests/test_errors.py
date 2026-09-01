@@ -1013,3 +1013,17 @@ def test_token_boundaries_are_unicode_aware() -> None:
     assert known_chain_in("Ethereumб handler") is None
     # Real names next to ordinary punctuation still match.
     assert known_asset_in("balance for USDC, low") == "USDC"
+
+
+def test_a_prefix_name_does_not_survive_its_longer_form_losing_the_boundary() -> None:
+    """"USDC.e" glued to a word character fails its own trailing boundary. Without
+    blocking the continuation the engine falls back to "USDC", whose boundary
+    passes because "." is not a word character — so the same glued text would
+    yield a ticker here but None in "USDC_balance"."""
+    assert known_asset_in("USDC_balance") is None
+    assert known_asset_in("USDC.e_balance") is None
+    assert known_asset_in("USDC.eб") is None
+    # The longer name still matches on its own, and a sentence-final period is
+    # not a continuation.
+    assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
+    assert known_asset_in("balance in USDC.") == "USDC"
