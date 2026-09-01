@@ -50,6 +50,9 @@ DEFAULT_STORM_THRESHOLD = 8
 # loudly, so a long-lived burst issue reports the ceiling instead of every later
 # edit failing at the API with a generic error.
 MAX_ISSUE_BODY = 60000
+# One page of candidates, as in github_act. A full page is treated as truncated
+# rather than as "no match".
+_ISSUE_LIST_LIMIT = 100
 # Result modes that never touched GitHub, so they must not start a cooldown
 # window: a dry run is a preview, not a touch.
 _DRY_RUN_MODES = frozenset({"dry-run", "storm-dry-run"})
@@ -293,7 +296,7 @@ def find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | Non
             "--state",
             "open",
             "--limit",
-            "100",
+            str(_ISSUE_LIST_LIMIT),
             "--json",
             "number,body",
         ],
@@ -311,6 +314,10 @@ def find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | Non
         if isinstance(number, bool) or not isinstance(number, int):
             raise StoreError("gh issue list returned a non-integer number")
         return number
+    if len(listed) == _ISSUE_LIST_LIMIT:
+        # A full page means the marker may sit on an issue we never saw. Failing
+        # here beats reporting "no issue yet" and filing a duplicate.
+        raise StoreError("gh issue list truncated")
     return None
 
 

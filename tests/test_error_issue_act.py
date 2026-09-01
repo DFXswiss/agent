@@ -171,6 +171,31 @@ def test_find_issue_number_ignores_issues_without_the_marker() -> None:
     assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
 
 
+def test_find_issue_number_raises_when_the_list_is_truncated() -> None:
+    """A full page may hide the marker on an unseen issue. Reporting "none" there
+    would file a duplicate, so this fails loud instead."""
+    def runner(argv: list[str]) -> Completed:
+        return Completed(
+            0,
+            json.dumps([{"number": n, "body": "unrelated"} for n in range(100)]),
+            "",
+        )
+
+    with pytest.raises(StoreError, match="issue list truncated"):
+        find_issue_number(runner, "org/tracker", "api|error|abc|prod")
+
+
+def test_find_issue_number_returns_none_on_a_partial_page() -> None:
+    def runner(argv: list[str]) -> Completed:
+        return Completed(
+            0,
+            json.dumps([{"number": n, "body": "unrelated"} for n in range(99)]),
+            "",
+        )
+
+    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
+
+
 def test_find_issue_number_raises_when_gh_is_missing() -> None:
     def runner(argv: list[str]) -> Completed:
         raise OSError("No such file or directory: 'gh'")
