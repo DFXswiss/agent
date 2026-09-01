@@ -290,12 +290,17 @@ def _parse_iso(ts: str) -> datetime:
 
 
 def _names_an_issue(result: dict[str, Any]) -> bool:
-    """Whether a result actually points at an issue, by number or by url."""
+    """Whether a result actually points at an issue, by number or by url.
+
+    Held to the same shape the write paths produce: a real issue number is
+    positive, and a real url is one _ISSUE_URL recognises. A corrupted or
+    hand-edited row that merely carries a truthy value must not open a cooldown
+    window with nothing behind it."""
     number = result.get("number")
-    if not isinstance(number, bool) and isinstance(number, int):
+    if not isinstance(number, bool) and isinstance(number, int) and number > 0:
         return True
     url = result.get("url")
-    return isinstance(url, str) and url != ""
+    return isinstance(url, str) and _ISSUE_URL.search(url) is not None
 
 
 def _touch_history(store: Store, issue_repo: str) -> dict[str, datetime]:

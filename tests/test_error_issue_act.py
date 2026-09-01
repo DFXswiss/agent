@@ -1843,3 +1843,35 @@ def test_a_create_reporting_no_url_fails_the_row(tmp_path: Path) -> None:
     row = store.row("activity", "issue-1")
     assert row is not None
     assert "no issue URL" in row["execution_error"]
+
+
+def test_a_result_with_an_implausible_issue_reference_is_not_a_touch(tmp_path: Path) -> None:
+    """The write paths only ever record a positive number or a real issue URL.
+    A hand-edited or corrupted row carrying some other truthy value must not
+    open a cooldown window with nothing behind it."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for activity_id, result in (
+        ("zero-number", {"number": 0}),
+        ("negative-number", {"number": -3}),
+        ("not-a-url", {"url": "failed"}),
+    ):
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "runner-1",
+                "type": "error.issue",
+                "payload": {"error_id": "irrelevant"},
+                "execution_status": "done",
+                "result": {
+                    "issue_repo": "org/tracker",
+                    "template_fingerprint": "api|error|abc|prod",
+                    "at": "2026-08-31T10:00:00Z",
+                    **result,
+                },
+            },
+        )
+    assert _touch_history(store, "org/tracker") == {}
