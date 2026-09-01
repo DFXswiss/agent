@@ -398,6 +398,7 @@ def scan_assigned(
             newest_at: str | None = None
             newest_dt: datetime | None = None
             newest_by = ""
+            newest_id: int | None = None
             for event in events:
                 if not isinstance(event, dict):
                     continue
@@ -424,10 +425,21 @@ def scan_assigned(
                     actor_login = actor.get("login")
                     if isinstance(actor_login, str):
                         assigned_by = actor_login
-                if newest_dt is None or event_dt > newest_dt:
+                raw_id = event.get("id")
+                event_id = raw_id if isinstance(raw_id, int) else None
+                is_newer = newest_dt is None or event_dt > newest_dt
+                if (
+                    not is_newer
+                    and event_dt == newest_dt
+                    and event_id is not None
+                    and newest_id is not None
+                ):
+                    is_newer = event_id > newest_id
+                if is_newer:
                     newest_dt = event_dt
                     newest_at = created_at
                     newest_by = assigned_by
+                    newest_id = event_id
             if newest_at is None or newest_dt is None:
                 continue
             previous_at = _latest_assigned_at(store, repo, number)
@@ -609,9 +621,9 @@ def _policy_admits(
     """Whether `head` (an issue.assigned activity row) is admitted by the
     policy at `store.home / "policy.json"`. No policy file present admits
     unconditionally — this is what keeps the gate backward-compatible."""
-    policy = load_policy(store.home)
-    if policy is None:
+    if not (store.home / "policy.json").is_file():
         return True
+    policy = load_policy(store.home)
     payload = head.get("payload")
     payload = payload if isinstance(payload, dict) else {}
     repo = payload.get("repo")
@@ -663,7 +675,10 @@ def dispatch_assigned(
     head_id = head.get("id")
     if not isinstance(head_id, str) or head_id == "":
         raise StoreError(f"session {sid} queue head is missing an id")
-    # Denial must not touch store or workspace so the same head re-evaluates next tick.
+    # Denial must not create this head's workspace files, claim its wake entry, or
+    # start a session, so the same head re-evaluates identically next tick — this
+    # does not cover the unconditional per-tick sync() housekeeping above, which
+    # runs regardless of the outcome.
     if not _policy_admits(store, head, runner):
         return "denied"
     cwd = workspace_root / sid

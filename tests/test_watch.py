@@ -364,6 +364,63 @@ def test_scan_assigned_missing_actor_sets_assigned_by_empty(tmp_path: Path) -> N
     assert row["payload"]["assigned_by"] == ""
 
 
+def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "first"},
+                        },
+                        {
+                            "id": 200,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "later"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == "later"
+
+
 def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
@@ -761,6 +818,29 @@ def test_dispatch_assigned_denies_when_policy_rejects_actor(tmp_path: Path) -> N
     store = Store(tmp_path)
     _insert_assigned_activity(store)
     _write_admit_policy(tmp_path, actors_allow=["alice"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+    assert not (workspace_root / "assigned" / "MANDATE.md").exists()
+    assert store.row("activity", "asg-1") is not None
+    assert not store.wake_delivered("asg-1")
+
+
+def test_dispatch_assigned_denies_when_policy_json_is_null(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    (tmp_path / "policy.json").write_text("null", encoding="utf-8")
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
     workspace_root = tmp_path / "sessions"
