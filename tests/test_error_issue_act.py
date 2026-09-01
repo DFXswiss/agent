@@ -137,14 +137,14 @@ def test_find_issue_number_none_when_empty(tmp_path: Path) -> None:
         assert argv[:4] == ["gh", "issue", "list", "--repo"]
         return Completed(0, "[]", "")
 
-    assert find_issue_number(runner, "org/intern", "api|error|abc|prod") is None
+    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
 
 
 def test_find_issue_number_parses_first_match() -> None:
     def runner(argv: list[str]) -> Completed:
         return Completed(0, '[{"number": 42}, {"number": 43}]', "")
 
-    assert find_issue_number(runner, "org/intern", "api|error|abc|prod") == 42
+    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") == 42
 
 
 def test_find_issue_number_raises_on_gh_failure() -> None:
@@ -152,7 +152,7 @@ def test_find_issue_number_raises_on_gh_failure() -> None:
         return Completed(1, "", "not found")
 
     with pytest.raises(StoreError, match="not found"):
-        find_issue_number(runner, "org/intern", "api|error|abc|prod")
+        find_issue_number(runner, "org/tracker", "api|error|abc|prod")
 
 
 # ---- scan_error_issue: dry run ----
@@ -169,7 +169,7 @@ def test_scan_dry_run_never_calls_gh(tmp_path: Path) -> None:
         calls.append(list(argv))
         return Completed(0, "", "")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=True)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=True)
     assert calls == []
     assert lines == ["error.issue issue-1 dry-run variant=Ethereum"]
     row = store.row("activity", "issue-1")
@@ -191,8 +191,8 @@ def test_scan_dry_run_is_a_noop_on_rerun(tmp_path: Path) -> None:
         calls.append(list(argv))
         return Completed(0, "", "")
 
-    scan_error_issue(store, runner, issue_repo="org/intern", dry_run=True)
-    assert scan_error_issue(store, runner, issue_repo="org/intern", dry_run=True) == []
+    scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=True)
+    assert scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=True) == []
     assert calls == []
 
 
@@ -211,13 +211,13 @@ def test_scan_creates_issue_when_none_exists(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(0, "[]", "")
         if argv[:3] == ["gh", "issue", "create"]:
-            return Completed(0, "https://github.com/org/intern/issues/7\n", "")
+            return Completed(0, "https://github.com/org/tracker/issues/7\n", "")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
     assert lines == ["error.issue issue-1 created variant=Ethereum"]
     create_call = next(c for c in calls if c[:3] == ["gh", "issue", "create"])
-    assert "--repo" in create_call and "org/intern" in create_call
+    assert "--repo" in create_call and "org/tracker" in create_call
     assert "--label" in create_call and ISSUE_LABEL in create_call
     body = create_call[create_call.index("--body") + 1]
     assert marker_for("api|error|abc123|prod") in body
@@ -226,7 +226,7 @@ def test_scan_creates_issue_when_none_exists(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "done"
     assert row["result"]["created"] is True
-    assert row["result"]["url"] == "https://github.com/org/intern/issues/7"
+    assert row["result"]["url"] == "https://github.com/org/tracker/issues/7"
 
 
 # ---- scan_error_issue: update path ----
@@ -259,7 +259,7 @@ def test_scan_updates_existing_issue_same_variant_no_comment(tmp_path: Path) -> 
             raise AssertionError("must not comment when the variant already existed")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
     assert lines == [
         "error.issue issue-1 updated number=9 variant=Ethereum new_variant=False"
     ]
@@ -300,7 +300,7 @@ def test_scan_updates_existing_issue_new_variant_posts_comment(tmp_path: Path) -
             return Completed(0, "", "")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
     assert lines == [
         "error.issue issue-1 updated number=9 variant=Polygon new_variant=True"
     ]
@@ -323,7 +323,7 @@ def test_scan_marks_error_when_template_fingerprint_missing(tmp_path: Path) -> N
     _issue(store)
 
     lines = scan_error_issue(
-        store, lambda _argv: Completed(0, "[]", ""), issue_repo="org/intern", dry_run=False
+        store, lambda _argv: Completed(0, "[]", ""), issue_repo="org/tracker", dry_run=False
     )
     assert lines == ["error.issue issue-1 error"]
     row = store.row("activity", "issue-1")
@@ -345,7 +345,7 @@ def test_scan_marks_error_when_create_fails(tmp_path: Path) -> None:
             return Completed(1, "", "permission denied")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
     assert lines == ["error.issue issue-1 error"]
     row = store.row("activity", "issue-1")
     assert row is not None
@@ -359,7 +359,7 @@ def test_scan_leaves_non_pending_rows_alone(tmp_path: Path) -> None:
     _seen(store)
     _issue(store)
     scan_error_issue(
-        store, lambda _argv: Completed(0, "[]", ""), issue_repo="org/intern", dry_run=True
+        store, lambda _argv: Completed(0, "[]", ""), issue_repo="org/tracker", dry_run=True
     )
     calls: list[list[str]] = []
 
@@ -367,7 +367,7 @@ def test_scan_leaves_non_pending_rows_alone(tmp_path: Path) -> None:
         calls.append(list(argv))
         return Completed(0, "", "")
 
-    assert scan_error_issue(store, fail_if_called, issue_repo="org/intern", dry_run=False) == []
+    assert scan_error_issue(store, fail_if_called, issue_repo="org/tracker", dry_run=False) == []
     assert calls == []
 
 
@@ -380,7 +380,7 @@ def _prior_touch(
     skipped: bool = False,
 ) -> None:
     result: dict[str, object] = {
-        "issue_repo": "org/intern",
+        "issue_repo": "org/tracker",
         "template_fingerprint": template_fingerprint,
         "at": at,
     }
@@ -500,7 +500,7 @@ def test_scan_skips_recently_touched_template_without_gh_calls(tmp_path: Path) -
         return Completed(0, "", "")
 
     lines = scan_error_issue(
-        store, fail_if_called, issue_repo="org/intern", dry_run=False, cooldown_minutes=60
+        store, fail_if_called, issue_repo="org/tracker", dry_run=False, cooldown_minutes=60
     )
     assert lines == ["error.issue issue-1 skipped-cooldown"]
     assert calls == []
@@ -526,11 +526,11 @@ def test_scan_processes_normally_after_cooldown_expires(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(0, "[]", "")
         if argv[:3] == ["gh", "issue", "create"]:
-            return Completed(0, "https://github.com/org/intern/issues/1\n", "")
+            return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
         raise AssertionError(f"unexpected call: {argv}")
 
     lines = scan_error_issue(
-        store, runner, issue_repo="org/intern", dry_run=False, cooldown_minutes=60
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=60
     )
     assert lines == ["error.issue issue-1 created variant=Ethereum"]
 
@@ -550,10 +550,10 @@ def test_scan_does_not_storm_at_or_below_threshold(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(0, "[]", "")
         if argv[:3] == ["gh", "issue", "create"]:
-            return Completed(0, "https://github.com/org/intern/issues/1\n", "")
+            return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2)
     assert len(lines) == 2
     assert all("created" in line for line in lines)
     create_calls = [c for c in calls if c[:3] == ["gh", "issue", "create"]]
@@ -572,10 +572,10 @@ def test_scan_folds_burst_into_one_storm_issue(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(0, "[]", "")
         if argv[:3] == ["gh", "issue", "create"]:
-            return Completed(0, "https://github.com/org/intern/issues/99\n", "")
+            return Completed(0, "https://github.com/org/tracker/issues/99\n", "")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2)
     assert len(lines) == 3
     assert all("storm" in line for line in lines)
     create_calls = [c for c in calls if c[:3] == ["gh", "issue", "create"]]
@@ -600,7 +600,7 @@ def test_scan_storm_dry_run_never_calls_gh(tmp_path: Path) -> None:
         calls.append(list(argv))
         return Completed(0, "", "")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=True, storm_threshold=2)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=True, storm_threshold=2)
     assert calls == []
     assert len(lines) == 3
     assert all("storm-dry-run" in line for line in lines)
@@ -631,7 +631,7 @@ def test_scan_storm_reuses_existing_open_storm_issue(tmp_path: Path) -> None:
             return Completed(0, "", "")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2)
     assert len(lines) == 3
     assert [c for c in calls if c[:3] == ["gh", "issue", "create"]] == []
     edit_calls = [c for c in calls if c[:3] == ["gh", "issue", "edit"]]
@@ -654,10 +654,208 @@ def test_scan_storm_marks_all_rows_error_on_create_failure(tmp_path: Path) -> No
             return Completed(1, "", "permission denied")
         raise AssertionError(f"unexpected call: {argv}")
 
-    lines = scan_error_issue(store, runner, issue_repo="org/intern", dry_run=False, storm_threshold=2)
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2)
     assert len(lines) == 3
     assert all(line.endswith("error") for line in lines)
     for i in range(3):
         row = store.row("activity", f"storm-issue-{i}")
         assert row is not None
         assert row["execution_status"] == "error"
+
+
+# ---- one template, several pending rows in one scan ----
+
+
+def test_scan_merges_two_variants_of_one_template_into_one_issue(tmp_path: Path) -> None:
+    """Two variants of the same template in one scan belong in one issue. Handled
+    row by row, the first would become a cooldown touch for the second and that
+    variant would be dropped."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(
+        store,
+        template_fingerprint="api|error|same|prod",
+        excerpt="Balance for Arbitrum/USDC went low",
+        activity_id="seen-a",
+    )
+    _seen(
+        store,
+        template_fingerprint="api|error|same|prod",
+        excerpt="Balance for Arbitrum/WBTC went low",
+        activity_id="seen-b",
+    )
+    _issue(store, error_id="seen-a", activity_id="issue-a")
+    _issue(store, error_id="seen-b", activity_id="issue-b")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "create"]:
+            return Completed(0, "https://github.com/org/tracker/issues/7\n", "")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=60
+    )
+    assert lines == [
+        "error.issue issue-a created variant=Arbitrum/USDC",
+        "error.issue issue-b created variant=Arbitrum/WBTC",
+    ]
+    create_calls = [c for c in calls if c[:3] == ["gh", "issue", "create"]]
+    assert len(create_calls) == 1
+    body = create_calls[0][create_calls[0].index("--body") + 1]
+    assert "Arbitrum/USDC" in body
+    assert "Arbitrum/WBTC" in body
+
+
+def test_scan_comments_once_for_several_new_variants(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(
+        store,
+        template_fingerprint="api|error|same|prod",
+        excerpt="Balance for Arbitrum/USDC went low",
+        activity_id="seen-a",
+    )
+    _seen(
+        store,
+        template_fingerprint="api|error|same|prod",
+        excerpt="Balance for Base/WBTC went low",
+        activity_id="seen-b",
+    )
+    _issue(store, error_id="seen-a", activity_id="issue-a")
+    _issue(store, error_id="seen-b", activity_id="issue-b")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, '[{"number": 12}]', "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, '{"body": "text\\n"}', "")
+        return Completed(0, "", "")
+
+    calls: list[list[str]] = []
+
+    def recording(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return runner(argv)
+
+    scan_error_issue(store, recording, issue_repo="org/tracker", dry_run=False)
+    comments = [c for c in calls if c[:3] == ["gh", "issue", "comment"]]
+    assert len(comments) == 1
+    body = comments[0][comments[0].index("--body") + 1]
+    assert "Arbitrum/USDC" in body
+    assert "Base/WBTC" in body
+
+
+def test_scan_keeps_the_edit_when_the_comment_fails(tmp_path: Path) -> None:
+    """The edit is the durable record. Failing the row on a comment error would
+    strand a variant that is already in the table and can never be re-announced,
+    because a retry no longer sees it as new."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, '[{"number": 12}]', "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, '{"body": "text\\n"}', "")
+        if argv[:3] == ["gh", "issue", "comment"]:
+            return Completed(1, "", "rate limited")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    assert lines == [
+        "error.issue issue-1 updated number=12 variant=Ethereum new_variant=True comment-failed"
+    ]
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["comment_error"] == "rate limited"
+
+
+# ---- dry run must not open a cooldown window ----
+
+
+def test_dry_run_does_not_start_a_cooldown_window(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+    assert scan_error_issue(
+        store, lambda _argv: Completed(0, "[]", ""), issue_repo="org/tracker", dry_run=True
+    ) == ["error.issue issue-1 dry-run variant=Ethereum"]
+
+    _issue(store, activity_id="issue-2")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=60
+    )
+    assert lines == ["error.issue issue-2 created variant=Ethereum"]
+    assert calls != []
+
+
+# ---- burst detection counts only templates never filed before ----
+
+
+def test_storm_threshold_ignores_already_tracked_templates(tmp_path: Path) -> None:
+    """A backlog of known templates draining after downtime is a volume spike,
+    not a burst of new problems, and must keep updating its own issues."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+    for i in range(3):
+        _prior_touch(
+            store,
+            template_fingerprint=f"api|error|t{i}|prod",
+            at="2026-08-30T10:00:00Z",
+            activity_id=f"prior-{i}",
+        )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "issue", "create"]:
+            return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+        raise AssertionError(f"unexpected call: {argv}")
+
+    lines = scan_error_issue(
+        store,
+        runner,
+        issue_repo="org/tracker",
+        dry_run=False,
+        storm_threshold=2,
+        cooldown_minutes=0,
+    )
+    assert len(lines) == 3
+    assert all(line.endswith("created variant=generic") for line in lines)
+    for i in range(3):
+        row = store.row("activity", f"storm-issue-{i}")
+        assert row is not None
+        assert row["result"].get("mode") != "storm"
+
+
+# ---- damaged variants section ----
+
+
+def test_splice_variants_refuses_a_half_open_section() -> None:
+    damaged = "Human notes.\n\n<!-- variants:start -->\n\n| variant | first seen | last seen |\n"
+    with pytest.raises(StoreError):
+        splice_variants(damaged, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
+
+
+def test_splice_variants_refuses_a_body_over_the_github_limit() -> None:
+    variants = {f"chain-{i}": {"first_seen": "t1", "last_seen": "t1"} for i in range(6000)}
+    with pytest.raises(StoreError):
+        splice_variants("Human notes.\n", variants)

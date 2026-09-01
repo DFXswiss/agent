@@ -5,14 +5,21 @@ action instead of calling gh for real.
 
 Two throttles sit in front of the per-template logic:
 
-- Burst detection: if one run resolves more distinct new templates than
-  storm_threshold, that is treated as one anomaly (a likely shared root cause)
-  rather than N unrelated problems — all of them fold into a single, reused
-  "burst" issue instead of N individual ones.
+- Burst detection: if one run resolves more templates that were never filed
+  before than storm_threshold, that is treated as one anomaly (a likely shared
+  root cause) rather than N unrelated problems — those fold into a single,
+  reused "burst" issue instead of N individual ones. Templates that already have
+  history keep updating their own issue: a backlog draining after downtime is a
+  volume spike, not a burst of new problems.
 - Cooldown: a template that was already touched (created, updated, or folded
   into a burst) within cooldown_minutes is skipped entirely — checked against
   local history, not a live gh call, so a fast-recurring error does not cost a
-  round trip or an issue edit every time it repeats.
+  round trip or an issue edit every time it repeats. A dry run is a preview and
+  never opens that window.
+
+All pending rows of one template are handled together, so two variants seen in
+the same run land in one issue instead of the first becoming a cooldown touch
+that drops the second.
 
 Both are plain comparisons against local state; neither involves model
 judgment."""
@@ -39,6 +46,13 @@ STORM_MARKER = "<!-- error-log-storm -->"
 
 DEFAULT_COOLDOWN_MINUTES = 60
 DEFAULT_STORM_THRESHOLD = 8
+# GitHub rejects an issue body over 65536 characters. Refuse a little earlier and
+# loudly, so a long-lived burst issue reports the ceiling instead of every later
+# edit failing at the API with a generic error.
+MAX_ISSUE_BODY = 60000
+# Result modes that never touched GitHub, so they must not start a cooldown
+# window: a dry run is a preview, not a touch.
+_DRY_RUN_MODES = frozenset({"dry-run", "storm-dry-run"})
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -129,34 +143,40 @@ def parse_variants_section(body: str) -> dict[str, dict[str, str]]:
 
 def splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     """Replace only the delimited variants section; never touch the rest of the
-    body — that is human territory."""
+    body — that is human territory. A body carrying exactly one of the two
+    markers, or them in the wrong order, is damaged (a hand edit truncated the
+    section): appending a second section there would silently strand the
+    variants already recorded above, so fail loud instead."""
     start = body.find(_VARIANTS_START)
     end = body.find(_VARIANTS_END)
     section = render_variants_section(variants)
-    if start == -1 or end == -1 or end < start:
+    if start == -1 and end == -1:
         sep = "" if body == "" else "\n\n"
-        return f"{body}{sep}{section}\n"
-    return body[:start] + section + body[end + len(_VARIANTS_END) :]
+        spliced = f"{body}{sep}{section}\n"
+    elif start == -1 or end == -1 or end < start:
+        raise StoreError("issue body has a damaged variants section")
+    else:
+        spliced = body[:start] + section + body[end + len(_VARIANTS_END) :]
+    if len(spliced) > MAX_ISSUE_BODY:
+        raise StoreError("issue body would exceed the GitHub body limit")
+    return spliced
 
 
 def _parse_iso(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def _recently_touched(
-    store: Store, template_fingerprint: str, now: str, cooldown_minutes: int
-) -> bool:
-    """Whether this template's issue was already touched (created, updated, or
-    folded into a burst — but not merely skipped by a prior cooldown check,
-    which must not renew its own window) within cooldown_minutes. Checked
-    against local activity history, not a live gh call, so a fast-recurring
-    error costs no round trip and no issue edit on every repeat."""
-    if cooldown_minutes <= 0:
-        return False
-    try:
-        now_dt = _parse_iso(now)
-    except ValueError:
-        return False
+def touch_history(store: Store) -> dict[str, datetime]:
+    """Most recent real touch per template, read once from local activity
+    history. A touch is a completed error.issue row that actually created,
+    updated or folded the template's issue — not one merely skipped by an
+    earlier cooldown check (which must not renew its own window) and not a dry
+    run (a preview must not suppress the real run that follows it).
+
+    Read as a snapshot before a scan mutates anything: rows written earlier in
+    the same scan are not touches for the rows behind them, otherwise the second
+    variant of one template would be skipped against the first."""
+    history: dict[str, datetime] = {}
     origin = store.device_id()
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin or row.get("type") != "error.issue":
@@ -166,7 +186,10 @@ def _recently_touched(
         result = row.get("result")
         if not isinstance(result, dict) or result.get("skipped"):
             continue
-        if result.get("template_fingerprint") != template_fingerprint:
+        if result.get("mode") in _DRY_RUN_MODES:
+            continue
+        template_fingerprint = result.get("template_fingerprint")
+        if not isinstance(template_fingerprint, str):
             continue
         touched_at = result.get("at")
         if not isinstance(touched_at, str):
@@ -175,9 +198,37 @@ def _recently_touched(
             touched_dt = _parse_iso(touched_at)
         except ValueError:
             continue
-        if now_dt - touched_dt < timedelta(minutes=cooldown_minutes):
-            return True
-    return False
+        previous = history.get(template_fingerprint)
+        if previous is None or touched_dt > previous:
+            history[template_fingerprint] = touched_dt
+    return history
+
+
+def _within_cooldown(
+    history: dict[str, datetime], template_fingerprint: str, now: str, cooldown_minutes: int
+) -> bool:
+    """Whether this template's issue was touched within cooldown_minutes, against
+    a history snapshot. No gh call, so a fast-recurring error costs no round trip
+    and no issue edit on every repeat."""
+    if cooldown_minutes <= 0:
+        return False
+    touched_dt = history.get(template_fingerprint)
+    if touched_dt is None:
+        return False
+    try:
+        now_dt = _parse_iso(now)
+    except ValueError:
+        return False
+    return now_dt - touched_dt < timedelta(minutes=cooldown_minutes)
+
+
+def _recently_touched(
+    store: Store, template_fingerprint: str, now: str, cooldown_minutes: int
+) -> bool:
+    """Single-template convenience over touch_history/_within_cooldown."""
+    return _within_cooldown(
+        touch_history(store), template_fingerprint, now, cooldown_minutes
+    )
 
 
 def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -254,14 +305,14 @@ def _create_issue(
     title: str,
     template_fingerprint: str,
     excerpt: str,
-    variant: str,
+    variants: list[str],
     now: str,
 ) -> str:
     body = (
         f"{marker_for(template_fingerprint)}\n\n"
         "Automated error-log finding.\n\n"
         f"```\n{excerpt}\n```\n\n"
-        + render_variants_section({variant: {"first_seen": now, "last_seen": now}})
+        + render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
         + "\n"
     )
     completed = runner(
@@ -285,38 +336,50 @@ def _create_issue(
 
 
 def _update_issue(
-    runner: Runner, *, issue_repo: str, number: int, variant: str, now: str
-) -> bool:
-    """Splice the variant into the issue's tracked table; comment only if it is
-    new. Returns whether this was a new variant."""
+    runner: Runner, *, issue_repo: str, number: int, variants: list[str], now: str
+) -> tuple[list[str], str | None]:
+    """Splice these variants into the issue's tracked table; comment once for the
+    ones that are genuinely new. Returns the new variants and, if the comment
+    failed, its error.
+
+    The edit runs before the comment so the durable record (the variant table)
+    is written first and a retry can never double-file a variant. That makes the
+    comment a best-effort notification: failing the whole row on a comment error
+    would strand a row whose table entry already landed, and no retry could ever
+    send that comment again (the variant is no longer new). So a comment failure
+    is reported on the row instead of discarding the successful edit."""
     body = _issue_body(runner, issue_repo, number)
-    variants = parse_variants_section(body)
-    is_new = variant not in variants
-    if is_new:
-        variants[variant] = {"first_seen": now, "last_seen": now}
-    else:
-        variants[variant]["last_seen"] = now
+    tracked = parse_variants_section(body)
+    new_variants = [v for v in variants if v not in tracked]
+    for variant in variants:
+        if variant in tracked:
+            tracked[variant]["last_seen"] = now
+        else:
+            tracked[variant] = {"first_seen": now, "last_seen": now}
     edit = runner(
-        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", splice_variants(body, variants)]
+        ["gh", "issue", "edit", str(number), "--repo", issue_repo, "--body", splice_variants(body, tracked)]
     )
     if edit.returncode != 0:
         raise StoreError((edit.stderr or edit.stdout or "gh issue edit failed").strip())
-    if is_new:
-        comment = runner(
-            [
-                "gh",
-                "issue",
-                "comment",
-                str(number),
-                "--repo",
-                issue_repo,
-                "--body",
-                f"Also seen on: {variant} ({now}).",
-            ]
-        )
-        if comment.returncode != 0:
-            raise StoreError((comment.stderr or comment.stdout or "gh issue comment failed").strip())
-    return is_new
+    if not new_variants:
+        return new_variants, None
+    comment = runner(
+        [
+            "gh",
+            "issue",
+            "comment",
+            str(number),
+            "--repo",
+            issue_repo,
+            "--body",
+            f"Also seen on: {', '.join(new_variants)} ({now}).",
+        ]
+    )
+    if comment.returncode != 0:
+        return new_variants, (
+            comment.stderr or comment.stdout or "gh issue comment failed"
+        ).strip()
+    return new_variants, None
 
 
 def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str:
@@ -494,100 +557,188 @@ def _scan_error_issue(
         return lines
 
     now = utcnow()
-    distinct_templates = {template_fp for _row, _error_id, template_fp, _seen_payload in resolved}
-    if len(distinct_templates) > storm_threshold:
+    # One snapshot of local history for the whole scan. Taken before any row is
+    # marked, so rows written by this scan cannot start a cooldown window
+    # against the rows behind them.
+    history = touch_history(store)
+
+    groups: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for row, _error_id, template_fp, seen_payload in resolved:
+        groups.setdefault(template_fp, []).append((row, seen_payload))
+
+    # Burst detection counts only templates never filed before. A backlog of
+    # already-tracked templates draining after downtime is a volume spike, not a
+    # burst of new problems, and must keep updating its own issues normally.
+    new_templates = [fp for fp in groups if fp not in history]
+    if len(new_templates) > storm_threshold:
+        storm_rows = [
+            (row, "", template_fp, seen_payload)
+            for template_fp in new_templates
+            for row, seen_payload in groups[template_fp]
+        ]
         lines.extend(
-            _process_storm(store, runner, issue_repo=issue_repo, dry_run=dry_run, resolved=resolved, now=now)
+            _process_storm(
+                store, runner, issue_repo=issue_repo, dry_run=dry_run, resolved=storm_rows, now=now
+            )
         )
+        for template_fp in new_templates:
+            del groups[template_fp]
+
+    for template_fp, members in groups.items():
+        lines.extend(
+            _process_template(
+                store,
+                runner,
+                issue_repo=issue_repo,
+                dry_run=dry_run,
+                template_fp=template_fp,
+                members=members,
+                now=now,
+                history=history,
+                cooldown_minutes=cooldown_minutes,
+            )
+        )
+    return lines
+
+
+def _process_template(
+    store: Store,
+    runner: Runner,
+    *,
+    issue_repo: str,
+    dry_run: bool,
+    template_fp: str,
+    members: list[tuple[dict[str, Any], dict[str, Any]]],
+    now: str,
+    history: dict[str, datetime],
+    cooldown_minutes: int,
+) -> list[str]:
+    """Handle every pending row of one template together. Rows are grouped
+    because two variants of the same template in one scan belong in one issue:
+    processing them one by one would make the first a cooldown touch for the
+    second and silently drop that variant."""
+    lines: list[str] = []
+    excerpts: list[str] = []
+    for _row, seen_payload in members:
+        excerpt = seen_payload.get("excerpt")
+        excerpts.append(excerpt if isinstance(excerpt, str) else "")
+    row_variants = [extract_variant(excerpt) for excerpt in excerpts]
+    variants: list[str] = []
+    for variant in row_variants:
+        if variant not in variants:
+            variants.append(variant)
+
+    if _within_cooldown(history, template_fp, now, cooldown_minutes):
+        for row, _seen_payload in members:
+            rid = str(row.get("id") or "?")
+            _mark(
+                store,
+                row,
+                status="done",
+                result={
+                    "issue_repo": issue_repo,
+                    "template_fingerprint": template_fp,
+                    "at": now,
+                    "skipped": "cooldown",
+                },
+            )
+            lines.append(f"error.issue {rid} skipped-cooldown")
         return lines
 
-    for row, _error_id, template_fp, seen_payload in resolved:
-        rid = str(row.get("id") or "?")
-        excerpt = seen_payload.get("excerpt")
-        excerpt = excerpt if isinstance(excerpt, str) else ""
-        variant = extract_variant(excerpt)
-
-        if _recently_touched(store, template_fp, now, cooldown_minutes):
-            result = {
-                "issue_repo": issue_repo,
-                "template_fingerprint": template_fp,
-                "at": now,
-                "skipped": "cooldown",
-            }
-            _mark(store, row, status="done", result=result)
-            lines.append(f"error.issue {rid} skipped-cooldown")
-            continue
-
-        if dry_run:
-            result = {
-                "mode": "dry-run",
-                "issue_repo": issue_repo,
-                "template_fingerprint": template_fp,
-                "at": now,
-                "variant": variant,
-                "excerpt": excerpt[:300],
-            }
-            _mark(store, row, status="done", result=result)
+    if dry_run:
+        for index, (row, _seen_payload) in enumerate(members):
+            rid = str(row.get("id") or "?")
+            variant = row_variants[index]
+            _mark(
+                store,
+                row,
+                status="done",
+                result={
+                    "mode": "dry-run",
+                    "issue_repo": issue_repo,
+                    "template_fingerprint": template_fp,
+                    "at": now,
+                    "variant": variant,
+                    "excerpt": excerpts[index][:300],
+                },
+            )
             lines.append(f"error.issue {rid} dry-run variant={variant}")
-            continue
+        return lines
 
-        try:
-            number = find_issue_number(runner, issue_repo, marker_for(template_fp))
-        except StoreError as exc:
+    def fail_all(exc: StoreError) -> list[str]:
+        for row, _seen_payload in members:
+            rid = str(row.get("id") or "?")
             _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.issue {rid} error")
-            continue
+        return lines
 
-        if number is None:
-            service = seen_payload.get("service")
-            service = service if isinstance(service, str) and service else "unknown"
-            cls = seen_payload.get("class")
-            cls = cls if isinstance(cls, str) and cls else "error"
-            try:
-                url = _create_issue(
-                    runner,
-                    issue_repo=issue_repo,
-                    title=f"{service}: {cls}",
-                    template_fingerprint=template_fp,
-                    excerpt=excerpt[:1000],
-                    variant=variant,
-                    now=now,
-                )
-            except StoreError as exc:
-                _mark(store, row, status="error", error=str(exc))
-                lines.append(f"error.issue {rid} error")
-                continue
-            result = {
-                "issue_repo": issue_repo,
-                "template_fingerprint": template_fp,
-                "at": now,
-                "url": url,
-                "variant": variant,
-                "created": True,
-            }
-            _mark(store, row, status="done", result=result)
-            lines.append(f"error.issue {rid} created variant={variant}")
-            continue
+    try:
+        number = find_issue_number(runner, issue_repo, marker_for(template_fp))
+    except StoreError as exc:
+        return fail_all(exc)
 
+    first_payload = members[0][1]
+    if number is None:
+        service = first_payload.get("service")
+        service = service if isinstance(service, str) and service else "unknown"
+        cls = first_payload.get("class")
+        cls = cls if isinstance(cls, str) and cls else "error"
         try:
-            is_new_variant = _update_issue(
-                runner, issue_repo=issue_repo, number=number, variant=variant, now=now
+            url = _create_issue(
+                runner,
+                issue_repo=issue_repo,
+                title=f"{service}: {cls}",
+                template_fingerprint=template_fp,
+                excerpt=excerpts[0][:1000],
+                variants=variants,
+                now=now,
             )
         except StoreError as exc:
-            _mark(store, row, status="error", error=str(exc))
-            lines.append(f"error.issue {rid} error")
-            continue
-        result = {
+            return fail_all(exc)
+        for index, (row, _seen_payload) in enumerate(members):
+            rid = str(row.get("id") or "?")
+            variant = row_variants[index]
+            _mark(
+                store,
+                row,
+                status="done",
+                result={
+                    "issue_repo": issue_repo,
+                    "template_fingerprint": template_fp,
+                    "at": now,
+                    "url": url,
+                    "variant": variant,
+                    "created": True,
+                },
+            )
+            lines.append(f"error.issue {rid} created variant={variant}")
+        return lines
+
+    try:
+        new_variants, comment_error = _update_issue(
+            runner, issue_repo=issue_repo, number=number, variants=variants, now=now
+        )
+    except StoreError as exc:
+        return fail_all(exc)
+
+    for index, (row, _seen_payload) in enumerate(members):
+        rid = str(row.get("id") or "?")
+        variant = row_variants[index]
+        result: dict[str, Any] = {
             "issue_repo": issue_repo,
             "template_fingerprint": template_fp,
             "at": now,
             "number": number,
             "variant": variant,
             "created": False,
-            "new_variant": is_new_variant,
+            "new_variant": variant in new_variants,
         }
+        if comment_error is not None:
+            result["comment_error"] = comment_error[:500]
         _mark(store, row, status="done", result=result)
+        suffix = " comment-failed" if comment_error is not None else ""
         lines.append(
-            f"error.issue {rid} updated number={number} variant={variant} new_variant={is_new_variant}"
+            f"error.issue {rid} updated number={number} variant={variant} "
+            f"new_variant={variant in new_variants}{suffix}"
         )
     return lines
