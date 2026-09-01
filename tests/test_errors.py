@@ -940,3 +940,40 @@ def test_line_must_match_keeps_and_drops(tmp_path: Path) -> None:
     assert enriched == []
     assert len(created) == 1
     assert "keep" in store.row("activity", created[0])["payload"]["excerpt"]
+
+
+def test_token_masking_only_matches_whole_tokens() -> None:
+    """Without boundary anchors "Base" matches inside "Based", "SOL" inside
+    "RESOLVE" and "COMP" inside "COMPLETE" — unrelated errors would then be
+    masked as chain/asset variants and labelled with a token that has nothing to
+    do with them."""
+    for line in (
+        "Based on the previous failure the job aborted",
+        "RESOLVE failed for host",
+        "COMPLETE checkout failed",
+        "DAILY reconciliation failed",
+        "UNIQUE constraint violated on table users",
+        "POLICY denied the request",
+        "BATCH job failed",
+        "MANAGEMENT api unreachable",
+        "LINKING accounts failed",
+        "SANDBOX unavailable",
+    ):
+        assert known_chain_in(line) is None, line
+        assert known_asset_in(line) is None, line
+
+
+def test_token_masking_still_matches_real_names_next_to_punctuation() -> None:
+    assert known_chain_in("Balance for Arbitrum/USDC went low") == "Arbitrum"
+    assert known_asset_in("Balance for Arbitrum/USDC went low") == "USDC"
+    # Tickers that are not word-character-only, or start with a digit, still match.
+    assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
+    assert known_asset_in("low balance 1INCH on Ethereum") == "1INCH"
+
+
+def test_template_signature_does_not_group_unrelated_words_with_assets() -> None:
+    # "UNIQUE" must not collapse onto the same template as a real ticker just
+    # because "UNI" is a prefix of it.
+    assert template_signature("UNIQUE constraint failed") != template_signature(
+        "UNI constraint failed"
+    )

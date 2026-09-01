@@ -57,10 +57,23 @@ _KNOWN_CHAINS = frozenset(
         "Olkypay", "BitcoinTestnet4", "BinancePay", "Arkade", "Cardano", "Monero",
     }
 )
-# Longest-first so e.g. "Bitcoin" cannot shadow-match a prefix of "BitcoinTestnet4".
-_CHAIN_TOKEN = re.compile(
-    "|".join(re.escape(name) for name in sorted(_KNOWN_CHAINS, key=len, reverse=True))
-)
+
+
+def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
+    """Alternation over known names, longest-first so e.g. "Bitcoin" cannot
+    shadow-match a prefix of "BitcoinTestnet4" and "USD" cannot shadow-match
+    "USDC". Anchored on both sides so a name only matches as a whole token:
+    without that, "Base" matches inside "Based", "SOL" inside "RESOLVE", "COMP"
+    inside "COMPLETE" and "DAI" inside "DAILY", which would mask unrelated words
+    and label an unrelated error as a chain/asset variant. The anchors are
+    explicit look-arounds rather than \b because several names are not
+    word-character-only ("USDC.e"). Matching stays case-sensitive on purpose:
+    lowercase prose words like "usd" in "token tether -> usd" are not tickers."""
+    alternation = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+    return re.compile(rf"(?<![A-Za-z0-9])(?:{alternation})(?![A-Za-z0-9])")
+
+
+_CHAIN_TOKEN = _token_pattern(_KNOWN_CHAINS)
 # Asset tickers from DFX's own asset enum (prod DB, checked 2026-08-31), masked the
 # same way as chains — e.g. "Balance for Arbitrum/USDC went..." vs ".../WBTC went..."
 # would otherwise stay separate templates. Kept to tickers seen on 2+ chains (a
@@ -83,11 +96,7 @@ _KNOWN_ASSETS = frozenset(
         "TGT",
     }
 )
-# Longest-first for the same reason as _CHAIN_TOKEN — e.g. "USD" is a literal
-# prefix of "USDC"/"USDT", "EUR" of "EURC"/"EURS"/"EURt".
-_ASSET_TOKEN = re.compile(
-    "|".join(re.escape(name) for name in sorted(_KNOWN_ASSETS, key=len, reverse=True))
-)
+_ASSET_TOKEN = _token_pattern(_KNOWN_ASSETS)
 _DIGITS = re.compile(r"\d+")
 _SPACE = re.compile(r"\s+")
 _CREDENTIAL_KEYS = frozenset(
