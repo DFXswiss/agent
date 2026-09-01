@@ -1003,3 +1003,13 @@ def test_asset_alternation_must_try_the_longest_name_first() -> None:
     match inside "USDC.e" and strip it down to the wrong asset."""
     assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
     assert known_asset_in("USDC drift on Arbitrum") == "USDC"
+
+
+def test_token_boundaries_are_unicode_aware() -> None:
+    """An ASCII-only boundary class would let a ticker glued to non-Latin letters
+    or to an underscore still count as a whole token."""
+    assert known_asset_in("ЖUSDCб drift") is None
+    assert known_asset_in("USDC_balance drift") is None
+    assert known_chain_in("Ethereumб handler") is None
+    # Real names next to ordinary punctuation still match.
+    assert known_asset_in("balance for USDC, low") == "USDC"

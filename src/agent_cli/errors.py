@@ -69,7 +69,9 @@ def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
     word character, so the short alternative would match and strip the ticker
     down to the wrong asset unless the longer one is tried first.
 
-    Anchored on both sides so a name only matches as a whole token:
+    Anchored on both sides with a word-character look-around so a name only
+    matches as a whole token. That class is Unicode-aware, so a ticker glued to
+    non-Latin letters or to an underscore is not a ticker either:
     without that, "Base" matches inside "Based", "SOL" inside "RESOLVE", "COMP"
     inside "COMPLETE" and "DAI" inside "DAILY", which would mask unrelated words
     and label an unrelated error as a chain/asset variant. The anchors are
@@ -77,7 +79,7 @@ def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
     word-character-only ("USDC.e"). Matching stays case-sensitive on purpose:
     lowercase prose words like "usd" in "token tether -> usd" are not tickers."""
     alternation = "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
-    return re.compile(rf"(?<![A-Za-z0-9])(?:{alternation})(?![A-Za-z0-9])")
+    return re.compile(rf"(?<!\w)(?:{alternation})(?!\w)")
 
 
 _CHAIN_TOKEN = _token_pattern(_KNOWN_CHAINS)
