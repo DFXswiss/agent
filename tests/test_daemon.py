@@ -14,9 +14,13 @@ from agent_cli.daemon import (
     SERVICE_LABEL,
     _terminate,
     acquire_lock,
+    adopt_kept_agent_pg_bin,
     child_specs,
+    existing_service_agent_pg_bin,
     hub_configured,
+    kept_service_agent_pg_bin,
     run_supervisor,
+    service_extra_env,
     service_unit_text,
 )
 from agent_cli.main import main
@@ -109,6 +113,92 @@ def test_service_unit_text_darwin_contains_label_and_daemon() -> None:
     assert "<string>daemon</string>" in text
     assert "ProgramArguments" in text
     assert "<key>PATH</key>" not in text
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_omits_empty_agent_pg_bin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    env = service_extra_env()
+    assert env == {"PATH": "/usr/bin:/bin"}
+    monkeypatch.setenv("AGENT_PG_BIN", "  ")
+    assert "AGENT_PG_BIN" not in service_extra_env()
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_persists_agent_pg_bin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("AGENT_PG_BIN", " /opt/pg/bin ")
+    env = service_extra_env()
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["AGENT_PG_BIN"] == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_keeps_existing_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    env = service_extra_env(existing_pg_bin="/opt/pg/bin")
+    assert env["AGENT_PG_BIN"] == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_service_extra_env_empty_clears_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("AGENT_PG_BIN", "  ")
+    env = service_extra_env(existing_pg_bin="/opt/pg/bin")
+    assert "AGENT_PG_BIN" not in env
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_roundtrip() -> None:
+    darwin = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    assert existing_service_agent_pg_bin(darwin, "darwin") == "/opt/pg/bin"
+    linux = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="linux",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    assert existing_service_agent_pg_bin(linux, "linux") == "/opt/pg/bin"
+    assert existing_service_agent_pg_bin(darwin, "linux") is None
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_unescapes() -> None:
+    special = "/opt/pg & bin"
+    darwin = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": special},
+    )
+    assert existing_service_agent_pg_bin(darwin, "darwin") == special
+    spaced = "/opt/pg bin"
+    linux = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="linux",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": spaced},
+    )
+    assert existing_service_agent_pg_bin(linux, "linux") == spaced
+
+
+@pytest.mark.no_pg
+def test_service_unit_text_darwin_includes_agent_pg_bin() -> None:
+    text = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/tmp/agent-home"),
+        platform="darwin",
+        extra_env={"PATH": "/usr/bin:/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    assert "<key>AGENT_PG_BIN</key>" in text
+    assert "<string>/opt/pg/bin</string>" in text
 
 
 @pytest.mark.no_pg
@@ -530,6 +620,31 @@ def test_daemon_install_writes_service_under_pytest(
         assert path_value in text
 
 
+def test_daemon_install_keeps_agent_pg_bin_on_reinstall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert os.environ.get("PYTEST_CURRENT_TEST")
+
+    def boom(_argv: list[str]) -> Any:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+    monkeypatch.setattr("agent_cli.runtime.run_argv", boom)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("AGENT_PG_BIN", "/opt/pg/bin")
+    run(tmp_path, ["daemon", "--install"])
+    path = tmp_path / "daemon.service"
+    first = path.read_text(encoding="utf-8")
+    plat = "darwin" if sys.platform == "darwin" else "linux"
+    if not sys.platform.startswith("linux") and sys.platform != "darwin":
+        plat = sys.platform
+    assert existing_service_agent_pg_bin(first, plat) == "/opt/pg/bin"
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    run(tmp_path, ["daemon", "--install"])
+    second = path.read_text(encoding="utf-8")
+    assert existing_service_agent_pg_bin(second, plat) == "/opt/pg/bin"
+
+
 def test_init_writes_daemon_service_under_pytest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -680,3 +795,199 @@ def test_run_supervisor_child_specs_argv(tmp_path: Path) -> None:
         )
     expected = [argv for name, argv in child_specs(["agent"]) if name != "sync"]
     assert started == expected
+
+
+@pytest.mark.no_pg
+def test_kept_service_agent_pg_bin_reads_installed_unit(tmp_path: Path) -> None:
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    assert kept_service_agent_pg_bin(tmp_path) == "/opt/pg/bin"
+    assert kept_service_agent_pg_bin(tmp_path / "nowhere") is None
+    (tmp_path / "daemon.service").write_bytes(b"\xff\xfe\x00")
+    assert kept_service_agent_pg_bin(tmp_path) is None
+
+
+@pytest.mark.no_pg
+def test_adopt_kept_agent_pg_bin_exports_when_env_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    assert adopt_kept_agent_pg_bin(tmp_path) == "/opt/pg/bin"
+    assert os.environ["AGENT_PG_BIN"] == "/opt/pg/bin"
+    monkeypatch.setenv("AGENT_PG_BIN", "/env/bin")
+    assert adopt_kept_agent_pg_bin(tmp_path) is None
+    assert os.environ["AGENT_PG_BIN"] == "/env/bin"
+    monkeypatch.setenv("AGENT_PG_BIN", "")
+    assert adopt_kept_agent_pg_bin(tmp_path) is None
+    assert os.environ["AGENT_PG_BIN"] == ""
+
+
+@pytest.mark.no_pg
+def test_open_store_adopts_kept_agent_pg_bin_before_cluster_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    pg_data = tmp_path / "pg" / "data"
+    pg_data.mkdir(parents=True)
+    (pg_data / "PG_VERSION").write_text("17", encoding="utf-8")
+
+    seen: list[str | None] = []
+
+    def fake_ensure_cluster(*args: object, **kwargs: object) -> Any:
+        seen.append(os.environ.get("AGENT_PG_BIN"))
+        raise SystemExit("agent: stop here")
+
+    monkeypatch.setattr("agent_cli.main.ensure_cluster", fake_ensure_cluster)
+
+    seen.clear()
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    with pytest.raises(SystemExit, match="stop here"):
+        run(tmp_path, ["daemon", "--install"])
+    assert seen == ["/opt/pg/bin"]
+
+    seen.clear()
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    with pytest.raises(SystemExit, match="stop here"):
+        run(tmp_path, ["init"])
+    assert seen == ["/opt/pg/bin"]
+
+    seen.clear()
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    with pytest.raises(SystemExit, match="stop here"):
+        run(tmp_path, ["status"])
+    assert seen == ["/opt/pg/bin"]
+
+
+@pytest.mark.no_pg
+def test_daemon_uninstall_adopts_kept_agent_pg_bin_before_removing_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    pg_data = tmp_path / "pg" / "data"
+    pg_data.mkdir(parents=True)
+    (pg_data / "PG_VERSION").write_text("17", encoding="utf-8")
+
+    seen: list[str | None] = []
+
+    def fake_cluster_running(data_dir: Path) -> bool:
+        seen.append(os.environ.get("AGENT_PG_BIN"))
+        return False
+
+    monkeypatch.setattr("agent_cli.main.cluster_running", fake_cluster_running)
+
+    def boom(_argv: list[str]) -> Any:
+        raise AssertionError("run_argv must not be called under pytest")
+
+    monkeypatch.setattr("agent_cli.daemon._default_run_argv", boom)
+
+    run(tmp_path, ["daemon", "--uninstall"])
+
+    assert seen == ["/opt/pg/bin"]
+    assert not (tmp_path / "daemon.service").exists()
+
+
+@pytest.mark.no_pg
+def test_pg_status_adopts_kept_agent_pg_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_PG_DSN", raising=False)
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=tmp_path,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    pg_data = tmp_path / "pg" / "data"
+    pg_data.mkdir(parents=True)
+    (pg_data / "PG_VERSION").write_text("17", encoding="utf-8")
+
+    seen: list[str | None] = []
+
+    def fake_cluster_running(data_dir: Path) -> bool:
+        seen.append(os.environ.get("AGENT_PG_BIN"))
+        return False
+
+    monkeypatch.setattr("agent_cli.main.cluster_running", fake_cluster_running)
+
+    run(tmp_path, ["pg", "status"])
+
+    assert seen == ["/opt/pg/bin"]
+
+
+@pytest.mark.no_pg
+def test_kept_service_agent_pg_bin_ignores_other_homes_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=Path("/elsewhere"),
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (tmp_path / "daemon.service").write_text(unit, encoding="utf-8")
+    assert kept_service_agent_pg_bin(tmp_path) is None
+    monkeypatch.delenv("AGENT_PG_BIN", raising=False)
+    assert adopt_kept_agent_pg_bin(tmp_path) is None
+    assert "AGENT_PG_BIN" not in os.environ
+
+
+@pytest.mark.no_pg
+def test_kept_service_agent_pg_bin_accepts_symlinked_own_home(tmp_path: Path) -> None:
+    real = tmp_path / "realhome"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    unit = service_unit_text(
+        program=["/usr/bin/agent", "daemon"],
+        home=link,
+        platform=sys.platform,
+        extra_env={"PATH": "/usr/bin", "AGENT_PG_BIN": "/opt/pg/bin"},
+    )
+    (real / "daemon.service").write_text(unit, encoding="utf-8")
+    assert kept_service_agent_pg_bin(real) == "/opt/pg/bin"
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_linux_whole_assignment_quoting() -> None:
+    text = "[Service]\nEnvironment=PATH=/usr/bin\nEnvironment='AGENT_PG_BIN=/opt/Custom Postgres/bin'\n"
+    assert existing_service_agent_pg_bin(text, "linux") == "/opt/Custom Postgres/bin"
+
+
+@pytest.mark.no_pg
+def test_existing_service_agent_pg_bin_linux_last_assignment_wins_and_reset() -> None:
+    text = "[Service]\nEnvironment=AGENT_PG_BIN=/old\nEnvironment='AGENT_PG_BIN=/new bin'\n"
+    assert existing_service_agent_pg_bin(text, "linux") == "/new bin"
+    text2 = "[Service]\nEnvironment=AGENT_PG_BIN=/old\nEnvironment=\n"
+    assert existing_service_agent_pg_bin(text2, "linux") is None
+    text3 = "[Service]\nEnvironment=AGENT_PG_BIN='/unterminated\n"
+    assert existing_service_agent_pg_bin(text3, "linux") is None

@@ -365,6 +365,85 @@ def _already_unloaded(stderr: str, stdout: str) -> bool:
     return any(n in text for n in needles)
 
 
+def existing_service_agent_pg_bin(text: str, platform: str) -> str | None:
+    if platform == "darwin":
+        try:
+            data = plistlib.loads(text.encode("utf-8"))
+        except (plistlib.InvalidFileException, ValueError, ExpatError):
+            return None
+        env = data.get("EnvironmentVariables") if isinstance(data, dict) else None
+        value = env.get("AGENT_PG_BIN") if isinstance(env, dict) else None
+        return value.strip() or None if isinstance(value, str) else None
+    if platform == "linux":
+        recorded: str | None = None
+        for line in text.splitlines():
+            if not line.startswith("Environment="):
+                continue
+            try:
+                tokens = shlex.split(line[len("Environment="):])
+            except ValueError:
+                return None
+            if not tokens:
+                recorded = None
+                continue
+            for token in tokens:
+                if token.startswith("AGENT_PG_BIN="):
+                    recorded = token[len("AGENT_PG_BIN="):].strip()
+        return recorded or None
+    return None
+
+
+def _unit_belongs_to(path: Path, platform: str, home: Path) -> bool:
+    """True when the installed unit at path records this home (after ~ expansion and symlink resolution)."""
+    try:
+        recorded = service_home(path, platform)
+    except StoreError:
+        return False
+    if recorded is None:
+        return False
+    return recorded.expanduser().resolve() == home.expanduser().resolve()
+
+
+def kept_service_agent_pg_bin(home: Path, platform: str | None = None) -> str | None:
+    """AGENT_PG_BIN recorded in the installed unit of THIS home, or None (missing, unreadable, malformed, or another home's unit)."""
+    plat = sys.platform if platform is None else platform
+    path = service_path(plat, home)
+    if not _unit_belongs_to(path, plat, home):
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return existing_service_agent_pg_bin(text, plat)
+
+
+def adopt_kept_agent_pg_bin(home: Path, platform: str | None = None) -> str | None:
+    """When AGENT_PG_BIN is not in the environment, export the value kept in the installed unit.
+
+    Returns the adopted value, or None when nothing was adopted.
+    """
+    if "AGENT_PG_BIN" in os.environ:
+        return None
+    kept = kept_service_agent_pg_bin(home, platform)
+    if kept:
+        os.environ["AGENT_PG_BIN"] = kept
+    return kept
+
+
+def service_extra_env(*, existing_pg_bin: str | None = None) -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
+    if "AGENT_PG_BIN" in os.environ:
+        pg_bin = os.environ["AGENT_PG_BIN"].strip()
+        if pg_bin:
+            env["AGENT_PG_BIN"] = pg_bin
+    elif isinstance(existing_pg_bin, str) and existing_pg_bin.strip():
+        env["AGENT_PG_BIN"] = existing_pg_bin.strip()
+    dsn = os.environ.get("AGENT_PG_DSN")
+    if dsn:
+        env["AGENT_PG_DSN"] = dsn
+    return env
+
+
 def install_and_start_service(
     *,
     home: Path,
@@ -374,17 +453,14 @@ def install_and_start_service(
 ) -> None:
     """Write the user service unit and start it (skipped under pytest)."""
     plat = sys.platform if platform is None else platform
-    extra_env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin"}
-    dsn = os.environ.get("AGENT_PG_DSN")
-    if dsn:
-        extra_env["AGENT_PG_DSN"] = dsn
+    path = service_path(plat, home)
+    kept = kept_service_agent_pg_bin(home, plat)
     text = service_unit_text(
         program=program,
         home=home,
         platform=plat,
-        extra_env=extra_env,
+        extra_env=service_extra_env(existing_pg_bin=kept),
     )
-    path = service_path(plat, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     if os.environ.get("PYTEST_CURRENT_TEST"):
