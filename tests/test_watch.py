@@ -316,7 +316,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     assert again == []
 
 
-def test_scan_assigned_missing_actor_sets_assigned_by_empty(tmp_path: Path) -> None:
+def test_scan_assigned_missing_actor_skips_without_persisting(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
     _write_assigned_repos(tmp_path)
@@ -418,7 +418,7 @@ def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
     assert row["payload"]["assigned_by"] == "later"
 
 
-def test_scan_assigned_same_second_unresolvable_tie_sets_assigned_by_empty(
+def test_scan_assigned_same_second_unresolvable_tie_skips_without_persisting(
     tmp_path: Path,
 ) -> None:
     store = Store(tmp_path)
@@ -1108,6 +1108,27 @@ def test_dispatch_assigned_denies_when_policy_json_is_null(tmp_path: Path) -> No
     assert not (workspace_root / "assigned" / "MANDATE.md").exists()
     assert store.row("activity", "asg-1") is not None
     assert not store.wake_delivered("asg-1")
+
+
+def test_load_policy_raises_on_invalid_json(tmp_path: Path) -> None:
+    (tmp_path / "policy.json").write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(StoreError, match="invalid JSON"):
+        load_policy(tmp_path)
+
+
+def test_dispatch_assigned_raises_when_policy_json_is_invalid(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    (tmp_path / "policy.json").write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(StoreError, match="invalid JSON"):
+        dispatch_assigned(
+            store,
+            "asg-1",
+            sync=lambda: None,
+            start=lambda s, cwd: None,
+            knock=lambda aid: None,
+            workspace_root=tmp_path / "sessions",
+        )
 
 
 def test_dispatch_assigned_denies_when_policy_rejects_attached(tmp_path: Path) -> None:
