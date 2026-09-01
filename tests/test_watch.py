@@ -1095,6 +1095,12 @@ def test_dispatch_assigned_denies_when_job_types_allow_omits_implement(
     _write_admit_policy(tmp_path, job_types_allow=["pr-review"])
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     status = dispatch_assigned(
         store,
         "asg-1",
@@ -1102,6 +1108,7 @@ def test_dispatch_assigned_denies_when_job_types_allow_omits_implement(
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=tmp_path / "sessions",
+        runner=runner,
     )
     assert status == "denied"
     assert start_log == []
