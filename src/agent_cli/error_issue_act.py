@@ -223,11 +223,14 @@ def _ensure_issue_body(body: str) -> str:
 
 def _splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     """Replace only the delimited variants section; never touch the rest of the
-    body — that is human territory. Anything but exactly one well-ordered marker
-    pair is damage and fails loud: a lone marker means a hand edit truncated the
-    section, and appending a second section there would strand the variants
-    already recorded above, while a duplicated marker would make the splice
-    rewrite whatever sits between the copies."""
+    body — that is human territory.
+
+    A body with no markers at all is fresh, so the section is appended. Once any
+    marker is present, though, anything but exactly one well-ordered pair is
+    damage and fails loud: a lone marker means a hand edit truncated the section,
+    and appending a second one there would strand the variants already recorded
+    above, while a duplicated marker would make the splice rewrite whatever sits
+    between the copies."""
     starts = body.count(_VARIANTS_START)
     ends = body.count(_VARIANTS_END)
     section = _render_variants_section(variants)
@@ -236,9 +239,9 @@ def _splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
         return _ensure_issue_body(f"{body}{sep}{section}\n")
     start = body.find(_VARIANTS_START)
     end = body.find(_VARIANTS_END)
-    # Anything but exactly one well-ordered pair is damage. Splicing across a
-    # duplicated marker would silently rewrite whatever sits between the copies,
-    # which is human territory.
+    # Past the fresh-body case above, anything but exactly one well-ordered pair
+    # is damage: splicing across a duplicated marker would silently rewrite
+    # whatever sits between the copies, which is human territory.
     if starts != 1 or ends != 1 or end < start:
         raise StoreError("issue body has a damaged variants section")
     return _ensure_issue_body(body[:start] + section + body[end + len(_VARIANTS_END) :])
@@ -342,7 +345,6 @@ def _within_cooldown(
     if elapsed < timedelta(0):
         return False
     return elapsed < timedelta(minutes=cooldown_minutes)
-
 
 
 def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:

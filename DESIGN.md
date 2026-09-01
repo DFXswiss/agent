@@ -638,10 +638,11 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 
 `template_fingerprint` is `fingerprint` one step coarser: known blockchain and
 payment-rail names and asset tickers are masked before hashing, so per-chain and
-per-token variants of one error share it. Names are masked only as whole tokens and case-sensitively, so prose
-like "Based" or lowercase "usd" is not mistaken for a chain or a ticker. It groups
-which issue a variant belongs to (§21.6); `fingerprint` stays the finer-grained
-identity used for `count` / `last_seen`, so per-variant dedup remains exact.
+per-token variants of one error share it. Names are masked only as whole tokens
+and case-sensitively, so prose like "Based" or lowercase "usd" is not mistaken
+for a chain or a ticker. It groups which issue a variant belongs to (§21.6);
+`fingerprint` stays the finer-grained identity used for `count` / `last_seen`,
+so per-variant dedup remains exact.
 
 `repo` may be omitted when the adapter cannot map the stream; the session then `error.skip`s with reason `unmapped-repo`. `line_fingerprint` is optional: `sha256(server + newline + container + newline + exact line)` as 64 lowercase hex, computed from the raw line before redaction. Omit it when `server` or `container` is missing. Host adapters may print the hex on `error.fix` stdout; it is not a mandate and not a log-host name.
 
@@ -689,11 +690,12 @@ The model never receives production credentials. Analysis that only reads the ex
 `error.issue` groups by `template_fingerprint` (§21.3), not by the per-variant
 `fingerprint`, so one issue covers every chain/token variant of one error. The
 concrete variants live in a machine-owned, delimited section of the issue body;
-nothing outside that section is ever rewritten, and a body carrying only one of
-the two markers is treated as damaged rather than appended to. Two throttles sit
-in front: a burst fold, counted over templates never filed before so a backlog
-draining after downtime is not mistaken for a burst, and a per-template cooldown
-read from local history — a dry run is a preview and never opens that window.
+nothing outside that section is ever rewritten. A body carrying only one of the
+two markers, or a duplicated marker, is treated as damaged rather than appended
+to. Two throttles sit in front: a burst fold, counted over templates never filed
+before so a backlog draining after downtime is not mistaken for a burst, and a
+per-template cooldown read from local history — a dry run is a preview and never
+opens that window.
 
 ## 22. Static supervise loop (v1)
 
