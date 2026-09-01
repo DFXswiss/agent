@@ -18,8 +18,9 @@ Two throttles sit in front of the per-template logic:
   never opens that window.
 
 All pending rows of one template are handled together, so two variants seen in
-the same run land in one issue instead of the first becoming a cooldown touch
-that drops the second.
+the same run land in one issue with one comment instead of one issue write and
+one comment each. The cooldown cannot mistake them for repeats either way: the
+history snapshot is taken before the scan marks anything.
 
 Both are plain comparisons against local state; neither involves model
 judgment."""
@@ -89,9 +90,15 @@ def _fenced(text: str) -> str:
 
 
 def _inert_cell(text: str) -> str:
-    """Same, for text that lands in a table cell: a pipe or a newline there
-    would break the row apart and the name would not survive a round trip."""
-    return _inert_block(text).replace("|", "/").replace("\n", " ").replace("\r", " ")
+    """Render untrusted text as an inert table cell.
+
+    A pipe or a newline would break the row apart so the name would not survive
+    a round trip. The code span is what stops the rest: this text comes from the
+    log source, and a bare "@name" or "[text](url)" in a cell renders as a live
+    mention or link in the issue. A backtick cannot be kept inside a single
+    backtick span, so it becomes an apostrophe."""
+    flattened = _inert_block(text).replace("|", "/").replace("\n", " ").replace("\r", " ")
+    return f"`{flattened.replace('`', chr(39))}`"
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -200,6 +207,17 @@ def _render_variants_section(variants: dict[str, dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _require_intact_section(body: str) -> None:
+    """Raise unless the body has no section at all or exactly one well-ordered
+    marker pair. Shared so a reader and a writer judge damage the same way."""
+    starts = body.count(_VARIANTS_START)
+    ends = body.count(_VARIANTS_END)
+    if starts == 0 and ends == 0:
+        return
+    if starts != 1 or ends != 1 or body.find(_VARIANTS_END) < body.find(_VARIANTS_START):
+        raise StoreError("issue body has a damaged variants section")
+
+
 def _parse_variants_section(body: str) -> dict[str, dict[str, str]]:
     """Parse the existing delimited variants table back out of an issue body."""
     start = body.find(_VARIANTS_START)
@@ -243,19 +261,13 @@ def _splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     and appending a second one there would strand the variants already recorded
     above, while a duplicated marker would make the splice rewrite whatever sits
     between the copies."""
-    starts = body.count(_VARIANTS_START)
-    ends = body.count(_VARIANTS_END)
+    _require_intact_section(body)
     section = _render_variants_section(variants)
-    if starts == 0 and ends == 0:
+    start = body.find(_VARIANTS_START)
+    if start == -1:
         sep = "" if body == "" else "\n\n"
         return _ensure_issue_body(f"{body}{sep}{section}\n")
-    start = body.find(_VARIANTS_START)
     end = body.find(_VARIANTS_END)
-    # Past the fresh-body case above, anything but exactly one well-ordered pair
-    # is damage: splicing across a duplicated marker would silently rewrite
-    # whatever sits between the copies, which is human territory.
-    if starts != 1 or ends != 1 or end < start:
-        raise StoreError("issue body has a damaged variants section")
     return _ensure_issue_body(body[:start] + section + body[end + len(_VARIANTS_END) :])
 
 
@@ -352,14 +364,15 @@ def _within_cooldown(
         return False
     elapsed = now_dt - touched_dt
     # A touch dated in the future (clock skew, a backward clock, a damaged row)
-    # would otherwise look like "no time has passed" forever and silently skip
-    # this template on every future scan. Treat it as not in cooldown.
+    # would otherwise read as "no time has passed" and silently skip this
+    # template until the clock passes that timestamp plus the whole window.
+    # Treat it as not in cooldown.
     if elapsed < timedelta(0):
         return False
     return elapsed < timedelta(minutes=cooldown_minutes)
 
 
-def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     payload = row.get("payload")
     if not isinstance(payload, dict):
         raise StoreError("payload must be an object")
@@ -376,7 +389,7 @@ def _pending_issue(store: Store, row: dict[str, Any]) -> tuple[str, str, dict[st
     template_fp = _nonempty_str(seen_payload.get("template_fingerprint"))
     if template_fp is None:
         raise StoreError("template_fingerprint is required")
-    return error_id, template_fp, seen_payload
+    return template_fp, seen_payload
 
 
 def _gh(runner: Runner, argv: list[str], fallback: str) -> str:
@@ -386,7 +399,10 @@ def _gh(runner: Runner, argv: list[str], fallback: str) -> str:
     github_act)."""
     try:
         completed = runner(argv)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # OSError is a missing or broken binary; ValueError is subprocess
+        # refusing an argument, e.g. a NUL byte carried in from a log line.
+        # Either way this stays one row's failure, not the scan's.
         raise StoreError(f"{fallback}: {exc}") from exc
     if completed.returncode != 0:
         raise StoreError((completed.stderr or completed.stdout or fallback).strip())
@@ -639,11 +655,11 @@ def _process_storm(
     *,
     issue_repo: str,
     dry_run: bool,
-    resolved: list[tuple[dict[str, Any], str, str, dict[str, Any]]],
+    resolved: list[tuple[dict[str, Any], str, dict[str, Any]]],
     now: str,
 ) -> list[str]:
     templates: dict[str, dict[str, str]] = {}
-    for _row, _error_id, template_fp, seen_payload in resolved:
+    for _row, template_fp, seen_payload in resolved:
         label = _storm_label(template_fp, seen_payload)
         if label in templates:
             templates[label]["last_seen"] = now
@@ -653,7 +669,7 @@ def _process_storm(
     lines: list[str] = []
 
     if dry_run:
-        for row, _error_id, template_fp, _seen_payload in resolved:
+        for row, template_fp, _seen_payload in resolved:
             rid = str(row.get("id") or "?")
             result = {
                 "mode": "storm-dry-run",
@@ -678,13 +694,13 @@ def _process_storm(
             _update_storm_issue(runner, issue_repo=issue_repo, number=number, templates=templates)
             extra = {"number": number, "created": False}
     except StoreError as exc:
-        for row, _error_id, _template_fp, _seen_payload in resolved:
+        for row, _template_fp, _seen_payload in resolved:
             rid = str(row.get("id") or "?")
             _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.issue {rid} error")
         return lines
 
-    for row, _error_id, template_fp, _seen_payload in resolved:
+    for row, template_fp, _seen_payload in resolved:
         rid = str(row.get("id") or "?")
         result = {
             "mode": "storm",
@@ -737,16 +753,16 @@ def _scan_error_issue(
     rows.sort(key=lambda row: str(row.get("id") or ""))
 
     lines: list[str] = []
-    resolved: list[tuple[dict[str, Any], str, str, dict[str, Any]]] = []
+    resolved: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
     for row in rows:
         rid = str(row.get("id") or "?")
         try:
-            error_id, template_fp, seen_payload = _pending_issue(store, row)
+            template_fp, seen_payload = _pending_issue(store, row)
         except StoreError as exc:
             _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.issue {rid} error")
             continue
-        resolved.append((row, error_id, template_fp, seen_payload))
+        resolved.append((row, template_fp, seen_payload))
 
     if not resolved:
         return lines
@@ -758,7 +774,7 @@ def _scan_error_issue(
     history = _touch_history(store, issue_repo)
 
     groups: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
-    for row, _error_id, template_fp, seen_payload in resolved:
+    for row, template_fp, seen_payload in resolved:
         groups.setdefault(template_fp, []).append((row, seen_payload))
 
     # Burst detection counts only templates never filed before. A backlog of
@@ -767,7 +783,7 @@ def _scan_error_issue(
     new_templates = [fp for fp in groups if fp not in history]
     if len(new_templates) > storm_threshold:
         storm_rows = [
-            (row, "", template_fp, seen_payload)
+            (row, template_fp, seen_payload)
             for template_fp in new_templates
             for row, seen_payload in groups[template_fp]
         ]
@@ -835,6 +851,10 @@ class _OpenBurst:
                 self._labels = set()
             else:
                 body = _issue_body(self._runner, self._issue_repo, self._number)
+                # A damaged section parses to nothing, which would read as "this
+                # burst covers no template" and file duplicates. Fail loud on it,
+                # exactly as a splice would.
+                _require_intact_section(body)
                 self._labels = set(_parse_variants_section(body))
         if self._number is None:
             return None

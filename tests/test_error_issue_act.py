@@ -1364,7 +1364,7 @@ def test_storm_label_is_unique_per_template_despite_separators(tmp_path: Path) -
         "api|x|error|sigAAAA|prod",
         {"service": "api|x", "class": "error", "environment": "prod"},
     )
-    assert shifted.startswith("api/x/prod: error (")
+    assert shifted.startswith("`api/x/prod: error (")
 
 
 def test_storm_issue_keeps_a_row_per_colliding_template(tmp_path: Path) -> None:
@@ -1497,7 +1497,7 @@ def test_a_row_named_like_the_header_survives_the_round_trip(tmp_path: Path) -> 
         "variant|error|abc123def|prod",
         {"service": "variant", "class": "error", "environment": "prod"},
     )
-    assert label.startswith("variant")
+    assert label.startswith("`variant")
     section = _render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
     assert _parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
 
@@ -1533,3 +1533,67 @@ def test_a_row_named_like_the_header_still_blocks_a_second_issue(tmp_path: Path)
         store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
     )
     assert lines == ["error.issue issue-1 already-in-burst number=99"]
+
+
+def test_storm_label_renders_log_text_inertly() -> None:
+    """service and class come from the log source. A bare mention or link in a
+    table cell renders as a live mention or link in the issue."""
+    label = _storm_label(
+        "api|error|abc|prod",
+        {"service": "@someone", "class": "[click](http://x)", "environment": "prod"},
+    )
+    assert label.startswith("`") and label.endswith("`")
+    assert "@someone" in label  # the text is kept, only made inert
+    # A backtick cannot survive inside a single-backtick span.
+    assert "`" not in label[1:-1]
+    spanned = _storm_label(
+        "api|error|abc|prod",
+        {"service": "a`b", "class": "error", "environment": "prod"},
+    )
+    assert "`" not in spanned[1:-1]
+
+
+def test_gh_argument_errors_stay_on_the_row(tmp_path: Path) -> None:
+    """subprocess refuses a NUL byte with ValueError, not OSError. Uncaught, it
+    would abort the whole scan and the row would block every later run."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+
+    def runner(argv: list[str]) -> Completed:
+        raise ValueError("embedded null byte")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    assert lines == ["error.issue issue-1 error"]
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "embedded null byte" in row["execution_error"]
+
+
+def test_burst_lookup_fails_loud_on_a_damaged_body(tmp_path: Path) -> None:
+    """A damaged burst body parses to nothing, which would read as "covers no
+    template" and file a duplicate. It has to fail like a splice would."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+    damaged = f"{STORM_MARKER}\n\n{_VARIANTS_START}\n\n| a | t1 | t1 |\n"
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "create"]:
+            raise AssertionError(f"must not open an issue off a damaged body: {argv}")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, json.dumps([{"number": 99, "body": STORM_MARKER}]), "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, json.dumps({"body": damaged}), "")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
+    )
+    assert lines == ["error.issue issue-1 error"]
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert "damaged variants section" in row["execution_error"]
