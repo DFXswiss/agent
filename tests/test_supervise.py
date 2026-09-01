@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_cli.runtime import Completed, Runtime
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from agent_cli.supervise import (
     ANSWER_BLOCKED,
     ANSWER_CAN,
@@ -115,8 +117,12 @@ def test_parse_closed_answer_ignores_ja_in_scrollback() -> None:
 def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
+    store.set_meta("github_login", "alice")
 
     def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if joined == "gh api user":
+            return Completed(0, json.dumps({"login": "alice"}), "")
         return Completed(1, "", "no gh")
 
     first = enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
@@ -127,6 +133,21 @@ def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
     assert row["type"] == "issue.assigned"
     assert row["payload"]["mandate"] == "github-assignment"
     assert row["payload"]["url"] == "https://github.com/octo/app/issues/3"
+    assert row["payload"]["assigned_by"] == "alice"
+
+
+def test_enqueue_broken_pairing_raises_without_writing(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(1, "", "no gh")
+
+    with pytest.raises(StoreError):
+        enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "issue.assigned"
+    ] == []
 
 
 def test_enqueue_uses_gh_json(tmp_path: Path) -> None:

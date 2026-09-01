@@ -357,11 +357,8 @@ def test_scan_assigned_missing_actor_sets_assigned_by_empty(tmp_path: Path) -> N
         raise AssertionError(f"unexpected argv: {argv}")
 
     created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
     assert skipped == 0
-    assert len(created) == 1
-    row = store.row("activity", created[0])
-    assert row is not None
-    assert row["payload"]["assigned_by"] == ""
 
 
 def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
@@ -479,11 +476,8 @@ def test_scan_assigned_same_second_unresolvable_tie_sets_assigned_by_empty(
         raise AssertionError(f"unexpected argv: {argv}")
 
     created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
     assert skipped == 0
-    assert len(created) == 1
-    row = store.row("activity", created[0])
-    assert row is not None
-    assert row["payload"]["assigned_by"] == ""
 
 
 def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
@@ -493,7 +487,45 @@ def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
     store.set_meta("github_login", "alice")
     _write_assigned_repos(tmp_path)
     store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
-    events_calls = {"n": 0}
+    # Legacy blanked marker (pre-Fix-Q / missing event_id): scan_assigned no
+    # longer manufactures these, but a resolvable candidate at the same
+    # timestamp must still beat a stored marker with no id.
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {
+            "id": "assigned",
+            "kind": "runner",
+            "status": "active",
+            "started_at": "2026-01-01T00:00:00Z",
+            "last_seen_at": "2026-01-01T00:00:00Z",
+            "host": "test",
+        },
+    )
+    store.sync_set("assigned_session_id", "assigned")
+    store.write(
+        "activity",
+        "insert",
+        "legacy-blanked",
+        {
+            "id": "legacy-blanked",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "url": "https://github.com/Owner/repo/issues/8",
+                "title": "Fix it",
+                "body": "SECRET_BODY_DO_NOT_COPY",
+                "assigned_at": "2026-01-01T00:00:00Z",
+                "assigned_by": "",
+                "event_id": None,
+                "mandate": "github-assignment",
+            },
+            "execution_status": "done",
+        },
+    )
 
     def runner(argv: list[str]) -> Completed:
         if argv[:3] == ["gh", "api", "user"]:
@@ -514,38 +546,6 @@ def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
                 "",
             )
         if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
-            events_calls["n"] += 1
-            if events_calls["n"] == 1:
-                # First scan: an unresolvable tie stores a blanked marker
-                # (assigned_by="", event_id=None) for this timestamp.
-                return Completed(
-                    0,
-                    json.dumps(
-                        [
-                            {
-                                "id": 100,
-                                "event": "assigned",
-                                "created_at": "2026-01-01T00:00:00Z",
-                                "assignee": {"login": "alice"},
-                                "actor": {"login": "first"},
-                            },
-                            {
-                                "event": "assigned",
-                                "created_at": "2026-01-01T00:00:00Z",
-                                "assignee": {"login": "alice"},
-                                "actor": {"login": "second"},
-                            },
-                        ]
-                    ),
-                    "",
-                )
-            # Second scan: GitHub's events list for this issue now (this is
-            # a fresh independent API read, not a diff against scan 1) only
-            # has resolvable ids — no unresolvable event to re-poison the
-            # tie, so this scan's own intra-scan result is a clean
-            # newest_id=300. The bug under test is whether that clean
-            # result can beat the stored marker from scan 1, whose
-            # event_id is None.
             return Completed(
                 0,
                 json.dumps(
@@ -570,24 +570,14 @@ def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
             )
         raise AssertionError(f"unexpected argv: {argv}")
 
-    created, skipped = scan_assigned(store, runner, now="2026-01-01T00:00:00Z")
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
     assert skipped == 0
     assert len(created) == 1
     row = store.row("activity", created[0])
     assert row is not None
-    assert row["payload"]["assigned_by"] == ""
-    assert row["payload"]["event_id"] is None
-
-    # `now` must not advance the watch cursor past the events' `created_at`
-    # (see the sibling across-scans test above for why).
-    created2, skipped2 = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
-    assert skipped2 == 0
-    assert len(created2) == 1
-    row2 = store.row("activity", created2[0])
-    assert row2 is not None
-    assert row2["id"] != created[0]
-    assert row2["payload"]["assigned_by"] == "resolved"
-    assert row2["payload"]["event_id"] == 300
+    assert row["id"] != "legacy-blanked"
+    assert row["payload"]["assigned_by"] == "resolved"
+    assert row["payload"]["event_id"] == 300
 
 
 def test_scan_assigned_same_second_higher_event_id_across_scans(tmp_path: Path) -> None:
@@ -723,6 +713,7 @@ def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) ->
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -771,6 +762,7 @@ def test_scan_assigned_equal_cursor_inserts_once(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -1347,6 +1339,7 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-02-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -1361,6 +1354,7 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -1545,6 +1539,7 @@ def test_scan_assigned_reassignment_while_pending_enqueues(tmp_path: Path) -> No
                             "event": "assigned",
                             "created_at": "2026-06-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -1624,6 +1619,7 @@ def test_scan_assigned_after_ack_allows_new_assignment(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-06-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -1767,6 +1763,7 @@ def test_scan_assigned_rejects_non_runner_session(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),

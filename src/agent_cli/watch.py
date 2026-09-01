@@ -473,6 +473,8 @@ def scan_assigned(
                         newest_id = None
             if newest_at is None or newest_dt is None:
                 continue
+            if newest_by == "":
+                continue
             previous = _latest_assigned_marker(store, repo, number)
             if not _assignment_is_newer(newest_dt, newest_id, previous):
                 continue

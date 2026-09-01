@@ -245,11 +245,7 @@ def enqueue_assigned(
                     assignee = data["assignee"]
     except (OSError, json.JSONDecodeError):
         pass
-    assigned_by = ""
-    try:
-        assigned_by = _paired_login(store, runner)
-    except StoreError:
-        pass
+    assigned_by = _paired_login(store, runner)
     activity_id = str(uuid.uuid4())
     store.write(
         "activity",
