@@ -293,10 +293,9 @@ def stack_sig(line: str) -> str:
 def template_signature(line: str) -> str:
     """Coarser than stack_sig: also masks known blockchain and payment-rail
     names and asset tickers (see _KNOWN_CHAINS/_KNOWN_ASSETS), so a per-chain or
-    per-token error variant groups under one issue-filing template instead of
-    fragmenting into one fingerprint per chain/token pair. Used only for
-    grouping which GitHub issue a variant belongs to — error.seen identity keeps
-    using the finer-grained fingerprint()/stack_sig() so per-variant
+    per-token error variant groups under one coarser template instead of
+    fragmenting into one fingerprint per chain/token pair. error.seen identity
+    keeps using the finer-grained fingerprint()/stack_sig() so per-variant
     count/last_seen tracking stays exact."""
     norm = redact(strip_ansi(line))
     norm = _UUID.sub("", norm)
@@ -332,9 +331,8 @@ def template_fingerprint(
 
 
 def known_chain_in(line: str) -> str | None:
-    """The first known chain or payment-rail name present in the line, if any —
-    used to label which concrete variant a template_fingerprint incident belongs
-    to. _KNOWN_CHAINS covers both, since the platform exposes them as one set of
+    """The first known chain or payment-rail name present in the line, if any.
+    _KNOWN_CHAINS covers both, since the platform exposes them as one set of
     transfer options. Most error lines name neither; those return None."""
     match = _CHAIN_TOKEN.search(line)
     return match.group(0) if match is not None else None
