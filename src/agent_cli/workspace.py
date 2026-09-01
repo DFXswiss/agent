@@ -114,3 +114,8 @@ def kill_session_argv(socket: str, session: str) -> list[str]:
     Same `=` prefix rule as `has_session_argv` for consistency.
     """
     return ["tmux", "-S", socket, "kill-session", "-t", f"={session}"]
+
+
+def is_bare_argv(bare: str) -> list[str]:
+    """Check whether `bare` is a bare Git repository."""
+    return ["git", f"--git-dir={bare}", "rev-parse", "--is-bare-repository"]
