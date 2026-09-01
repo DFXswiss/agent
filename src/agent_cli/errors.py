@@ -28,6 +28,8 @@ _JSON_SECRET = re.compile(
     r'(?i)("[^"]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[^"]*"\s*:\s*")[^"]*(")'
 )
 _HEX = re.compile(r"\b[a-fA-F0-9]{20,}\b")
+_OTEL_TRACE_ID = re.compile(r"\btrace_id=[0-9a-fA-F]{32}\b")
+_OTEL_SPAN_ID = re.compile(r"\bspan_id=[0-9a-fA-F]{16}\b")
 _SECRET = re.compile(
     r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9_-]*(?:password|secret|token|api[_-]?key|access[_-]?token|client[_-]?secret|authorization|passwd|access_key)[A-Za-z0-9_-]*\s*[:=]\s*\S+"
 )
@@ -180,6 +182,8 @@ def redact(text: str) -> str:
     out = _AKIA.sub("[redacted]", out)
     out = _JWT.sub("[redacted]", out)
     out = _EMAIL.sub("[redacted]", out)
+    out = _OTEL_TRACE_ID.sub("trace_id=[redacted]", out)
+    out = _OTEL_SPAN_ID.sub("span_id=[redacted]", out)
     out = _HEX.sub("[redacted]", out)
     return out
 
