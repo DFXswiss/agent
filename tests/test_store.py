@@ -45,6 +45,13 @@ def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
     assert pending[0]["origin_seq"] == 1
 
 
+def test_mark_pushed_does_not_regress_the_cursor(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.mark_pushed(10)
+    store.mark_pushed(3)
+    assert store.sync_get("pushed_origin_seq", "0") == "10"
+
+
 def test_remote_gap_fail_closed(tmp_path: Path) -> None:
     store = Store(tmp_path)
     with pytest.raises(StoreError, match="gap"):

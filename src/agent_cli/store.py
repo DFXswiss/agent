@@ -522,7 +522,9 @@ class Store:
 
     @_wrap_pg_errors
     def mark_pushed(self, seq: int) -> None:
-        self.sync_set("pushed_origin_seq", str(seq))
+        current = int(self.sync_get("pushed_origin_seq", "0") or "0")
+        if seq > current:
+            self.sync_set("pushed_origin_seq", str(seq))
 
     def origin_cursor(self, origin: str) -> int:
         raw = self.sync_get(f"origin:{origin}", "0")

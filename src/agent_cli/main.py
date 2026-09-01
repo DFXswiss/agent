@@ -13,9 +13,10 @@ import sys
 import time
 import uuid
 import webbrowser
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 from websockets.exceptions import WebSocketException
@@ -36,6 +37,7 @@ from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
+    Completed,
     Runtime,
     grok_model,
     grok_new_session_id,
@@ -2904,7 +2906,7 @@ def cmd_lane(args: list[str]) -> None:
         raise SystemExit(2)
 
 
-def _knock_scan_cycle(store: Store, run_argv: Callable) -> None:
+def _knock_scan_cycle(store: Store, run_argv: Callable[[list[str]], Completed]) -> None:
     from .pending import scan_pending
 
     try:
@@ -2969,7 +2971,7 @@ def _knock_scan_cycle(store: Store, run_argv: Callable) -> None:
     if hub_url and hub_token:
         try:
             _sync_once(store)
-        except (HubError, StoreError) as exc:
+        except (HubError, StoreError, SystemExit) as exc:
             print(f"sync error: {exc}", file=sys.stderr)
 
 
