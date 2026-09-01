@@ -51,6 +51,7 @@ def _seen(
     excerpt: str = "Timeout updating balances for Ethereum: Error: Timeout",
     service: str = "api",
     cls: str = "error",
+    environment: str = "prod",
     activity_id: str = "error-seen-1",
 ) -> None:
     payload: dict[str, object] = {
@@ -58,6 +59,7 @@ def _seen(
         "excerpt": excerpt,
         "service": service,
         "class": cls,
+        "environment": environment,
     }
     if template_fingerprint is not None:
         payload["template_fingerprint"] = template_fingerprint
@@ -1485,3 +1487,49 @@ def test_burst_folds_do_not_leak_across_repos(tmp_path: Path) -> None:
     )
     assert _burst_folded_templates(store, "org/tracker") == {"api|error|abc|prod": {99}}
     assert _burst_folded_templates(store, "org/other-tracker") == {}
+
+
+def test_a_row_named_like_the_header_survives_the_round_trip(tmp_path: Path) -> None:
+    """service is free text, so a label can begin with "variant". Matching the
+    header by prefix would drop that row, and a template the burst issue already
+    lists would be filed a second time."""
+    label = _storm_label(
+        "variant|error|abc123def|prod",
+        {"service": "variant", "class": "error", "environment": "prod"},
+    )
+    assert label.startswith("variant")
+    section = _render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
+    assert _parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
+
+
+def test_a_row_named_like_the_header_still_blocks_a_second_issue(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(
+        store,
+        template_fingerprint="variant|error|abc123def|prod",
+        service="variant",
+        excerpt="Some error",
+    )
+    _issue(store)
+    label = _storm_label(
+        "variant|error|abc123def|prod",
+        {"service": "variant", "class": "error", "environment": "prod"},
+    )
+    burst_body = f"{STORM_MARKER}\n\n" + _render_variants_section(
+        {label: {"first_seen": "t1", "last_seen": "t1"}}
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "create"]:
+            raise AssertionError(f"must not open a second issue: {argv}")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, json.dumps([{"number": 99, "body": STORM_MARKER}]), "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, json.dumps({"body": burst_body}), "")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, cooldown_minutes=0
+    )
+    assert lines == ["error.issue issue-1 already-in-burst number=99"]

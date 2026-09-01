@@ -42,6 +42,7 @@ Runner = Callable[[list[str]], Completed]
 ISSUE_LABEL = "error-log-agent"
 _MARKER_PREFIX = "<!-- error-log-template:"
 _MARKER_SUFFIX = " -->"
+_VARIANTS_HEADER = ("variant", "first seen", "last seen")
 _VARIANTS_START = "<!-- variants:start -->"
 _VARIANTS_END = "<!-- variants:end -->"
 STORM_MARKER = "<!-- error-log-storm -->"
@@ -182,7 +183,12 @@ def _render_variants_section(variants: dict[str, dict[str, str]]) -> str:
         )
         kept = dict(by_recency[:MAX_TRACKED_VARIANTS])
         dropped = len(variants) - MAX_TRACKED_VARIANTS
-    lines = [_VARIANTS_START, "", "| variant | first seen | last seen |", "|---|---|---|"]
+    lines = [
+        _VARIANTS_START,
+        "",
+        "| " + " | ".join(_VARIANTS_HEADER) + " |",
+        "|---|---|---|",
+    ]
     for name in sorted(kept):
         entry = kept[name]
         lines.append(f"| {name} | {entry.get('first_seen', '')} | {entry.get('last_seen', '')} |")
@@ -203,10 +209,16 @@ def _parse_variants_section(body: str) -> dict[str, dict[str, str]]:
         return variants
     for raw_line in body[start:end].splitlines():
         line = raw_line.strip()
-        if not line.startswith("|") or line.startswith("|---") or line.startswith("| variant"):
+        if not line.startswith("|") or line.startswith("|---"):
             continue
         parts = [p.strip() for p in line.strip("|").split("|")]
         if len(parts) != 3 or parts[0] == "":
+            continue
+        # Recognise the header by its cells, not by a prefix: a real row whose
+        # name merely starts with "variant" — a service is free text — would
+        # otherwise be read as the header and dropped, and a template the burst
+        # issue already lists would be filed a second time.
+        if tuple(parts) == _VARIANTS_HEADER:
             continue
         name, first_seen, last_seen = parts
         variants[name] = {"first_seen": first_seen, "last_seen": last_seen}
