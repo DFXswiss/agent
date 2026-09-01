@@ -15,7 +15,7 @@ import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from websockets.exceptions import WebSocketException
@@ -2904,6 +2904,75 @@ def cmd_lane(args: list[str]) -> None:
         raise SystemExit(2)
 
 
+def _knock_scan_cycle(store: Store, run_argv: Callable) -> None:
+    from .pending import scan_pending
+
+    try:
+        usage_id = scan_usage(store)
+        if usage_id:
+            print(f"usage.snapshot {usage_id}")
+    except AuthStale:
+        pass
+    except StoreError as exc:
+        print(f"usage.snapshot error: {exc}", file=sys.stderr)
+    try:
+        created, skipped = scan_merged(store, run_argv)
+        for activity_id in created:
+            print(f"pr.merged {activity_id}")
+        if skipped:
+            print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
+    except StoreError as exc:
+        print(f"pr.merged error: {exc}", file=sys.stderr)
+    hub_url = store.meta("hub_url")
+    hub_token = store.meta("device_token")
+    if hub_url and hub_token:
+        hub = Hub(hub_url, hub_token)
+        try:
+            lines = scan_pending(store, hub)
+            for line in lines:
+                print(line)
+        except (HubError, StoreError) as exc:
+            print(f"pending error: {exc}", file=sys.stderr)
+        finally:
+            hub.close()
+    from .github_act import scan_github
+    from .mail_act import scan_mail
+
+    try:
+        for line in scan_github(store, run_argv):
+            print(line)
+    except StoreError as exc:
+        print(f"github pending error: {exc}", file=sys.stderr)
+    try:
+        for line in scan_mail(store, run_argv):
+            print(line)
+    except StoreError as exc:
+        print(f"mail pending error: {exc}", file=sys.stderr)
+    from .errors import config_path, default_fetch, scan_errors
+
+    if config_path(store.home).is_file():
+        try:
+            created, enriched = scan_errors(store, default_fetch)
+            for activity_id in created:
+                print(f"error.seen {activity_id}")
+            for activity_id in enriched:
+                print(f"error.seen enrich {activity_id}")
+        except StoreError as exc:
+            print(f"error.seen error: {exc}", file=sys.stderr)
+    from .error_fix_act import scan_error_fix
+
+    try:
+        for line in scan_error_fix(store, run_argv):
+            print(line)
+    except StoreError as exc:
+        print(f"error.fix error: {exc}", file=sys.stderr)
+    if hub_url and hub_token:
+        try:
+            _sync_once(store)
+        except (HubError, StoreError) as exc:
+            print(f"sync error: {exc}", file=sys.stderr)
+
+
 def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
@@ -2913,71 +2982,12 @@ def cmd_knock(args: list[str]) -> None:
             for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
             return
-        from .pending import scan_pending
         from .runtime import run_argv
 
         last_poll: float | None = None
         while True:
             if usage_poll_due(last_poll, time.monotonic()):
-                try:
-                    usage_id = scan_usage(store)
-                    if usage_id:
-                        print(f"usage.snapshot {usage_id}")
-                except AuthStale:
-                    pass
-                except StoreError as exc:
-                    print(f"usage.snapshot error: {exc}", file=sys.stderr)
-                try:
-                    created, skipped = scan_merged(store, run_argv)
-                    for activity_id in created:
-                        print(f"pr.merged {activity_id}")
-                    if skipped:
-                        print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
-                except StoreError as exc:
-                    print(f"pr.merged error: {exc}", file=sys.stderr)
-                hub_url = store.meta("hub_url")
-                hub_token = store.meta("device_token")
-                if hub_url and hub_token:
-                    hub = Hub(hub_url, hub_token)
-                    try:
-                        lines = scan_pending(store, hub)
-                        for line in lines:
-                            print(line)
-                    except (HubError, StoreError) as exc:
-                        print(f"pending error: {exc}", file=sys.stderr)
-                    finally:
-                        hub.close()
-                from .github_act import scan_github
-                from .mail_act import scan_mail
-
-                try:
-                    for line in scan_github(store, run_argv):
-                        print(line)
-                except StoreError as exc:
-                    print(f"github pending error: {exc}", file=sys.stderr)
-                try:
-                    for line in scan_mail(store, run_argv):
-                        print(line)
-                except StoreError as exc:
-                    print(f"mail pending error: {exc}", file=sys.stderr)
-                from .errors import config_path, default_fetch, scan_errors
-
-                if config_path(store.home).is_file():
-                    try:
-                        created, enriched = scan_errors(store, default_fetch)
-                        for activity_id in created:
-                            print(f"error.seen {activity_id}")
-                        for activity_id in enriched:
-                            print(f"error.seen enrich {activity_id}")
-                    except StoreError as exc:
-                        print(f"error.seen error: {exc}", file=sys.stderr)
-                from .error_fix_act import scan_error_fix
-
-                try:
-                    for line in scan_error_fix(store, run_argv):
-                        print(line)
-                except StoreError as exc:
-                    print(f"error.fix error: {exc}", file=sys.stderr)
+                _knock_scan_cycle(store, run_argv)
                 last_poll = time.monotonic()
             activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:
