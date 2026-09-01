@@ -76,6 +76,17 @@ def _inert_block(text: str) -> str:
     return text.replace("<!--", "<!- -")
 
 
+def _fenced(text: str) -> str:
+    """Quote untrusted text in a fence longer than any backtick run inside it.
+
+    A fixed three-backtick fence would be closed early by an excerpt containing
+    one, and everything after it would render as live Markdown in an issue this
+    module presents as an inert log quote."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
 def _inert_cell(text: str) -> str:
     """Same, for text that lands in a table cell: a pipe or a newline there
     would break the row apart and the name would not survive a round trip."""
@@ -123,12 +134,20 @@ def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
     return row
 
 
-def marker_for(template_fingerprint: str) -> str:
-    return f"{_MARKER_PREFIX}{template_fingerprint}{_MARKER_SUFFIX}"
+def _marker_for(template_fingerprint: str) -> str:
+    """The hidden marker that identifies a template's issue.
+
+    It carries a digest rather than the fingerprint itself: service, class and
+    environment are free text from the log source, so a raw fingerprint could
+    close the HTML comment early or embed this module's own section markers,
+    which would corrupt the body and lose the marker the next lookup needs. The
+    marker is invisible to readers anyway, so nothing is lost by hashing it."""
+    digest = hashlib.sha256(template_fingerprint.encode("utf-8")).hexdigest()[:32]
+    return f"{_MARKER_PREFIX}{digest}{_MARKER_SUFFIX}"
 
 
-def extract_variant(excerpt: str) -> str:
-    """Best-effort concrete detail for the variant table: "Chain/Asset" if both
+def _extract_variant(excerpt: str) -> str:
+    """Best-effort concrete detail for the variant table: "chain/asset" if both
     are present in the excerpt, whichever one is present if only one is, or
     "generic" if neither. Most error lines don't name either — those never
     fragment, so there is only ever one variant."""
@@ -139,12 +158,13 @@ def extract_variant(excerpt: str) -> str:
     return chain or asset or "generic"
 
 
-def render_variants_section(variants: dict[str, dict[str, str]]) -> str:
+def _render_variants_section(variants: dict[str, dict[str, str]]) -> str:
     """Render the machine-owned table, keeping at most MAX_TRACKED_VARIANTS rows.
 
-    The cap is what stops a long-lived issue from growing into MAX_ISSUE_BODY,
-    where every later update would fail and the template would be stuck erroring
-    for good. The most recently seen variants are the ones worth keeping; the
+    The cap bounds how many rows the table can hold, which is what keeps normal
+    growth away from MAX_ISSUE_BODY — where every later update would fail and the
+    template would be stuck erroring for good. It bounds rows, not bytes:
+    _ensure_issue_body stays the hard limit, since a single cell can be long. The most recently seen variants are the ones worth keeping; the
     dropped count stays visible in the section so the table never silently
     understates what was seen.
 
@@ -172,7 +192,7 @@ def render_variants_section(variants: dict[str, dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def parse_variants_section(body: str) -> dict[str, dict[str, str]]:
+def _parse_variants_section(body: str) -> dict[str, dict[str, str]]:
     """Parse the existing delimited variants table back out of an issue body."""
     start = body.find(_VARIANTS_START)
     end = body.find(_VARIANTS_END)
@@ -199,30 +219,33 @@ def _ensure_issue_body(body: str) -> str:
     return body
 
 
-def splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
+def _splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     """Replace only the delimited variants section; never touch the rest of the
     body — that is human territory. A body carrying exactly one of the two
     markers, or them in the wrong order, is damaged (a hand edit truncated the
     section): appending a second section there would silently strand the
     variants already recorded above, so fail loud instead."""
+    starts = body.count(_VARIANTS_START)
+    ends = body.count(_VARIANTS_END)
+    section = _render_variants_section(variants)
+    if starts == 0 and ends == 0:
+        sep = "" if body == "" else "\n\n"
+        return _ensure_issue_body(f"{body}{sep}{section}\n")
     start = body.find(_VARIANTS_START)
     end = body.find(_VARIANTS_END)
-    section = render_variants_section(variants)
-    if start == -1 and end == -1:
-        sep = "" if body == "" else "\n\n"
-        spliced = f"{body}{sep}{section}\n"
-    elif start == -1 or end == -1 or end < start:
+    # Anything but exactly one well-ordered pair is damage. Splicing across a
+    # duplicated marker would silently rewrite whatever sits between the copies,
+    # which is human territory.
+    if starts != 1 or ends != 1 or end < start:
         raise StoreError("issue body has a damaged variants section")
-    else:
-        spliced = body[:start] + section + body[end + len(_VARIANTS_END) :]
-    return _ensure_issue_body(spliced)
+    return _ensure_issue_body(body[:start] + section + body[end + len(_VARIANTS_END) :])
 
 
 def _parse_iso(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def touch_history(store: Store) -> dict[str, datetime]:
+def _touch_history(store: Store, issue_repo: str) -> dict[str, datetime]:
     """Most recent real touch per template, read once from local activity
     history. A touch is a completed error.issue row that actually created,
     updated or folded the template's issue — not one merely skipped by an
@@ -244,6 +267,8 @@ def touch_history(store: Store) -> dict[str, datetime]:
             continue
         if result.get("mode") in _DRY_RUN_MODES:
             continue
+        if result.get("issue_repo") != issue_repo:
+            continue
         template_fingerprint = result.get("template_fingerprint")
         if not isinstance(template_fingerprint, str):
             continue
@@ -260,7 +285,7 @@ def touch_history(store: Store) -> dict[str, datetime]:
     return history
 
 
-def burst_folded_templates(store: Store) -> dict[str, set[int]]:
+def _burst_folded_templates(store: Store, issue_repo: str) -> dict[str, set[int]]:
     """Which burst issues this device folded each template into.
 
     The burst table is capped, so a long-lived burst issue can evict an older
@@ -277,6 +302,10 @@ def burst_folded_templates(store: Store) -> dict[str, set[int]]:
             continue
         result = row.get("result")
         if not isinstance(result, dict) or result.get("mode") != "storm":
+            continue
+        # Issue numbers are per repo, so a fold recorded against another tracker
+        # says nothing about this one.
+        if result.get("issue_repo") != issue_repo:
             continue
         template_fingerprint = result.get("template_fingerprint")
         number = result.get("number")
@@ -355,7 +384,7 @@ def _gh_json(runner: Runner, argv: list[str], fallback: str) -> Any:
         raise StoreError(f"{fallback}: invalid JSON") from exc
 
 
-def find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | None:
+def _find_issue_number(runner: Runner, issue_repo: str, marker: str) -> int | None:
     """The open, labeled issue whose body carries this marker, or None if none
     exists yet.
 
@@ -426,10 +455,10 @@ def _create_issue(
     now: str,
 ) -> str:
     body = _ensure_issue_body(
-        f"{marker_for(template_fingerprint)}\n\n"
+        f"{_marker_for(template_fingerprint)}\n\n"
         "Automated error-log finding.\n\n"
-        f"```\n{_inert_block(excerpt)}\n```\n\n"
-        + render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
+        f"{_fenced(_inert_block(excerpt))}\n\n"
+        + _render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
         + "\n"
     )
     return _gh(
@@ -465,7 +494,7 @@ def _update_issue(
     send that comment again (the variant is no longer new). So a comment failure
     is reported on the row instead of discarding the successful edit."""
     body = _issue_body(runner, issue_repo, number)
-    tracked = parse_variants_section(body)
+    tracked = _parse_variants_section(body)
     new_variants = [v for v in variants if v not in tracked]
     for variant in variants:
         if variant in tracked:
@@ -482,7 +511,7 @@ def _update_issue(
             "--repo",
             issue_repo,
             "--body",
-            splice_variants(body, tracked),
+            _splice_variants(body, tracked),
         ],
         "gh issue edit failed",
     )
@@ -531,7 +560,7 @@ def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str
 
 
 def _create_storm_issue(
-    runner: Runner, *, issue_repo: str, templates: dict[str, dict[str, str]], now: str
+    runner: Runner, *, issue_repo: str, templates: dict[str, dict[str, str]]
 ) -> str:
     body = _ensure_issue_body(
         f"{STORM_MARKER}\n\n"
@@ -539,7 +568,7 @@ def _create_storm_issue(
         "than usual in one pass. That is more likely one shared root cause than "
         "many unrelated bugs — investigate the cause, not each row below "
         "individually.\n\n"
-        + render_variants_section(templates)
+        + _render_variants_section(templates)
         + "\n"
     )
     return _gh(
@@ -565,7 +594,7 @@ def _update_storm_issue(
     runner: Runner, *, issue_repo: str, number: int, templates: dict[str, dict[str, str]]
 ) -> None:
     body = _issue_body(runner, issue_repo, number)
-    existing = parse_variants_section(body)
+    existing = _parse_variants_section(body)
     for name, entry in templates.items():
         if name in existing:
             existing[name]["last_seen"] = entry["last_seen"]
@@ -581,7 +610,7 @@ def _update_storm_issue(
             "--repo",
             issue_repo,
             "--body",
-            splice_variants(body, existing),
+            _splice_variants(body, existing),
         ],
         "gh issue edit failed",
     )
@@ -621,9 +650,9 @@ def _process_storm(
         return lines
 
     try:
-        number = find_issue_number(runner, issue_repo, STORM_MARKER)
+        number = _find_issue_number(runner, issue_repo, STORM_MARKER)
         if number is None:
-            url = _create_storm_issue(runner, issue_repo=issue_repo, templates=templates, now=now)
+            url = _create_storm_issue(runner, issue_repo=issue_repo, templates=templates)
             match = _ISSUE_URL.search(url)
             if match is None:
                 raise StoreError("gh issue create returned no issue URL")
@@ -709,7 +738,7 @@ def _scan_error_issue(
     # One snapshot of local history for the whole scan. Taken before any row is
     # marked, so rows written by this scan cannot start a cooldown window
     # against the rows behind them.
-    history = touch_history(store)
+    history = _touch_history(store, issue_repo)
 
     groups: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for row, _error_id, template_fp, seen_payload in resolved:
@@ -733,7 +762,7 @@ def _scan_error_issue(
         for template_fp in new_templates:
             del groups[template_fp]
 
-    open_burst = _OpenBurst(runner, issue_repo, burst_folded_templates(store))
+    open_burst = _OpenBurst(runner, issue_repo, _burst_folded_templates(store, issue_repo))
     for template_fp, members in groups.items():
         lines.extend(
             _process_template(
@@ -784,12 +813,12 @@ class _OpenBurst:
         gap. Both only count while a burst issue is actually open: once a human
         closes it, a template that recurs has earned its own issue."""
         if self._labels is None:
-            self._number = find_issue_number(self._runner, self._issue_repo, STORM_MARKER)
+            self._number = _find_issue_number(self._runner, self._issue_repo, STORM_MARKER)
             if self._number is None:
                 self._labels = set()
             else:
                 body = _issue_body(self._runner, self._issue_repo, self._number)
-                self._labels = set(parse_variants_section(body))
+                self._labels = set(_parse_variants_section(body))
         if self._number is None:
             return None
         if label in self._labels or self._number in self._folded.get(template_fingerprint, set()):
@@ -819,7 +848,7 @@ def _process_template(
     for _row, seen_payload in members:
         excerpt = seen_payload.get("excerpt")
         excerpts.append(excerpt if isinstance(excerpt, str) else "")
-    row_variants = [extract_variant(excerpt) for excerpt in excerpts]
+    row_variants = [_extract_variant(excerpt) for excerpt in excerpts]
     variants: list[str] = []
     for variant in row_variants:
         if variant not in variants:
@@ -870,7 +899,7 @@ def _process_template(
         return lines
 
     try:
-        number = find_issue_number(runner, issue_repo, marker_for(template_fp))
+        number = _find_issue_number(runner, issue_repo, _marker_for(template_fp))
     except StoreError as exc:
         return fail_all(exc)
 

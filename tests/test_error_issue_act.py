@@ -10,21 +10,21 @@ from agent_cli.error_issue_act import (
     MAX_ISSUE_BODY,
     MAX_TRACKED_VARIANTS,
     STORM_MARKER,
-    burst_folded_templates,
+    _burst_folded_templates,
     _VARIANTS_END,
     _VARIANTS_START,
     _storm_label,
     _create_issue,
     _create_storm_issue,
     _within_cooldown,
-    extract_variant,
-    find_issue_number,
-    marker_for,
-    parse_variants_section,
-    render_variants_section,
+    _extract_variant,
+    _find_issue_number,
+    _marker_for,
+    _parse_variants_section,
+    _render_variants_section,
     scan_error_issue,
-    splice_variants,
-    touch_history,
+    _splice_variants,
+    _touch_history,
 )
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, utcnow
@@ -94,19 +94,30 @@ def _issue(store: Store, error_id: str = "error-seen-1", activity_id: str = "iss
 
 
 def test_extract_variant_finds_known_chain_or_falls_back_to_generic() -> None:
-    assert extract_variant("Timeout updating balances for Ethereum") == "Ethereum"
-    assert extract_variant("Failed to check Bank Frick order status") == "Frick"
-    assert extract_variant("Failed to get price for token tether -> usd") == "generic"
+    assert _extract_variant("Timeout updating balances for Ethereum") == "Ethereum"
+    assert _extract_variant("Failed to check Bank Frick order status") == "Frick"
+    assert _extract_variant("Failed to get price for token tether -> usd") == "generic"
 
 
 def test_extract_variant_combines_chain_and_asset() -> None:
-    assert extract_variant("Balance for Arbitrum/USDC went low") == "Arbitrum/USDC"
-    assert extract_variant("Balance for Base/WBTC went low") == "Base/WBTC"
+    assert _extract_variant("Balance for Arbitrum/USDC went low") == "Arbitrum/USDC"
+    assert _extract_variant("Balance for Base/WBTC went low") == "Base/WBTC"
 
 
-def test_marker_for_embeds_template_fingerprint() -> None:
-    marker = marker_for("api|error|abc123|prod")
-    assert marker == "<!-- error-log-template:api|error|abc123|prod -->"
+def test_marker_is_a_digest_and_never_carries_raw_text() -> None:
+    """service, class and environment are free text from the log source. A raw
+    fingerprint in the marker could close the HTML comment early or embed the
+    section markers, corrupting the body and losing the marker the next lookup
+    needs."""
+    marker = _marker_for("api|error|abc123|prod")
+    assert marker.startswith("<!-- error-log-template:")
+    assert marker.endswith(" -->")
+    assert _marker_for("api|error|abc123|prod") == marker
+    assert _marker_for("api|error|abc123|staging") != marker
+
+    hostile = _marker_for(f"api --> {_VARIANTS_START}|error|abc|prod")
+    assert hostile.count("-->") == 1
+    assert _VARIANTS_START not in hostile
 
 
 def test_variants_section_round_trips() -> None:
@@ -114,21 +125,21 @@ def test_variants_section_round_trips() -> None:
         "Ethereum": {"first_seen": "2026-08-31T10:00:00Z", "last_seen": "2026-08-31T10:00:00Z"},
         "Polygon": {"first_seen": "2026-08-31T11:00:00Z", "last_seen": "2026-08-31T11:30:00Z"},
     }
-    section = render_variants_section(variants)
+    section = _render_variants_section(variants)
     assert "Ethereum" in section
     assert "Polygon" in section
-    parsed = parse_variants_section(section)
+    parsed = _parse_variants_section(section)
     assert parsed == variants
 
 
 def test_splice_variants_only_touches_delimited_section() -> None:
     body = "Human-written context above.\n\nMore human notes.\n"
-    with_section = splice_variants(body, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
+    with_section = _splice_variants(body, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
     assert "Human-written context above." in with_section
     assert "More human notes." in with_section
     assert "Ethereum" in with_section
 
-    updated = splice_variants(
+    updated = _splice_variants(
         with_section,
         {
             "Ethereum": {"first_seen": "t1", "last_seen": "t2"},
@@ -142,12 +153,12 @@ def test_splice_variants_only_touches_delimited_section() -> None:
     assert updated.count("Human-written context above.") == 1
 
 
-def test_find_issue_number_none_when_empty(tmp_path: Path) -> None:
+def test_find_issue_number_none_when_empty() -> None:
     def runner(argv: list[str]) -> Completed:
         assert argv[:4] == ["gh", "issue", "list", "--repo"]
         return Completed(0, "[]", "")
 
-    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
+    assert _find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
 
 
 def test_find_issue_number_matches_the_marker_in_the_body() -> None:
@@ -164,7 +175,7 @@ def test_find_issue_number_matches_the_marker_in_the_body() -> None:
             "",
         )
 
-    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") == 43
+    assert _find_issue_number(runner, "org/tracker", "api|error|abc|prod") == 43
 
 
 def test_find_issue_number_ignores_issues_without_the_marker() -> None:
@@ -173,7 +184,7 @@ def test_find_issue_number_ignores_issues_without_the_marker() -> None:
     def runner(argv: list[str]) -> Completed:
         return Completed(0, json.dumps([{"number": 42, "body": "unrelated"}]), "")
 
-    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
+    assert _find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
 
 
 def test_find_issue_number_raises_when_the_list_is_truncated() -> None:
@@ -187,7 +198,7 @@ def test_find_issue_number_raises_when_the_list_is_truncated() -> None:
         )
 
     with pytest.raises(StoreError, match="issue list truncated"):
-        find_issue_number(runner, "org/tracker", "api|error|abc|prod")
+        _find_issue_number(runner, "org/tracker", "api|error|abc|prod")
 
 
 def test_find_issue_number_returns_none_on_a_partial_page() -> None:
@@ -198,7 +209,7 @@ def test_find_issue_number_returns_none_on_a_partial_page() -> None:
             "",
         )
 
-    assert find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
+    assert _find_issue_number(runner, "org/tracker", "api|error|abc|prod") is None
 
 
 def test_find_issue_number_raises_when_gh_is_missing() -> None:
@@ -206,7 +217,7 @@ def test_find_issue_number_raises_when_gh_is_missing() -> None:
         raise OSError("No such file or directory: 'gh'")
 
     with pytest.raises(StoreError, match="gh issue list failed"):
-        find_issue_number(runner, "org/tracker", "api|error|abc|prod")
+        _find_issue_number(runner, "org/tracker", "api|error|abc|prod")
 
 
 def test_find_issue_number_raises_on_gh_failure() -> None:
@@ -214,7 +225,7 @@ def test_find_issue_number_raises_on_gh_failure() -> None:
         return Completed(1, "", "not found")
 
     with pytest.raises(StoreError, match="not found"):
-        find_issue_number(runner, "org/tracker", "api|error|abc|prod")
+        _find_issue_number(runner, "org/tracker", "api|error|abc|prod")
 
 
 # ---- scan_error_issue: dry run ----
@@ -282,7 +293,7 @@ def test_scan_creates_issue_when_none_exists(tmp_path: Path) -> None:
     assert "--repo" in create_call and "org/tracker" in create_call
     assert "--label" in create_call and ISSUE_LABEL in create_call
     body = create_call[create_call.index("--body") + 1]
-    assert marker_for("api|error|abc123|prod") in body
+    assert _marker_for("api|error|abc123|prod") in body
     assert "Ethereum" in body
     row = store.row("activity", "issue-1")
     assert row is not None
@@ -300,9 +311,9 @@ def test_scan_updates_existing_issue_same_variant_no_comment(tmp_path: Path) -> 
     _seen(store)
     _issue(store)
     existing_body = (
-        marker_for("api|error|abc123|prod")
+        _marker_for("api|error|abc123|prod")
         + "\n\nAutomated error-log finding.\n\n"
-        + render_variants_section({"Ethereum": {"first_seen": "t0", "last_seen": "t0"}})
+        + _render_variants_section({"Ethereum": {"first_seen": "t0", "last_seen": "t0"}})
         + "\n"
     )
     calls: list[list[str]] = []
@@ -312,7 +323,7 @@ def test_scan_updates_existing_issue_same_variant_no_comment(tmp_path: Path) -> 
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 9, "body": marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 9, "body": _marker_for("api|error|abc123|prod")}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -345,9 +356,9 @@ def test_scan_updates_existing_issue_new_variant_posts_comment(tmp_path: Path) -
     )
     _issue(store)
     existing_body = (
-        marker_for("api|error|abc123|prod")
+        _marker_for("api|error|abc123|prod")
         + "\n\nAutomated error-log finding.\n\n"
-        + render_variants_section({"Ethereum": {"first_seen": "t0", "last_seen": "t0"}})
+        + _render_variants_section({"Ethereum": {"first_seen": "t0", "last_seen": "t0"}})
         + "\n"
     )
     calls: list[list[str]] = []
@@ -357,7 +368,7 @@ def test_scan_updates_existing_issue_new_variant_posts_comment(tmp_path: Path) -
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 9, "body": marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 9, "body": _marker_for("api|error|abc123|prod")}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -516,7 +527,7 @@ def _seen_and_issue(
 def test_cooldown_false_with_no_history(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
-    assert _within_cooldown(touch_history(store), "api|error|abc|prod", utcnow(), 60) is False
+    assert _within_cooldown(_touch_history(store, "org/tracker"), "api|error|abc|prod", utcnow(), 60) is False
 
 
 def test_cooldown_true_within_window(tmp_path: Path) -> None:
@@ -529,7 +540,7 @@ def test_cooldown_true_within_window(tmp_path: Path) -> None:
         activity_id="prior-1",
     )
     assert (
-        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T10:30:00Z", 60)
+        _within_cooldown(_touch_history(store, "org/tracker"), "api|error|abc|prod", "2026-08-31T10:30:00Z", 60)
         is True
     )
 
@@ -544,7 +555,7 @@ def test_cooldown_false_after_expiry(tmp_path: Path) -> None:
         activity_id="prior-1",
     )
     assert (
-        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T11:30:00Z", 60)
+        _within_cooldown(_touch_history(store, "org/tracker"), "api|error|abc|prod", "2026-08-31T11:30:00Z", 60)
         is False
     )
 
@@ -561,7 +572,7 @@ def test_cooldown_ignores_skipped_results(tmp_path: Path) -> None:
     )
     # A skip-only history must not itself extend the cooldown window.
     assert (
-        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T10:30:00Z", 60)
+        _within_cooldown(_touch_history(store, "org/tracker"), "api|error|abc|prod", "2026-08-31T10:30:00Z", 60)
         is False
     )
 
@@ -695,7 +706,7 @@ def test_scan_storm_reuses_existing_open_storm_issue(tmp_path: Path) -> None:
     existing_body = (
         STORM_MARKER
         + "\n\n"
-        + render_variants_section({"api: error (oldhash)": {"first_seen": "t0", "last_seen": "t0"}})
+        + _render_variants_section({"api: error (oldhash)": {"first_seen": "t0", "last_seen": "t0"}})
         + "\n"
     )
     calls: list[list[str]] = []
@@ -811,7 +822,7 @@ def test_scan_comments_once_for_several_new_variants(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 12, "body": marker_for("api|error|same|prod")}]),
+                json.dumps([{"number": 12, "body": _marker_for("api|error|same|prod")}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -845,7 +856,7 @@ def test_scan_keeps_the_edit_when_the_comment_fails(tmp_path: Path) -> None:
         if argv[:3] == ["gh", "issue", "list"]:
             return Completed(
                 0,
-                json.dumps([{"number": 12, "body": marker_for("api|error|abc123|prod")}]),
+                json.dumps([{"number": 12, "body": _marker_for("api|error|abc123|prod")}]),
                 "",
             )
         if argv[:3] == ["gh", "issue", "view"]:
@@ -939,7 +950,7 @@ def test_storm_threshold_ignores_already_tracked_templates(tmp_path: Path) -> No
 def test_splice_variants_refuses_a_half_open_section() -> None:
     damaged = "Human notes.\n\n<!-- variants:start -->\n\n| variant | first seen | last seen |\n"
     with pytest.raises(StoreError):
-        splice_variants(damaged, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
+        _splice_variants(damaged, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
 
 
 def test_splice_variants_refuses_a_body_over_the_github_limit() -> None:
@@ -947,7 +958,7 @@ def test_splice_variants_refuses_a_body_over_the_github_limit() -> None:
     cap cannot control, such as very long human-written prose."""
     huge_human_body = "human prose. " * (MAX_ISSUE_BODY // 10)
     with pytest.raises(StoreError):
-        splice_variants(huge_human_body, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
+        _splice_variants(huge_human_body, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
 
 
 def test_render_variants_section_caps_the_table() -> None:
@@ -958,8 +969,8 @@ def test_render_variants_section_caps_the_table() -> None:
         f"chain-{i:04d}": {"first_seen": "t1", "last_seen": f"2026-08-{(i % 28) + 1:02d}"}
         for i in range(MAX_TRACKED_VARIANTS + 50)
     }
-    section = render_variants_section(variants)
-    parsed = parse_variants_section(section)
+    section = _render_variants_section(variants)
+    parsed = _parse_variants_section(section)
     assert len(parsed) == MAX_TRACKED_VARIANTS
     assert "50 older variants dropped" in section
     # The dropped-count note must not survive as a phantom variant row.
@@ -971,7 +982,7 @@ def test_variants_table_stays_under_the_ceiling_when_saturated() -> None:
         f"chain-{i:04d}": {"first_seen": "2026-08-31T10:00:00Z", "last_seen": "2026-08-31T10:00:00Z"}
         for i in range(MAX_TRACKED_VARIANTS * 5)
     }
-    assert len(splice_variants("Human notes.\n", variants)) <= MAX_ISSUE_BODY
+    assert len(_splice_variants("Human notes.\n", variants)) <= MAX_ISSUE_BODY
 
 
 def test_create_paths_apply_the_same_body_ceiling() -> None:
@@ -998,7 +1009,7 @@ def test_create_paths_apply_the_same_body_ceiling() -> None:
         return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
 
     _create_storm_issue(
-        runner, issue_repo="org/tracker", templates=templates, now="2026-08-31T10:00:00Z"
+        runner, issue_repo="org/tracker", templates=templates
     )
     body = created[0][created[0].index("--body") + 1]
     assert len(body) <= MAX_ISSUE_BODY
@@ -1026,7 +1037,7 @@ def test_touch_history_keeps_the_newest_touch_per_template(tmp_path: Path) -> No
         at="2026-08-31T12:00:00Z",
         activity_id="prior-new",
     )
-    history = touch_history(store)
+    history = _touch_history(store, "org/tracker")
     assert history["api|error|abc|prod"].isoformat() == "2026-08-31T12:00:00+00:00"
 
 
@@ -1052,7 +1063,7 @@ def test_touch_history_ignores_unusable_rows(tmp_path: Path) -> None:
                 "result": result,
             },
         )
-    assert touch_history(store) == {}
+    assert _touch_history(store, "org/tracker") == {}
 
 
 # ---- untrusted excerpt text ----
@@ -1081,7 +1092,7 @@ def test_excerpt_cannot_move_the_section_boundary(tmp_path: Path) -> None:
     assert body.count(_VARIANTS_END) == 1
 
     # A later update must keep the excerpt intact rather than splicing over it.
-    updated = splice_variants(body, parse_variants_section(body))
+    updated = _splice_variants(body, _parse_variants_section(body))
     assert updated.count(_VARIANTS_START) == 1
     assert "injected" in updated
 
@@ -1090,8 +1101,8 @@ def test_storm_label_survives_a_round_trip_through_the_table() -> None:
     """service/class come from the error payload; a pipe or a marker there would
     break the row apart so the label would not parse back."""
     label = _storm_label("api|error|abc|prod", {"service": "a|b", "class": "<!-- variants:end -->"})
-    section = render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
-    assert parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
+    section = _render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
+    assert _parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
 
 
 # ---- clock skew ----
@@ -1109,7 +1120,7 @@ def test_cooldown_ignores_a_touch_dated_in_the_future(tmp_path: Path) -> None:
         activity_id="prior-future",
     )
     assert (
-        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T10:00:00Z", 60)
+        _within_cooldown(_touch_history(store, "org/tracker"), "api|error|abc|prod", "2026-08-31T10:00:00Z", 60)
         is False
     )
 
@@ -1144,7 +1155,7 @@ def test_retry_after_a_partially_marked_burst_does_not_split_the_template(tmp_pa
     store.write("activity", "update", "storm-issue-2", replayed)
 
     # The burst issue is the only record that template t2 was already folded.
-    burst_body = render_variants_section(
+    burst_body = _render_variants_section(
         {
             _storm_label(f"api|error|t{i}|prod", {"service": "api", "class": "error"}): {
                 "first_seen": "2026-08-31T10:00:00Z",
@@ -1200,7 +1211,7 @@ def test_storm_issue_lists_each_environment_separately(tmp_path: Path) -> None:
     )
     assert all("storm size=3" in line for line in lines)
     body = created[-1][created[-1].index("--body") + 1]
-    assert len(parse_variants_section(body)) == 3
+    assert len(_parse_variants_section(body)) == 3
 
 
 def test_evicted_burst_label_still_blocks_a_second_issue(tmp_path: Path) -> None:
@@ -1228,7 +1239,7 @@ def test_evicted_burst_label_still_blocks_a_second_issue(tmp_path: Path) -> None
             return Completed(0, json.dumps([{"number": 99, "body": STORM_MARKER}]), marker)
         if argv[:3] == ["gh", "issue", "view"]:
             # The burst issue is open, but this template's row was evicted.
-            body = f"{STORM_MARKER}\n\n" + render_variants_section(
+            body = f"{STORM_MARKER}\n\n" + _render_variants_section(
                 {"other/prod: error (zzzzzzzz)": {"first_seen": "t1", "last_seen": "t1"}}
             )
             return Completed(0, json.dumps({"body": body}), "")
@@ -1294,7 +1305,7 @@ def test_a_fold_into_a_closed_burst_does_not_count_for_a_different_one(tmp_path:
             # A different burst issue is open now; it does not list this template.
             return Completed(0, json.dumps([{"number": 777, "body": STORM_MARKER}]), "")
         if argv[:3] == ["gh", "issue", "view"]:
-            body = f"{STORM_MARKER}\n\n" + render_variants_section(
+            body = f"{STORM_MARKER}\n\n" + _render_variants_section(
                 {"other/prod: error (unrelated)": {"first_seen": "t1", "last_seen": "t1"}}
             )
             return Completed(0, json.dumps({"body": body}), "")
@@ -1326,7 +1337,7 @@ def test_a_created_burst_records_its_issue_number(tmp_path: Path) -> None:
         assert row is not None
         assert row["result"]["created"] is True
         assert row["result"]["number"] == 99
-    assert burst_folded_templates(store) == {
+    assert _burst_folded_templates(store, "org/tracker") == {
         f"api|error|t{i}|prod": {99} for i in range(3)
     }
 
@@ -1405,4 +1416,72 @@ def test_storm_issue_keeps_a_row_per_colliding_template(tmp_path: Path) -> None:
     )
     assert all("storm size=3" in line for line in lines)
     body = created[-1][created[-1].index("--body") + 1]
-    assert len(parse_variants_section(body)) == 3
+    assert len(_parse_variants_section(body)) == 3
+
+
+# ---- untrusted text cannot escape its quoting ----
+
+
+def test_excerpt_cannot_break_out_of_its_code_fence(tmp_path: Path) -> None:
+    """A log line containing a fence would close the quote early and let the
+    rest render as live Markdown in an issue presented as an inert log quote."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store, excerpt="boom ``` then [a](http://x) and more")
+    _issue(store)
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+
+    scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    body = created[-1][created[-1].index("--body") + 1]
+    fence = "````"
+    assert body.count(fence) == 2
+    quoted = body.split(fence)[1]
+    assert "boom ``` then [a](http://x) and more" in quoted
+
+
+def test_splice_refuses_a_duplicated_marker(tmp_path: Path) -> None:
+    """Two copies of a marker mean the body is damaged; splicing across them
+    would silently rewrite whatever a human put between the copies."""
+    section = _render_variants_section({"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
+    doubled = f"{section}\n\nhuman notes worth keeping\n\n{section}\n"
+    with pytest.raises(StoreError, match="damaged variants section"):
+        _splice_variants(doubled, {"Ethereum": {"first_seen": "t1", "last_seen": "t2"}})
+
+
+# ---- history is per issue_repo ----
+
+
+def test_cooldown_history_does_not_leak_across_repos(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-1",
+    )
+    assert _touch_history(store, "org/tracker") != {}
+    assert _touch_history(store, "org/other-tracker") == {}
+
+
+def test_burst_folds_do_not_leak_across_repos(tmp_path: Path) -> None:
+    """Issue numbers are per repo, so a fold recorded against another tracker
+    must not mark a template as covered here."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-1",
+        mode="storm",
+        number=99,
+    )
+    assert _burst_folded_templates(store, "org/tracker") == {"api|error|abc|prod": {99}}
+    assert _burst_folded_templates(store, "org/other-tracker") == {}
