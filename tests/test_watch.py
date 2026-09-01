@@ -1071,6 +1071,12 @@ def test_dispatch_assigned_denies_when_policy_rejects_actor(tmp_path: Path) -> N
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
     workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     status = dispatch_assigned(
         store,
         "asg-1",
@@ -1078,6 +1084,7 @@ def test_dispatch_assigned_denies_when_policy_rejects_actor(tmp_path: Path) -> N
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=workspace_root,
+        runner=runner,
     )
     assert status == "denied"
     assert start_log == []
@@ -1166,6 +1173,12 @@ def test_dispatch_assigned_denies_when_policy_rejects_attached(tmp_path: Path) -
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
     workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     status = dispatch_assigned(
         store,
         "asg-1",
@@ -1173,6 +1186,7 @@ def test_dispatch_assigned_denies_when_policy_rejects_attached(tmp_path: Path) -
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=workspace_root,
+        runner=runner,
     )
     assert status == "denied"
     assert start_log == []

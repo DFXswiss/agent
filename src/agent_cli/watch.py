@@ -306,9 +306,9 @@ def _assignment_is_newer(
     """Whether (dt, event_id) is provably newer than `marker`. A same-
     timestamp tie needs the candidate's own id to be known: an unresolvable
     candidate never wins (fail closed), but an unresolvable STORED marker
-    (a legacy row, or one this scan itself blanked on an earlier ambiguous
-    tie) must not permanently block every future candidate at that
-    timestamp — so a resolvable candidate beats a marker with no id."""
+    (a legacy row predating this field) must not permanently block every
+    future candidate at that timestamp — so a resolvable candidate beats a
+    marker with no id."""
     if marker is None:
         return True
     prev_dt, prev_id = marker

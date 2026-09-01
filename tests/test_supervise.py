@@ -214,6 +214,11 @@ def test_tick_denies_and_does_not_mutate_when_policy_rejects(tmp_path: Path) -> 
         ),
         encoding="utf-8",
     )
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     rt = FakeRuntime(exists=False, pane="")
     line = tick(
         store,
@@ -221,6 +226,7 @@ def test_tick_denies_and_does_not_mutate_when_policy_rejects(tmp_path: Path) -> 
         "runner-1",
         start=lambda sid, cwd: None,
         knock=lambda aid: "sent",
+        runner=runner,
     )
     assert line == f"supervise denied assigned={assigned}"
     events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
@@ -244,6 +250,11 @@ def test_tick_denies_pane_up_and_does_not_mutate_when_policy_rejects(
         ),
         encoding="utf-8",
     )
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     rt = FakeRuntime(exists=True, pane="")
     line = tick(
         store,
@@ -251,6 +262,7 @@ def test_tick_denies_pane_up_and_does_not_mutate_when_policy_rejects(
         "runner-1",
         start=lambda sid, cwd: None,
         knock=lambda aid: "sent",
+        runner=runner,
     )
     assert line == f"supervise denied assigned={assigned}"
     events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
