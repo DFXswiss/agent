@@ -332,7 +332,6 @@ v1 types (mechanism only):
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
-| `error.issue` | `error` | AI | script (`error_issue_act`, §21.6) — scaffolded only: not yet a member of the `agent activity add` allowlist and not yet dispatched by a watch command |
 | `supervise.event` | `supervise` | script | — (supervise follow bookkeeping / approve; optional closed-question path in tests; skip rows may carry a truncated pane excerpt; no TUI knock) |
 
 `investigate` is the thick log: hypothesis, check, result, ruled out, still open — each a new row, at once. Other sessions can query or subscribe and see what was already tried.
@@ -685,28 +684,6 @@ The model never receives production credentials. Analysis that only reads the ex
 ### 21.6 Not in this revision
 
 - A second hub state machine, leases, or autonomous merge
-- Dispatch for `error.issue`. Its payload is `{ "error_id": "<error.seen-id>" }`;
-  the scan reads the template and the excerpt from that `error.seen` row. The
-  grouping and throttling logic ships as `error_issue_act` with its tests, but
-  the type is deliberately not yet in the `agent activity add` allowlist and no
-  watch command calls the scan, so nothing files an issue yet. Wiring it means
-  adding the type to that allowlist, an `agent watch error-issue` one-scan
-  command next to `agent watch error-fix`, and `issue_repo` / `dry_run` /
-  `cooldown_minutes` / `storm_threshold` in `error-fix.json`.
-
-`error.issue` groups by `template_fingerprint` (§21.3), not by the per-variant
-`fingerprint`, so one issue covers every chain/token variant of one error. The
-concrete variants live in a machine-owned, delimited section of the issue body;
-nothing outside that section is ever rewritten. A body carrying only one of the
-two markers, or a duplicated marker, is treated as damaged rather than appended
-to. Creating an issue writes its variants straight into that opening table and
-posts no comment; updating one splices them in and announces the genuinely new
-ones in a single `Also seen on: …` comment. That comment is best effort, so one
-that fails after the body edit landed is recorded on the row rather than
-discarding the edit. Two throttles sit in front: a burst fold, counted over
-templates never filed before so a backlog draining after downtime is not
-mistaken for a burst, and a per-template cooldown read from local history — a
-dry run is a preview and never opens that window.
 
 ## 22. Static supervise loop (v1)
 
