@@ -3143,6 +3143,7 @@ def cmd_watch(args: list[str]) -> None:
                             knock=lambda activity_id: deliver(store, Runtime(), activity_id),
                             workspace_root=workspace_root,
                             pane_up=lambda session_id: Runtime().exists(session_id),
+                            runner=run_argv,
                         )
                 for activity_id in created:
                     print(f"issue.assigned {activity_id}")
@@ -3261,6 +3262,7 @@ def cmd_supervise(args: list[str]) -> None:
                 knock=lambda activity_id: deliver(store, runtime, activity_id),
                 pane=pane,
                 working=working,
+                runner=run_argv,
             )
             print(line)
             try:

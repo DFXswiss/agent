@@ -786,17 +786,21 @@ def test_dispatch_assigned_denies_when_policy_rejects_attached(tmp_path: Path) -
     _write_admit_policy(tmp_path, actors_allow=["alice"])
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
     status = dispatch_assigned(
         store,
         "asg-1",
         sync=lambda: None,
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
-        workspace_root=tmp_path / "sessions",
+        workspace_root=workspace_root,
     )
     assert status == "denied"
     assert start_log == []
     assert knock_log == []
+    assert not (workspace_root / "assigned" / "MANDATE.md").exists()
+    assert store.row("activity", "asg-1") is not None
+    assert not store.wake_delivered("asg-1")
 
 
 def test_dispatch_assigned_starts_when_policy_admits(tmp_path: Path) -> None:
@@ -806,6 +810,13 @@ def test_dispatch_assigned_starts_when_policy_admits(tmp_path: Path) -> None:
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
     workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     status = dispatch_assigned(
         store,
         "asg-1",
@@ -813,6 +824,7 @@ def test_dispatch_assigned_starts_when_policy_admits(tmp_path: Path) -> None:
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=workspace_root,
+        runner=runner,
     )
     assert status == "started"
     assert start_log == [("assigned", workspace_root / "assigned")]
@@ -825,6 +837,13 @@ def test_dispatch_assigned_kicks_when_policy_admits_attached(tmp_path: Path) -> 
     _write_admit_policy(tmp_path)
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
     status = dispatch_assigned(
         store,
         "asg-1",
@@ -832,19 +851,27 @@ def test_dispatch_assigned_kicks_when_policy_admits_attached(tmp_path: Path) -> 
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=tmp_path / "sessions",
+        runner=runner,
     )
     assert status == "kicked"
     assert start_log == []
     assert knock_log == ["asg-1"]
 
 
-def test_dispatch_assigned_repos_private_needs_naming_twice(tmp_path: Path) -> None:
+def test_dispatch_assigned_private_repo_needs_naming_twice(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _insert_assigned_activity(store)
-    _write_admit_policy(tmp_path, repos_private=["Owner/repo"])
+    _write_admit_policy(tmp_path)
     start_log: list[tuple[str, Path]] = []
     knock_log: list[str] = []
     workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "true", "")
+        raise AssertionError(argv)
+
     denied = dispatch_assigned(
         store,
         "asg-1",
@@ -852,13 +879,13 @@ def test_dispatch_assigned_repos_private_needs_naming_twice(tmp_path: Path) -> N
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=workspace_root,
+        runner=runner,
     )
     assert denied == "denied"
     assert start_log == []
     assert knock_log == []
     _write_admit_policy(
         tmp_path,
-        repos_private=["Owner/repo"],
         agent_identity={"private_repos_allow": ["Owner/repo"]},
     )
     admitted = dispatch_assigned(
@@ -868,10 +895,32 @@ def test_dispatch_assigned_repos_private_needs_naming_twice(tmp_path: Path) -> N
         start=lambda s, cwd: start_log.append((s, cwd)),
         knock=lambda aid: knock_log.append(aid),
         workspace_root=workspace_root,
+        runner=runner,
     )
     assert admitted == "started"
     assert start_log == [("assigned", workspace_root / "assigned")]
     assert knock_log == ["asg-1"]
+
+
+def test_dispatch_assigned_denies_when_runner_missing_and_repo_not_private_allowed(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
 
 
 def test_dispatch_assigned_kicks_when_attached(tmp_path: Path) -> None:

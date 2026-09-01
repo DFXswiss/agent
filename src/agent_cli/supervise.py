@@ -23,6 +23,7 @@ from .store import Store, StoreError, utcnow
 from .watch import (
     _ensure_assigned_session,
     _issue_number,
+    _paired_login,
     assigned_workspace_root,
     dispatch_assigned,
     pending_assigned,
@@ -243,6 +244,11 @@ def enqueue_assigned(
                     assignee = data["assignee"]
     except (OSError, json.JSONDecodeError):
         pass
+    assigned_by = ""
+    try:
+        assigned_by = _paired_login(store, runner)
+    except StoreError:
+        pass
     activity_id = str(uuid.uuid4())
     store.write(
         "activity",
@@ -259,6 +265,7 @@ def enqueue_assigned(
                 "title": title,
                 "body": body,
                 "assigned_at": now,
+                "assigned_by": assigned_by,
                 "assignee": assignee,
                 "mandate": "github-assignment",
             },
@@ -315,6 +322,7 @@ def tick(
     ask: bool = False,
     pane: str | None = None,
     working: bool | None = None,
+    runner: Callable[[list[str]], Completed] | None = None,
 ) -> str:
     if SESSION_RE.match(session_id) is None:
         raise StoreError("session id may contain only A-Za-z0-9_-")
@@ -365,7 +373,10 @@ def tick(
             knock=knock,
             workspace_root=root,
             pane_up=lambda sid: runtime.exists(sid),
+            runner=runner,
         )
+        if dispatched == "denied":
+            return f"supervise denied assigned={assigned_id}"
     else:
         dispatched = "held"
     if last_kind is None:

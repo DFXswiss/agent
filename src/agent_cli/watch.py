@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .ingest import _repo_is_private
 from .jobs import Verdict, admits
 from .runtime import Completed
 from .store import Store, StoreError
@@ -609,6 +610,7 @@ def dispatch_assigned(
     knock: Callable[[str], Any],
     workspace_root: Path,
     pane_up: Callable[[str], bool] | None = None,
+    runner: Callable[[list[str]], Completed] | None = None,
 ) -> str:
     activity = store.row("activity", activity_id)
     if activity is None:
@@ -646,17 +648,13 @@ def dispatch_assigned(
         repo = repo if isinstance(repo, str) else ""
         assigned_by = payload.get("assigned_by")
         assigned_by = assigned_by if isinstance(assigned_by, str) else ""
-        private_repos = {
-            r.lower()
-            for r in (policy.get("repos_private") if isinstance(policy, dict) else None) or []
-            if isinstance(r, str)
-        }
+        private = True if runner is None else _repo_is_private(repo, runner)
         verdict: Verdict = admits(
             policy,
             actor=assigned_by,
             repo=repo,
             job_type="implement",
-            private=repo.lower() in private_repos,
+            private=private,
         )
         if not verdict.admitted:
             return "denied"
