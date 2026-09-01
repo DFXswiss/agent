@@ -1039,9 +1039,9 @@ def test_a_prefix_name_does_not_survive_its_longer_form_losing_the_boundary() ->
 def test_the_template_fingerprint_keeps_services_apart(tmp_path: Path) -> None:
     """Grouping must stay injective: two tenants whose service labels differ are
     two templates, even where a coarse redaction would render both the same.
-    Keeping the raw value here is safe because the digest that reaches a public
-    issue is salted (see _marker_for); redacting the grouping key instead would
-    file two tenants' errors into one issue."""
+    Keeping the raw value here is safe because every digest that reaches a
+    public issue is salted (the marker and the burst row alike); redacting the
+    grouping key instead would file two tenants' errors into one issue."""
     store = Store(tmp_path)
     _runner_session(store)
     _write_config(tmp_path, service="api-alice@example.com")

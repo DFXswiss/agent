@@ -1139,7 +1139,7 @@ def test_excerpt_cannot_move_the_section_boundary(tmp_path: Path) -> None:
 def test_storm_label_survives_a_round_trip_through_the_table() -> None:
     """service/class come from the error payload; a pipe or a marker there would
     break the row apart so the label would not parse back."""
-    label = _storm_label("api|error|abc|prod", {"service": "a|b", "class": "<!-- variants:end -->"})
+    label = _storm_label("api|error|abc|prod", {"service": "a|b", "class": "<!-- variants:end -->"}, "device-1")
     section = _render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
     assert _parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
 
@@ -1196,7 +1196,7 @@ def test_retry_after_a_partially_marked_burst_does_not_split_the_template(tmp_pa
     # The burst issue is the only record that template t2 was already folded.
     burst_body = _render_variants_section(
         {
-            _storm_label(f"api|error|t{i}|prod", {"service": "api", "class": "error"}): {
+            _storm_label(f"api|error|t{i}|prod", {"service": "api", "class": "error"}, store.device_id()): {
                 "first_seen": "2026-08-31T10:00:00Z",
                 "last_seen": "2026-08-31T10:00:00Z",
             }
@@ -1227,8 +1227,8 @@ def test_storm_label_separates_environments() -> None:
     """service|class|template-sig|environment: the same error in two environments
     is two templates, so one shared row would hide one and undercount the burst."""
     payload = {"service": "api", "class": "error"}
-    assert _storm_label("api|error|abc123def|prod", payload) != _storm_label(
-        "api|error|abc123def|staging", payload
+    assert _storm_label("api|error|abc123def|prod", payload, "device-1") != _storm_label(
+        "api|error|abc123def|staging", payload, "device-1"
     )
 
 
@@ -1386,21 +1386,12 @@ def test_storm_label_is_unique_per_template_despite_separators(tmp_path: Path) -
     can contain the separators the fingerprint joins on and the table renders
     with. Two different templates must still get two rows, or one goes missing
     from the burst issue while a row claims to cover it."""
-    first = _storm_label(
-        "api|error|abc123def|prod/eu",
-        {"service": "api", "class": "error", "environment": "prod/eu"},
-    )
-    second = _storm_label(
-        "api/prod|error|abc123def|eu",
-        {"service": "api/prod", "class": "error", "environment": "eu"},
-    )
+    first = _storm_label("api|error|abc123def|prod/eu", {"service": "api", "class": "error", "environment": "prod/eu"}, "device-1")
+    second = _storm_label("api/prod|error|abc123def|eu", {"service": "api/prod", "class": "error", "environment": "eu"}, "device-1")
     assert first != second
 
     # A pipe inside a component must not shift which field the label reports.
-    shifted = _storm_label(
-        "api|x|error|sigAAAA|prod",
-        {"service": "api|x", "class": "error", "environment": "prod"},
-    )
+    shifted = _storm_label("api|x|error|sigAAAA|prod", {"service": "api|x", "class": "error", "environment": "prod"}, "device-1")
     assert shifted.startswith("`api/x/prod: error (")
 
 
@@ -1530,10 +1521,7 @@ def test_a_row_named_like_the_header_survives_the_round_trip(tmp_path: Path) -> 
     """service is free text, so a label can begin with "variant". Matching the
     header by prefix would drop that row, and a template the burst issue already
     lists would be filed a second time."""
-    label = _storm_label(
-        "variant|error|abc123def|prod",
-        {"service": "variant", "class": "error", "environment": "prod"},
-    )
+    label = _storm_label("variant|error|abc123def|prod", {"service": "variant", "class": "error", "environment": "prod"}, "device-1")
     assert label.startswith("`variant")
     section = _render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
     assert _parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
@@ -1552,6 +1540,7 @@ def test_a_row_named_like_the_header_still_blocks_a_second_issue(tmp_path: Path)
     label = _storm_label(
         "variant|error|abc123def|prod",
         {"service": "variant", "class": "error", "environment": "prod"},
+        store.device_id(),
     )
     burst_body = f"{STORM_MARKER}\n\n" + _render_variants_section(
         {label: {"first_seen": "t1", "last_seen": "t1"}}
@@ -1575,18 +1564,12 @@ def test_a_row_named_like_the_header_still_blocks_a_second_issue(tmp_path: Path)
 def test_storm_label_renders_log_text_inertly() -> None:
     """service and class come from the log source. A bare mention or link in a
     table cell renders as a live mention or link in the issue."""
-    label = _storm_label(
-        "api|error|abc|prod",
-        {"service": "@someone", "class": "[click](http://x)", "environment": "prod"},
-    )
+    label = _storm_label("api|error|abc|prod", {"service": "@someone", "class": "[click](http://x)", "environment": "prod"}, "device-1")
     assert label.startswith("`") and label.endswith("`")
     assert "@someone" in label  # the text is kept, only made inert
     # A backtick cannot survive inside a single-backtick span.
     assert "`" not in label[1:-1]
-    spanned = _storm_label(
-        "api|error|abc|prod",
-        {"service": "a`b", "class": "error", "environment": "prod"},
-    )
+    spanned = _storm_label("api|error|abc|prod", {"service": "a`b", "class": "error", "environment": "prod"}, "device-1")
     assert "`" not in spanned[1:-1]
 
 
@@ -1759,10 +1742,7 @@ def test_public_issue_text_redacts_the_unredacted_fields(tmp_path: Path) -> None
     """class comes from an already-redacted line, but service and environment are
     stream labels that never passed through redact() — and both reach a public
     issue title or table row."""
-    label = _storm_label(
-        "api|error|abc|prod",
-        {"service": "api-alice@example.com", "class": "error", "environment": "prod"},
-    )
+    label = _storm_label("api|error|abc|prod", {"service": "api-alice@example.com", "class": "error", "environment": "prod"}, "device-1")
     assert "alice@example.com" not in label
     assert "[redacted]" in label
 
@@ -1947,3 +1927,36 @@ def test_a_filed_template_is_never_folded_into_a_burst(tmp_path: Path) -> None:
     assert all("storm" not in (store.row("activity", f"storm-issue-{i}") or {})
                .get("result", {}).get("mode", "") for i in range(3))
     assert len(lines) == 3
+
+
+def test_the_burst_row_digest_is_salted_too() -> None:
+    """The burst table lands in a public issue and its digest is taken over the
+    same injective, raw fingerprint the marker uses. Unsalted, a reader could
+    confirm a guessed stream label by recomputing it."""
+    payload = {"service": "api", "class": "error", "environment": "prod"}
+    assert _storm_label("api|error|abc|prod", payload, "device-1") != _storm_label(
+        "api|error|abc|prod", payload, "device-2"
+    )
+
+
+def test_an_unencodable_fingerprint_fails_the_burst_rows_not_the_scan(tmp_path: Path) -> None:
+    """The burst path builds its labels before the gh call. Unguarded, a lone
+    surrogate there aborted the whole scan and recurred on every later one."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|\ud800")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/9\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2
+    )
+    assert lines == [f"error.issue storm-issue-{i} error" for i in range(3)]
+    for i in range(3):
+        row = store.row("activity", f"storm-issue-{i}")
+        assert row is not None
+        assert "not encodable" in row["execution_error"]

@@ -143,6 +143,21 @@ def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
     return row
 
 
+def _digest(template_fingerprint: str, salt: str) -> str:
+    """Salted digest of a fingerprint, for anything that reaches a public issue.
+
+    The salt is the device id: local, stable for the one device that owns this
+    loop (§21.1), and unknown to a reader, so a guessed stream label cannot be
+    confirmed by recomputing the digest. A lone surrogate can reach the
+    fingerprint from an untrusted stream label; that fails this row rather than
+    the scan, as line_fingerprint already does."""
+    try:
+        seed = f"{salt}\x00{template_fingerprint}".encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise StoreError(f"template fingerprint is not encodable: {exc}") from exc
+    return hashlib.sha256(seed).hexdigest()
+
+
 def _marker_for(template_fingerprint: str, salt: str) -> str:
     """The hidden marker that identifies a template's issue.
 
@@ -152,18 +167,10 @@ def _marker_for(template_fingerprint: str, salt: str) -> str:
     which would corrupt the body and lose the marker the next lookup needs. The
     marker is invisible to readers anyway, so nothing is lost by hashing it.
 
-    The digest is salted with the device id. The fingerprint stays injective —
+    The digest is salted (see _digest): the fingerprint stays injective —
     grouping must not merge two services — but an unsalted digest of it sits in
-    a public issue, where a reader could confirm a guessed stream label by
-    recomputing it. The salt is local, so the marker stays stable for the one
-    device that owns this loop (§21.1) and tells a reader nothing."""
-    try:
-        seed = f"{salt}\x00{template_fingerprint}".encode("utf-8")
-    except UnicodeEncodeError as exc:
-        # A lone surrogate can reach here from an untrusted stream label. Fail
-        # this row rather than the scan, as line_fingerprint already does.
-        raise StoreError(f"template fingerprint is not encodable: {exc}") from exc
-    return f"{_MARKER_PREFIX}{hashlib.sha256(seed).hexdigest()[:32]}{_MARKER_SUFFIX}"
+    a public issue, where a reader could confirm a guessed stream label."""
+    return f"{_MARKER_PREFIX}{_digest(template_fingerprint, salt)[:32]}{_MARKER_SUFFIX}"
 
 
 def _extract_variant(excerpt: str) -> str:
@@ -659,7 +666,7 @@ def _field(seen_payload: dict[str, Any], key: str, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
 
 
-def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str:
+def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any], salt: str) -> str:
     """One burst-table row per template: readable text plus a digest that makes
     it unique.
 
@@ -670,15 +677,18 @@ def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str
     templates could render identical text. The digest is taken over the whole
     fingerprint rather than a slice of it, so distinct templates keep distinct
     rows whatever the text does — otherwise one of them would be missing from
-    the burst issue while a row still claimed to cover it."""
+    the burst issue while a row still claimed to cover it.
+
+    Salted like the marker, and for the same reason: this digest is written into
+    a public burst issue, and the fingerprint behind it is injective and raw, so
+    an unsalted digest would let a reader confirm a guessed stream label."""
     # class is already derived from a redacted line; service and environment are
     # stream labels that never went through redact(), and both end up in a public
     # issue. Redact them here rather than trust their source.
     service = redact(_field(seen_payload, "service", "unknown"))
     cls = _field(seen_payload, "class", "error")
     environment = redact(_field(seen_payload, "environment", "unknown"))
-    digest = hashlib.sha256(template_fingerprint.encode("utf-8")).hexdigest()[:12]
-    return _inert_cell(f"{service}/{environment}: {cls} ({digest})")
+    return _inert_cell(f"{service}/{environment}: {cls} ({_digest(template_fingerprint, salt)[:12]})")
 
 
 def _create_storm_issue(
@@ -741,15 +751,22 @@ def _process_storm(
     resolved: list[tuple[dict[str, Any], str, dict[str, Any]]],
     now: str,
 ) -> list[str]:
-    templates: dict[str, dict[str, str]] = {}
-    for _row, template_fp, seen_payload in resolved:
-        label = _storm_label(template_fp, seen_payload)
-        if label in templates:
-            templates[label]["last_seen"] = now
-        else:
-            templates[label] = {"first_seen": now, "last_seen": now}
-
     lines: list[str] = []
+    templates: dict[str, dict[str, str]] = {}
+    try:
+        for _row, template_fp, seen_payload in resolved:
+            label = _storm_label(template_fp, seen_payload, store.device_id())
+            if label in templates:
+                templates[label]["last_seen"] = now
+            else:
+                templates[label] = {"first_seen": now, "last_seen": now}
+    except StoreError as exc:
+        # An unencodable fingerprint must fail these rows, not the scan.
+        for row, _template_fp, _seen_payload in resolved:
+            rid = str(row.get("id") or "?")
+            _mark(store, row, status="error", error=str(exc))
+            lines.append(f"error.issue {rid} error")
+        return lines
 
     if dry_run:
         for row, template_fp, _seen_payload in resolved:
@@ -1055,7 +1072,7 @@ def _process_template(
     if number is None:
         try:
             burst_number = open_burst.covers(
-                _storm_label(template_fp, first_payload), template_fp
+                _storm_label(template_fp, first_payload, store.device_id()), template_fp
             )
         except StoreError as exc:
             return fail_all(exc)
