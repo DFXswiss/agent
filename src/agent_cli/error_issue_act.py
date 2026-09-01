@@ -53,9 +53,28 @@ MAX_ISSUE_BODY = 60000
 # One page of candidates, as in github_act. A full page is treated as truncated
 # rather than as "no match".
 _ISSUE_LIST_LIMIT = 100
+# Keep the variants table bounded so normal growth can never walk an issue into
+# MAX_ISSUE_BODY and wedge every later update on it.
+MAX_TRACKED_VARIANTS = 200
 # Result modes that never touched GitHub, so they must not start a cooldown
 # window: a dry run is a preview, not a touch.
 _DRY_RUN_MODES = frozenset({"dry-run", "storm-dry-run"})
+
+
+def _inert_block(text: str) -> str:
+    """Log lines are untrusted data (DESIGN.md §19.2). A line carrying this
+    module's own marker would otherwise move the boundary of the machine-owned
+    section: a later splice would find the excerpt's marker first and rewrite
+    everything between it and the real one, destroying issue content. Breaking
+    the comment opener keeps the line readable inside its code fence while
+    making it inert."""
+    return text.replace("<!--", "<!- -")
+
+
+def _inert_cell(text: str) -> str:
+    """Same, for text that lands in a table cell: a pipe or a newline there
+    would break the row apart and the name would not survive a round trip."""
+    return _inert_block(text).replace("|", "/").replace("\n", " ").replace("\r", " ")
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -116,11 +135,29 @@ def extract_variant(excerpt: str) -> str:
 
 
 def render_variants_section(variants: dict[str, dict[str, str]]) -> str:
+    """Render the machine-owned table, keeping at most MAX_TRACKED_VARIANTS rows.
+
+    The cap is what stops a long-lived issue from growing into MAX_ISSUE_BODY,
+    where every later update would fail and the template would be stuck erroring
+    for good. The most recently seen variants are the ones worth keeping; the
+    dropped count stays visible in the section so the table never silently
+    understates what was seen."""
+    kept = variants
+    dropped = 0
+    if len(variants) > MAX_TRACKED_VARIANTS:
+        by_recency = sorted(
+            variants.items(), key=lambda item: (item[1].get("last_seen", ""), item[0]), reverse=True
+        )
+        kept = dict(by_recency[:MAX_TRACKED_VARIANTS])
+        dropped = len(variants) - MAX_TRACKED_VARIANTS
     lines = [_VARIANTS_START, "", "| variant | first seen | last seen |", "|---|---|---|"]
-    for name in sorted(variants):
-        entry = variants[name]
+    for name in sorted(kept):
+        entry = kept[name]
         lines.append(f"| {name} | {entry.get('first_seen', '')} | {entry.get('last_seen', '')} |")
     lines.append("")
+    if dropped:
+        lines.append(f"_{dropped} older variants dropped to stay within the issue body limit._")
+        lines.append("")
     lines.append(_VARIANTS_END)
     return "\n".join(lines)
 
@@ -228,7 +265,13 @@ def _within_cooldown(
         now_dt = _parse_iso(now)
     except ValueError:
         return False
-    return now_dt - touched_dt < timedelta(minutes=cooldown_minutes)
+    elapsed = now_dt - touched_dt
+    # A touch dated in the future (clock skew, a backward clock, a damaged row)
+    # would otherwise look like "no time has passed" forever and silently skip
+    # this template on every future scan. Treat it as not in cooldown.
+    if elapsed < timedelta(0):
+        return False
+    return elapsed < timedelta(minutes=cooldown_minutes)
 
 
 
@@ -347,7 +390,7 @@ def _create_issue(
     body = _ensure_issue_body(
         f"{marker_for(template_fingerprint)}\n\n"
         "Automated error-log finding.\n\n"
-        f"```\n{excerpt}\n```\n\n"
+        f"```\n{_inert_block(excerpt)}\n```\n\n"
         + render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
         + "\n"
     )
@@ -434,7 +477,7 @@ def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str
     cls = cls if isinstance(cls, str) and cls else "error"
     parts = template_fingerprint.split("|")
     short = parts[2][:8] if len(parts) >= 3 and parts[2] else template_fingerprint[:8]
-    return f"{service}: {cls} ({short})"
+    return _inert_cell(f"{service}: {cls} ({short})")
 
 
 def _create_storm_issue(
@@ -637,6 +680,7 @@ def _scan_error_issue(
         for template_fp in new_templates:
             del groups[template_fp]
 
+    open_burst = _OpenBurst(runner, issue_repo)
     for template_fp, members in groups.items():
         lines.extend(
             _process_template(
@@ -649,9 +693,40 @@ def _scan_error_issue(
                 now=now,
                 history=history,
                 cooldown_minutes=cooldown_minutes,
+                open_burst=open_burst,
             )
         )
     return lines
+
+
+class _OpenBurst:
+    """The templates the currently open burst issue already lists, fetched once
+    per scan and only when a template is about to get its own issue.
+
+    A burst writes its issue in one gh call but marks its rows one at a time, so
+    a process that dies mid-loop leaves rows pending for templates that carry no
+    local history at all — the fold is recorded only in the issue. Without this
+    lookup the retry would file a second, individual issue for a template the
+    burst issue already covers, splitting one template across two issues."""
+
+    def __init__(self, runner: Runner, issue_repo: str) -> None:
+        self._runner = runner
+        self._issue_repo = issue_repo
+        self._number: int | None = None
+        self._labels: set[str] | None = None
+
+    def covers(self, label: str) -> int | None:
+        """The open burst issue's number when it already lists this label."""
+        if self._labels is None:
+            self._number = find_issue_number(self._runner, self._issue_repo, STORM_MARKER)
+            if self._number is None:
+                self._labels = set()
+            else:
+                body = _issue_body(self._runner, self._issue_repo, self._number)
+                self._labels = set(parse_variants_section(body))
+        if label in self._labels:
+            return self._number
+        return None
 
 
 def _process_template(
@@ -665,6 +740,7 @@ def _process_template(
     now: str,
     history: dict[str, datetime],
     cooldown_minutes: int,
+    open_burst: _OpenBurst,
 ) -> list[str]:
     """Handle every pending row of one template together. Rows are grouped
     because two variants of the same template in one scan belong in one issue:
@@ -732,6 +808,28 @@ def _process_template(
 
     first_payload = members[0][1]
     if number is None:
+        try:
+            burst_number = open_burst.covers(_storm_label(template_fp, first_payload))
+        except StoreError as exc:
+            return fail_all(exc)
+        if burst_number is not None:
+            for row, _seen_payload in members:
+                rid = str(row.get("id") or "?")
+                _mark(
+                    store,
+                    row,
+                    status="done",
+                    result={
+                        "mode": "storm",
+                        "issue_repo": issue_repo,
+                        "template_fingerprint": template_fp,
+                        "at": now,
+                        "number": burst_number,
+                        "created": False,
+                    },
+                )
+                lines.append(f"error.issue {rid} already-in-burst number={burst_number}")
+            return lines
         service = first_payload.get("service")
         service = service if isinstance(service, str) and service else "unknown"
         cls = first_payload.get("class")

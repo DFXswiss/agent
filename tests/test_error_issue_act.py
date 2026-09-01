@@ -8,7 +8,11 @@ import pytest
 from agent_cli.error_issue_act import (
     ISSUE_LABEL,
     MAX_ISSUE_BODY,
+    MAX_TRACKED_VARIANTS,
     STORM_MARKER,
+    _VARIANTS_END,
+    _VARIANTS_START,
+    _storm_label,
     _create_issue,
     _create_storm_issue,
     _within_cooldown,
@@ -932,9 +936,35 @@ def test_splice_variants_refuses_a_half_open_section() -> None:
 
 
 def test_splice_variants_refuses_a_body_over_the_github_limit() -> None:
-    variants = {f"chain-{i}": {"first_seen": "t1", "last_seen": "t1"} for i in range(6000)}
+    """The ceiling still guards a body that is oversized for reasons the table
+    cap cannot control, such as very long human-written prose."""
+    huge_human_body = "human prose. " * (MAX_ISSUE_BODY // 10)
     with pytest.raises(StoreError):
-        splice_variants("Human notes.\n", variants)
+        splice_variants(huge_human_body, {"Ethereum": {"first_seen": "t1", "last_seen": "t1"}})
+
+
+def test_render_variants_section_caps_the_table() -> None:
+    """Unbounded growth would walk the issue into the body limit and wedge every
+    later update on it, so the table keeps the most recent variants and says how
+    many it dropped."""
+    variants = {
+        f"chain-{i:04d}": {"first_seen": "t1", "last_seen": f"2026-08-{(i % 28) + 1:02d}"}
+        for i in range(MAX_TRACKED_VARIANTS + 50)
+    }
+    section = render_variants_section(variants)
+    parsed = parse_variants_section(section)
+    assert len(parsed) == MAX_TRACKED_VARIANTS
+    assert "50 older variants dropped" in section
+    # The dropped-count note must not survive as a phantom variant row.
+    assert all(name.startswith("chain-") for name in parsed)
+
+
+def test_variants_table_stays_under_the_ceiling_when_saturated() -> None:
+    variants = {
+        f"chain-{i:04d}": {"first_seen": "2026-08-31T10:00:00Z", "last_seen": "2026-08-31T10:00:00Z"}
+        for i in range(MAX_TRACKED_VARIANTS * 5)
+    }
+    assert len(splice_variants("Human notes.\n", variants)) <= MAX_ISSUE_BODY
 
 
 def test_create_paths_apply_the_same_body_ceiling() -> None:
@@ -951,14 +981,20 @@ def test_create_paths_apply_the_same_body_ceiling() -> None:
             variants=["generic"],
             now="2026-08-31T10:00:00Z",
         )
+    # The storm body is bounded by the same table cap, so it stays writable even
+    # with far more templates than the cap.
     templates = {f"t-{i}": {"first_seen": "t1", "last_seen": "t1"} for i in range(6000)}
-    with pytest.raises(StoreError):
-        _create_storm_issue(
-            _unreachable_runner,
-            issue_repo="org/tracker",
-            templates=templates,
-            now="2026-08-31T10:00:00Z",
-        )
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+
+    _create_storm_issue(
+        runner, issue_repo="org/tracker", templates=templates, now="2026-08-31T10:00:00Z"
+    )
+    body = created[0][created[0].index("--body") + 1]
+    assert len(body) <= MAX_ISSUE_BODY
 
 
 def _unreachable_runner(argv: list[str]) -> Completed:
@@ -1010,3 +1046,121 @@ def test_touch_history_ignores_unusable_rows(tmp_path: Path) -> None:
             },
         )
     assert touch_history(store) == {}
+
+
+# ---- untrusted excerpt text ----
+
+
+def test_excerpt_cannot_move_the_section_boundary(tmp_path: Path) -> None:
+    """A log line is untrusted data. One carrying the section marker would
+    otherwise make a later splice rewrite everything between it and the real
+    marker, destroying the excerpt and the issue's own structure."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    hostile = f"Timeout for Ethereum {_VARIANTS_START} injected"
+    _seen(store, excerpt=hostile)
+    _issue(store)
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/1\n", "")
+
+    scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    body = created[-1][created[-1].index("--body") + 1]
+    assert body.count(_VARIANTS_START) == 1
+    assert body.count(_VARIANTS_END) == 1
+
+    # A later update must keep the excerpt intact rather than splicing over it.
+    updated = splice_variants(body, parse_variants_section(body))
+    assert updated.count(_VARIANTS_START) == 1
+    assert "injected" in updated
+
+
+def test_storm_label_survives_a_round_trip_through_the_table() -> None:
+    """service/class come from the error payload; a pipe or a marker there would
+    break the row apart so the label would not parse back."""
+    label = _storm_label("api|error|abc|prod", {"service": "a|b", "class": "<!-- variants:end -->"})
+    section = render_variants_section({label: {"first_seen": "t1", "last_seen": "t1"}})
+    assert parse_variants_section(section) == {label: {"first_seen": "t1", "last_seen": "t1"}}
+
+
+# ---- clock skew ----
+
+
+def test_cooldown_ignores_a_touch_dated_in_the_future(tmp_path: Path) -> None:
+    """A future-dated touch would otherwise read as "no time has passed" forever
+    and skip this template on every later scan."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-09-30T10:00:00Z",
+        activity_id="prior-future",
+    )
+    assert (
+        _within_cooldown(touch_history(store), "api|error|abc|prod", "2026-08-31T10:00:00Z", 60)
+        is False
+    )
+
+
+# ---- interrupted burst, then retry ----
+
+
+def test_retry_after_a_partially_marked_burst_does_not_split_the_template(tmp_path: Path) -> None:
+    """A burst writes its issue in one gh call but marks its rows one at a time.
+    If the process dies mid-loop, the rows left pending belong to templates the
+    burst issue already lists, so a retry must not file a second issue for them."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    for i in range(3):
+        _seen_and_issue(store, index=i, template_fingerprint=f"api|error|t{i}|prod")
+
+    def storm_runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/99\n", "")
+
+    scan_error_issue(
+        store, storm_runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2
+    )
+
+    # Simulate the crash: put one of the burst's rows back to pending.
+    row = store.row("activity", "storm-issue-2")
+    assert row is not None
+    replayed = {k: v for k, v in row.items() if not k.startswith("_")}
+    replayed["execution_status"] = "pending"
+    replayed.pop("result", None)
+    store.write("activity", "update", "storm-issue-2", replayed)
+
+    # The burst issue is the only record that template t2 was already folded.
+    burst_body = render_variants_section(
+        {
+            _storm_label(f"api|error|t{i}|prod", {"service": "api", "class": "error"}): {
+                "first_seen": "2026-08-31T10:00:00Z",
+                "last_seen": "2026-08-31T10:00:00Z",
+            }
+            for i in range(3)
+        }
+    )
+
+    def fail_if_created(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "create"]:
+            raise AssertionError(f"must not open a second issue: {argv}")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, json.dumps([{"number": 99, "body": STORM_MARKER}]), "")
+        if argv[:3] == ["gh", "issue", "view"]:
+            return Completed(0, json.dumps({"body": f"{STORM_MARKER}\n\n{burst_body}\n"}), "")
+        return Completed(0, "", "")
+
+    lines = scan_error_issue(
+        store, fail_if_created, issue_repo="org/tracker", dry_run=False, storm_threshold=2
+    )
+    assert lines == ["error.issue storm-issue-2 already-in-burst number=99"]
+    row = store.row("activity", "storm-issue-2")
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["mode"] == "storm"
