@@ -304,8 +304,11 @@ def _assignment_is_newer(
     dt: datetime, event_id: int | None, marker: tuple[datetime, int | None] | None
 ) -> bool:
     """Whether (dt, event_id) is provably newer than `marker`. A same-
-    timestamp tie is newer only when both ids are known and comparable —
-    unresolvable ties are NOT treated as newer (fail closed)."""
+    timestamp tie needs the candidate's own id to be known: an unresolvable
+    candidate never wins (fail closed), but an unresolvable STORED marker
+    (a legacy row, or one this scan itself blanked on an earlier ambiguous
+    tie) must not permanently block every future candidate at that
+    timestamp — so a resolvable candidate beats a marker with no id."""
     if marker is None:
         return True
     prev_dt, prev_id = marker
@@ -313,7 +316,9 @@ def _assignment_is_newer(
         return True
     if dt < prev_dt:
         return False
-    return event_id is not None and prev_id is not None and event_id > prev_id
+    if event_id is None:
+        return False
+    return prev_id is None or event_id > prev_id
 
 
 def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:

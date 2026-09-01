@@ -486,6 +486,110 @@ def test_scan_assigned_same_second_unresolvable_tie_sets_assigned_by_empty(
     assert row["payload"]["assigned_by"] == ""
 
 
+def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    events_calls = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            events_calls["n"] += 1
+            if events_calls["n"] == 1:
+                # First scan: an unresolvable tie stores a blanked marker
+                # (assigned_by="", event_id=None) for this timestamp.
+                return Completed(
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": 100,
+                                "event": "assigned",
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "assignee": {"login": "alice"},
+                                "actor": {"login": "first"},
+                            },
+                            {
+                                "event": "assigned",
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "assignee": {"login": "alice"},
+                                "actor": {"login": "second"},
+                            },
+                        ]
+                    ),
+                    "",
+                )
+            # Second scan: GitHub's events list for this issue now (this is
+            # a fresh independent API read, not a diff against scan 1) only
+            # has resolvable ids — no unresolvable event to re-poison the
+            # tie, so this scan's own intra-scan result is a clean
+            # newest_id=300. The bug under test is whether that clean
+            # result can beat the stored marker from scan 1, whose
+            # event_id is None.
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "first"},
+                        },
+                        {
+                            "id": 300,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "resolved"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-01-01T00:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
+    assert row["payload"]["event_id"] is None
+
+    # `now` must not advance the watch cursor past the events' `created_at`
+    # (see the sibling across-scans test above for why).
+    created2, skipped2 = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
+    assert skipped2 == 0
+    assert len(created2) == 1
+    row2 = store.row("activity", created2[0])
+    assert row2 is not None
+    assert row2["id"] != created[0]
+    assert row2["payload"]["assigned_by"] == "resolved"
+    assert row2["payload"]["event_id"] == 300
+
+
 def test_scan_assigned_same_second_higher_event_id_across_scans(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
