@@ -1164,3 +1164,33 @@ def test_retry_after_a_partially_marked_burst_does_not_split_the_template(tmp_pa
     assert row is not None
     assert row["execution_status"] == "done"
     assert row["result"]["mode"] == "storm"
+
+
+def test_storm_label_separates_environments() -> None:
+    """service|class|template-sig|environment: the same error in two environments
+    is two templates, so one shared row would hide one and undercount the burst."""
+    payload = {"service": "api", "class": "error"}
+    assert _storm_label("api|error|abc123def|prod", payload) != _storm_label(
+        "api|error|abc123def|staging", payload
+    )
+
+
+def test_storm_issue_lists_each_environment_separately(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    for index, environment in enumerate(("prod", "staging", "test")):
+        _seen_and_issue(store, index=index, template_fingerprint=f"api|error|same|{environment}")
+    created: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        created.append(list(argv))
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "https://github.com/org/tracker/issues/99\n", "")
+
+    lines = scan_error_issue(
+        store, runner, issue_repo="org/tracker", dry_run=False, storm_threshold=2
+    )
+    assert all("storm size=3" in line for line in lines)
+    body = created[-1][created[-1].index("--body") + 1]
+    assert len(parse_variants_section(body)) == 3

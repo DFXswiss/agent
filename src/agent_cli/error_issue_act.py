@@ -477,7 +477,12 @@ def _storm_label(template_fingerprint: str, seen_payload: dict[str, Any]) -> str
     cls = cls if isinstance(cls, str) and cls else "error"
     parts = template_fingerprint.split("|")
     short = parts[2][:8] if len(parts) >= 3 and parts[2] else template_fingerprint[:8]
-    return _inert_cell(f"{service}: {cls} ({short})")
+    # The environment belongs in the label: a template_fingerprint is
+    # service|class|template-sig|environment, so the same error in two
+    # environments is two templates. Without it both would share one row, the
+    # burst issue would hide one of them and storm_size would undercount.
+    environment = parts[3] if len(parts) >= 4 and parts[3] else "unknown"
+    return _inert_cell(f"{service}/{environment}: {cls} ({short})")
 
 
 def _create_storm_issue(
