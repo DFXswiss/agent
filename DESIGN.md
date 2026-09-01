@@ -636,9 +636,9 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 }
 ```
 
-`template_fingerprint` is `fingerprint` one step coarser: known blockchain names and
-asset tickers are masked before hashing, so per-chain and per-token variants of one
-error share it. Names are masked only as whole tokens and case-sensitively, so prose
+`template_fingerprint` is `fingerprint` one step coarser: known blockchain and
+payment-rail names and asset tickers are masked before hashing, so per-chain and
+per-token variants of one error share it. Names are masked only as whole tokens and case-sensitively, so prose
 like "Based" or lowercase "usd" is not mistaken for a chain or a ticker. It groups
 which issue a variant belongs to (§21.6); `fingerprint` stays the finer-grained
 identity used for `count` / `last_seen`, so per-variant dedup remains exact.

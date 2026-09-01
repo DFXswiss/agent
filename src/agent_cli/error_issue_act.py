@@ -164,9 +164,11 @@ def _render_variants_section(variants: dict[str, dict[str, str]]) -> str:
     The cap bounds how many rows the table can hold, which is what keeps normal
     growth away from MAX_ISSUE_BODY — where every later update would fail and the
     template would be stuck erroring for good. It bounds rows, not bytes:
-    _ensure_issue_body stays the hard limit, since a single cell can be long. The most recently seen variants are the ones worth keeping; the
-    dropped count stays visible in the section so the table never silently
-    understates what was seen.
+    _ensure_issue_body stays the hard limit, since a single cell can be long.
+
+    The most recently seen variants are the ones worth keeping; the dropped
+    count stays visible in the section so the table never silently understates
+    what was seen.
 
     Accepted trade-off: an evicted variant that recurs later reads as new again
     and is announced a second time. The cooldown keeps that from becoming a
@@ -221,10 +223,11 @@ def _ensure_issue_body(body: str) -> str:
 
 def _splice_variants(body: str, variants: dict[str, dict[str, str]]) -> str:
     """Replace only the delimited variants section; never touch the rest of the
-    body — that is human territory. A body carrying exactly one of the two
-    markers, or them in the wrong order, is damaged (a hand edit truncated the
-    section): appending a second section there would silently strand the
-    variants already recorded above, so fail loud instead."""
+    body — that is human territory. Anything but exactly one well-ordered marker
+    pair is damage and fails loud: a lone marker means a hand edit truncated the
+    section, and appending a second section there would strand the variants
+    already recorded above, while a duplicated marker would make the splice
+    rewrite whatever sits between the copies."""
     starts = body.count(_VARIANTS_START)
     ends = body.count(_VARIANTS_END)
     section = _render_variants_section(variants)

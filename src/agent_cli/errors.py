@@ -263,13 +263,13 @@ def stack_sig(line: str) -> str:
 
 
 def template_signature(line: str) -> str:
-    """Coarser than stack_sig: also masks known blockchain names and asset
-    tickers (see _KNOWN_CHAINS/_KNOWN_ASSETS), so a per-chain or per-token error
-    variant groups under one issue-filing template instead of fragmenting into
-    one fingerprint per chain/token pair. Used only for grouping which GitHub
-    issue a variant belongs to — error.seen identity keeps using the
-    finer-grained fingerprint()/stack_sig() so per-variant count/last_seen
-    tracking stays exact."""
+    """Coarser than stack_sig: also masks known blockchain and payment-rail
+    names and asset tickers (see _KNOWN_CHAINS/_KNOWN_ASSETS), so a per-chain or
+    per-token error variant groups under one issue-filing template instead of
+    fragmenting into one fingerprint per chain/token pair. Used only for
+    grouping which GitHub issue a variant belongs to — error.seen identity keeps
+    using the finer-grained fingerprint()/stack_sig() so per-variant
+    count/last_seen tracking stays exact."""
     norm = redact(strip_ansi(line))
     norm = _UUID.sub("", norm)
     norm = _CHAIN_TOKEN.sub("<CHAIN>", norm)
