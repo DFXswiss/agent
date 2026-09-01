@@ -45,8 +45,8 @@ _UUID = re.compile(
 # The blockchain and payment-rail names the platform already exposes as transfer
 # options, current as of 2026-08-31 — masked in the template signature so a
 # per-chain error variant ("Timeout updating balances for Ethereum" vs "...for
-# Polygon") groups under one issue-filing template instead of fragmenting one
-# issue per chain. Refresh when that list changes; there is no automated sync.
+# Polygon") groups under one coarser template instead of fragmenting one
+# fingerprint per chain. Refresh when that list changes; there is no automated sync.
 _KNOWN_CHAINS = frozenset(
     {
         "DeFiChain", "Ethereum", "Arbitrum", "Polygon", "BinanceSmartChain", "Binance",
