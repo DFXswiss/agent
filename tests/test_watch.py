@@ -1087,6 +1087,27 @@ def test_dispatch_assigned_denies_when_policy_rejects_actor(tmp_path: Path) -> N
     assert not store.wake_delivered("asg-1")
 
 
+def test_dispatch_assigned_denies_when_job_types_allow_omits_implement(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path, job_types_allow=["pr-review"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+
+
 def test_dispatch_assigned_denies_when_policy_json_is_null(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _insert_assigned_activity(store)
