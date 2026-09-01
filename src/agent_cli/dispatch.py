@@ -3,18 +3,19 @@
 Phase 3 of porting the existing runner. Every external effect (store, runner)
 is injected; this module only decides the sequence and the payloads. The
 original runner fixed the order announcement → output baseline → started →
-worker start. Announcement and baseline need network and belong in a later
-phase. Immediately above `started = utcnow()`, the comment below records that
-they must come before it: a baseline taken after the announcement would count
-the bot's own comment as new output and make the later silent-failure check
-pass every job.
+worker start. The output baseline is captured here; the announcement remains
+for a later phase and must precede it. A baseline taken after the announcement
+would count the bot's own comment as new output and make the later
+silent-failure check pass every job.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
+from . import outputs
 from . import runtime
 from . import workspace
 from .runtime import Completed
@@ -130,10 +131,27 @@ def dispatch_queued(
             skipped += 1
             continue
 
-        # Announcement and output baseline belong BEFORE this line.
-        # A baseline taken after the announcement would count the bot's own
-        # comment as new output and make the later silent-failure check pass
-        # every job.
+        # The announcement still belongs before this output baseline. Taking
+        # the baseline after announcing would count this instance's own comment
+        # as new output and make the later silent-failure check pass every job.
+        completed = runner(outputs.baseline_argv(repo, ref))
+        baseline_output_ids = None
+        if completed.returncode == 0:
+            try:
+                payload = json.loads(completed.stdout)
+            except json.JSONDecodeError:
+                pass
+            else:
+                baseline_output_ids = outputs.parse_baseline_ids(payload)
+        if baseline_output_ids is None:
+            # An untrusted baseline must not start a worker: a later phase
+            # compares against it to decide whether work really happened.
+            # The row stays queued so the next pass retries.
+            runner(workspace.worktree_remove_argv(bare, worktree))
+            runner(workspace.worktree_prune_argv(bare))
+            skipped += 1
+            continue
+
         started_ts = utcnow()
 
         session = session_name(job_id)
@@ -153,6 +171,7 @@ def dispatch_queued(
                 "state": "running",
                 "session": session,
                 "worktree": worktree,
+                "baseline_output_ids": baseline_output_ids,
                 "started": started_ts,
                 "updated_at": utcnow(),
             }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -25,6 +26,8 @@ def _runner(
     start_rc: int = 0,
     has_rc: int = 0,
     kill_rc: int = 0,
+    baseline_rc: int = 0,
+    baseline_stdout: str | None = None,
 ) -> Callable[[list[str]], Completed]:
     def run(argv: list[str]) -> Completed:
         calls.append(list(argv))
@@ -49,6 +52,26 @@ def _runner(
             return Completed(has_rc, "", "")
         if "kill-session" in joined:
             return Completed(kill_rc, "", "")
+        if "graphql" in joined:
+            if baseline_stdout is not None:
+                return Completed(baseline_rc, baseline_stdout, "")
+            return Completed(
+                baseline_rc,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "issueOrPullRequest": {
+                                    "__typename": "PullRequest",
+                                    "comments": {"nodes": [{"id": "C_1"}]},
+                                    "reviews": {"nodes": []},
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
         raise AssertionError(argv)
 
     return run
@@ -464,3 +487,133 @@ def test_write_update_failure_triggers_worktree_and_session_cleanup(
         assert kill_at < remove_at < prune_at
     finally:
         store.close()
+
+
+# ------------------------------------------------ baseline failures
+
+
+def test_a_nonzero_baseline_call_leaves_the_job_queued_and_counts_it_skipped(
+    tmp_path: Path,
+) -> None:
+    # A failed baseline fetch must leave the row available for retry, not mark it failed.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(store, _runner(calls=calls, baseline_rc=1))
+
+        assert started == []
+        assert skipped == 1
+        assert store.row("job", row["id"])["state"] == "queued"
+        joined = [" ".join(argv) for argv in calls]
+        assert any("worktree remove" in c for c in joined)
+        assert any("worktree prune" in c for c in joined)
+    finally:
+        store.close()
+
+
+def test_an_undecodable_baseline_json_leaves_the_job_queued_and_counts_it_skipped(
+    tmp_path: Path,
+) -> None:
+    # Invalid JSON from the baseline must not start a worker.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, baseline_stdout="not json")
+        )
+
+        assert started == []
+        assert skipped == 1
+        assert store.row("job", row["id"])["state"] == "queued"
+        joined = [" ".join(argv) for argv in calls]
+        assert any("worktree remove" in c for c in joined)
+        assert any("worktree prune" in c for c in joined)
+    finally:
+        store.close()
+
+
+def test_a_parseable_baseline_with_unknown_typename_leaves_the_job_queued_and_counts_it_skipped(
+    tmp_path: Path,
+) -> None:
+    # An untrusted baseline (parse rejects it) must never start a worker.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        payload = json.dumps(
+            {
+                "data": {
+                    "repository": {
+                        "issueOrPullRequest": {
+                            "__typename": "Unknown",
+                            "comments": {"nodes": []},
+                            "reviews": {"nodes": []},
+                        }
+                    }
+                }
+            }
+        )
+        started, skipped = _dispatch(
+            store, _runner(calls=calls, baseline_stdout=payload)
+        )
+
+        assert started == []
+        assert skipped == 1
+        assert store.row("job", row["id"])["state"] == "queued"
+        joined = [" ".join(argv) for argv in calls]
+        assert any("worktree remove" in c for c in joined)
+        assert any("worktree prune" in c for c in joined)
+    finally:
+        store.close()
+
+
+def test_a_successful_baseline_stores_the_ids_on_the_row(tmp_path: Path) -> None:
+    # On success the baseline ids must be persisted for the later silent-failure check.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+
+        started, skipped = _dispatch(store, _runner(calls=calls))
+
+        assert started == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved is not None
+        assert saved["baseline_output_ids"] == ["C_1"]
+    finally:
+        store.close()
+
