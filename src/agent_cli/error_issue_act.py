@@ -289,6 +289,15 @@ def _parse_iso(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
+def _names_an_issue(result: dict[str, Any]) -> bool:
+    """Whether a result actually points at an issue, by number or by url."""
+    number = result.get("number")
+    if not isinstance(number, bool) and isinstance(number, int):
+        return True
+    url = result.get("url")
+    return isinstance(url, str) and url != ""
+
+
 def _touch_history(store: Store, issue_repo: str) -> dict[str, datetime]:
     """Most recent real touch per template, read once from local activity
     history. A touch is a completed error.issue row that actually created,
@@ -317,8 +326,9 @@ def _touch_history(store: Store, issue_repo: str) -> dict[str, datetime]:
         if not isinstance(template_fingerprint, str):
             continue
         # A row that names no issue never touched one; a corrupted or partial
-        # result must not open a cooldown window with nothing behind it.
-        if result.get("number") is None and result.get("url") is None:
+        # result must not open a cooldown window with nothing behind it. An
+        # empty string names nothing either.
+        if not _names_an_issue(result):
             continue
         touched_at = result.get("at")
         if not isinstance(touched_at, str):
@@ -514,7 +524,7 @@ def _create_issue(
         + _render_variants_section({v: {"first_seen": now, "last_seen": now} for v in variants})
         + "\n"
     )
-    return _gh(
+    url = _gh(
         runner,
         [
             "gh",
@@ -531,6 +541,11 @@ def _create_issue(
         ],
         "gh issue create failed",
     ).strip()
+    # Same check the burst path makes: a create that reports success without an
+    # issue URL would be recorded as a touch that names no issue.
+    if _ISSUE_URL.search(url) is None:
+        raise StoreError("gh issue create returned no issue URL")
+    return url
 
 
 def _update_issue(

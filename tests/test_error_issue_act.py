@@ -1755,3 +1755,91 @@ def test_public_issue_text_redacts_the_unredacted_fields(tmp_path: Path) -> None
     title = created[-1][created[-1].index("--title") + 1]
     assert "alice@example.com" not in title
     assert title.startswith("[redacted]")
+
+
+def test_the_cooldown_window_is_half_open(tmp_path: Path) -> None:
+    """A touch exactly one window old is out of cooldown; a "<" that became "<="
+    would otherwise hold the template one scan too long."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _prior_touch(
+        store,
+        template_fingerprint="api|error|abc|prod",
+        at="2026-08-31T10:00:00Z",
+        activity_id="prior-1",
+    )
+    history = _touch_history(store, "org/tracker")
+    assert _within_cooldown(history, "api|error|abc|prod", "2026-08-31T10:59:59Z", 60) is True
+    assert _within_cooldown(history, "api|error|abc|prod", "2026-08-31T11:00:00Z", 60) is False
+
+
+def test_a_touch_named_only_by_url_still_counts(tmp_path: Path) -> None:
+    """The create path records a url and no number. Requiring a number would drop
+    every freshly created issue out of the cooldown history."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "url-only",
+        {
+            "id": "url-only",
+            "session_id": "runner-1",
+            "type": "error.issue",
+            "payload": {"error_id": "irrelevant"},
+            "execution_status": "done",
+            "result": {
+                "issue_repo": "org/tracker",
+                "template_fingerprint": "api|error|abc|prod",
+                "at": "2026-08-31T10:00:00Z",
+                "url": "https://github.com/org/tracker/issues/4",
+                "created": True,
+            },
+        },
+    )
+    assert "api|error|abc|prod" in _touch_history(store, "org/tracker")
+
+
+def test_an_empty_url_names_no_issue(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "empty-url",
+        {
+            "id": "empty-url",
+            "session_id": "runner-1",
+            "type": "error.issue",
+            "payload": {"error_id": "irrelevant"},
+            "execution_status": "done",
+            "result": {
+                "issue_repo": "org/tracker",
+                "template_fingerprint": "api|error|abc|prod",
+                "at": "2026-08-31T10:00:00Z",
+                "url": "",
+                "created": True,
+            },
+        },
+    )
+    assert _touch_history(store, "org/tracker") == {}
+
+
+def test_a_create_reporting_no_url_fails_the_row(tmp_path: Path) -> None:
+    """gh exiting zero without an issue URL would otherwise be recorded as a
+    touch that names no issue."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _issue(store)
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(0, "[]", "")
+        return Completed(0, "  \n", "")
+
+    lines = scan_error_issue(store, runner, issue_repo="org/tracker", dry_run=False)
+    assert lines == ["error.issue issue-1 error"]
+    row = store.row("activity", "issue-1")
+    assert row is not None
+    assert "no issue URL" in row["execution_error"]
