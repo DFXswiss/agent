@@ -90,7 +90,12 @@ def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
         blockers = "".join(
             f"(?!{re.escape(longer[len(name):])})"
             for longer in ordered
-            if longer.startswith(name) and len(longer) > len(name) and not longer[len(name)].isalnum()
+            if longer.startswith(name)
+            and len(longer) > len(name)
+            # Word characters, not just alphanumerics: an underscore continuation
+            # is already handled by the trailing boundary below, so the predicate
+            # has to mean the same thing that boundary does.
+            and re.match(r"\w", longer[len(name)]) is None
         )
         alternatives.append(re.escape(name) + blockers)
     return re.compile(rf"(?<!\w)(?:{'|'.join(alternatives)})(?!\w)")
