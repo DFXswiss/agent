@@ -421,6 +421,160 @@ def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
     assert row["payload"]["assigned_by"] == "later"
 
 
+def test_scan_assigned_same_second_unresolvable_tie_sets_assigned_by_empty(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "first"},
+                        },
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "middle"},
+                        },
+                        {
+                            "id": 200,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "later"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
+
+
+def test_scan_assigned_same_second_higher_event_id_across_scans(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    events_calls = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            events_calls["n"] += 1
+            if events_calls["n"] == 1:
+                return Completed(
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": 100,
+                                "event": "assigned",
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "assignee": {"login": "alice"},
+                                "actor": {"login": "A"},
+                            }
+                        ]
+                    ),
+                    "",
+                )
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "A"},
+                        },
+                        {
+                            "id": 200,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "B"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-01-01T00:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == "A"
+    assert row["payload"]["event_id"] == 100
+
+    # `now` here must not advance the watch cursor past the events'
+    # `created_at` (both "2026-01-01T00:00:00Z"), or scan_assigned's
+    # no-backfill rule filters them out before the tie-break/marker
+    # comparison this test exercises ever runs.
+    created2, skipped2 = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
+    assert skipped2 == 0
+    assert len(created2) == 1
+    row2 = store.row("activity", created2[0])
+    assert row2 is not None
+    assert row2["id"] != created[0]
+    assert row2["payload"]["assigned_by"] == "B"
+    assert row2["payload"]["event_id"] == 200
+
+
 def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")

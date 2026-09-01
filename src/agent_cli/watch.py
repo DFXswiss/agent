@@ -255,9 +255,15 @@ def _paired_login(store: Store, runner: Callable[[list[str]], Completed]) -> str
     return paired.lower()
 
 
-def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None:
+def _latest_assigned_marker(
+    store: Store, repo: str, number: int
+) -> tuple[datetime, int | None] | None:
+    """The (assigned_at, event_id) of the most recently recorded assignment
+    activity for repo/number, or None if none stored. Among rows tied on
+    assigned_at, the highest present event_id wins; None if none of the
+    tied rows have one."""
     repo_key = repo.lower()
-    latest: datetime | None = None
+    latest: tuple[datetime, int | None] | None = None
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
             continue
@@ -284,9 +290,30 @@ def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None
             event_dt = _parse_gh_time(raw_at)
         except ValueError:
             continue
-        if latest is None or event_dt > latest:
-            latest = event_dt
+        raw_eid = payload.get("event_id")
+        event_id = raw_eid if isinstance(raw_eid, int) else None
+        if latest is None or event_dt > latest[0]:
+            latest = (event_dt, event_id)
+        elif event_dt == latest[0]:
+            if event_id is not None and (latest[1] is None or event_id > latest[1]):
+                latest = (event_dt, event_id)
     return latest
+
+
+def _assignment_is_newer(
+    dt: datetime, event_id: int | None, marker: tuple[datetime, int | None] | None
+) -> bool:
+    """Whether (dt, event_id) is provably newer than `marker`. A same-
+    timestamp tie is newer only when both ids are known and comparable —
+    unresolvable ties are NOT treated as newer (fail closed)."""
+    if marker is None:
+        return True
+    prev_dt, prev_id = marker
+    if dt > prev_dt:
+        return True
+    if dt < prev_dt:
+        return False
+    return event_id is not None and prev_id is not None and event_id > prev_id
 
 
 def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:
@@ -427,23 +454,22 @@ def scan_assigned(
                         assigned_by = actor_login
                 raw_id = event.get("id")
                 event_id = raw_id if isinstance(raw_id, int) else None
-                is_newer = newest_dt is None or event_dt > newest_dt
-                if (
-                    not is_newer
-                    and event_dt == newest_dt
-                    and event_id is not None
-                    and newest_id is not None
-                ):
-                    is_newer = event_id > newest_id
-                if is_newer:
+                if newest_dt is None or event_dt > newest_dt:
                     newest_dt = event_dt
                     newest_at = created_at
                     newest_by = assigned_by
                     newest_id = event_id
+                elif event_dt == newest_dt:
+                    if event_id is not None and newest_id is not None and event_id > newest_id:
+                        newest_by = assigned_by
+                        newest_id = event_id
+                    elif event_id is None or newest_id is None:
+                        newest_by = ""
+                        newest_id = None
             if newest_at is None or newest_dt is None:
                 continue
-            previous_at = _latest_assigned_at(store, repo, number)
-            if previous_at is not None and newest_dt <= previous_at:
+            previous = _latest_assigned_marker(store, repo, number)
+            if not _assignment_is_newer(newest_dt, newest_id, previous):
                 continue
             title = issue.get("title")
             body = issue.get("body")
@@ -457,6 +483,7 @@ def scan_assigned(
                     "body": body if isinstance(body, str) else "",
                     "assigned_at": newest_at,
                     "assigned_by": newest_by,
+                    "event_id": newest_id,
                 }
             )
     found.sort(key=lambda item: (str(item["assigned_at"]), str(item["repo"]).lower(), int(item["number"])))
@@ -468,12 +495,13 @@ def scan_assigned(
         repo = str(item["repo"])
         number = int(item["number"])
         assigned_at = str(item["assigned_at"])
+        event_id = item["event_id"]
         try:
             assigned_dt = _parse_gh_time(assigned_at)
         except ValueError:
             continue
-        previous_at = _latest_assigned_at(store, repo, number)
-        if previous_at is not None and assigned_dt <= previous_at:
+        previous = _latest_assigned_marker(store, repo, number)
+        if not _assignment_is_newer(assigned_dt, event_id, previous):
             continue
         activity_id = str(uuid.uuid4())
         lock_key = f"assigned:{repo.lower()}:{number}:{assigned_at}"
@@ -493,15 +521,15 @@ def scan_assigned(
                     "body": item["body"],
                     "assigned_at": assigned_at,
                     "assigned_by": item["assigned_by"],
+                    "event_id": event_id,
                     "assignee": login,
                     "mandate": "github-assignment",
                 },
                 "execution_status": "done",
             },
             lock_key=lock_key,
-            skip=lambda r=repo, n=number, dt=assigned_dt: (
-                _latest_assigned_at(store, r, n) is not None
-                and _latest_assigned_at(store, r, n) >= dt
+            skip=lambda r=repo, n=number, dt=assigned_dt, eid=event_id: (
+                not _assignment_is_newer(dt, eid, _latest_assigned_marker(store, r, n))
             ),
         )
         if event is not None:
