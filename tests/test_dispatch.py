@@ -461,6 +461,6 @@ def test_write_update_failure_triggers_worktree_and_session_cleanup(
         remove_at = next(i for i, c in enumerate(joined) if "worktree remove" in c)
         prune_at = next(i for i, c in enumerate(joined) if "worktree prune" in c)
         kill_at = next(i for i, c in enumerate(joined) if "kill-session" in c)
-        assert remove_at < prune_at < kill_at
+        assert kill_at < remove_at < prune_at
     finally:
         store.close()
