@@ -42,11 +42,11 @@ _ERROR_LEVEL = re.compile(r"\b(?:ERROR|FATAL|PANIC|CRITICAL)\b")
 _UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
-# Blockchain names from DFX's own asset/blockchain enum (prod DB, checked
-# 2026-08-31) — masked in the template signature so a per-chain error
-# variant ("Timeout updating balances for Ethereum" vs "...for Polygon") groups
-# under one issue-filing template instead of fragmenting one issue per chain.
-# Refresh from prod if this drifts; there is no automated sync.
+# The blockchain and payment-rail names the platform already exposes as transfer
+# options, current as of 2026-08-31 — masked in the template signature so a
+# per-chain error variant ("Timeout updating balances for Ethereum" vs "...for
+# Polygon") groups under one issue-filing template instead of fragmenting one
+# issue per chain. Refresh when that list changes; there is no automated sync.
 _KNOWN_CHAINS = frozenset(
     {
         "DeFiChain", "Ethereum", "Arbitrum", "Polygon", "BinanceSmartChain", "Binance",
@@ -74,14 +74,13 @@ def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
 
 
 _CHAIN_TOKEN = _token_pattern(_KNOWN_CHAINS)
-# Asset tickers from DFX's own asset enum (prod DB, checked 2026-08-31), masked the
-# same way as chains — e.g. "Balance for Arbitrum/USDC went..." vs ".../WBTC went..."
-# would otherwise stay separate templates. Kept to tickers seen on 2+ chains (a
-# defensible cut against one-off/legacy DeFiChain stock-tokenization artifacts like
-# "dAAPL" or internal numeric-ID-prefixed rows), plus two single-chain tickers
-# (GMX, TGT) confirmed present in real production balance-check errors that day —
-# the 2+-chains cut alone would otherwise have missed them. Refresh from prod if
-# this drifts; there is no automated sync.
+# Asset tickers the platform lists, current as of 2026-08-31, masked the same way
+# as chains — e.g. "Balance for Arbitrum/USDC went..." vs ".../WBTC went..." would
+# otherwise stay separate templates. Kept to tickers available on 2+ chains (a
+# defensible cut against one-off and legacy stock-tokenization artifacts), plus two
+# single-chain tickers (GMX, TGT) that the 2+-chains cut would otherwise have
+# missed even though real balance-check errors named them. Refresh when the listed
+# assets change; there is no automated sync.
 _KNOWN_ASSETS = frozenset(
     {
         "1INCH", "AAVE", "ADA", "APE", "ARB", "AXS",
