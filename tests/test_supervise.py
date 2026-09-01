@@ -207,6 +207,73 @@ def test_tick_denies_and_does_not_mutate_when_policy_rejects(tmp_path: Path) -> 
     assert store.sync_get(LAST_WORKING_KEY) is None
 
 
+def test_tick_denies_pane_up_and_does_not_mutate_when_policy_rejects(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store, assigned_by="mallory")
+    (store.home / "policy.json").write_text(
+        json.dumps(
+            {
+                "actors_allow": ["alice"],
+                "repos_allow": ["octo/app"],
+                "job_types_allow": ["implement"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rt = FakeRuntime(exists=True, pane="")
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+    )
+    assert line == f"supervise denied assigned={assigned}"
+    events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
+    assert events == []
+    assert store.sync_get(LAST_WORKING_KEY) is None
+
+
+def test_tick_commissions_when_policy_admits_pane_up(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store, assigned_by="alice")
+    (store.home / "policy.json").write_text(
+        json.dumps(
+            {
+                "actors_allow": ["alice"],
+                "repos_allow": ["octo/app"],
+                "job_types_allow": ["implement"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    rt = FakeRuntime(exists=True, pane="")
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        runner=runner,
+    )
+    assert line == f"supervise commission assigned={assigned} dispatch=held"
+    events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
+    assert len(events) == 1
+    assert events[0]["payload"]["kind"] == "commission"
+    assert store.sync_get(LAST_WORKING_KEY) is not None
+
+
 def test_tick_commissions_then_asks_then_acks_yes(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)

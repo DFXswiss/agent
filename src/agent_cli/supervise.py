@@ -24,6 +24,7 @@ from .watch import (
     _ensure_assigned_session,
     _issue_number,
     _paired_login,
+    _policy_admits,
     assigned_workspace_root,
     dispatch_assigned,
     pending_assigned,
@@ -351,6 +352,8 @@ def tick(
             last_answer = last_payload.get("answer")
     pane_missing = not runtime.exists(session_id)
     if last_kind is None and not pane_missing:
+        if not _policy_admits(store, head, runner):
+            return f"supervise denied assigned={assigned_id}"
         _log(
             store,
             session_id,

@@ -601,6 +601,30 @@ def _write_assigned_queue_files(
     (cwd / "QUEUE.md").write_text("\n".join(queue), encoding="utf-8")
 
 
+def _policy_admits(
+    store: Store,
+    head: dict[str, Any],
+    runner: Callable[[list[str]], Completed] | None,
+) -> bool:
+    """Whether `head` (an issue.assigned activity row) is admitted by the
+    policy at `store.home / "policy.json"`. No policy file present admits
+    unconditionally — this is what keeps the gate backward-compatible."""
+    policy = load_policy(store.home)
+    if policy is None:
+        return True
+    payload = head.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    repo = payload.get("repo")
+    repo = repo if isinstance(repo, str) else ""
+    assigned_by = payload.get("assigned_by")
+    assigned_by = assigned_by if isinstance(assigned_by, str) else ""
+    private = True if runner is None else _repo_is_private(repo, runner)
+    verdict: Verdict = admits(
+        policy, actor=assigned_by, repo=repo, job_type="implement", private=private
+    )
+    return verdict.admitted
+
+
 def dispatch_assigned(
     store: Store,
     activity_id: str,
@@ -640,24 +664,8 @@ def dispatch_assigned(
     if not isinstance(head_id, str) or head_id == "":
         raise StoreError(f"session {sid} queue head is missing an id")
     # Denial must not touch store or workspace so the same head re-evaluates next tick.
-    policy = load_policy(store.home)
-    if policy is not None:
-        payload = head.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
-        repo = payload.get("repo")
-        repo = repo if isinstance(repo, str) else ""
-        assigned_by = payload.get("assigned_by")
-        assigned_by = assigned_by if isinstance(assigned_by, str) else ""
-        private = True if runner is None else _repo_is_private(repo, runner)
-        verdict: Verdict = admits(
-            policy,
-            actor=assigned_by,
-            repo=repo,
-            job_type="implement",
-            private=private,
-        )
-        if not verdict.admitted:
-            return "denied"
+    if not _policy_admits(store, head, runner):
+        return "denied"
     cwd = workspace_root / sid
     cwd.mkdir(parents=True, exist_ok=True)
     _write_assigned_queue_files(cwd, sid, head, pending)
