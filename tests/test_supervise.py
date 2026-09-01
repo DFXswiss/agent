@@ -197,30 +197,6 @@ def test_enqueue_uses_gh_json(tmp_path: Path) -> None:
     assert row["payload"]["assigned_by"] == "octocat"
 
 
-def test_enqueue_assigned_sets_assigned_by_from_paired_login(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    _session(store)
-    store.set_meta("github_login", "octocat")
-    body = {
-        "title": "t",
-        "body": "b",
-        "html_url": "https://github.com/octo/app/issues/3",
-        "assignee": "octocat",
-    }
-
-    def runner(argv: list[str]) -> Completed:
-        joined = " ".join(argv)
-        if joined == "gh api user":
-            return Completed(0, json.dumps({"login": "octocat"}), "")
-        assert argv[:3] == ["gh", "api", "repos/octo/app/issues/3"]
-        return Completed(0, json.dumps(body), "")
-
-    aid = enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
-    row = store.row("activity", aid)
-    assert row is not None
-    assert row["payload"]["assigned_by"] == "octocat"
-
-
 def test_tick_denies_and_does_not_mutate_when_policy_rejects(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)

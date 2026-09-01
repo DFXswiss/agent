@@ -487,8 +487,8 @@ def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
     store.set_meta("github_login", "alice")
     _write_assigned_repos(tmp_path)
     store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
-    # Legacy blanked marker (pre-Fix-Q / missing event_id): scan_assigned no
-    # longer manufactures these, but a resolvable candidate at the same
+    # Legacy stored marker with no event_id (field added later): scan_assigned
+    # no longer manufactures these, but a resolvable candidate at the same
     # timestamp must still beat a stored marker with no id.
     store.write(
         "session",
