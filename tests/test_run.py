@@ -195,7 +195,7 @@ def test_run_local_check_pass(
     out = capsys.readouterr().out
     assert "local_check_pass" in out
     assert seen
-    assert seen[0][0] == "pytest"
+    assert any(a and a[0] == "pytest" for a in seen)
     assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
     assert any(
         c.get("name") == "local" and c.get("result") == "pass"
@@ -261,7 +261,7 @@ def test_run_agent_check_command_env(
     monkeypatch.setenv("AGENT_CHECK_COMMAND", "true")
     monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     run(tmp_path, ["run", "--task", tid])
-    assert seen == [["true"]]
+    assert ["true"] in seen
 
 
 def test_run_dry_run_skips_local_check(
@@ -757,3 +757,270 @@ def test_run_mergeable_after_gates(
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
     assert _checklist(tmp_path, tid)["mergeable"] == "ja"
+
+
+def test_interpret_lane_rejects_multiple_report_blocks() -> None:
+    """Early example STATUS/FINDINGS + real FINDINGS with a bug must not pass."""
+    from agent_cli.lane import LaneResult
+    from agent_cli.run_core import _interpret_lane
+
+    stdout = (
+        "Example format:\n"
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+        "\n"
+        "FINDINGS:\n"
+        "- real bug in foo.py:1\n"
+        "STATUS: complete\n"
+    )
+    result = LaneResult(
+        role="reviewer",
+        vendor="grok",
+        status="complete",
+        argv=["grok"],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+    )
+    decision, _findings = _interpret_lane("reviewer", result)
+    assert decision != "pass"
+    assert decision == "retry"
+
+
+def test_reviewer_gets_distinct_review_spec_with_diff_and_contract(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reviewer launch must receive a review prompt, not the implementer .spec.md."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    impl_spec = tmp_path / "implement-spec.md"
+    impl_spec.write_text("# Task\n\nImplement the feature.\n", encoding="utf-8")
+    captured: dict[str, str] = {}
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        path = str(kwargs.get("spec_file") or "")
+        captured["spec_file"] = path
+        body = Path(path).read_text(encoding="utf-8")
+        captured["body"] = body
+        return LaneResult(
+            role="reviewer",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    run(
+        tmp_path,
+        [
+            "run",
+            "--task",
+            tid,
+            "--spec-file",
+            str(impl_spec),
+            "--no-tmux",
+            "--cwd",
+            str(tmp_path),
+        ],
+    )
+    capsys.readouterr()
+    assert captured.get("spec_file")
+    assert Path(captured["spec_file"]).resolve() != impl_spec.resolve()
+    body = captured["body"]
+    assert "Implement the feature" in body  # context includes implementer spec
+    assert "diff --git a/src/foo.py" in body
+    assert "STATUS: complete | partial | timeout | unavailable" in body
+    assert "FINDINGS:" in body
+    assert "FINDINGS: 0" in body or "`FINDINGS: 0`" in body
+    assert _checklist(tmp_path, tid)["reviewer_approved"] == "ja"
+
+
+def test_execute_spine_step_unbounded_round_cap_without_kwarg(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """cmd_run path (no round_cap kwarg) must not fail at 5 rejection rounds."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return LaneResult(
+            role="reviewer",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS:\n- still broken\n",
+            stderr="",
+        )
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            return Completed(0, "diff --git a/x b/x\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
+
+    store = _store(tmp_path)
+    try:
+        # Drive more than 5 rejection rounds the way cmd_run calls execute_spine_step
+        # (no round_cap kwarg → unbounded).
+        for _ in range(6):
+            # Re-open reviewer step after each rejection by ensuring implementer is done.
+            task = store.row("task", tid)
+            assert task is not None
+            # After rejection, implementer_done is nein — finish implementer again.
+            cl = _checklist(tmp_path, tid)
+            if cl.get("implementer_done") != "ja":
+                # Manually set implementer_done via a quick pass launch path is heavy;
+                # instead close via checklist after starting a fresh implementer finish.
+                round_n = int(task.get("current_round") or 1)
+                if _task_state(tmp_path, tid) == "implementing":
+                    run(
+                        tmp_path,
+                        [
+                            "agent",
+                            "start",
+                            "--session",
+                            "sess-1",
+                            "--task",
+                            tid,
+                            "--role",
+                            "implementer",
+                            "--vendor",
+                            "grok",
+                            "--round",
+                            str(round_n),
+                        ],
+                    )
+                    impl_id = _last_agent_id(capsys.readouterr().out)
+                    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+                    capsys.readouterr()
+                    run(tmp_path, ["run", "--task", tid])  # close implementer_done
+                    capsys.readouterr()
+            outcome = execute_spine_step(
+                store,
+                tid,
+                head=None,
+                dry_run=False,
+                spec_file=str(spec),
+                cwd=str(tmp_path),
+                tmux=False,
+                exec_argv=fake_exec,
+            )
+            assert outcome.kind != "failed" or "round cap" not in (
+                outcome.message or outcome.reason or ""
+            )
+            if outcome.kind == "failed":
+                assert "round cap" not in (outcome.message or "")
+                assert "round cap" not in (outcome.reason or "")
+            assert outcome.kind == "rejected_new_round"
+            assert int((store.row("task", tid) or {}).get("current_round") or 0) > 5 or True
+        final_round = int((store.row("task", tid) or {}).get("current_round") or 0)
+        assert final_round > 5
+        assert "round cap" not in str(outcome.message or "")
+    finally:
+        store.close()
+
+
+def test_local_check_reruns_after_pr_rejection_with_new_head(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stale local_check pass for an old head must not satisfy a reopened step."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    old_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    new_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+    # Record a passing check bound to the old head, then reopen local_check_pass.
+    run(
+        tmp_path,
+        [
+            "check",
+            "record",
+            "--task",
+            tid,
+            "--name",
+            "local",
+            "--command",
+            "pytest -q",
+            "--result",
+            "pass",
+            "--output",
+            "ok",
+            "--head",
+            old_sha,
+        ],
+    )
+    capsys.readouterr()
+    store = _store(tmp_path)
+    try:
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") == "local_check_pass":
+                row = dict(row)
+                row["status"] = "nein"
+                row["evidence"] = "pr rejection reset"
+                store.write(
+                    "checklist_item",
+                    "update",
+                    row["id"],
+                    {k: v for k, v in row.items() if not str(k).startswith("_")},
+                )
+        # Also reopen pushed so spine lands on local_check_pass first... actually
+        # after local_check_pass=nein with prior steps ja, next is local_check_pass.
+        check_calls = {"n": 0}
+
+        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+            if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+                return Completed(0, new_sha + "\n", "")
+            if argv and argv[0] == "pytest":
+                check_calls["n"] += 1
+                return Completed(0, "ok\n", "")
+            return Completed(0, "", "")
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=new_sha,
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert check_calls["n"] == 1, "must re-run check for the new head"
+        assert outcome.kind in ("closed", "agent_closed") or outcome.key == "local_check_pass"
+        checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
+        assert any(
+            c.get("name") == "local"
+            and c.get("result") == "pass"
+            and str(c.get("head_sha") or "").lower() == new_sha
+            for c in checks
+        )
+    finally:
+        store.close()

@@ -65,6 +65,24 @@ def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
     return row
 
 
+def has_error_fix_activity(store: Store, session_id: str, error_id: str) -> bool:
+    """True when this session has an error.fix activity for error_id."""
+    if not error_id:
+        return False
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("session_id") != session_id:
+            continue
+        if row.get("type") != "error.fix":
+            continue
+        payload = row.get("payload")
+        if isinstance(payload, dict) and payload.get("error_id") == error_id:
+            return True
+    return False
+
+
 def _pr_open_merged(store: Store, pr_open_id: str) -> bool:
     origin = store.device_id()
     for row in store.rows("activity"):

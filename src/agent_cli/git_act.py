@@ -46,54 +46,76 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
         raise GitActError("uncommitted changes")
 
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "@{upstream}"))
-    if completed.returncode != 0:
-        raise GitActError("no upstream")
-    upstream = completed.stdout.strip()
-    if not upstream:
-        raise GitActError("no upstream")
-
-    completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
     if completed.returncode != 0 or not completed.stdout.strip():
-        raise GitActError("no upstream remote")
-    remote = completed.stdout.strip()
-    completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.merge"))
-    if completed.returncode != 0 or not completed.stdout.strip():
-        raise GitActError("no upstream merge ref")
-    merge_ref = completed.stdout.strip()
-    if not merge_ref.startswith("refs/heads/"):
-        raise GitActError(f"unexpected merge ref {merge_ref!r}")
-    merge_short = merge_ref[len("refs/heads/") :]
-    if merge_short in PROTECTED:
-        raise GitActError(f"upstream tracks protected branch {merge_short}")
-
-    completed = runner(_git(cwd, "fetch", "--", remote))
-    if completed.returncode != 0:
-        raise GitActError(_fail_detail(completed, "git fetch failed"))
-
-    completed = runner(
-        _git(cwd, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
-    )
-    if completed.returncode != 0:
-        raise GitActError(_fail_detail(completed, "git failed"))
-    count_raw = completed.stdout.strip()
-    parts = count_raw.replace("\t", " ").split()
-    if len(parts) != 2:
-        raise GitActError(f"bad rev-list count: {count_raw!r}")
-    try:
-        behind = int(parts[0])
-        ahead = int(parts[1])
-    except ValueError as exc:
-        raise GitActError(f"bad rev-list count: {count_raw!r}") from exc
-    if behind < 0 or ahead < 0:
-        raise GitActError(f"bad rev-list count: {count_raw!r}")
-    if behind > 0:
-        raise GitActError("branch is behind upstream")
-    if ahead > 0:
+        # Fresh branch (e.g. error-fix checkout -B): set upstream on first push.
+        remotes_done = runner(_git(cwd, "remote"))
+        if remotes_done.returncode != 0:
+            raise GitActError(_fail_detail(remotes_done, "git remote failed"))
+        remotes = [r for r in remotes_done.stdout.splitlines() if r.strip()]
+        if not remotes:
+            raise GitActError("no remotes")
+        if len(remotes) == 1:
+            remote = remotes[0]
+        elif "origin" in remotes:
+            remote = "origin"
+        else:
+            raise GitActError("ambiguous remotes (no origin)")
+        merge_ref = f"refs/heads/{branch}"
+        merge_short = branch
+        if merge_short in PROTECTED:
+            raise GitActError(f"upstream tracks protected branch {merge_short}")
         completed = runner(
-            _git(cwd, "push", "--", remote, f"HEAD:{merge_ref}")
+            _git(cwd, "push", "--set-upstream", "--", remote, f"HEAD:{merge_ref}")
         )
         if completed.returncode != 0:
             raise GitActError(_fail_detail(completed, "git push failed"))
+    else:
+        upstream = completed.stdout.strip()
+        if not upstream:
+            raise GitActError("no upstream")
+
+        completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
+        if completed.returncode != 0 or not completed.stdout.strip():
+            raise GitActError("no upstream remote")
+        remote = completed.stdout.strip()
+        completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.merge"))
+        if completed.returncode != 0 or not completed.stdout.strip():
+            raise GitActError("no upstream merge ref")
+        merge_ref = completed.stdout.strip()
+        if not merge_ref.startswith("refs/heads/"):
+            raise GitActError(f"unexpected merge ref {merge_ref!r}")
+        merge_short = merge_ref[len("refs/heads/") :]
+        if merge_short in PROTECTED:
+            raise GitActError(f"upstream tracks protected branch {merge_short}")
+
+        completed = runner(_git(cwd, "fetch", "--", remote))
+        if completed.returncode != 0:
+            raise GitActError(_fail_detail(completed, "git fetch failed"))
+
+        completed = runner(
+            _git(cwd, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
+        )
+        if completed.returncode != 0:
+            raise GitActError(_fail_detail(completed, "git failed"))
+        count_raw = completed.stdout.strip()
+        parts = count_raw.replace("\t", " ").split()
+        if len(parts) != 2:
+            raise GitActError(f"bad rev-list count: {count_raw!r}")
+        try:
+            behind = int(parts[0])
+            ahead = int(parts[1])
+        except ValueError as exc:
+            raise GitActError(f"bad rev-list count: {count_raw!r}") from exc
+        if behind < 0 or ahead < 0:
+            raise GitActError(f"bad rev-list count: {count_raw!r}")
+        if behind > 0:
+            raise GitActError("branch is behind upstream")
+        if ahead > 0:
+            completed = runner(
+                _git(cwd, "push", "--", remote, f"HEAD:{merge_ref}")
+            )
+            if completed.returncode != 0:
+                raise GitActError(_fail_detail(completed, "git push failed"))
 
     completed = runner(_git(cwd, "rev-parse", "HEAD"))
     if completed.returncode != 0:

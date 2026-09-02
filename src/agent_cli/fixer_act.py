@@ -137,12 +137,18 @@ def template_pr_open_payload(
 
 
 def _pr_open_row_exists(store: Store, *, head: str) -> bool:
-    """True when a pr.open activity row already exists for this branch head."""
+    """True when a non-failed pr.open already exists for this branch head.
+
+    `done` (success) and `pending` (in-flight) skip re-insert. `error` does
+    not — the driver must retry after a failed `gh pr create`.
+    """
     origin = store.device_id()
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
             continue
         if row.get("type") != "pr.open":
+            continue
+        if row.get("execution_status") not in ("done", "pending"):
             continue
         payload = row.get("payload")
         if isinstance(payload, dict) and payload.get("head") == head:
@@ -238,7 +244,14 @@ def _contributing_ok_evidence(snap: dict[str, Any]) -> str:
 
 
 def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
-    """Set n_a deviation keys + summaries so task-done can pass."""
+    """Close contributing_ok, error-fix deviation n_a keys, and summaries.
+
+    For ordinary implement tasks, deviation_declared / deviation_granted stay
+    human-only (HUMAN_KEYS). For an error-fix-originated task, the same
+    script-authorship carve-out chain.py grants for spec_written also lets
+    this driver close both with n_a — a mechanically generated error-fix
+    task has, by design, no deliberate CONTRIBUTING.md rule-bending to declare.
+    """
     from . import main as main_mod
 
     checklist = {
@@ -246,23 +259,6 @@ def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
         for r in store.rows("checklist_item")
         if r.get("task_id") == tid
     }
-    for key in ("deviation_declared", "deviation_granted"):
-        if checklist.get(key) in (None, "pending", "nein"):
-            main_mod.cmd_checklist(
-                [
-                    "set",
-                    "--task",
-                    tid,
-                    "--key",
-                    key,
-                    "--status",
-                    "n_a",
-                    "--source",
-                    "script",
-                    "--evidence",
-                    "error-fix auto: no deviation",
-                ]
-            )
     if checklist.get("contributing_ok") in (None, "pending", "nein"):
         snap = main_mod._chain_snapshot(store, tid)
         ready = next_steps(str(snap["workflow"]), snap["checklist"], spine_only=True)
@@ -279,6 +275,42 @@ def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
                     _contributing_ok_evidence(snap),
                 ]
             )
+    evidence = (
+        "error-fix task: no CONTRIBUTING.md deviation, mechanically generated"
+    )
+    for key in ("deviation_declared", "deviation_granted"):
+        snap = main_mod._chain_snapshot(store, tid)
+        checklist = snap["checklist"]
+        if checklist.get(key) not in (None, "pending", "nein"):
+            continue
+        ready = next_steps(str(snap["workflow"]), checklist, spine_only=False)
+        if not any(s.key == key for s in ready):
+            continue
+        verdict = close_allowed(
+            str(snap["workflow"]),
+            key,
+            checklist=checklist,
+            source="script",
+            evidence=evidence,
+            status="n_a",
+            snapshot=snap,
+        )
+        if not verdict.allowed:
+            raise StoreError(verdict.reason)
+        main_mod.cmd_close_step(
+            [
+                "--task",
+                tid,
+                "--key",
+                key,
+                "--source",
+                "script",
+                "--status",
+                "n_a",
+                "--evidence",
+                evidence,
+            ]
+        )
     task = store.row("task", tid)
     if task is None:
         return
@@ -503,10 +535,15 @@ def _drive_one(
             )
 
         if outcome.kind == "rejected_new_round":
-            # Continue loop — implementer_done is open again on the new round.
+            # PR-gate rejection resets `pushed` (see _PR_REJECT_RESET_KEYS) and
+            # expects a new commit — drop the stale head so the next push is
+            # not compared against the pre-rejection sha. Inner reviewer
+            # rejection keeps key="reviewer_approved" and does not reset pushed.
+            if outcome.key != "reviewer_approved":
+                head = None
             continue
 
-        if outcome.kind in ("closed", "agent_closed", "rejected_new_round"):
+        if outcome.kind in ("closed", "agent_closed"):
             continue
 
         return f"error-fix-work {tid} stop kind={outcome.kind}"

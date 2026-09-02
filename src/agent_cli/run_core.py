@@ -1,7 +1,8 @@
 """Shared spine-step executor for `agent run` and the error-fix fixer driver.
 
-Performs ledger writes and lane launches. Does not print, die, or raise
-SystemExit — callers map RunOutcome to CLI text / exit codes.
+Performs ledger writes and lane launches. Delegates ledger mutations to
+`main.cmd_*` helpers, which may print and raise SystemExit — callers must
+catch SystemExit (and map RunOutcome) themselves.
 OSError from a missing vendor CLI binary propagates (fixer catches it).
 """
 
@@ -10,15 +11,45 @@ from __future__ import annotations
 import os
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .chain import NO_AUTO_CLOSE, Step, close_allowed, next_steps
-from .lane import LaneResult, count_findings, findings_header_present, launch
+from .lane import (
+    LaneResult,
+    count_findings,
+    findings_header_present,
+    has_single_terminal_report,
+    launch,
+    Runner as LaneRunner,
+)
+from .runtime import Completed
+from .store import Store
 
 DEFAULT_ROUND_CAP = 5
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+_REVIEW_ROLES = frozenset({"reviewer", "pr-reviewer-quality", "pr-reviewer-logic"})
+_BASE_CANDIDATES = (
+    "origin/develop",
+    "origin/main",
+    "origin/master",
+    "develop",
+    "main",
+    "master",
+)
+_REVIEW_OUTPUT_CONTRACT = (
+    "STATUS: complete | partial | timeout | unavailable\n"
+    "REASON: [...]\n"
+    "SCOPE: [...]\n"
+    "DIMENSION: [...]\n"
+    "FINDINGS: [...]\n"
+    "NOT-VERIFIABLE: [...]\n"
+    "GAPS: [...]"
+)
+Runner = Callable[[list[str]], Completed]
+ExecArgv = Callable[..., Any]
 
 # Checklist keys reset when a PR-reviewer dimension is rejected (new head).
 _PR_REJECT_RESET_KEYS = (
@@ -156,24 +187,26 @@ def _check_record(
     command: str,
     result: str,
     output: str,
+    head: str | None = None,
 ) -> None:
     from . import main as main_mod
 
-    main_mod.cmd_check(
-        [
-            "record",
-            "--task",
-            tid,
-            "--name",
-            name,
-            "--command",
-            command,
-            "--result",
-            result,
-            "--output",
-            output,
-        ]
-    )
+    args = [
+        "record",
+        "--task",
+        tid,
+        "--name",
+        name,
+        "--command",
+        command,
+        "--result",
+        result,
+        "--output",
+        output,
+    ]
+    if head:
+        args.extend(["--head", head])
+    main_mod.cmd_check(args)
 
 
 def _close_step(
@@ -221,10 +254,137 @@ def _interpret_lane(
     # No FINDINGS: header → unparseable (retry), not an automatic pass.
     if not findings_header_present(stdout):
         return "retry", None
+    # Multiple STATUS:/FINDINGS: blocks (e.g. quoted example + real report)
+    # must not be parsed as a false pass via last-STATUS / first-FINDINGS.
+    if not has_single_terminal_report(stdout):
+        return "retry", None
     n = count_findings(stdout)
     if n == 0:
         return "pass", None
     return "fail", stdout.strip() or "findings"
+
+
+def _collect_review_diff(
+    cwd: str, exec_argv: ExecArgv
+) -> tuple[str, list[str]]:
+    """Materialize unified diff + changed paths against a base branch."""
+    base_ref: str | None = None
+    for candidate in _BASE_CANDIDATES:
+        completed = exec_argv(["git", "rev-parse", "--verify", candidate], cwd=cwd)
+        if int(getattr(completed, "returncode", 1)) == 0:
+            base_ref = candidate
+            break
+    chunks: list[str] = []
+    paths: list[str] = []
+    if base_ref is not None:
+        mb = exec_argv(["git", "merge-base", "HEAD", base_ref], cwd=cwd)
+        base_sha = str(getattr(mb, "stdout", "") or "").strip()
+        if int(getattr(mb, "returncode", 1)) == 0 and base_sha:
+            range_spec = f"{base_sha}...HEAD"
+            diff = exec_argv(["git", "diff", range_spec], cwd=cwd)
+            if int(getattr(diff, "returncode", 1)) == 0:
+                text = str(getattr(diff, "stdout", "") or "")
+                if text.strip():
+                    chunks.append(text)
+            names = exec_argv(["git", "diff", "--name-only", range_spec], cwd=cwd)
+            if int(getattr(names, "returncode", 1)) == 0:
+                paths.extend(
+                    p.strip()
+                    for p in str(getattr(names, "stdout", "") or "").splitlines()
+                    if p.strip()
+                )
+    for argv_extra in (["HEAD"], ["--cached"]):
+        diff = exec_argv(["git", "diff", *argv_extra], cwd=cwd)
+        if int(getattr(diff, "returncode", 1)) == 0:
+            text = str(getattr(diff, "stdout", "") or "")
+            if text.strip():
+                chunks.append(text)
+        names = exec_argv(["git", "diff", "--name-only", *argv_extra], cwd=cwd)
+        if int(getattr(names, "returncode", 1)) == 0:
+            paths.extend(
+                p.strip()
+                for p in str(getattr(names, "stdout", "") or "").splitlines()
+                if p.strip()
+            )
+    # Preserve order, drop dupes.
+    seen: set[str] = set()
+    unique_paths: list[str] = []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
+    return "\n".join(chunks), unique_paths
+
+
+def build_review_spec_file(
+    store: Store,
+    tid: str,
+    *,
+    role: str,
+    round_num: int | None,
+    implement_spec_file: str | None,
+    cwd: str,
+    exec_argv: ExecArgv,
+) -> str:
+    """Write a four-part review prompt under $AGENT_HOME; return its path."""
+    diff_text, changed_paths = _collect_review_diff(cwd, exec_argv)
+    parent = Path(store.home) / "error-fix-work" / tid
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    round_bit = round_num if round_num is not None else 0
+    diff_path = parent / f"review-{role}-round{round_bit}.diff"
+    spec_path = parent / f"review-{role}-round{round_bit}.md"
+    diff_path.write_text(diff_text if diff_text.strip() else "(empty diff)\n", encoding="utf-8")
+    abs_diff = str(diff_path.resolve())
+    paths_line = ", ".join(changed_paths) if changed_paths else "(none)"
+
+    if role == "reviewer":
+        dimension = "does this diff fulfill the spec below?"
+        impl_body = ""
+        if implement_spec_file:
+            try:
+                impl_body = Path(implement_spec_file).read_text(encoding="utf-8")
+            except OSError:
+                impl_body = ""
+        context = (
+            "Original implementer spec (what was asked for):\n\n"
+            f"{impl_body.strip() or '(implementer spec unavailable)'}\n"
+        )
+    elif role == "pr-reviewer-quality":
+        dimension = "conformance/quality only (not logic/correctness)"
+        context = (
+            "Read CONTRIBUTING.md in the repository first. "
+            "Judge conformance and quality against that file and repo conventions only.\n"
+        )
+    else:
+        dimension = "logic/correctness only (not conformance/quality)"
+        context = (
+            "Read CONTRIBUTING.md in the repository first for project context, "
+            "then judge logic and correctness of the diff only.\n"
+        )
+
+    body = (
+        f"# Scope\n\n"
+        f"Read the unified diff via the Read tool from this absolute path:\n"
+        f"`{abs_diff}`\n\n"
+        f"Changed paths: {paths_line}\n\n"
+        f"Unified diff (also embedded for convenience; the Read path is required):\n\n"
+        f"```diff\n{diff_text if diff_text.strip() else '(empty diff)'}\n```\n\n"
+        f"# Dimension\n\n"
+        f"{dimension}\n\n"
+        f"# Context\n\n"
+        f"{context}\n"
+        f"# Output contract\n\n"
+        f"End with exactly one terminal report in this shape (verbatim headers):\n\n"
+        f"```\n{_REVIEW_OUTPUT_CONTRACT}\n```\n\n"
+        f"`FINDINGS: 0` (or `none`) is a valid, expected result when "
+        f"`STATUS: complete` and nothing is wrong.\n\n"
+        f"Do not execute software — no tests, builds, package managers, shells, "
+        f"or project scripts. Read/Grep/Glob only. Cite every finding with "
+        f"`Datei:Zeile` / `file:line`. If a judgment needs a test run, put the "
+        f"command under NOT-VERIFIABLE instead of running it.\n"
+    )
+    spec_path.write_text(body, encoding="utf-8")
+    return str(spec_path)
 
 
 def _reset_keys(store: Any, tid: str, keys: tuple[str, ...], *, evidence: str) -> None:
@@ -274,17 +434,17 @@ def _resolve_gate_head(
 
 
 def _apply_rejection_resets(
-    store: Any,
+    store: Store,
     tid: str,
     role: str,
     *,
-    round_cap: int,
+    round_cap: int | None,
     evidence: str,
 ) -> RunOutcome:
     """Reset checklist keys then round-start, or fail on cap (no reset)."""
     task = store.row("task", tid)
     current = int((task or {}).get("current_round") or 0)
-    if current >= round_cap:
+    if round_cap is not None and current >= round_cap:
         cap_msg = f"round cap {round_cap} reached (current_round={current})"
         # Persist reason in the ledger (check fail also sets task state failed).
         _check_record(
@@ -404,7 +564,7 @@ def _finish_agent_pass(
 
 
 def _finish_agent_fail(
-    store: Any,
+    store: Store,
     tid: str,
     *,
     role: str,
@@ -414,9 +574,9 @@ def _finish_agent_fail(
     result: LaneResult,
     step: Step,
     findings_text: str,
-    round_cap: int,
+    round_cap: int | None,
     cwd: str | None = None,
-    exec_argv: Callable[..., Any] | None = None,
+    exec_argv: ExecArgv | None = None,
 ) -> RunOutcome:
     from . import main as main_mod
 
@@ -467,7 +627,7 @@ def _finish_agent_fail(
 
 
 def _lane_retry_then_fail(
-    store: Any,
+    store: Store,
     tid: str,
     *,
     role: str,
@@ -478,10 +638,10 @@ def _lane_retry_then_fail(
     spec_file: str,
     cwd: str,
     tmux: bool,
-    runner: Any,
+    runner: LaneRunner | None,
     first: LaneResult,
-    round_cap: int,
-    exec_argv: Callable[..., Any] | None = None,
+    round_cap: int | None,
+    exec_argv: ExecArgv | None = None,
 ) -> RunOutcome:
     """Re-invoke launch once; on second unparseable/non-pass, fail the task."""
     second = launch(
@@ -528,6 +688,19 @@ def _lane_retry_then_fail(
     # problem. Leave the task untouched for retry; only genuinely unparseable/ambiguous
     # output (status != "unavailable") still fails the task per the mechanical rule below.
     if second.status == "unavailable":
+        # Release the working agent without a task-state transition so a later
+        # scan / manual round-start is not blocked by a stuck "working" row.
+        from . import main as main_mod
+
+        working = main_mod._find_working_agent(
+            store, tid, role=role, vendor=vendor, round_num=round_num
+        )
+        if working is not None:
+            _agent_finish(
+                str(working["id"]),
+                "unavailable",
+                note=f"vendor CLI unavailable ({vendor} {role})",
+            )
         return RunOutcome(
             kind="vendor_unavailable",
             key=step.key,
@@ -576,7 +749,7 @@ def _lane_retry_then_fail(
 
 
 def execute_spine_step(
-    store: Any,
+    store: Store,
     tid: str,
     *,
     head: str | None = None,
@@ -584,11 +757,15 @@ def execute_spine_step(
     spec_file: str | None = None,
     cwd: str | None = None,
     tmux: bool = True,
-    runner: Any = None,
-    round_cap: int = DEFAULT_ROUND_CAP,
-    exec_argv: Callable[..., Any] | None = None,
+    runner: LaneRunner | None = None,
+    round_cap: int | None = None,
+    exec_argv: ExecArgv | None = None,
 ) -> RunOutcome:
-    """Execute the single open spine step for tid. No print/die/SystemExit."""
+    """Execute the single open spine step for tid.
+
+    `round_cap=None` means unbounded (interactive `agent run`). The fixer
+    passes an explicit int (DEFAULT_ROUND_CAP).
+    """
     from . import main as main_mod
 
     if exec_argv is None:
@@ -685,48 +862,75 @@ def execute_spine_step(
             head_sha=head,
         )
 
-    if step.key == "local_check_pass" and not snap["local_checks"]:
+    if step.key == "local_check_pass":
         run_cwd = cwd or os.getcwd()
-        env_cmd = os.environ.get("AGENT_CHECK_COMMAND")
-        if env_cmd is None:
-            command = "pytest -q"
-        elif env_cmd == "":
-            return RunOutcome(
-                kind="failed",
-                key=step.key,
-                step=step,
-                reason="AGENT_CHECK_COMMAND is set but empty",
-                message="AGENT_CHECK_COMMAND is set but empty",
+        # Bind validity to the worktree HEAD (not merely "any prior pass row").
+        check_head = ""
+        completed_head = exec_argv(["git", "rev-parse", "HEAD"], cwd=run_cwd)
+        sha = str(getattr(completed_head, "stdout", "") or "").strip().lower()
+        if int(getattr(completed_head, "returncode", 1)) == 0 and _SHA_RE.fullmatch(
+            sha
+        ):
+            check_head = sha
+        if not check_head:
+            check_head = _resolve_gate_head(
+                store, tid, head, cwd=run_cwd, exec_argv=exec_argv
             )
-        else:
-            command = env_cmd
-        argv = shlex.split(command)
-        if not argv:
-            return RunOutcome(
-                kind="failed",
-                key=step.key,
-                step=step,
-                reason="check command is empty",
-                message="check command is empty",
+        has_fresh = False
+        if check_head:
+            for c in snap.get("local_checks") or []:
+                if not isinstance(c, dict):
+                    continue
+                if str(c.get("name") or "") != "local":
+                    continue
+                row_head = str(c.get("head_sha") or "").strip().lower()
+                if row_head and row_head == check_head:
+                    has_fresh = True
+                    break
+        if not has_fresh:
+            env_cmd = os.environ.get("AGENT_CHECK_COMMAND")
+            if env_cmd is None:
+                command = "pytest -q"
+            elif env_cmd == "":
+                return RunOutcome(
+                    kind="failed",
+                    key=step.key,
+                    step=step,
+                    reason="AGENT_CHECK_COMMAND is set but empty",
+                    message="AGENT_CHECK_COMMAND is set but empty",
+                )
+            else:
+                command = env_cmd
+            argv = shlex.split(command)
+            if not argv:
+                return RunOutcome(
+                    kind="failed",
+                    key=step.key,
+                    step=step,
+                    reason="check command is empty",
+                    message="check command is empty",
+                )
+            completed = exec_argv(argv, cwd=run_cwd)
+            result = "pass" if completed.returncode == 0 else "fail"
+            output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
+            _check_record(
+                tid=tid,
+                name="local",
+                command=command,
+                result=result,
+                output=output or "(no output)",
+                head=check_head or None,
             )
-        completed = exec_argv(argv, cwd=run_cwd)
-        result = "pass" if completed.returncode == 0 else "fail"
-        output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
-        _check_record(
-            tid=tid,
-            name="local",
-            command=command,
-            result=result,
-            output=output or "(no output)",
-        )
-        if result == "fail":
-            return RunOutcome(
-                kind="local_check_failed",
-                key=step.key,
-                step=step,
-                message="local_check fail",
-            )
-        snap = main_mod._chain_snapshot(store, tid, extra_head=head)
+            if result == "fail":
+                return RunOutcome(
+                    kind="local_check_failed",
+                    key=step.key,
+                    step=step,
+                    message="local_check fail",
+                )
+            if check_head:
+                head = check_head
+            snap = main_mod._chain_snapshot(store, tid, extra_head=head)
 
     if step.kind == "agent":
         already = close_allowed(
@@ -793,11 +997,22 @@ def execute_spine_step(
                 vendor=vendor,
                 round_num=round_num,
             )
+        launch_spec = spec_file
+        if role in _REVIEW_ROLES:
+            launch_spec = build_review_spec_file(
+                store,
+                tid,
+                role=role,
+                round_num=round_num,
+                implement_spec_file=spec_file,
+                cwd=run_cwd,
+                exec_argv=exec_argv,
+            )
         # OSError propagates to caller (fixer catches; cmd_run surfaces).
         result = launch(
             role=role,
             vendor=vendor,
-            spec_file=spec_file,
+            spec_file=launch_spec,
             cwd=run_cwd,
             runner=runner,
             tmux=tmux,
@@ -844,7 +1059,7 @@ def execute_spine_step(
             round_num=round_num,
             head=head,
             step=step,
-            spec_file=spec_file,
+            spec_file=launch_spec,
             cwd=run_cwd,
             tmux=tmux,
             runner=runner,

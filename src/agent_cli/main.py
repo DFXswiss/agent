@@ -7,7 +7,6 @@ import json
 import os
 import re
 import secrets
-import shlex
 import socket
 import sys
 import time
@@ -946,9 +945,19 @@ def cmd_agent(args: list[str]) -> None:
                 _require_skill(session, skill_for_agent_role(str(role)))
             except ValueError:
                 die(f"unknown agent role: {role}")
+            # Neutral release: clear working without task/round state changes.
+            # Used when a vendor CLI is unavailable so a later retry is unblocked.
+            if verdict == "unavailable":
+                agent["status"] = "done"
+                agent["finished_at"] = utcnow()
+                if note is not None:
+                    agent["note"] = note
+                store.write("agent", "update", aid, _strip(agent))
+                print(f"agent {aid} verdict={verdict}")
+                return
             if role == "implementer":
                 if verdict not in ("done", "blocked"):
-                    die("implementer verdict must be done|blocked")
+                    die("implementer verdict must be done|blocked|unavailable")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "implementing":
@@ -967,7 +976,7 @@ def cmd_agent(args: list[str]) -> None:
                 store.write("task", "update", task["id"], _strip(task))
             elif role == "reviewer":
                 if verdict not in ("approved", "rejected"):
-                    die("reviewer verdict must be approved|rejected")
+                    die("reviewer verdict must be approved|rejected|unavailable")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "reviewing":
@@ -987,7 +996,7 @@ def cmd_agent(args: list[str]) -> None:
                 store.write("task", "update", task["id"], _strip(task))
             elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
                 if verdict not in ("approved", "rejected"):
-                    die("pr-reviewer verdict must be approved|rejected")
+                    die("pr-reviewer verdict must be approved|rejected|unavailable")
                 _require_owned(store, task, "task")
             else:
                 die(f"unknown agent role: {role}")
@@ -1006,7 +1015,7 @@ def cmd_check(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
             "Usage: agent check record --task UUID --name NAME --command CMD "
-            "--result pass|fail|skip [--output TEXT]"
+            "--result pass|fail|skip [--output TEXT] [--head SHA]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
@@ -1014,6 +1023,7 @@ def cmd_check(args: list[str]) -> None:
     command = require_flag(rest, "--command")
     result = require_flag(rest, "--result")
     output = flag(rest, "--output")
+    head = flag(rest, "--head")
     if result not in ("pass", "fail", "skip"):
         die("result must be pass|fail|skip")
     if result == "skip" and (output is None or output == ""):
@@ -1038,6 +1048,7 @@ def cmd_check(args: list[str]) -> None:
                 "command": command,
                 "result": result,
                 "output": output,
+                "head_sha": head or None,
                 "ran_at": utcnow(),
             },
         )
@@ -2097,16 +2108,20 @@ def load_task_dict(store: Store, tid: str) -> dict:
         if r.get("task_id") == tid
     }
     checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
+    # Keep full history (like gates). ran_at is second-resolution; same-second
+    # ties plus ORDER BY updated_at DESC without a secondary key are unstable,
+    # so collapsing to latest-by-name can drop a fresh head-bound pass and
+    # leave only a stale row — chain._artifact_ok matches by head over this list.
     ordered_checks = list(reversed(checks))
     ordered_checks.sort(key=lambda c: c.get("ran_at") or "")
-    latest_by_name: dict[str, dict] = {}
-    for c in ordered_checks:
-        name = c.get("name")
-        if name is None:
-            continue
-        latest_by_name[str(name)] = c
     local_checks = [
-        {"name": name, "result": c.get("result")} for name, c in latest_by_name.items()
+        {
+            "name": c.get("name"),
+            "result": c.get("result"),
+            "head_sha": c.get("head_sha") or "",
+        }
+        for c in ordered_checks
+        if c.get("name") is not None
     ]
     gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
     ordered_gates = list(reversed(gates_raw))
@@ -2144,6 +2159,8 @@ def load_session_tasks(store: Store, session_id: str) -> list[dict]:
 
 
 def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> dict:
+    from .error_fix_act import has_error_fix_activity
+
     task = load_task_dict(store, tid)
     sid = str(task.get("session_id") or "")
     session = store.row("session", sid) if sid else None
@@ -2164,10 +2181,19 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
     rounds_ordered.sort(key=lambda r: (r.get("round") or 0, str(r.get("id") or "")))
     last_round = rounds_ordered[-1] if rounds_ordered else {}
     head = extra_head or ""
-    if not head:
+    if not head and str((task.get("checklist") or {}).get("pushed") or "") == "ja":
         for g in task.get("gates") or []:
             if g.get("head_sha"):
                 head = str(g["head_sha"])
+    payload = task.get("payload") or {}
+    error_id = ""
+    if isinstance(payload, dict):
+        raw_eid = payload.get("error_id")
+        if isinstance(raw_eid, str):
+            error_id = raw_eid
+    error_fix_confirmed = bool(
+        error_id and sid and has_error_fix_activity(store, sid, error_id)
+    )
     return {
         "session_active": bool(session is not None and session.get("status") == "active"),
         "agents": agents,
@@ -2179,7 +2205,8 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
         "workflow": task.get("workflow"),
         "checklist": task.get("checklist") or {},
         "session_id": sid,
-        "payload": task.get("payload") or {},
+        "payload": payload,
+        "error_fix_confirmed": error_fix_confirmed,
     }
 
 
@@ -2426,6 +2453,7 @@ def cmd_close_step(args: list[str]) -> None:
             source=chain_source,
             evidence=evidence,
             snapshot=snap,
+            status=status,
         )
         if not verdict.allowed:
             die(verdict.reason)

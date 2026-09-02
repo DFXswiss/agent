@@ -127,7 +127,48 @@ def test_push_dirty_porcelain() -> None:
         push_branch(cwd=CWD, runner=runner)
 
 
-def test_push_no_upstream() -> None:
+SET_UPSTREAM_PUSH = [
+    "git",
+    "-C",
+    CWD,
+    "push",
+    "--set-upstream",
+    "--",
+    "origin",
+    "HEAD:refs/heads/feat-x",
+]
+
+
+def test_push_no_upstream_sets_upstream_with_origin() -> None:
+    """Fresh branch (no @{upstream}): push --set-upstream to the sole origin remote."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv:
+            return Completed(1, "", "no upstream configured")
+        if argv == ["git", "-C", CWD, "remote"]:
+            return Completed(0, "origin\n", "")
+        if argv == SET_UPSTREAM_PUSH:
+            return Completed(0, "", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    got = push_branch(cwd=CWD, runner=runner)
+    assert got == SHA
+    assert SET_UPSTREAM_PUSH in calls
+    for argv in calls:
+        for flag in FORCE_FLAGS:
+            assert flag not in argv
+
+
+def test_push_no_upstream_ambiguous_remotes_errors() -> None:
     def runner(argv: list[str]) -> Completed:
         if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
             return Completed(0, "feat-x\n", "")
@@ -135,9 +176,11 @@ def test_push_no_upstream() -> None:
             return Completed(0, "", "")
         if "@{upstream}" in argv:
             return Completed(1, "", "no upstream configured")
+        if argv == ["git", "-C", CWD, "remote"]:
+            return Completed(0, "upstream\nfork\n", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    with pytest.raises(GitActError, match="no upstream"):
+    with pytest.raises(GitActError, match="ambiguous remotes"):
         push_branch(cwd=CWD, runner=runner)
 
 

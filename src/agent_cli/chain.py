@@ -247,11 +247,19 @@ def required_source(step: Step) -> str:
 
 
 def is_error_fix_originated(snapshot: dict[str, Any] | None) -> bool:
-    """True when the task payload carries an error_id (error-fix skill)."""
+    """True when this is a validated error-fix task.
+
+    Requires both payload.error_id and snapshot.error_fix_confirmed (a matching
+    error.fix activity in the same session). Payload alone is not enough —
+    an error.seen / error.skip without error.fix must not get the
+    spec_written script carve-out.
+    """
     if not isinstance(snapshot, dict):
         return False
     payload = snapshot.get("payload")
-    return isinstance(payload, dict) and bool(payload.get("error_id"))
+    if not isinstance(payload, dict) or not payload.get("error_id"):
+        return False
+    return bool(snapshot.get("error_fix_confirmed"))
 
 
 @dataclass(frozen=True)
@@ -269,6 +277,7 @@ def close_allowed(
     source: str,
     evidence: str | None,
     snapshot: dict[str, Any] | None = None,
+    status: str = "ja",
 ) -> CloseVerdict:
     """May this key be set to ja/n_a NOW? Only the current next step."""
     step = find_step(workflow, key)
@@ -278,13 +287,15 @@ def close_allowed(
         return CloseVerdict(False, f"{key} requires evidence", step)
     want = required_source(step)
     if source != want:
-        # error-fix implement tasks may script-author spec_written; HUMAN_KEYS
-        # and Step.kind stay human so every other implement task is unchanged.
-        if not (
-            key == "spec_written"
-            and source == "script"
-            and is_error_fix_originated(snapshot)
-        ):
+        # error-fix implement tasks may script-author spec_written (any status)
+        # and, when status=="n_a", deviation_declared/deviation_granted too —
+        # HUMAN_KEYS and Step.kind stay human so every other task keeps the
+        # human-only requirement for all three keys, unchanged.
+        script_carveout = source == "script" and is_error_fix_originated(snapshot)
+        deviation_na = (
+            key in ("deviation_declared", "deviation_granted") and status == "n_a"
+        )
+        if not (script_carveout and (key == "spec_written" or deviation_na)):
             return CloseVerdict(
                 False, f"{key} requires --source {want} (got {source})", step
             )
@@ -317,11 +328,22 @@ def _latest_agent(snapshot: dict[str, Any], role: str, vendor: str | None) -> di
 def _latest_gate(
     snapshot: dict[str, Any], stage: str, dimension: str
 ) -> dict[str, Any] | None:
+    """Latest gate for stage/dimension.
+
+    When snapshot.head_sha is set, prefer a gate recorded for that head so a
+    same-second reject@old then approve@new pair cannot lose to list-order ties
+    on second-resolution recorded_at.
+    """
+    want = str(snapshot.get("head_sha") or "").strip().lower()
     hit = None
+    hit_for_head = None
     for g in snapshot.get("gates") or []:
         if g.get("stage") == stage and g.get("dimension") == dimension:
             hit = g
-    return hit
+            g_head = str(g.get("head_sha") or "").strip().lower()
+            if want and g_head == want:
+                hit_for_head = g
+    return hit_for_head if hit_for_head is not None else hit
 
 
 def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
@@ -361,9 +383,33 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
         checks = list(snapshot.get("local_checks") or [])
         if not checks:
             return "no local_check recorded"
-        if any(c.get("result") == "fail" for c in checks):
+        want = str(snapshot.get("head_sha") or "").strip().lower()
+        if want:
+            # Scope to this head so a stale pass/fail for another (or empty) head
+            # cannot mask a fresh check — load_task_dict keeps the full history
+            # and same-second ran_at ties are otherwise order-unstable.
+            for_head = [
+                c
+                for c in checks
+                if str(c.get("head_sha") or "").strip().lower() == want
+            ]
+            if any(c.get("result") == "fail" for c in for_head):
+                return "local_check fail"
+            if not any(
+                str(c.get("result") or "") in ("pass", "skip") for c in for_head
+            ):
+                return "no local_check for current head"
+            return ""
+        # No bound head: last row per name wins (list is oldest→newest).
+        latest: dict[str, Any] = {}
+        for c in checks:
+            name = c.get("name")
+            if name is not None:
+                latest[str(name)] = c
+        latest_list = list(latest.values())
+        if any(c.get("result") == "fail" for c in latest_list):
             return "local_check fail"
-        if not any(c.get("result") in ("pass", "skip") for c in checks):
+        if not any(c.get("result") in ("pass", "skip") for c in latest_list):
             return "local_check without pass/skip"
         return ""
     if step.key == "pushed":

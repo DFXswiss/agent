@@ -9,6 +9,7 @@ from agent_cli.chain import (
     CHAINS,
     close_allowed,
     handoff_prompt,
+    is_error_fix_originated,
     next_steps,
     required_source,
     steps_for,
@@ -297,6 +298,130 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("key=implementer_done", text)
         self.assertIn("close-step", text)
         self.assertNotIn("grok_pr_quality", text)
+
+    def test_error_fix_carve_out_needs_confirmed_fix(self) -> None:
+        """payload.error_id alone (no error_fix_confirmed) is not originated."""
+        cl = _pending("implement")
+        cl["session_registered"] = "ja"
+        snap_seen_only = {
+            "payload": {"error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+            "error_fix_confirmed": False,
+        }
+        self.assertFalse(is_error_fix_originated(snap_seen_only))
+        denied = close_allowed(
+            "implement",
+            "spec_written",
+            checklist=cl,
+            source="script",
+            evidence="auto spec",
+            snapshot=snap_seen_only,
+        )
+        self.assertFalse(denied.allowed)
+
+        snap_confirmed = {
+            "payload": {"error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+            "error_fix_confirmed": True,
+        }
+        self.assertTrue(is_error_fix_originated(snap_confirmed))
+        allowed = close_allowed(
+            "implement",
+            "spec_written",
+            checklist=cl,
+            source="script",
+            evidence="auto spec",
+            snapshot=snap_confirmed,
+        )
+        self.assertTrue(allowed.allowed)
+
+    def test_error_fix_deviation_n_a_script_carve_out(self) -> None:
+        """Confirmed error-fix may script-author deviation_* only as n_a."""
+        cl = _pending("implement")
+        for k in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+            "grok_pr_quality",
+            "grok_pr_logic",
+            "codex_pr_quality",
+            "codex_pr_logic",
+            "contributing_ok",
+        ):
+            cl[k] = "ja"
+        snap = {
+            "payload": {"error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+            "error_fix_confirmed": True,
+        }
+        evidence = "error-fix task: no CONTRIBUTING.md deviation, mechanically generated"
+        declared = close_allowed(
+            "implement",
+            "deviation_declared",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            status="n_a",
+            snapshot=snap,
+        )
+        self.assertTrue(declared.allowed)
+        cl["deviation_declared"] = "n_a"
+        granted = close_allowed(
+            "implement",
+            "deviation_granted",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            status="n_a",
+            snapshot=snap,
+        )
+        self.assertTrue(granted.allowed)
+
+        cl["deviation_declared"] = "pending"
+        denied_ja = close_allowed(
+            "implement",
+            "deviation_declared",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            status="ja",
+            snapshot=snap,
+        )
+        self.assertFalse(denied_ja.allowed)
+        self.assertIn("source human", denied_ja.reason)
+
+    def test_error_fix_deviation_n_a_denied_without_confirmed_fix(self) -> None:
+        """Without confirmed error.fix, deviation n_a still requires human source."""
+        cl = _pending("implement")
+        for k in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+            "grok_pr_quality",
+            "grok_pr_logic",
+            "codex_pr_quality",
+            "codex_pr_logic",
+            "contributing_ok",
+        ):
+            cl[k] = "ja"
+        snap_seen_only = {
+            "payload": {"error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+            "error_fix_confirmed": False,
+        }
+        denied = close_allowed(
+            "implement",
+            "deviation_declared",
+            checklist=cl,
+            source="script",
+            evidence="no deviation",
+            status="n_a",
+            snapshot=snap_seen_only,
+        )
+        self.assertFalse(denied.allowed)
+        self.assertIn("source human", denied.reason)
 
 
 if __name__ == "__main__":

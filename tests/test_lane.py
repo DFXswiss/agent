@@ -13,6 +13,7 @@ from agent_cli.lane import (
     _run_in_tmux,
     codex_argv,
     grok_argv,
+    has_single_terminal_report,
     launch,
     parse_status,
     tmux_wrap_argv,
@@ -155,6 +156,25 @@ def test_parse_status_rc_nonzero_unavailable() -> None:
 
 def test_parse_status_rc_zero_partial() -> None:
     assert parse_status("no status here", 0) == "partial"
+
+
+def test_has_single_terminal_report_accepts_one_block() -> None:
+    text = "STATUS: complete\nFINDINGS: none\n"
+    assert has_single_terminal_report(text) is True
+
+
+def test_has_single_terminal_report_rejects_example_plus_real() -> None:
+    """Early example STATUS/FINDINGS plus a real report → unparseable."""
+    text = (
+        "Example format:\n"
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+        "\n"
+        "FINDINGS:\n"
+        "- real bug in foo.py:1\n"
+        "STATUS: complete\n"
+    )
+    assert has_single_terminal_report(text) is False
 
 
 def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:

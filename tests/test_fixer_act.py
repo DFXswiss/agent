@@ -8,13 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.fixer_act import _drive_one, _runner_to_completed
+from agent_cli.fixer_act import _drive_one, _pr_open_row_exists, _runner_to_completed
 from agent_cli.git_act import GitActError
 from agent_cli.lane import LaneResult, findings_header_present
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_cli import _last_task_id, run
 from test_run import (
+    _agents,
     _checklist,
     _finish_implementer,
     _finish_reviewer,
@@ -329,6 +330,7 @@ def test_fixer_vendor_unavailable_leaves_task_untouched(
     assert _checklist(tmp_path, tid).get("implementer_done") == before_checklist.get(
         "implementer_done"
     )
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 
 def test_fixer_retries_pr_open_across_scans_after_insert_failure(
@@ -450,3 +452,381 @@ def test_runner_to_completed_without_cwd_uses_runner() -> None:
     completed = _runner_to_completed(runner, ["echo", "hi"], cwd=None)
     assert completed.stdout == "from-runner"
     assert seen == [["echo", "hi"]]
+
+
+def _pass_lane(**kwargs):  # type: ignore[no-untyped-def]
+    role = str(kwargs.get("role") or "pr-reviewer-quality")
+    vendor = str(kwargs.get("vendor") or "grok")
+    return LaneResult(
+        role=role,
+        vendor=vendor,
+        status="complete",
+        argv=[vendor],
+        returncode=0,
+        stdout="STATUS: complete\nFINDINGS: none\n",
+        stderr="",
+    )
+
+
+def test_fixer_drives_error_fix_task_to_done(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path: error-fix task reaches done with deviation_* closed n_a."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch", lambda *, cwd, runner: pushed_sha
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        lambda *a, **k: [],
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert result.endswith("done") or " done" in result
+    assert _task_state(tmp_path, tid) == "done"
+    cl = _checklist(tmp_path, tid)
+    assert cl["contributing_ok"] == "ja"
+    assert cl["deviation_declared"] == "n_a"
+    assert cl["deviation_granted"] == "n_a"
+
+
+def test_fixer_pr_gate_rejection_clears_head_for_new_push(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-gate rejection drops stale head so a genuinely new push sha is accepted."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    shas = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ]
+    push_calls = {"n": 0}
+    rejects = {"n": 0}
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        i = push_calls["n"]
+        push_calls["n"] += 1
+        return shas[min(i, len(shas) - 1)]
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if (
+            role == "pr-reviewer-quality"
+            and vendor == "grok"
+            and rejects["n"] == 0
+        ):
+            rejects["n"] += 1
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS:\n- fix the retry loop\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        lambda *a, **k: [],
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert "does not match pushed sha" not in result
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+    assert _task_state(tmp_path, tid) == "done"
+    gates = _gates(tmp_path, tid)
+    approved_gq = [
+        g
+        for g in gates
+        if g.get("vendor") == "grok"
+        and g.get("dimension") == "quality"
+        and g.get("verdict") == "approved"
+    ]
+    assert approved_gq, "expected a final approved grok/quality gate"
+    approved_gq.sort(key=lambda g: str(g.get("recorded_at") or ""))
+    assert str(approved_gq[-1].get("head_sha") or "").lower() == shas[1]
+
+
+def test_fixer_pr_gate_rejection_clears_head_before_next_step(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Head must be None on the first execute_spine_step call after a PR-gate
+    rejection -- asserted directly on that call's head kwarg, not inferred from
+    a later step succeeding (which could pass via local_check_pass's incidental
+    git-rev-parse correction instead of the real fix)."""
+    import agent_cli.fixer_act as fixer_mod
+
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    shas = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ]
+    push_calls = {"n": 0}
+    rejects = {"n": 0}
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        i = push_calls["n"]
+        push_calls["n"] += 1
+        return shas[min(i, len(shas) - 1)]
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if role == "pr-reviewer-quality" and vendor == "grok" and rejects["n"] == 0:
+            rejects["n"] += 1
+            return LaneResult(
+                role=role, vendor=vendor, status="complete", argv=[vendor],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS:\n- fix the retry loop\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role, vendor=vendor, status="complete", argv=[vendor],
+            returncode=0, stdout="STATUS: complete\nFINDINGS: none\n", stderr="",
+        )
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan", lambda *a, **k: []
+    )
+
+    calls: list[tuple[str | None, str, str | None]] = []
+    real_execute = fixer_mod.execute_spine_step
+
+    def spy_execute(*args, **kwargs):  # type: ignore[no-untyped-def]
+        outcome = real_execute(*args, **kwargs)
+        calls.append((kwargs.get("head"), outcome.kind, outcome.key))
+        return outcome
+
+    monkeypatch.setattr("agent_cli.fixer_act.execute_spine_step", spy_execute)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store, task, runner=lambda argv: Completed(0, "", ""),
+            round_cap=5, lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    reject_idx = next(
+        i for i, (_, kind, key) in enumerate(calls)
+        if kind == "rejected_new_round" and key != "reviewer_approved"
+    )
+    assert reject_idx + 1 < len(calls), (
+        "expected a further execute_spine_step call after the PR-gate rejection"
+    )
+    next_head, _next_kind, _next_key = calls[reject_idx + 1]
+    assert next_head is None, (
+        "head must be None on the first execute_spine_step call after a "
+        f"PR-gate rejection; got {next_head!r} (stale rehydration bug)"
+    )
+
+
+def test_fixer_inner_reviewer_rejection_keeps_head(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inner reviewer rejection must not clear the threaded pushed head."""
+    import agent_cli.fixer_act as fixer_mod
+
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "cccccccccccccccccccccccccccccccccccccccc"
+    real_ensure = fixer_mod._ensure_done_readiness
+    real_execute = fixer_mod.execute_spine_step
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch", lambda *, cwd, runner: pushed_sha
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        lambda *a, **k: [],
+    )
+    # Stop short of done so gates (and thus recoverable head_sha) remain.
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._ensure_done_readiness", lambda *a, **k: None
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        first = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        assert "done-blocked" in first or _checklist(tmp_path, tid)["pushed"] == "ja"
+        assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") == tid and row.get("key") in (
+                "implementer_done",
+                "reviewer_approved",
+            ):
+                row = dict(row)
+                row["status"] = "pending"
+                row["evidence"] = "reopen for inner-reviewer head test"
+                store.write(
+                    "checklist_item",
+                    "update",
+                    row["id"],
+                    {k: v for k, v in row.items() if not str(k).startswith("_")},
+                )
+    finally:
+        store.close()
+
+    seen_heads: list[str | None] = []
+
+    def spy(*a, **kw):  # type: ignore[no-untyped-def]
+        seen_heads.append(kw.get("head"))
+        return real_execute(*a, **kw)
+
+    rejects = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if role == "reviewer" and rejects["n"] == 0:
+            rejects["n"] += 1
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS:\n- fix the retry loop\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.fixer_act.execute_spine_step", spy)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._ensure_done_readiness", real_ensure)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+    assert seen_heads, "expected execute_spine_step calls"
+    assert all(h == pushed_sha for h in seen_heads), seen_heads
+    assert None not in seen_heads
+
+
+def test_pr_open_row_exists_excludes_error_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing pr.open with execution_status=error must not count as present."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    head = f"error-fix-{ERROR_ID[:8]}"
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        activity_id = str(uuid.uuid4())
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {"head": head, "repo": "org/app", "title": "x", "body": "y"},
+                "execution_status": "error",
+            },
+        )
+        assert _pr_open_row_exists(store, head=head) is False
+    finally:
+        store.close()

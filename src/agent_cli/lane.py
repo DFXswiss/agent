@@ -38,6 +38,18 @@ def findings_header_present(text: str) -> bool:
     return _FINDINGS_HEADER_RE.search(text) is not None
 
 
+def has_single_terminal_report(text: str) -> bool:
+    """True when STATUS: and FINDINGS: each appear exactly once.
+
+    Multiple STATUS or FINDINGS headers (e.g. an early example block plus a
+    real report) are unparseable — callers must not trust parse_status /
+    count_findings on such transcripts.
+    """
+    status_n = len(list(_STATUS_RE.finditer(text)))
+    findings_n = len(list(_FINDINGS_HEADER_RE.finditer(text)))
+    return status_n == 1 and findings_n == 1
+
+
 def count_findings(text: str) -> int:
     """Count non-empty FINDINGS entries. Empty / 0 / none → 0.
 
