@@ -28,6 +28,13 @@ def _config(argv: list[str]) -> Completed | None:
     return Completed(1, "", "")
 
 
+def _remote(argv: list[str]) -> Completed | None:
+    """Fake `git -C <cwd> remote`: single 'origin' remote, matching _config above."""
+    if argv == ["git", "-C", CWD, "remote"]:
+        return Completed(0, "origin\n", "")
+    return None
+
+
 def _assert_git_c(argv: list[str]) -> None:
     assert argv[:3] == ["git", "-C", CWD]
     for flag in FORCE_FLAGS:
@@ -49,6 +56,9 @@ def test_push_ahead_one_pushes_without_force() -> None:
         cfg = _config(argv)
         if cfg is not None:
             return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
         if "fetch" in argv:
             assert argv == ["git", "-C", CWD, "fetch", "--", "origin"]
             return Completed(0, "", "")
@@ -87,6 +97,9 @@ def test_push_ahead_zero_skips_push() -> None:
         cfg = _config(argv)
         if cfg is not None:
             return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
         if "fetch" in argv:
             return Completed(0, "", "")
         if "rev-list" in argv:
@@ -214,6 +227,9 @@ def test_push_behind_errors_no_push() -> None:
         cfg = _config(argv)
         if cfg is not None:
             return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
         if "fetch" in argv:
             return Completed(0, "", "")
         if "rev-list" in argv:
@@ -248,6 +264,65 @@ def test_push_upstream_origin_develop_refused() -> None:
         push_branch(cwd=CWD, runner=runner)
 
 
+def test_push_upstream_tracks_wrong_expected_branch_refused() -> None:
+    """Local name matches expected_branch, but upstream merge tracks elsewhere."""
+    calls: list[list[str]] = []
+    branch = "error-fix-aaaaaaaa"
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, f"{branch}\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/some-other-branch\n", "")
+        if "config" in argv and "--get" in argv:
+            key = argv[-1]
+            if key == f"branch.{branch}.remote":
+                return Completed(0, "origin\n", "")
+            if key == f"branch.{branch}.merge":
+                return Completed(0, "refs/heads/some-other-branch\n", "")
+            return Completed(1, "", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="refusing to push"):
+        push_branch(cwd=CWD, runner=runner, expected_branch=branch)
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_upstream_remote_mismatch_refused() -> None:
+    """branch.<b>.remote tracks a remote other than the one `git remote`
+    resolves to (single-remote-or-origin, same rule the fresh-branch path
+    uses) — refuse rather than fetch/push to an unexpected remote."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "fork/feat-x\n", "")
+        if "config" in argv and "--get" in argv:
+            key = argv[-1]
+            if key == "branch.feat-x.remote":
+                return Completed(0, "fork\n", "")
+            if key == "branch.feat-x.merge":
+                return Completed(0, "refs/heads/feat-x\n", "")
+            return Completed(1, "", "")
+        if argv == ["git", "-C", CWD, "remote"]:
+            return Completed(0, "origin\nfork\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="refusing to push"):
+        push_branch(cwd=CWD, runner=runner)
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
 def test_push_upstream_feat_main_not_protected() -> None:
     calls: list[list[str]] = []
 
@@ -266,6 +341,9 @@ def test_push_upstream_feat_main_not_protected() -> None:
             if key == "branch.feat-x.merge":
                 return Completed(0, "refs/heads/feat/main\n", "")
             return Completed(1, "", "")
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
         if "fetch" in argv:
             return Completed(0, "", "")
         if "rev-list" in argv:

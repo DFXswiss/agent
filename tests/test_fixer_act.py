@@ -274,6 +274,58 @@ def test_pushed_passes_expected_branch_from_error_id(
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
+def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 26 regression: _drive_one used to derive error_id via
+    str(x or "") and would build a garbage "error-fix- " branch head from a
+    stale whitespace-only payload.error_id (simulated by writing the task
+    row directly, bypassing create-time validation). Must fail loudly
+    instead of building the garbage head or opening a PR."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None: "abcdef1234567890abcdef1234567890abcdef12",
+    )
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {"error_id": " ", "repo": "org/app"}
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+    def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError(
+            "insert_pr_open_and_scan must not run for whitespace-only error_id"
+        )
+
+    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", boom)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        assert "whitespace-only" in result
+        assert "failed" in result
+        assert not _pr_open_row_exists(store, head="error-fix- ")
+    finally:
+        store.close()
+
+
 def test_fixer_threads_pushed_head_into_pr_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

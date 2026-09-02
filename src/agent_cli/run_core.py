@@ -824,7 +824,21 @@ def execute_spine_step(
         from .git_act import GitActError, push_branch
 
         payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-        error_id = str(payload.get("error_id") or "").strip()
+        raw_error_id = payload.get("error_id")
+        error_id = str(raw_error_id or "").strip()
+        if not error_id and isinstance(raw_error_id, str) and raw_error_id != "":
+            # Present but strips to empty (e.g. stale pre-round-24 store row
+            # with a whitespace-only error_id — creation-time validation now
+            # rejects this for new tasks). Fail loudly instead of silently
+            # downgrading to expected_branch=None, which would skip the push
+            # identity check entirely as if error_id were absent.
+            return RunOutcome(
+                kind="failed",
+                key=step.key,
+                step=step,
+                reason="task payload.error_id is whitespace-only",
+                message="task payload.error_id is whitespace-only",
+            )
         expected_branch = f"error-fix-{error_id[:8]}" if error_id else None
         try:
             sha = push_branch(

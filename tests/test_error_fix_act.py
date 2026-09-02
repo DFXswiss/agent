@@ -499,6 +499,16 @@ def test_has_error_fix_activity_false_for_empty_error_id(tmp_path: Path) -> None
     assert has_error_fix_activity(store, "runner-1", "") is False
 
 
+def test_nonempty_str_rejects_unicode_whitespace_only() -> None:
+    """U+00A0-only must be absent so run_core cannot strip it to skip identity."""
+    assert error_fix_act_mod._nonempty_str("\u00a0") is None
+    assert error_fix_act_mod._nonempty_str("\u00a0\u00a0") is None
+    assert error_fix_act_mod._nonempty_str("") is None
+    assert error_fix_act_mod._nonempty_str("  ") is None
+    assert error_fix_act_mod._nonempty_str("ok") == "ok"
+    assert error_fix_act_mod._nonempty_str("  ok  ") == "ok"
+
+
 def test_has_error_fix_activity_false_for_mismatched_ids(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
@@ -510,3 +520,29 @@ def test_has_error_fix_activity_false_for_mismatched_ids(tmp_path: Path) -> None
     assert (
         has_error_fix_activity(store, "other-session", "error-seen-12345678") is False
     )
+
+
+def test_has_error_fix_activity_true_for_whitespace_padded_persisted_error_id(
+    tmp_path: Path,
+) -> None:
+    """Round 26 regression: a persisted error.fix payload.error_id with
+    incidental whitespace (simulated by writing the activity row directly,
+    bypassing validate_conclusion's normalization) must still match the
+    caller's already-normalized error_id."""
+    store = Store(tmp_path)
+    store.write(
+        "activity",
+        "insert",
+        "fix-1",
+        {
+            "id": "fix-1",
+            "session_id": "runner-1",
+            "type": "error.fix",
+            "payload": {
+                "error_id": "error-seen-12345678 ",
+                "fingerprint": "api|TimeoutError|abc|prod",
+            },
+            "execution_status": "pending",
+        },
+    )
+    assert has_error_fix_activity(store, "runner-1", "error-seen-12345678") is True

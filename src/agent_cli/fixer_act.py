@@ -385,7 +385,13 @@ def _drive_one(
     tid = str(task["id"])
     session_id = str(task.get("session_id") or "")
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-    error_id = str(payload.get("error_id") or "")
+    raw_error_id = payload.get("error_id")
+    error_id = _nonempty_str(raw_error_id) or ""
+    if not error_id and isinstance(raw_error_id, str) and raw_error_id != "":
+        # Present but strips to empty (e.g. a stale store row bypassing
+        # create-time validation) — fail loudly instead of silently building
+        # a garbage "error-fix- " branch head from it.
+        return f"error-fix-work {tid} failed (payload.error_id is whitespace-only)"
     repo = _repo_ok(payload.get("repo") or task.get("repo")) or ""
     brief = _error_fix_brief(store, session_id, error_id) or ""
     worktree = Path(store.home) / "error-fix-work" / tid

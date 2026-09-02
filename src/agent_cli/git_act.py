@@ -28,6 +28,26 @@ def _fail_detail(completed: Completed, fallback: str) -> str:
     return detail or fallback
 
 
+def _resolve_remote(cwd: str, runner: Runner) -> str:
+    """Pick the remote to use: the sole remote, or 'origin' when there are several.
+
+    Shared by the fresh-branch push (no @{upstream} yet) and, as a
+    defense-in-depth check, by the existing-upstream push path — both must
+    agree on which remote an unattended push is allowed to target.
+    """
+    remotes_done = runner(_git(cwd, "remote"))
+    if remotes_done.returncode != 0:
+        raise GitActError(_fail_detail(remotes_done, "git remote failed"))
+    remotes = [r for r in remotes_done.stdout.splitlines() if r.strip()]
+    if not remotes:
+        raise GitActError("no remotes")
+    if len(remotes) == 1:
+        return remotes[0]
+    if "origin" in remotes:
+        return "origin"
+    raise GitActError("ambiguous remotes (no origin)")
+
+
 def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None) -> str:
     """Push the current branch if needed. Return HEAD sha (lowercase hex)."""
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
@@ -52,18 +72,7 @@ def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None)
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "@{upstream}"))
     if completed.returncode != 0 or not completed.stdout.strip():
         # Fresh branch (e.g. error-fix checkout -B): set upstream on first push.
-        remotes_done = runner(_git(cwd, "remote"))
-        if remotes_done.returncode != 0:
-            raise GitActError(_fail_detail(remotes_done, "git remote failed"))
-        remotes = [r for r in remotes_done.stdout.splitlines() if r.strip()]
-        if not remotes:
-            raise GitActError("no remotes")
-        if len(remotes) == 1:
-            remote = remotes[0]
-        elif "origin" in remotes:
-            remote = "origin"
-        else:
-            raise GitActError("ambiguous remotes (no origin)")
+        remote = _resolve_remote(cwd, runner)
         merge_ref = f"refs/heads/{branch}"
         merge_short = branch
         if merge_short in PROTECTED:
@@ -87,6 +96,17 @@ def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None)
         merge_short = merge_ref[len("refs/heads/") :]
         if merge_short in PROTECTED:
             raise GitActError(f"upstream tracks protected branch {merge_short}")
+        if expected_branch is not None and merge_short != expected_branch:
+            raise GitActError(
+                f"branch {branch!r} tracks {merge_short!r} but task expects "
+                f"{expected_branch!r} — refusing to push"
+            )
+        expected_remote = _resolve_remote(cwd, runner)
+        if remote != expected_remote:
+            raise GitActError(
+                f"branch {branch!r} tracks remote {remote!r} but expected "
+                f"{expected_remote!r} — refusing to push"
+            )
 
         completed = runner(_git(cwd, "fetch", "--", remote))
         if completed.returncode != 0:

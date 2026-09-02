@@ -48,8 +48,15 @@ def _repo_ok(repo: Any) -> str | None:
 
 
 def _nonempty_str(raw: Any) -> str | None:
-    if isinstance(raw, str) and raw != "":
-        return raw
+    # Layer (a): strip here so whitespace-only values (e.g. U+00A0) cannot
+    # pass validation then strip to empty in run_core's expected_branch
+    # derivation and silently skip the push identity check. Same rule for
+    # id/head/fingerprint/reason/ref: whitespace-only is absent — desired,
+    # those fields have no meaningful whitespace-only content.
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped != "":
+            return stripped
     return None
 
 
@@ -78,7 +85,7 @@ def has_error_fix_activity(store: Store, session_id: str, error_id: str) -> bool
         if row.get("type") != "error.fix":
             continue
         payload = row.get("payload")
-        if isinstance(payload, dict) and payload.get("error_id") == error_id:
+        if isinstance(payload, dict) and _nonempty_str(payload.get("error_id")) == error_id:
             return True
     return False
 
@@ -144,15 +151,27 @@ def validate_conclusion(
     session_id: str,
     typ: str,
     payload: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
+    """Validate payload and return the payload to persist.
+
+    Callers MUST write the returned dict, not the original `payload`, to the
+    store. Validation checks the stripped (normalized) error_id/fingerprint/
+    reason; every downstream comparison (has_error_fix_activity,
+    _chain_snapshot's error_fix_confirmed, fixer_act._error_fix_brief) does
+    exact `==` against whatever was persisted. Persisting the raw, unstripped
+    payload would validate one value and compare a different one.
+    """
     error_id = _nonempty_str(payload.get("error_id"))
     if error_id is None:
         raise StoreError("error_id is required")
     fingerprint = _nonempty_str(payload.get("fingerprint"))
     if fingerprint is None:
         raise StoreError("fingerprint is required")
-    if typ == "error.skip" and _nonempty_str(payload.get("reason")) is None:
-        raise StoreError("reason is required")
+    reason = None
+    if typ == "error.skip":
+        reason = _nonempty_str(payload.get("reason"))
+        if reason is None:
+            raise StoreError("reason is required")
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
     if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
@@ -170,6 +189,12 @@ def validate_conclusion(
         raise StoreError("unmapped-repo")
     if typ == "error.fix" and _already_open_draft(store, fingerprint):
         raise StoreError("already-open-draft")
+    normalized = dict(payload)
+    normalized["error_id"] = error_id
+    normalized["fingerprint"] = fingerprint
+    if typ == "error.skip":
+        normalized["reason"] = reason
+    return normalized
 
 
 def find_or_create_implement_task(
@@ -207,8 +232,15 @@ def _find_or_create_implement_task(
     *,
     ref: str | None = None,
 ) -> tuple[str, bool]:
-    if _nonempty_str(error_id) is None:
+    normalized_error_id = _nonempty_str(error_id)
+    if normalized_error_id is None:
         raise StoreError("error_id is required")
+    # Use the normalized (stripped) value for both the lookup and the
+    # persisted payload below, so a whitespace-padded caller (e.g. `agent
+    # task create --error-id`) matches the same stripped value everything
+    # else (has_error_fix_activity, _chain_snapshot, _error_fix_brief)
+    # compares against.
+    error_id = normalized_error_id
     existing = _lookup_implement_task(store, session_id, error_id)
     if existing is not None:
         return existing, False

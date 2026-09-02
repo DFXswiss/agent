@@ -864,6 +864,43 @@ def test_pushed_passes_expected_branch_none_for_ordinary_task(
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
+def test_pushed_fails_loudly_on_stale_whitespace_only_error_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 25 regression: run_core's expected_branch derivation used to
+    treat "error_id key absent" and "error_id present but whitespace-only"
+    identically (both -> expected_branch=None, silently skipping the push
+    identity check). Round 24 now rejects whitespace-only error_id at
+    creation time for NEW tasks, so this is only reachable via stale
+    pre-existing store data — simulated here by writing the task payload
+    directly, bypassing create-time validation."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {"error_id": " "}
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+    called = {"n": 0}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+        called["n"] += 1
+        return "abc1234"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert "whitespace-only" in str(exc.value.code)
+    assert called["n"] == 0
+    assert _checklist(tmp_path, tid)["pushed"] != "ja"
+
+
 def _bootstrap_resolve(home: Path, capsys: pytest.CaptureFixture[str]) -> str:
     run(home, ["init"])
     run(

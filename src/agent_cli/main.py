@@ -558,7 +558,12 @@ def cmd_activity(args: list[str]) -> None:
 
             _require_skill(session, "error-fix")
             with store.exclusive("error-fix-act:" + store.device_id()):
-                validate_conclusion(store, sid, typ, raw)
+                # Persist the NORMALIZED payload validate_conclusion returns,
+                # not raw — otherwise a whitespace-padded but valid error_id
+                # validates fine here and then compares != everywhere it's
+                # read back (has_error_fix_activity, error_fix_confirmed,
+                # _error_fix_brief).
+                normalized = validate_conclusion(store, sid, typ, raw)
                 activity_id = str(uuid.uuid4())
                 store.write(
                     "activity",
@@ -568,7 +573,7 @@ def cmd_activity(args: list[str]) -> None:
                         "id": activity_id,
                         "session_id": sid,
                         "type": typ,
-                        "payload": raw,
+                        "payload": normalized,
                         "execution_status": "pending",
                     },
                 )
@@ -2183,7 +2188,7 @@ def load_session_tasks(store: Store, session_id: str) -> list[dict]:
 
 
 def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> dict:
-    from .error_fix_act import has_error_fix_activity
+    from .error_fix_act import _nonempty_str, has_error_fix_activity
 
     task = load_task_dict(store, tid)
     sid = str(task.get("session_id") or "")
@@ -2234,11 +2239,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
             # downstream) and never to a stale gate's head.
             head = "unresolved-pushed-head"
     payload = task.get("payload") or {}
-    error_id = ""
-    if isinstance(payload, dict):
-        raw_eid = payload.get("error_id")
-        if isinstance(raw_eid, str):
-            error_id = raw_eid
+    error_id = _nonempty_str(payload.get("error_id")) if isinstance(payload, dict) else None
     error_fix_confirmed = bool(
         error_id and sid and has_error_fix_activity(store, sid, error_id)
     )
