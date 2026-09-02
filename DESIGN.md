@@ -401,6 +401,7 @@ agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
 agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
 agent check record …                              # spine skill
+agent local-ci verify|parse|render [--file PATH] [--require-ids id,id] [--expect-head SHA] [--expect-private] [--json]
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
 agent allow|next|close-step|run …                 # spine skill; run: [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
@@ -543,7 +544,7 @@ A draft plus local tests is not done. A check records the local suite. When spin
 
 Quality and logic of one vendor stage run together. Vendors are `grok`, then `codex`. Codex runs only after both grok dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
-CI on this head is a script-measured fact. `skipped` and `cancelled` are not green unless the workflow documents that skip. Stay draft until that holds. One comment whose review-pass count is those four `approved` verdicts on this head, then ready. A retry reuses the existing draft. A human merges.
+CI on this head is a script-measured fact. On a **private** GitHub repository that fact is a full local `ci:full` equivalent, recorded as `dfx-local-ci/v1` and checked with `agent local-ci verify` (`--expect-head`, `--expect-private`, status `pass`). GitHub Actions is not the ready gate there. On a **public** repository, GitHub Actions on this head remains the gate; `skipped` and `cancelled` are not green unless the workflow documents that skip. Stay draft until that holds. One comment whose review-pass count is those four `approved` verdicts on this head, then ready. A retry reuses the existing draft. A human merges.
 
 ## 20. Refused: hub as a coding control plane
 

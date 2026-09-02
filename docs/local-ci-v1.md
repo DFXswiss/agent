@@ -62,9 +62,9 @@ Parse errors exit with `agent: …`. A computed fail exits `1` after printing
 ## Commands
 
 ```
-agent local-ci verify [--file PATH] [--require-ids id,id] [--json]
+agent local-ci verify [--file PATH] [--require-ids id,id] [--expect-head SHA] [--expect-private] [--json]
 agent local-ci parse [--file PATH] [--json]
-agent local-ci render --file payload.json
+agent local-ci render [--file PATH]
 ```
 
 Without `--file`, the comment or JSON is read from stdin.
