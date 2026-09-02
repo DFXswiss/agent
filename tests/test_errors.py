@@ -235,6 +235,26 @@ def test_redact_and_fingerprint() -> None:
     assert '\\"traceparent\\":\\"[redacted]\\"' in traceparent_escaped_json
 
 
+def test_redact_strips_otel_ids_of_non_standard_length() -> None:
+    """Regression test: _OTEL_TRACE_ID/_OTEL_SPAN_ID required an exact
+    32/16-char hex value. A malformed or non-conformant id (e.g. a span_id
+    of 17-19 hex chars) falls between that exact match and the generic
+    _HEX fallback's 20-char floor, so it used to pass through unredacted -
+    undermining the "always stripped before hashing" dedup guarantee for
+    exactly the malformed values most likely to vary occurrence to
+    occurrence. The label match already does the real specificity work, so
+    matching the value's actual length instead of requiring the standard
+    one only helps."""
+    odd_span_id = "b" * 18
+    otel = redact(f"TimeoutError boom trace_id={'a' * 32} span_id={odd_span_id}")
+    assert odd_span_id not in otel
+    assert "span_id=[redacted]" in otel
+    short_trace_id = "a" * 10
+    otel_short_trace = redact(f"TimeoutError boom trace_id={short_trace_id} span_id={'b' * 16}")
+    assert short_trace_id not in otel_short_trace
+    assert "trace_id=[redacted]" in otel_short_trace
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
