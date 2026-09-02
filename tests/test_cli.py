@@ -1707,6 +1707,46 @@ def test_activity_add_refuses_second_error_conclusion(tmp_path: Path) -> None:
         )
 
 
+def test_activity_add_refuses_duplicate_against_whitespace_padded_conclusion(
+    tmp_path: Path,
+) -> None:
+    """A prior conclusion persisted with incidental whitespace in error_id
+    (simulated by writing the activity row directly, bypassing
+    validate_conclusion's normalization) must still be found by the
+    duplicate-conclusion guard for a normalized error_id."""
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "error-session",
+                "type": "error.fix",
+                "payload": {"error_id": f"{error_id} ", "fingerprint": fingerprint},
+                "execution_status": "pending",
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="conclusion already exists"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.skip",
+            payload={
+                "error_id": error_id,
+                "fingerprint": fingerprint,
+                "reason": "Known external failure",
+            },
+        )
+
+
 def test_activity_add_error_skip_requires_reason(tmp_path: Path) -> None:
     error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     fingerprint = "traceback-fingerprint"

@@ -36,7 +36,7 @@ def _error_fix_brief(store: Store, session_id: str, error_id: str) -> str | None
         if row.get("type") != "error.fix":
             continue
         payload = row.get("payload")
-        if not isinstance(payload, dict) or payload.get("error_id") != error_id:
+        if not isinstance(payload, dict) or _nonempty_str(payload.get("error_id")) != error_id:
             continue
         brief = payload.get("brief")
         if isinstance(brief, str) and brief.strip():

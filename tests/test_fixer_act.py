@@ -11,6 +11,7 @@ import pytest
 
 from agent_cli.fixer_act import (
     _drive_one,
+    _error_fix_brief,
     _pr_open_row_exists,
     _runner_to_completed,
     drive_error_fix_tasks,
@@ -1218,6 +1219,38 @@ def test_pr_open_row_exists_excludes_pending_status(
             },
         )
         assert _pr_open_row_exists(store, head=head) is False
+    finally:
+        store.close()
+
+
+def test_error_fix_brief_matches_whitespace_padded_persisted_error_id(
+    tmp_path: Path,
+) -> None:
+    """A persisted error.fix payload.error_id with incidental whitespace
+    (simulated by writing the activity row directly, bypassing
+    validate_conclusion's normalization) must still match the caller's
+    already-normalized error_id, same fix as has_error_fix_activity."""
+    store = _store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "runner-1",
+                "type": "error.fix",
+                "payload": {
+                    "error_id": f"{ERROR_ID} ",
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "brief": "Timeout in handler; add retry.",
+                },
+                "execution_status": "pending",
+            },
+        )
+        assert _error_fix_brief(store, "runner-1", ERROR_ID) == (
+            "Timeout in handler; add retry."
+        )
     finally:
         store.close()
 

@@ -183,7 +183,7 @@ def validate_conclusion(
         if row.get("type") not in ("error.skip", "error.fix"):
             continue
         inner = row.get("payload")
-        if isinstance(inner, dict) and inner.get("error_id") == error_id:
+        if isinstance(inner, dict) and _nonempty_str(inner.get("error_id")) == error_id:
             raise StoreError("conclusion already exists")
     if typ == "error.fix" and _repo_ok(seen_payload.get("repo")) is None:
         raise StoreError("unmapped-repo")
@@ -219,7 +219,7 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
         if row.get("workflow") != "implement":
             continue
         payload = row.get("payload")
-        if isinstance(payload, dict) and payload.get("error_id") == error_id:
+        if isinstance(payload, dict) and _nonempty_str(payload.get("error_id")) == error_id:
             return str(row["id"])
     return None
 

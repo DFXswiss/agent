@@ -522,6 +522,46 @@ def test_has_error_fix_activity_false_for_mismatched_ids(tmp_path: Path) -> None
     )
 
 
+def test_find_or_create_returns_existing_task_for_whitespace_padded_error_id(
+    tmp_path: Path,
+) -> None:
+    """A prior implement task persisted with incidental whitespace in
+    payload.error_id (simulated by writing the task row directly, bypassing
+    the normal create path's normalization) must still be found by
+    find_or_create_implement_task for a normalized error_id, not duplicated."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "task",
+        "insert",
+        "task-1",
+        {
+            "id": "task-1",
+            "session_id": "runner-1",
+            "workflow": "implement",
+            "title": "Fix observed error",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678 ", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "created_at": utcnow(),
+            "updated_at": utcnow(),
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    tid, created = find_or_create_implement_task(
+        store,
+        "runner-1",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert created is False
+    assert tid == "task-1"
+
+
 def test_has_error_fix_activity_true_for_whitespace_padded_persisted_error_id(
     tmp_path: Path,
 ) -> None:
