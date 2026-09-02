@@ -654,7 +654,8 @@ class Store:
                 continue
             if payload.get("execution_status") != "pending":
                 continue
-            if payload.get("type") not in EXECUTABLE_ACTIVITY_TYPES:
+            typ = payload.get("type")
+            if not isinstance(typ, str) or typ not in EXECUTABLE_ACTIVITY_TYPES:
                 continue
             payload["_origin_device_id"] = row["origin_device_id"]
             out.append(payload)
