@@ -3181,9 +3181,18 @@ def cmd_watch(args: list[str]) -> None:
 
             KNOCK_SUBMIT_RETRIES = 8
             KNOCK_SUBMIT_POLL_S = 2.0
+            KNOCK_READY_TIMEOUT_S = 60.0
+            KNOCK_READY_POLL_S = 1.0
 
             def _knock(sid: str, error_id: str) -> None:
+                from .grok_pane import grok_pane_is_idle
+
                 runtime = Runtime()
+                deadline = time.monotonic() + KNOCK_READY_TIMEOUT_S
+                while not grok_pane_is_idle(runtime.capture(sid)):
+                    if time.monotonic() >= deadline:
+                        raise StoreError(f"session {sid} never reached an idle prompt before the knock")
+                    time.sleep(KNOCK_READY_POLL_S)
                 runtime.input_text(sid, knock_text(error_id))
                 for _ in range(KNOCK_SUBMIT_RETRIES):
                     runtime.input_key(sid, "enter")

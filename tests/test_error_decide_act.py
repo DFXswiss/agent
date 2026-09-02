@@ -481,10 +481,9 @@ def test_scan_error_decide_reports_stop_error_after_success(tmp_path: Path) -> N
     sid = decide_session_id(error_id)
     assert stopped == [sid]
     assert len(lines) == 1
-    assert "error" in lines[0]
+    assert lines[0].startswith(f"error.seen {error_id} decided session={sid}")
     assert "stop failed" in lines[0]
-    assert "decided" not in lines[0]
-    assert lines[0].startswith(f"error.seen {error_id} error session={sid}:")
+    assert "(stop failed:" in lines[0]
 
 
 def test_scan_error_decide_reports_os_error_from_stop(tmp_path: Path) -> None:
@@ -512,9 +511,9 @@ def test_scan_error_decide_reports_os_error_from_stop(tmp_path: Path) -> None:
     sid = decide_session_id(error_id)
     assert stopped == [sid]
     assert len(lines) == 1
-    assert "error" in lines[0]
+    assert lines[0].startswith(f"error.seen {error_id} decided session={sid}")
     assert "tmux kill-session failed" in lines[0]
-    assert "decided" not in lines[0]
+    assert "(stop failed:" in lines[0]
 
 
 def test_decide_session_id_uses_the_full_error_id() -> None:
@@ -569,6 +568,31 @@ def test_ensure_decide_session_rejects_non_runner_kind(tmp_path: Path) -> None:
     )
     with pytest.raises(StoreError, match="must be runner"):
         _ensure_decide_session(store, sid, now)
+
+
+def test_ensure_decide_session_reopens_closed_session(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    error_id = "error-seen-oooooooo"
+    sid = decide_session_id(error_id)
+    now = utcnow()
+    store.write(
+        "session",
+        "insert",
+        sid,
+        {
+            "id": sid,
+            "kind": "runner",
+            "started_at": now,
+            "last_seen_at": now,
+            "host": socket.gethostname(),
+            "status": "closed",
+            "skills": ["error-fix", "spine", "review-loop", "pr-review"],
+        },
+    )
+    _ensure_decide_session(store, sid, now)
+    session = store.row("session", sid)
+    assert session is not None
+    assert session["status"] == "active"
 
 
 def test_scan_error_decide_lock_serializes_overlapping_scans(tmp_path: Path) -> None:

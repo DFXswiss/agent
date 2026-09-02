@@ -78,17 +78,20 @@ def _ensure_decide_session(store: Store, sid: str, now: str) -> None:
         return
     if existing.get("_origin_device_id") != store.device_id():
         raise StoreError(f"session {sid} is owned by another device")
-    if existing.get("status") == "closed":
-        raise StoreError(f"session {sid} is closed")
     if existing.get("kind") != "runner":
         raise StoreError(f"session {sid} is kind={existing.get('kind')}, error-decide worker must be runner")
     required = ["error-fix", "spine", "review-loop", "pr-review"]
     current_skills = existing.get("skills")
     current = list(current_skills) if isinstance(current_skills, list) else []
     missing = [s for s in required if s not in current]
-    if missing:
+    was_closed = existing.get("status") == "closed"
+    if missing or was_closed:
         updated = dict(existing)
-        updated["skills"] = current + missing
+        if missing:
+            updated["skills"] = current + missing
+        if was_closed:
+            updated["status"] = "active"
+            updated["last_seen_at"] = now
         store.write("session", "update", sid, {k: v for k, v in updated.items() if not k.startswith("_")})
 
 
@@ -138,6 +141,7 @@ def scan_error_decide(
                 lines.append(f"error.seen {error_id} error session={sid}: {exc}")
                 continue
             failure: StoreError | SystemExit | OSError | None = None
+            stop_failure: StoreError | SystemExit | OSError | None = None
             decided = False
             try:
                 start(sid)
@@ -155,13 +159,13 @@ def scan_error_decide(
                 try:
                     stop(sid)
                 except (StoreError, SystemExit, OSError) as stop_exc:
-                    if failure is None:
-                        failure = stop_exc
+                    stop_failure = stop_exc
             if failure is not None:
                 lines.append(f"error.seen {error_id} error session={sid}: {failure}")
                 continue
+            note = f" (stop failed: {stop_failure})" if stop_failure is not None else ""
             if decided:
-                lines.append(f"error.seen {error_id} decided session={sid}")
+                lines.append(f"error.seen {error_id} decided session={sid}{note}")
             else:
-                lines.append(f"error.seen {error_id} timeout session={sid}")
+                lines.append(f"error.seen {error_id} timeout session={sid}{note}")
         return lines
