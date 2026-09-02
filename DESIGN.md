@@ -654,7 +654,7 @@ After the knock, a session on **this device** reads the row and writes `investig
 
 The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
 
-`agent activity add` now enforces the error-fix skill, payload, fingerprint, one-conclusion, unmapped-repo, and already-open-draft guards.
+`agent activity add` now enforces the error-fix skill, payload (including required `brief` on `error.fix` / `reason` on `error.skip`), fingerprint, one-conclusion, unmapped-repo, and already-open-draft guards.
 
 The adapter decides open vs closed by that `error_id` / `fingerprint`, plus any spine task on this device whose `payload.error_id` matches (not only a task under the scanning session). A later `error.skip` or a terminal task (`done` / `failed`) for the same `error_id` closes the incident. `pr.merged` knocks as today; it is not a second close signal. `agent task create` for a given `error_id` is find-or-create across this device; a second `error.fix` does not open a second task.
 
