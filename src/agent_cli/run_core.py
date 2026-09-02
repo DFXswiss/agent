@@ -279,6 +279,8 @@ def _collect_review_diff(
     The third return value is True only when every diff-producing git probe
     that actually ran exited 0. The base-ref rev-parse search is excluded —
     a missing candidate ref is expected control flow, not a probe failure.
+    When *no* candidate resolves at all, that counts as a probe failure
+    (not expected control flow), so probes_ok becomes False.
     """
     base_ref: str | None = None
     for candidate in _BASE_CANDIDATES:
@@ -289,6 +291,8 @@ def _collect_review_diff(
     chunks: list[str] = []
     paths: list[str] = []
     probes_ok = True
+    if base_ref is None:
+        probes_ok = False
     if base_ref is not None:
         mb = exec_argv(["git", "merge-base", "HEAD", base_ref], cwd=cwd)
         mb_rc = int(getattr(mb, "returncode", 1))
@@ -352,12 +356,12 @@ def build_review_spec_file(
 ) -> str:
     """Write a four-part review prompt under $AGENT_HOME/review-work/<task_id>/; return its path."""
     diff_text, changed_paths, probes_ok = _collect_review_diff(cwd, exec_argv)
-    if not diff_text.strip():
-        if probes_ok:
-            raise EmptyReviewDiffError("empty review diff")
+    if not probes_ok:
         raise ReviewDiffUnavailableError(
             "git probe failed while collecting the review diff"
         )
+    if not diff_text.strip():
+        raise EmptyReviewDiffError("empty review diff")
     parent = Path(store.home) / "review-work" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     round_bit = round_num if round_num is not None else 0

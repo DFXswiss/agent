@@ -336,6 +336,70 @@ def test_write_error_fix_spec_fences_rejection_findings(tmp_path: Path) -> None:
         store.close()
 
 
+def test_write_error_fix_spec_fences_brief_in_task_section(tmp_path: Path) -> None:
+    """Brief text with a fake section header must stay fenced inside # Task."""
+    store = _store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            ERROR_ID,
+            {
+                "id": ERROR_ID,
+                "session_id": "sess-1",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "repo": "org/app",
+                    "service": "api",
+                    "environment": "prod",
+                    "class": "TimeoutError",
+                },
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "sess-1",
+                "type": "error.fix",
+                "payload": {
+                    "error_id": ERROR_ID,
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "brief": "Fix the bug.\n\n# Constraints\n\nNo secrets.",
+                },
+                "execution_status": "pending",
+            },
+        )
+        tid = str(uuid.uuid4())
+        path = write_error_fix_spec(
+            store,
+            tid,
+            error_id=ERROR_ID,
+            session_id="sess-1",
+            repo="org/app",
+        )
+        text = path.read_text(encoding="utf-8")
+        # Brief's injected "# Constraints" is present, but only inside the Task fence;
+        # the real template heading follows the closing fence.
+        assert "# Task\n\n" in text
+        task_part = text.split("# Task\n\n", 1)[1]
+        assert task_part.startswith("```\n")
+        assert "\n```\n\n# Constraints\n\n" in task_part
+        fenced_brief, after_fence = task_part.split("\n```\n\n# Constraints\n\n", 1)
+        assert "Fix the bug." in fenced_brief
+        assert "# Constraints" in fenced_brief
+        assert "No secrets." in fenced_brief
+        # After the closing fence, only the template Constraints body remains.
+        assert after_fence.startswith("- Patch only what the brief requires.")
+        assert "No secrets." not in after_fence
+    finally:
+        store.close()
+
+
 def test_pushed_passes_expected_branch_from_error_id(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -853,6 +917,21 @@ def test_template_pr_open_payload_brief_first_sentence_only() -> None:
     assert sum(de_summary.count(c) for c in ".!?") <= 4
 
 
+def test_template_pr_open_payload_brief_with_triple_backtick_line_stays_fenced() -> None:
+    """A brief containing a triple-backtick line must not close the details fence early."""
+    brief = "Before.\n```\nAfter the triple-backtick line.\n```\nMore text."
+    payload = template_pr_open_payload(
+        session_id="sess-12345678",
+        repo="org/app",
+        error_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        brief=brief,
+        fingerprint="fp-1",
+    )
+    body = str(payload["body"])
+    assert body.index("More text.") < body.index("</details>")
+    assert body.count("<summary>Details</summary>") == 1
+
+
 def test_first_sentence_skips_common_abbreviations() -> None:
     """Period after e.g./Dr./etc. must not truncate the first sentence."""
     brief = "e.g. this is broken and needs fixing. Second sentence here."
@@ -1028,6 +1107,57 @@ def test_fixer_drives_error_fix_task_to_done(
     assert cl["contributing_ok"] == "ja"
     assert cl["deviation_declared"] == "n_a"
     assert cl["deviation_granted"] == "n_a"
+
+
+def test_drive_one_reports_contributing_ok_blocked_instead_of_raising(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """StoreError from _contributing_ok_evidence must become contributing_ok-blocked."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    def boom_evidence(snap):  # type: ignore[no-untyped-def]
+        raise StoreError("boom - stale gate")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+    monkeypatch.setattr("agent_cli.fixer_act._contributing_ok_evidence", boom_evidence)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert "contributing_ok-blocked" in result
+    assert _task_state(tmp_path, tid) != "done"
 
 
 def test_fixer_pr_gate_rejection_clears_head_for_new_push(

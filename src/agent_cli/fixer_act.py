@@ -121,6 +121,8 @@ def write_error_fix_spec(
         )
     else:
         rejection_section = ""
+    brief_text = brief or "(no brief provided)"
+    brief_fence = _fence_marker(brief_text)
     body = (
         f"# Context\n\n"
         f"- repo: `{repo}`\n"
@@ -130,7 +132,7 @@ def write_error_fix_spec(
         f"- environment: `{environment}`\n"
         f"- class: `{class_name}`\n\n"
         f"# Task\n\n"
-        f"{brief or '(no brief provided)'}\n\n"
+        f"{brief_fence}\n{brief_text}\n{brief_fence}\n\n"
         f"{rejection_section}"
         f"# Constraints\n\n"
         f"- Patch only what the brief requires.\n"
@@ -180,13 +182,15 @@ def template_pr_open_payload(
         f"Nur Entwurf; ein Mensch merged. "
         f"Brief: {brief_summary[:200] if brief_summary else 'siehe Task-Spec'}."
     )
+    brief_text = brief or "(none)"
+    brief_fence = _fence_marker(brief_text)
     details = (
         f"<details>\n"
         f"<summary>Details</summary>\n\n"
         f"- error_id: `{error_id}`\n"
         f"- fingerprint: `{fingerprint}`\n"
         f"- head: `{head}`\n"
-        f"- brief:\n\n```\n{brief or '(none)'}\n```\n\n"
+        f"- brief:\n\n{brief_fence}\n{brief_text}\n{brief_fence}\n\n"
         f"</details>\n"
     )
     body = f"EN:\n{en}\n\nDE:\n{de}\n\n{details}"
@@ -430,6 +434,27 @@ def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
         )
 
 
+def _finish_task_done(store: Store, tid: str, *, brief: str) -> str:
+    """Close readiness gates, then set task state done; report StoreError as blocked.
+
+    A StoreError from _ensure_done_readiness (e.g. a stale/missing PR-gate
+    evidence check inside _contributing_ok_evidence) must not propagate —
+    callers driving this in a scan loop would otherwise hit the identical
+    failure on every subsequent scan with no visible terminal signal.
+    """
+    from . import main as main_mod
+
+    try:
+        _ensure_done_readiness(store, tid, brief=brief)
+    except StoreError as exc:
+        return f"error-fix-work {tid} contributing_ok-blocked ({exc})"
+    try:
+        main_mod.cmd_task(["state", tid, "done"])
+    except SystemExit as exc:
+        return f"error-fix-work {tid} done-blocked ({exc})"
+    return f"error-fix-work {tid} done"
+
+
 def _open_error_fix_tasks(store: Store) -> list[dict[str, Any]]:
     origin = store.device_id()
     out: list[dict[str, Any]] = []
@@ -541,12 +566,7 @@ def _drive_one(
 
         ready = next_steps(str(snap["workflow"]), snap["checklist"], spine_only=True)
         if not ready:
-            _ensure_done_readiness(store, tid, brief=brief)
-            try:
-                main_mod.cmd_task(["state", tid, "done"])
-            except SystemExit as exc:
-                return f"error-fix-work {tid} done-blocked ({exc})"
-            return f"error-fix-work {tid} done"
+            return _finish_task_done(store, tid, brief=brief)
 
         step = ready[0]
 
@@ -583,7 +603,7 @@ def _drive_one(
                         _contributing_ok_evidence(snap),
                     ]
                 )
-            except SystemExit as exc:
+            except (StoreError, SystemExit) as exc:
                 return f"error-fix-work {tid} contributing_ok-blocked ({exc})"
             continue
 
@@ -623,12 +643,7 @@ def _drive_one(
             head = outcome.head_sha
 
         if outcome.kind == "idle":
-            _ensure_done_readiness(store, tid, brief=brief)
-            try:
-                main_mod.cmd_task(["state", tid, "done"])
-            except SystemExit as exc:
-                return f"error-fix-work {tid} done-blocked ({exc})"
-            return f"error-fix-work {tid} done"
+            return _finish_task_done(store, tid, brief=brief)
 
         if outcome.kind == "human_required":
             return f"error-fix-work {tid} human-required key={outcome.key}"

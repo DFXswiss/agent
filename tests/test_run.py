@@ -6,6 +6,12 @@ from pathlib import Path
 import pytest
 
 from agent_cli.lane import LaneResult
+from agent_cli.run_core import (
+    EmptyReviewDiffError,
+    ReviewDiffUnavailableError,
+    _collect_review_diff,
+    build_review_spec_file,
+)
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_cli import _last_agent_id, _last_task_id, run
@@ -535,6 +541,82 @@ def test_review_diff_probe_failure_leaves_task_untouched(
     assert _task_state(tmp_path, tid) != "failed"
     assert _checklist(tmp_path, tid).get("reviewer_approved") == before_reviewer
     assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
+def test_collect_review_diff_no_base_candidate_resolves_marks_probes_not_ok(
+    tmp_path: Path,
+) -> None:
+    """When every base candidate fails rev-parse, probes_ok must be False."""
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            return Completed(1, "", "")
+        # Supplemental HEAD / --cached probes succeed but empty.
+        return Completed(0, "", "")
+
+    _diff, _paths, probes_ok = _collect_review_diff(str(tmp_path), fake_exec)
+    assert probes_ok is False
+
+
+def test_build_review_spec_file_raises_unavailable_when_no_base_resolves(
+    tmp_path: Path,
+) -> None:
+    """No resolving base candidate → ReviewDiffUnavailableError, not EmptyReviewDiffError."""
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            return Completed(1, "", "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        with pytest.raises(ReviewDiffUnavailableError) as ei:
+            build_review_spec_file(
+                store,
+                "some-tid",
+                role="reviewer",
+                round_num=1,
+                implement_spec_file=None,
+                cwd=str(tmp_path),
+                exec_argv=fake_exec,
+            )
+        assert not isinstance(ei.value, EmptyReviewDiffError)
+    finally:
+        store.close()
+
+
+def test_build_review_spec_file_raises_unavailable_despite_dirty_worktree_diff(
+    tmp_path: Path,
+) -> None:
+    """Failed range-diff probe must raise even when supplemental dirty-worktree diff is non-empty."""
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(1, "", "")
+        if argv == ["git", "diff", "HEAD"]:
+            return Completed(0, "diff --git a/x b/x\n+dirty\n", "")
+        if argv == ["git", "diff", "--name-only", "HEAD"]:
+            return Completed(0, "x\n", "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        with pytest.raises(ReviewDiffUnavailableError):
+            build_review_spec_file(
+                store,
+                "some-tid",
+                role="reviewer",
+                round_num=1,
+                implement_spec_file=None,
+                cwd=str(tmp_path),
+                exec_argv=fake_exec,
+            )
+    finally:
+        store.close()
 
 
 def test_launch_oserror_does_not_leave_working_agent(
