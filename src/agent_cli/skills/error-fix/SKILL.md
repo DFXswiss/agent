@@ -43,7 +43,8 @@ rules live in DESIGN.md §§14–15, §19, and §21.
      investigation above, never a placeholder); `error.skip` also requires
      `reason`.
 5. On `error.fix`, `agent watch error-fix` find-or-creates a spine
-   `implement` task on this session, copies `error_id` and `repo` from that
+   `implement` task on this device (find-or-create; any session on the
+   same `_origin_device_id`), copies `error_id` and `repo` from that
    `error.seen` row into the task payload, and clones
    `https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`
    (never the origin checkout). Mandatory checks must `pass`, then
@@ -64,8 +65,8 @@ or a terminal implement task (`done` / `failed`) for that `error_id`.
 `pr.merged` knocks as today; it is not a second close signal. While open, the same fingerprint **enriches** that row. Do
 not open a second task or a second pull request. After close, the next
 match is a **new** `error.seen` (new id, first insert knocks). The adapter
-uses `error_id` / `fingerprint` plus the spine task with
-`payload.error_id`.
+uses `error_id` / `fingerprint` plus any spine task on this device whose
+`payload.error_id` matches (not only a task under the scanning session).
 
 ## Config
 
