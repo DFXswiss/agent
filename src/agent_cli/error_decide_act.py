@@ -16,7 +16,7 @@ DEFAULT_POLL_INTERVAL_S = 5.0
 def decide_session_id(error_id: str) -> str:
     """Deterministic per-error session id, so a retry after a timeout reuses the
     same session row instead of piling up a new one per attempt."""
-    return f"error-decide-{error_id[:8]}"
+    return f"error-decide-{error_id}"
 
 
 def _has_conclusion(store: Store, error_id: str) -> bool:
@@ -149,12 +149,12 @@ def scan_error_decide(
                     poll_interval_s=poll_interval_s,
                     sleep=sleep,
                 )
-            except (StoreError, SystemExit) as exc:
+            except (StoreError, SystemExit, OSError) as exc:
                 failure = exc
             finally:
                 try:
                     stop(sid)
-                except (StoreError, SystemExit) as stop_exc:
+                except (StoreError, SystemExit, OSError) as stop_exc:
                     if failure is None:
                         failure = stop_exc
             if failure is not None:
