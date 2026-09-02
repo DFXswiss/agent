@@ -212,7 +212,7 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def incident_closed(store: Store, session_id: str, error_id: str) -> bool:
+def incident_closed(store: Store, error_id: str) -> bool:
     origin = store.device_id()
     for row in store.rows("activity"):
         if row.get("_origin_device_id") != origin:
@@ -224,8 +224,6 @@ def incident_closed(store: Store, session_id: str, error_id: str) -> bool:
             return True
     for row in store.rows("task"):
         if row.get("_origin_device_id") != origin:
-            continue
-        if row.get("session_id") != session_id:
             continue
         inner = row.get("payload")
         if not isinstance(inner, dict) or inner.get("error_id") != error_id:
@@ -251,7 +249,7 @@ def _latest_seen(store: Store, session_id: str, fp: str) -> dict[str, Any] | Non
     if not matches:
         return None
     open_rows = [
-        row for row in matches if not incident_closed(store, session_id, str(row.get("id") or ""))
+        row for row in matches if not incident_closed(store, str(row.get("id") or ""))
     ]
 
     def rank(row: dict[str, Any]) -> tuple[str, str, str]:
@@ -481,7 +479,7 @@ def _apply_lines(
             except UnicodeEncodeError:
                 line_fp = None
         existing = _latest_seen(store, session_id, fp)
-        if existing is not None and not incident_closed(store, session_id, str(existing.get("id") or "")):
+        if existing is not None and not incident_closed(store, str(existing.get("id") or "")):
             inner = existing.get("payload")
             payload_obj = dict(inner) if isinstance(inner, dict) else {}
             count = payload_obj.get("count")

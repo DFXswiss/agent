@@ -11,6 +11,7 @@ from agent_cli.errors import (
     default_fetch,
     error_class,
     fingerprint,
+    incident_closed,
     is_incident_line,
     line_fingerprint,
     load_config,
@@ -474,6 +475,83 @@ def test_failed_task_opens_new_seen(tmp_path: Path) -> None:
     assert enriched2 == []
     assert len(created2) == 1
     assert created2[0] != eid
+
+
+def test_incident_closed_by_task_on_other_session_same_device(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "session",
+        "insert",
+        "other-session",
+        {
+            "id": "other-session",
+            "kind": "runner",
+            "status": "active",
+            "skills": ["error-fix"],
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "seen-1",
+        {
+            "id": "seen-1",
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {"fingerprint": "api|TimeoutError|abc|prod"},
+            "execution_status": "done",
+        },
+    )
+    assert incident_closed(store, "seen-1") is False
+    store.write(
+        "task",
+        "insert",
+        "task-other",
+        {
+            "id": "task-other",
+            "session_id": "other-session",
+            "workflow": "implement",
+            "state": "done",
+            "payload": {"error_id": "seen-1", "repo": "org/app"},
+        },
+    )
+    assert incident_closed(store, "seen-1") is True
+
+
+def test_incident_closed_ignores_other_device_task(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "seen-1",
+        {
+            "id": "seen-1",
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {"fingerprint": "api|TimeoutError|abc|prod"},
+            "execution_status": "done",
+        },
+    )
+    store.apply_remote(
+        {
+            "origin_device_id": "other-device",
+            "origin_seq": 1,
+            "table": "task",
+            "op": "insert",
+            "row_id": "foreign-task",
+            "payload": {
+                "id": "foreign-task",
+                "session_id": "foreign-session",
+                "workflow": "implement",
+                "state": "done",
+                "payload": {"error_id": "seen-1", "repo": "org/app"},
+            },
+            "occurred_at": "2026-08-23T16:00:00Z",
+        }
+    )
+    assert incident_closed(store, "seen-1") is False
 
 
 def test_default_fetch_uses_forward_cursor_and_netrc(monkeypatch: pytest.MonkeyPatch) -> None:
