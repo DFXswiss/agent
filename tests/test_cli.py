@@ -1282,6 +1282,57 @@ def test_watch_error_decide_fails_fast_after_max_retries(
     assert sum(1 for name, _ in calls if name == "input_key") == 8
 
 
+def test_watch_error_decide_fails_fast_when_pane_never_goes_idle(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id)
+    capsys.readouterr()
+
+    calls: list[tuple[str, object]] = []
+    mono_calls = {"n": 0}
+
+    def fake_input_text(self: object, sid: str, data: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_text", (sid, data)))
+
+    def fake_input_key(self: object, sid: str, key: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_key", (sid, key)))
+
+    def fake_deliver(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("deliver should not be called")
+
+    def fake_mono() -> float:
+        mono_calls["n"] += 1
+        if mono_calls["n"] == 1:
+            return 0.0
+        return 999999.0
+
+    monkeypatch.setattr("agent_cli.runtime.Runtime.available", lambda self: True)
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.exists", lambda self, sid, **kwargs: False
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.start", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.stop", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.capture", lambda self, sid: "")
+    monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
+    monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
+    monkeypatch.setattr("agent_cli.main.time.monotonic", fake_mono)
+
+    run(tmp_path, ["watch", "error-decide"])
+    out = capsys.readouterr().out
+    assert f"error.seen {error_id} error session=" in out
+    assert "never reached an idle prompt before the knock" in out
+    assert calls == []
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
