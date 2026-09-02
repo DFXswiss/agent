@@ -193,7 +193,7 @@ def template_pr_open_payload(
     }
 
 
-def _pr_open_row_exists(store: Store, *, head: str) -> bool:
+def _pr_open_row_exists(store: Store, *, head: str, repo: str) -> bool:
     """True when a successful pr.open already exists for this branch head.
 
     Only `done` skips the insert/resume path entirely. A `pending` row is
@@ -210,12 +210,16 @@ def _pr_open_row_exists(store: Store, *, head: str) -> bool:
         if row.get("execution_status") != "done":
             continue
         payload = row.get("payload")
-        if isinstance(payload, dict) and payload.get("head") == head:
+        if (
+            isinstance(payload, dict)
+            and payload.get("head") == head
+            and payload.get("repo") == repo
+        ):
             return True
     return False
 
 
-def _pr_open_number(store: Store, *, head: str) -> int | None:
+def _pr_open_number(store: Store, *, head: str, repo: str) -> int | None:
     """Return result.number from a done pr.open for head, or None if missing."""
     origin = store.device_id()
     for row in store.rows("activity"):
@@ -226,23 +230,27 @@ def _pr_open_number(store: Store, *, head: str) -> int | None:
         if row.get("execution_status") != "done":
             continue
         payload = row.get("payload")
-        if not isinstance(payload, dict) or payload.get("head") != head:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("head") != head
+            or payload.get("repo") != repo
+        ):
             continue
         result = row.get("result")
         if not isinstance(result, dict):
-            return None
+            continue
         number = result.get("number")
         if isinstance(number, bool):
-            return None
+            continue
         if isinstance(number, int) and number > 0:
             return number
         if isinstance(number, str) and number.isdigit() and int(number) > 0:
             return int(number)
-        return None
+        continue
     return None
 
 
-def _pr_open_pending_row_exists(store: Store, *, head: str) -> bool:
+def _pr_open_pending_row_exists(store: Store, *, head: str, repo: str) -> bool:
     """True when a mid-flight pr.open (execution_status=pending) exists for head."""
     origin = store.device_id()
     for row in store.rows("activity"):
@@ -253,7 +261,11 @@ def _pr_open_pending_row_exists(store: Store, *, head: str) -> bool:
         if row.get("execution_status") != "pending":
             continue
         payload = row.get("payload")
-        if isinstance(payload, dict) and payload.get("head") == head:
+        if (
+            isinstance(payload, dict)
+            and payload.get("head") == head
+            and payload.get("repo") == repo
+        ):
             return True
     return False
 
@@ -548,10 +560,10 @@ def _drive_one(
             error_id
             and repo
             and checklist.get("pushed") == "ja"
-            and not _pr_open_row_exists(store, head=pr_head)
+            and not _pr_open_row_exists(store, head=pr_head, repo=repo)
         ):
             try:
-                if _pr_open_pending_row_exists(store, head=pr_head):
+                if _pr_open_pending_row_exists(store, head=pr_head, repo=repo):
                     # Crash between insert and scan left a pending row — resume
                     # it rather than inserting a duplicate.
                     from .github_act import scan_github
@@ -582,7 +594,7 @@ def _drive_one(
                 # Persistent gh pr create failures are almost always external
                 # (auth/rate-limit/permissions). Leave the task untouched for the
                 # next scan rather than failing it; each cron/knock scan retries.
-                if not _pr_open_row_exists(store, head=pr_head):
+                if not _pr_open_row_exists(store, head=pr_head, repo=repo):
                     return f"error-fix-work {tid} pr.open-error (create failed)"
             except (StoreError, OSError, SystemExit) as exc:
                 return f"error-fix-work {tid} pr.open-error ({exc})"
@@ -595,9 +607,14 @@ def _drive_one(
         # since-crashed scan). Must not be nested inside the "does pr.open need
         # creating" guard above, since that guard is permanently False once the
         # row is done, which would otherwise permanently skip a missed backfill.
-        if error_id and repo and pr_head and _pr_open_row_exists(store, head=pr_head):
+        if (
+            error_id
+            and repo
+            and pr_head
+            and _pr_open_row_exists(store, head=pr_head, repo=repo)
+        ):
             try:
-                pr_number = _pr_open_number(store, head=pr_head)
+                pr_number = _pr_open_number(store, head=pr_head, repo=repo)
                 if pr_number is not None:
                     task = store.row("task", tid) or task
                     task_payload = (

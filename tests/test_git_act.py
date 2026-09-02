@@ -647,6 +647,22 @@ def test_push_protected_branch_develop() -> None:
     assert not any("push" in a for a in calls)
 
 
+def test_push_expected_branch_without_expected_repo_refused() -> None:
+    """expected_branch alone must not push — destination check is mandatory."""
+    calls: list[list[str]] = []
+
+    def boom(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        raise AssertionError(f"runner must not be called: {argv}")
+
+    with pytest.raises(
+        GitActError,
+        match="expected_branch set without expected_repo",
+    ):
+        push_branch(cwd=CWD, runner=boom, expected_branch="feat-x")
+    assert calls == []
+
+
 def test_push_expected_branch_mismatch() -> None:
     calls: list[list[str]] = []
 
@@ -658,7 +674,10 @@ def test_push_expected_branch_mismatch() -> None:
 
     with pytest.raises(GitActError, match="expects 'error-fix-aaaaaaaa'"):
         push_branch(
-            cwd=CWD, runner=runner, expected_branch="error-fix-aaaaaaaa"
+            cwd=CWD,
+            runner=runner,
+            expected_branch="error-fix-aaaaaaaa",
+            expected_repo="org/app",
         )
     assert not any("push" in a for a in calls)
 
@@ -702,13 +721,18 @@ def test_push_no_upstream_sets_upstream_with_origin() -> None:
             return Completed(1, "", "no upstream configured")
         if argv == ["git", "-C", CWD, "remote"]:
             return Completed(0, "origin\n", "")
+        url = _remote_push_url(argv, url="git@github.com:org/app.git")
+        if url is not None:
+            return url
         if argv == SET_UPSTREAM_PUSH:
             return Completed(0, "", "")
         if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
             return Completed(0, SHA + "\n", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    got = push_branch(cwd=CWD, runner=runner, expected_branch="feat-x")
+    got = push_branch(
+        cwd=CWD, runner=runner, expected_branch="feat-x", expected_repo="org/app"
+    )
     assert got == SHA
     assert SET_UPSTREAM_PUSH in calls
     for argv in calls:
@@ -729,7 +753,9 @@ def test_push_no_upstream_ambiguous_remotes_errors() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="ambiguous remotes"):
-        push_branch(cwd=CWD, runner=runner, expected_branch="feat-x")
+        push_branch(
+            cwd=CWD, runner=runner, expected_branch="feat-x", expected_repo="org/app"
+        )
 
 
 def test_push_no_upstream_without_expected_branch_fails_closed() -> None:
@@ -824,7 +850,9 @@ def test_push_upstream_tracks_wrong_expected_branch_refused() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="refusing to push"):
-        push_branch(cwd=CWD, runner=runner, expected_branch=branch)
+        push_branch(
+            cwd=CWD, runner=runner, expected_branch=branch, expected_repo="org/app"
+        )
     assert not any("push" in a for a in calls)
     assert not any("fetch" in a for a in calls)
 

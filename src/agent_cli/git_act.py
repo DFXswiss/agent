@@ -111,6 +111,11 @@ def push_branch(
     expected_repo: str | None = None,
 ) -> str:
     """Push the current branch if needed. Return HEAD sha (lowercase hex)."""
+    if expected_branch is not None and expected_repo is None:
+        raise GitActError(
+            "expected_branch set without expected_repo — refusing to push "
+            "without a destination check"
+        )
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "git failed"))

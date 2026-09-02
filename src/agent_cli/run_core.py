@@ -898,16 +898,21 @@ def execute_spine_step(
                 reason="task payload.error_id is set but error_fix_confirmed is False",
                 message="task payload.error_id is set but error_fix_confirmed is False",
             )
-        if error_id and _repo_ok(task.get("repo")) is None:
-            # Missing/malformed/stale task.repo would pass expected_repo=None
-            # and skip the push-destination allowlist check entirely while
-            # still pushing under the expected_branch-only identity check.
+        # Payload wins when both are valid but differ: _drive_one (which
+        # creates the PR) resolves repo the same way. A genuine
+        # two-valid-but-different-values divergence is not fail-closed here.
+        resolved_repo = _repo_ok(payload.get("repo") or task.get("repo"))
+        if error_id and resolved_repo is None:
+            # Missing/malformed/stale payload.repo and task.repo would pass
+            # expected_repo=None and skip the push-destination allowlist
+            # check entirely while still pushing under the
+            # expected_branch-only identity check.
             return RunOutcome(
                 kind="failed",
                 key=step.key,
                 step=step,
-                reason="task.repo could not be resolved for the push-destination check",
-                message="task.repo could not be resolved for the push-destination check",
+                reason="task repo could not be resolved for the push-destination check",
+                message="task repo could not be resolved for the push-destination check",
             )
         # error_id non-empty here implies is_error_fix_originated (gated above).
         expected_branch = f"error-fix-{error_id[:8]}" if error_id else None
@@ -916,7 +921,7 @@ def execute_spine_step(
                 cwd=run_cwd,
                 runner=lambda argv: exec_argv(argv, cwd=run_cwd),
                 expected_branch=expected_branch,
-                expected_repo=_repo_ok(task.get("repo")),
+                expected_repo=resolved_repo,
             )
         except GitActError as exc:
             return RunOutcome(

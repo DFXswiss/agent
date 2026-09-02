@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from agent_cli.fixer_act import (
     _error_fix_brief,
     _first_sentence,
     _open_error_fix_tasks,
+    _pr_open_number,
     _pr_open_row_exists,
     _runner_to_completed,
     drive_error_fix_tasks,
@@ -451,6 +453,14 @@ def test_write_error_fix_spec_outside_git_worktree(tmp_path: Path) -> None:
     )
 
     def real_runner(argv: list[str]) -> Completed:
+        # Destination check only: report a matching github URL while the
+        # actual push still targets the local bare remote.
+        if (
+            len(argv) >= 6
+            and argv[0] == "git"
+            and argv[3:6] == ["remote", "get-url", "--push"]
+        ):
+            return Completed(0, "git@github.com:org/app.git\n", "")
         proc = subprocess.run(argv, capture_output=True, text=True, check=False)
         return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
 
@@ -523,6 +533,7 @@ def test_write_error_fix_spec_outside_git_worktree(tmp_path: Path) -> None:
             cwd=str(worktree),
             runner=real_runner,
             expected_branch="feat-spec-leak",
+            expected_repo="org/app",
         )
         assert sha
     finally:
@@ -554,9 +565,13 @@ def test_pushed_passes_expected_branch_from_error_id(
 def test_pushed_fails_loudly_on_unresolvable_repo(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """error-fix tasks must fail closed when task.repo cannot be resolved
+    """error-fix tasks must fail closed when repo cannot be resolved
     for the push-destination check — expected_repo=None would silently skip
-    it while still pushing under the expected_branch-only identity check."""
+    it while still pushing under the expected_branch-only identity check.
+
+    Resolution is payload-first (matching _drive_one), so both fields must
+    be unresolvable for the guard to fire.
+    """
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
 
@@ -565,6 +580,8 @@ def test_pushed_fails_loudly_on_unresolvable_repo(
         task = store.row("task", tid)
         assert task is not None
         task["repo"] = "not-a-repo"
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        task["payload"] = {**payload, "repo": "also-not-a-repo"}
         store.write("task", "update", tid, task)
     finally:
         store.close()
@@ -578,10 +595,42 @@ def test_pushed_fails_loudly_on_unresolvable_repo(
     with pytest.raises(SystemExit) as exc:
         run(tmp_path, ["run", "--task", tid])
     assert (
-        "task.repo could not be resolved for the push-destination check"
+        "task repo could not be resolved for the push-destination check"
         in str(exc.value.code)
     )
     assert _checklist(tmp_path, tid)["pushed"] != "ja"
+
+
+def test_pushed_expected_repo_prefers_payload_over_task_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When task.repo and payload.repo both resolve but differ, payload wins
+    (same precedence as _drive_one, which creates the PR)."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["repo"] = "org/task-repo"
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        task["payload"] = {**payload, "repo": "org/payload-repo"}
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+    captured: dict[str, object] = {}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+        captured["expected_repo"] = expected_repo
+        return "abcdef1234567890abcdef1234567890abcdef12"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert captured.get("expected_repo") == "org/payload-repo"
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
 def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
@@ -631,7 +680,7 @@ def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
         )
         assert "whitespace-only" in result
         assert "failed" in result
-        assert not _pr_open_row_exists(store, head="error-fix- ")
+        assert not _pr_open_row_exists(store, head="error-fix- ", repo="org/app")
     finally:
         store.close()
 
@@ -1629,7 +1678,7 @@ def test_fixer_backfills_pr_number_when_pr_open_already_done(
                 },
             },
         )
-        assert _pr_open_row_exists(store, head=pr_head)
+        assert _pr_open_row_exists(store, head=pr_head, repo="org/app")
 
         _drive_one(
             store,
@@ -2083,7 +2132,7 @@ def test_pr_open_row_exists_excludes_error_status(
                 "execution_status": "error",
             },
         )
-        assert _pr_open_row_exists(store, head=head) is False
+        assert _pr_open_row_exists(store, head=head, repo="org/app") is False
     finally:
         store.close()
 
@@ -2113,7 +2162,127 @@ def test_pr_open_row_exists_excludes_pending_status(
                 "execution_status": "pending",
             },
         )
-        assert _pr_open_row_exists(store, head=head) is False
+        assert _pr_open_row_exists(store, head=head, repo="org/app") is False
+    finally:
+        store.close()
+
+
+def test_pr_open_helpers_scope_by_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same head across different repos must not collide for exists/number."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    head = f"error-fix-{ERROR_ID[:8]}"
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        session_id = task["session_id"]
+        id_app = str(uuid.uuid4())
+        id_other = str(uuid.uuid4())
+        store.write(
+            "activity",
+            "insert",
+            id_app,
+            {
+                "id": id_app,
+                "session_id": session_id,
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": "org/app",
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "done",
+                "result": {"number": 11},
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            id_other,
+            {
+                "id": id_other,
+                "session_id": session_id,
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": "org/other",
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "done",
+                "result": {"number": 22},
+            },
+        )
+        assert _pr_open_row_exists(store, head=head, repo="org/app") is True
+        assert _pr_open_row_exists(store, head=head, repo="org/other") is True
+        assert _pr_open_row_exists(store, head=head, repo="org/third") is False
+        assert _pr_open_number(store, head=head, repo="org/app") == 11
+        assert _pr_open_number(store, head=head, repo="org/other") == 22
+        assert _pr_open_number(store, head=head, repo="org/third") is None
+    finally:
+        store.close()
+
+
+def test_pr_open_number_skips_malformed_newer_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer done row with a malformed result must not block an older valid number."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    head = f"error-fix-{ERROR_ID[:8]}"
+    repo = "org/app"
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        session_id = task["session_id"]
+        older_id = str(uuid.uuid4())
+        newer_id = str(uuid.uuid4())
+        store.write(
+            "activity",
+            "insert",
+            older_id,
+            {
+                "id": older_id,
+                "session_id": session_id,
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": repo,
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "done",
+                "result": {"number": 42},
+            },
+        )
+        # utcnow() is second-precision; sleep so the malformed row sorts first.
+        time.sleep(1.1)
+        store.write(
+            "activity",
+            "insert",
+            newer_id,
+            {
+                "id": newer_id,
+                "session_id": session_id,
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": repo,
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "done",
+                "result": {"number": "not-a-number"},
+            },
+        )
+        assert _pr_open_number(store, head=head, repo=repo) == 42
     finally:
         store.close()
 
