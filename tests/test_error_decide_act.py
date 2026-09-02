@@ -487,6 +487,41 @@ def test_scan_error_decide_reports_stop_error_after_success(tmp_path: Path) -> N
     assert lines[0].startswith(f"error.seen {error_id} error session={sid}:")
 
 
+def test_scan_error_decide_reports_os_error_from_stop(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    error_id = "error-seen-nnnnnnnn"
+    _insert_seen(store, rid=error_id)
+    stopped: list[str] = []
+
+    def knock(sid: str, eid: str) -> None:
+        _insert_conclusion(store, rid="fix-1", error_id=eid, session_id=sid)
+
+    def stop(sid: str) -> None:
+        stopped.append(sid)
+        raise OSError("tmux kill-session failed")
+
+    lines = scan_error_decide(
+        store,
+        start=lambda _sid: None,
+        stop=stop,
+        knock=knock,
+        sleep=lambda _s: None,
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+    )
+    sid = decide_session_id(error_id)
+    assert stopped == [sid]
+    assert len(lines) == 1
+    assert "error" in lines[0]
+    assert "tmux kill-session failed" in lines[0]
+    assert "decided" not in lines[0]
+
+
+def test_decide_session_id_uses_the_full_error_id() -> None:
+    error_id = "error-seen-12345678-not-truncated"
+    assert decide_session_id(error_id) == f"error-decide-{error_id}"
+
+
 def test_ensure_decide_session_unions_missing_skills(tmp_path: Path) -> None:
     store = Store(tmp_path)
     error_id = "error-seen-hhhhhhhh"

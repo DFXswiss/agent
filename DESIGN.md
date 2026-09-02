@@ -682,7 +682,7 @@ The model never receives production credentials. Analysis that only reads the ex
 
 `agent watch error-decide` drains unconcluded `error.seen` rows on this device one at a time (oldest `payload.first_seen` first; `id` as tiebreaker). For each row it:
 
-1. Ensures a deterministic runner session `error-decide-<id8>` with skills `error-fix`, `spine`, `review-loop`, and `pr-review` (`status: active`).
+1. Ensures a deterministic runner session `error-decide-<error_id>` with skills `error-fix`, `spine`, `review-loop`, and `pr-review` (`status: active`).
 2. Starts that session’s tmux pane (grok), knocks `da ist Post id <uuid>` directly into it (not via `knock.deliver`, which would target the scanning session on the `error.seen` row). It retries the Enter keypress (up to a bounded number of attempts) until the session shows as busy, confirming the knock was actually accepted; if it never is, that row is recorded as failed and the dispatcher moves on to the next one.
 3. Polls until this device writes `error.fix` or `error.skip` for that `error_id`, or until timeout (default 30 minutes).
 4. Stops the pane (`runtime.control: stopped`) and leaves the session `active` — it does not `session close`, so `agent watch error-fix` can still create the implement task under that session without racing the “open tasks” guard.

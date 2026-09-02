@@ -137,7 +137,7 @@ def scan_error_decide(
             except (StoreError, SystemExit) as exc:
                 lines.append(f"error.seen {error_id} error session={sid}: {exc}")
                 continue
-            failure: StoreError | SystemExit | None = None
+            failure: StoreError | SystemExit | OSError | None = None
             decided = False
             try:
                 start(sid)
