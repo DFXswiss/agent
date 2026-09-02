@@ -116,7 +116,7 @@ def test_cmd_restore_dies_on_event_with_non_dict_payload(
         _run_restore(tmp_path, monkeypatch, body)
     store = open_store()
     try:
-        assert store.rows("task") == []
+        assert store.rows("activity") == []
     finally:
         store.close()
 
@@ -128,6 +128,22 @@ def test_cmd_restore_dies_on_event_with_unknown_op(tmp_path: Path, monkeypatch: 
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event has an unknown op"):
         _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
+def test_cmd_restore_dies_on_event_with_unknown_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_unknown_table."""
+    event = {**_valid_restore_event(), "table": "not_a_real_table"}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
 
 
 def test_cmd_restore_dies_on_snapshot_with_non_dict_payload(
@@ -138,6 +154,17 @@ def test_cmd_restore_dies_on_snapshot_with_non_dict_payload(
     row = {**_valid_restore_row(), "payload": ["not", "an", "object"]}
     body = {"own_events": [], "inbox": [row]}
     with pytest.raises(SystemExit, match="restore snapshot payload is not an object"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_dies_on_snapshot_with_unknown_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_cmd_restore_dies_on_event_with_unknown_table."""
+    row = {**_valid_restore_row(), "table": "not_a_real_table"}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot has an unknown table"):
         _run_restore(tmp_path, monkeypatch, body)
 
 

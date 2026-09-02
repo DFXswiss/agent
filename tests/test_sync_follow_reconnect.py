@@ -378,6 +378,49 @@ def test_generic_store_error_from_sync_is_not_retried(
     assert calls == [1], "a genuine data-integrity StoreError must not be retried"
 
 
+def test_subscription_row_with_non_dict_payload_is_skipped_not_committed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: incoming websocket subscription rows went straight to
+    store.apply_replica_row(row) guarded only by isinstance(row, dict) and
+    row.get("table") - never through _check_pull_row. A non-dict payload
+    doesn't raise anywhere in apply_replica_row/_upsert_row (dumps([]) is
+    valid JSON), so it used to get durably committed and only fail later, on
+    every future store.rows()/row() call for that whole table - the same bug
+    class this PR closed for _sync_once/cmd_restore, reachable a third way
+    through the live subscription push path."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        row = {
+            "table": "session",
+            "origin_device_id": "other",
+            "row_id": "s1",
+            "payload": ["not", "an", "object"],
+            "updated_at": "2026-08-13T12:00:00Z",
+        }
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter([json.dumps({"type": "subscription", "rows": [row]})])
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(HubError, match="websocket closed"):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+        assert store.rows("session") == []
+    finally:
+        store.close()
+
+
 def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -402,9 +445,14 @@ def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
                 pass
 
             def __iter__(self):
-                return iter(
-                    [json.dumps({"type": "subscription", "rows": [{"table": "session", "id": "s1"}]})]
-                )
+                row = {
+                    "table": "session",
+                    "origin_device_id": "other",
+                    "row_id": "s1",
+                    "payload": {"id": "s1"},
+                    "updated_at": "2026-08-13T12:00:00Z",
+                }
+                return iter([json.dumps({"type": "subscription", "rows": [row]})])
 
             def close(self) -> None:
                 pass

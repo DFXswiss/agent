@@ -46,7 +46,7 @@ from .runtime import (
     tmux_name,
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
-from .store import Store, StoreConnectionError, StoreError, utcnow
+from .store import OWNED_TABLES, Store, StoreConnectionError, StoreError, utcnow
 from .usage import AuthStale, scan_usage, usage_poll_due
 from .watch import (
     assigned_session_id,
@@ -1464,7 +1464,9 @@ def _run_sync_ws_session(
                 rows = message.get("rows")
                 if isinstance(rows, list):
                     for row in rows:
-                        if not isinstance(row, dict) or not row.get("table"):
+                        try:
+                            row = _check_pull_row(row)
+                        except _PullShapeError:
                             continue
                         try:
                             store.apply_replica_row(row)
@@ -1524,6 +1526,7 @@ def cmd_restore(_: list[str]) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 die(f"restore {exc}")
+        for row in snapshots:
             try:
                 store.apply_replica_row(row, wake=False)
             except Exception as exc:
@@ -1773,6 +1776,8 @@ def _coerce_pull_event(event: object) -> dict[str, Any]:
     of the raw event is left untouched."""
     if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
         raise _PullShapeError("event is missing required fields")
+    if event["table"] not in OWNED_TABLES:
+        raise _PullShapeError("event has an unknown table")
     if not isinstance(event["payload"], dict):
         raise _PullShapeError("event payload is not an object")
     if event["op"] not in ("insert", "update", "delete"):
@@ -1797,6 +1802,8 @@ def _check_pull_row(row: object) -> dict[str, Any]:
     that whole table."""
     if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
         raise _PullShapeError("snapshot is missing required fields")
+    if row["table"] not in OWNED_TABLES:
+        raise _PullShapeError("snapshot has an unknown table")
     if not isinstance(row["payload"], dict):
         raise _PullShapeError("snapshot payload is not an object")
     return row

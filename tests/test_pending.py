@@ -333,7 +333,26 @@ def test_sync_once_raises_hub_error_on_event_with_unknown_op(
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
     with pytest.raises(HubError, match="pull event has an unknown op"):
+        _sync_once(store)
+    assert store.origin_cursor("other") == 0
+    assert store.rows("activity") == []
+
+
+def test_sync_once_raises_hub_error_on_event_with_unknown_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: sibling of the unknown-op test above, for table.
+    Store._write_in_txn rejects any table outside OWNED_TABLES for a local
+    write; the hub-pull path must reject it too, instead of durably
+    committing an orphaned row under a table name no application code ever
+    reads back."""
+    event = {**_valid_pull_event(), "table": "not_a_real_table"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event has an unknown table"):
         _sync_once(_paired_store(tmp_path))
 
 
@@ -503,6 +522,19 @@ def test_sync_once_raises_hub_error_on_snapshot_missing_one_required_field(
     hub.pull_body = {"events": [], "inbox": [row]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull snapshot is missing required fields"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_raises_hub_error_on_snapshot_with_unknown_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_unknown_table."""
+    row = {**_valid_pull_row(), "table": "not_a_real_table"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot has an unknown table"):
         _sync_once(_paired_store(tmp_path))
 
 
