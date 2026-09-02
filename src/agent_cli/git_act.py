@@ -14,6 +14,14 @@ PROTECTED = frozenset({"develop", "main", "master"})
 
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
+# Deny-by-default allowlist for attacker-controlled remote push URLs. Capture
+# groups 1/2 are the sole source of org/repo — no further string surgery.
+_REAL_REMOTE_URL_RES = (
+    re.compile(r"^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(\.git)?/?\Z"),
+    re.compile(r"^[A-Za-z0-9._-]+@github\.com:([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(\.git)?\Z"),
+    re.compile(r"^ssh://[A-Za-z0-9._-]+@github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(\.git)?\Z"),
+)
+
 
 class GitActError(Exception):
     """Fail-loud; cmd_run maps this to die()."""
@@ -48,38 +56,31 @@ def _resolve_remote(cwd: str, runner: Runner) -> str:
     raise GitActError("ambiguous remotes (no origin)")
 
 
-def _normalize_repo_identity(raw: str) -> str | None:
+def _match_real_remote_url(raw: str) -> str | None:
+    """Return 'org/repo' only for the three allowlisted github.com URL forms."""
+    for pattern in _REAL_REMOTE_URL_RES:
+        m = pattern.fullmatch(raw)
+        if m is not None:
+            return f"{m.group(1)}/{m.group(2)}"
+    return None
+
+
+def _normalize_repo_identity(raw: str, *, require_host: bool = False) -> str | None:
     """Normalize a git remote URL or org/repo string down to 'org/repo'.
 
-    URL and SCP-style forms must resolve to host github.com (case-insensitive) —
-    the fixer's own clone step always targets https://github.com/{repo}.git, so an
-    unattended push must never be accepted merely because the trailing org/repo path
-    matches while the host points somewhere else. The bare 'org/repo' string form
-    (used to normalize expected_repo itself) has no host to check.
+    When require_host is True (real remote push URLs — attacker-controllable),
+    only three exact github.com forms are accepted via regex allowlist; every
+    other scheme, host, or shape is rejected. When require_host is False
+    (trusted expected_repo config), bare 'org/repo' is normalized without a
+    host check.
     """
     s = raw.strip()
     if not s:
         return None
+    if require_host:
+        return _match_real_remote_url(s)
     if s.endswith(".git"):
         s = s[: -len(".git")]
-    if "://" in s:
-        after_scheme = s.split("://", 1)[1]
-        parts = after_scheme.split("/")
-        if len(parts) < 3 or not parts[1] or not parts[2]:
-            return None
-        host = parts[0].rsplit("@", 1)[-1].split(":", 1)[0]
-        if host.lower() != "github.com":
-            return None
-        return f"{parts[1]}/{parts[2]}"
-    if "@" in s and ":" in s.rsplit("@", 1)[-1]:
-        host = s.rsplit("@", 1)[-1].split(":", 1)[0]
-        if host.lower() != "github.com":
-            return None
-        path = s.rsplit(":", 1)[-1]
-        parts = path.split("/")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            return None
-        return f"{parts[0]}/{parts[1]}"
     parts = s.split("/")
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
@@ -94,7 +95,7 @@ def _ensure_remote_matches_repo(
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "git remote get-url failed"))
     url = completed.stdout.strip()
-    got = _normalize_repo_identity(url)
+    got = _normalize_repo_identity(url, require_host=True)
     want = _normalize_repo_identity(expected_repo)
     if got is None or want is None or got != want:
         raise GitActError(

