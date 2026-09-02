@@ -186,11 +186,18 @@ def test_cmd_restore_applies_events_and_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Happy-path coverage: cmd_restore had none before this change. Replays
-    one own event and one inbox snapshot row."""
+    one own event (own_events replays this device's own history, so its
+    origin_device_id must genuinely be this device's own id, not a foreign
+    one - foreign data only ever arrives via inbox/pings) and one inbox
+    snapshot row (from another device, correctly foreign)."""
+    _init_store(tmp_path)
+    store = open_store()
+    device_id = store.device_id()
+    store.close()
     body = {
         "own_events": [
             {
-                "origin_device_id": "other",
+                "origin_device_id": device_id,
                 "origin_seq": 1,
                 "table": "task",
                 "op": "insert",

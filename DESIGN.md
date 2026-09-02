@@ -593,7 +593,7 @@ The script:
 1. Authenticates with credentials that never enter the store or `evidence`.
 2. Pulls new lines since the last cursor (persisted next to the config).
 3. Filters to incident lines only: HTTP access-log lines (`METHOD path status`) are dropped; lines with a logger level token `ERROR` / `FATAL` / `PANIC` / `CRITICAL` are kept; lines with an `*Error` / `*Exception` class are kept; other lines (including ones that merely mention the word "error") are dropped. Optional config strings `line_must_match` / `line_must_not_match` further filter (non-empty regexes; invalid values are rejected at load). Filtered lines advance the cursor but do not insert `error.seen`.
-4. Redacts secrets and obvious personal data **before** any row is written.
+4. Redacts secrets and obvious personal data **before** any row is written. Separately from the `$AGENT_HOME`-configured redaction, an OTel `trace_id`/`span_id`/`traceparent` value (logfmt, colon, JSON, or quoted-value form) is always stripped before hashing — those are per-occurrence random ids, not secrets, but leaving them in would make every occurrence of the same recurring error hash to a different stack signature and never dedupe.
 5. Computes a fingerprint: service + error class + normalized stack signature + environment.
 6. Inserts `error.seen` or **enriches** an existing **open** row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt, optional `line_fingerprint`). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks. After skip or a terminal implement task, the next match is a new `error.seen` (new id, knocks).
 7. Payload holds a **sanitized** excerpt plus an optional pointer to raw evidence on this disk. It does not hold the full log dump.

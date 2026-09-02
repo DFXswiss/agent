@@ -206,6 +206,16 @@ def test_redact_and_fingerprint() -> None:
     assert span_id not in otel_quoted_value
     assert 'trace_id="[redacted]"' in otel_quoted_value
     assert 'span_id="[redacted]"' in otel_quoted_value
+    # Docker json-file log driver wraps an application's JSON log line inside its
+    # own "log" field, escaping the inner quotes - a very plausible real shape
+    # for a containerized service's logs, not a hypothetical one.
+    otel_escaped_json = redact(
+        '{"log":"...{\\"trace_id\\":\\"' + trace_id + '\\",\\"span_id\\":\\"' + span_id + '\\"}..."}'
+    )
+    assert trace_id not in otel_escaped_json
+    assert span_id not in otel_escaped_json
+    assert '\\"trace_id\\":\\"[redacted]\\"' in otel_escaped_json
+    assert '\\"span_id\\":\\"[redacted]\\"' in otel_escaped_json
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
