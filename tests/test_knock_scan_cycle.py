@@ -29,7 +29,7 @@ def _stub_scans(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda store, run_argv: [])
 
 
-def test_knock_scan_cycle_pushes_when_paired(
+def test_knock_scan_cycle_syncs_when_paired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[int] = []

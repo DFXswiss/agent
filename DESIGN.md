@@ -40,7 +40,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
-| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls, plus a hub push of new local activity each cycle once paired) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
+| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls, plus a hub sync — push then pull — each cycle once paired) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
@@ -469,7 +469,7 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, a per-cycle hub sync once paired, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
 
 Later product work (not required to operate v1 after merge):
 
