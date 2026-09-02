@@ -1152,6 +1152,7 @@ def test_watch_error_decide_uses_runtime_input_not_deliver(
     monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
     monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
     monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.capture", lambda self, sid: "❯")
     monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
     monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
 
@@ -1223,6 +1224,7 @@ def test_watch_error_decide_retries_enter_until_busy(
     monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
     monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
     monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.capture", lambda self, sid: "❯")
     monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
     monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
 
@@ -1269,6 +1271,7 @@ def test_watch_error_decide_fails_fast_after_max_retries(
     monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
     monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
     monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.capture", lambda self, sid: "❯")
     monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
     monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
 
