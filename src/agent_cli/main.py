@@ -1523,10 +1523,17 @@ def cmd_restore(_: list[str]) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 die(f"restore {exc}")
-        # Every event and snapshot is validated above before either is
-        # applied here - a malformed snapshot must not be discovered only
+        # Every event and snapshot's SHAPE is validated above before either
+        # is applied here - a malformed snapshot must not be discovered only
         # after well-formed events ahead of it in the response are already
-        # durably committed and their origin cursor advanced.
+        # durably committed and their origin cursor advanced. This does not
+        # cover semantic conflicts (an origin_seq gap, a foreign row-
+        # ownership conflict): those can only be checked against live store
+        # state at apply time, inside each item's own transaction, so a
+        # batch that's shape-valid throughout can still partially commit
+        # before a later semantic conflict is discovered. Closing that would
+        # need one transaction spanning the whole apply loop, a bigger
+        # change than this fix - tracked separately.
         for event in coerced_events:
             try:
                 store.apply_remote(event, wake=False)
@@ -1895,10 +1902,17 @@ def _sync_once(store: Store) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 raise HubError(f"pull {exc}") from exc
-        # Every event and snapshot is validated above before either is
-        # applied here - a malformed snapshot must not be discovered only
+        # Every event and snapshot's SHAPE is validated above before either
+        # is applied here - a malformed snapshot must not be discovered only
         # after well-formed events ahead of it in the response are already
-        # durably committed and their origin cursor advanced.
+        # durably committed and their origin cursor advanced. This does not
+        # cover semantic conflicts (an origin_seq gap, a foreign row-
+        # ownership conflict): those can only be checked against live store
+        # state at apply time, inside each item's own transaction, so a
+        # batch that's shape-valid throughout can still partially commit
+        # before a later semantic conflict is discovered. Closing that would
+        # need one transaction spanning the whole apply loop, a bigger
+        # change than this fix - tracked separately.
         for event in coerced_events:
             # Field presence and origin_seq are validated above, but not the
             # shape of nested values (e.g. payload["type"]) - apply_remote/
