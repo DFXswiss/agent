@@ -1505,7 +1505,7 @@ def cmd_restore(_: list[str]) -> None:
             die("restore response missing own_events")
         for event in events:
             try:
-                event = _coerce_pull_event(event)
+                event = _coerce_pull_event(event, store.device_id())
             except _PullShapeError as exc:
                 die(f"restore {exc}")
             try:
@@ -1763,7 +1763,7 @@ class _PullShapeError(ValueError):
     module."""
 
 
-def _coerce_pull_event(event: object) -> dict[str, Any]:
+def _coerce_pull_event(event: object, own_device_id: str) -> dict[str, Any]:
     """Validate a pulled/restored event has every field _insert_event_idempotent
     indexes, and that table/op are shaped the way Store._write_in_txn already
     requires for this device's own local writes (op/table checked there; the
@@ -1775,10 +1775,18 @@ def _coerce_pull_event(event: object) -> dict[str, Any]:
     data, not to this codebase's own trusted call sites. Normalize
     origin_seq to an int (rejecting bool, a fractional float, and anything
     int() can't convert, including an out-of-range float that would
-    otherwise raise OverflowError). Returns a new dict; the caller's own copy
-    of the raw event is left untouched."""
+    otherwise raise OverflowError). Also validates origin_device_id equals
+    own_device_id: DESIGN.md's sync contract is "own events, gapless" -
+    foreign-origin data arrives as row snapshots, never as an event
+    (apply_replica_row already enforces this the other way, rejecting a row
+    that isn't foreign-owned) - so a pulled/restored event claiming a
+    foreign origin_device_id is a malformed hub response, not a normal case
+    apply_remote/mark_origin should accept. Returns a new dict; the caller's
+    own copy of the raw event is left untouched."""
     if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
         raise _PullShapeError("event is missing required fields")
+    if event["origin_device_id"] != own_device_id:
+        raise _PullShapeError("event origin_device_id is not this device's own")
     if not isinstance(event["table"], str) or event["table"] not in OWNED_TABLES:
         raise _PullShapeError("event has an unknown table")
     if not isinstance(event["payload"], dict):
@@ -1802,13 +1810,20 @@ def _check_pull_row(row: object) -> dict[str, Any]:
     apply_replica_row indexes directly, and that payload is an object - same
     reasoning as _coerce_pull_event: an unvalidated non-object payload would
     otherwise be stored as-is and only fail later, on every future read of
-    that whole table."""
+    that whole table. updated_at additionally must be a non-empty string:
+    it's stored as-is on first insert (the row_data upsert only compares
+    updated_at against an existing row on conflict), so an empty value isn't
+    rejected until some later write to that same row fails its
+    ::timestamptz cast - by which point the row is already stuck with a
+    value no legitimate update can pass the "newer than" check against."""
     if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
         raise _PullShapeError("snapshot is missing required fields")
     if not isinstance(row["table"], str) or row["table"] not in OWNED_TABLES:
         raise _PullShapeError("snapshot has an unknown table")
     if not isinstance(row["payload"], dict):
         raise _PullShapeError("snapshot payload is not an object")
+    if not isinstance(row["updated_at"], str) or not row["updated_at"].strip():
+        raise _PullShapeError("snapshot updated_at is not a valid timestamp")
     return row
 
 
@@ -1831,7 +1846,7 @@ def _sync_once(store: Store) -> None:
             raise HubError("pull response missing events")
         for event in events:
             try:
-                event = _coerce_pull_event(event)
+                event = _coerce_pull_event(event, store.device_id())
             except _PullShapeError as exc:
                 raise HubError(f"pull {exc}") from exc
             # Field presence and origin_seq are validated above, but not the

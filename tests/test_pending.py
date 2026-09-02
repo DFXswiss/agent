@@ -267,9 +267,9 @@ def test_sync_once_raises_hub_error_on_non_dict_pull_response(tmp_path: Path, mo
         _sync_once(_paired_store(tmp_path))
 
 
-def _valid_pull_event() -> dict[str, Any]:
+def _valid_pull_event(device_id: str) -> dict[str, Any]:
     return {
-        "origin_device_id": "other",
+        "origin_device_id": device_id,
         "origin_seq": 1,
         "table": "activity",
         "op": "insert",
@@ -291,13 +291,33 @@ def test_sync_once_raises_hub_error_on_event_missing_one_required_field(
     inside store.apply_remote instead of a catchable HubError raised before that
     call. Parametrized per field so a future accidental narrowing of
     _PULL_EVENT_FIELDS to any one of them is still caught."""
-    event = _valid_pull_event()
+    store = _paired_store(tmp_path)
+    event = _valid_pull_event(store.device_id())
     del event[field]
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull event is missing required fields"):
-        _sync_once(_paired_store(tmp_path))
+        _sync_once(store)
+
+
+def test_sync_once_raises_hub_error_on_event_with_foreign_origin_device_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: DESIGN.md's sync contract is "own events, gapless" -
+    foreign-origin data arrives as row snapshots, never as an event. An event
+    whose origin_device_id doesn't match this device's own used to pass every
+    check and reach apply_remote/mark_origin unchanged, letting a malformed
+    hub response poison this device's own ledger under a foreign device's
+    identity."""
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "origin_device_id": "other"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="event origin_device_id is not this device's own"):
+        _sync_once(store)
+    assert store.rows("activity") == []
 
 
 def test_sync_once_raises_hub_error_on_event_with_non_dict_payload(
@@ -312,14 +332,14 @@ def test_sync_once_raises_hub_error_on_event_with_non_dict_payload(
     shape either for local writes, but that's this codebase's own trusted
     code constructing payloads, not externally-supplied hub data - the risk
     this test guards against is specific to the pull path."""
-    event = {**_valid_pull_event(), "payload": ["not", "an", "object"]}
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "payload": ["not", "an", "object"]}
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
-    store = _paired_store(tmp_path)
     with pytest.raises(HubError, match="pull event payload is not an object"):
         _sync_once(store)
-    assert store.origin_cursor("other") == 0
+    assert store.origin_cursor(store.device_id()) == 0
     assert store.rows("activity") == []
 
 
@@ -330,14 +350,14 @@ def test_sync_once_raises_hub_error_on_event_with_unknown_op(
     Store._write_in_txn rejects any op outside insert/update/delete for a
     local write; the hub-pull path must reject it too, not silently accept
     and materialize a row under an op nothing else in the codebase expects."""
-    event = {**_valid_pull_event(), "op": "bogus"}
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "op": "bogus"}
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
-    store = _paired_store(tmp_path)
     with pytest.raises(HubError, match="pull event has an unknown op"):
         _sync_once(store)
-    assert store.origin_cursor("other") == 0
+    assert store.origin_cursor(store.device_id()) == 0
     assert store.rows("activity") == []
 
 
@@ -349,12 +369,13 @@ def test_sync_once_raises_hub_error_on_event_with_unknown_table(
     write; the hub-pull path must reject it too, instead of durably
     committing an orphaned row under a table name no application code ever
     reads back."""
-    event = {**_valid_pull_event(), "table": "not_a_real_table"}
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "table": "not_a_real_table"}
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull event has an unknown table"):
-        _sync_once(_paired_store(tmp_path))
+        _sync_once(store)
 
 
 def test_sync_once_raises_hub_error_on_event_with_unhashable_table(
@@ -365,12 +386,13 @@ def test_sync_once_raises_hub_error_on_event_with_unhashable_table(
     payload["type"] elsewhere in this PR (isinstance(typ, str) guards in
     store.py). A JSON-decoded list/dict for table used to raise a raw
     TypeError instead of a catchable HubError."""
-    event = {**_valid_pull_event(), "table": ["activity"]}
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "table": ["activity"]}
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull event has an unknown table"):
-        _sync_once(_paired_store(tmp_path))
+        _sync_once(store)
 
 
 @pytest.mark.parametrize(
@@ -388,23 +410,12 @@ def test_sync_once_raises_hub_error_on_non_numeric_origin_seq(
     """Regression test: int(event["origin_seq"]) used to run unguarded (raising a
     raw ValueError on garbage, OverflowError on an out-of-range float) and also
     silently accepted a bool or a fractional float as a valid sequence number."""
+    store = _paired_store(tmp_path)
     hub = FakeHub()
-    hub.pull_body = {
-        "events": [
-            {
-                "origin_device_id": "other",
-                "origin_seq": bad_seq,
-                "table": "activity",
-                "op": "insert",
-                "row_id": "x",
-                "payload": {},
-                "occurred_at": "2026-08-13T12:00:00Z",
-            }
-        ]
-    }
+    hub.pull_body = {"events": [{**_valid_pull_event(store.device_id()), "origin_seq": bad_seq}]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="non-numeric origin_seq"):
-        _sync_once(_paired_store(tmp_path))
+        _sync_once(store)
 
 
 def test_sync_once_accepts_an_activity_payload_whose_type_is_not_a_wake_type_shape(
@@ -419,24 +430,13 @@ def test_sync_once_accepts_an_activity_payload_whose_type_is_not_a_wake_type_sha
     so the hub keeps re-serving the same event forever). _maybe_wake now treats
     a non-string type as simply "not a wake type" and lets the event apply
     normally instead of failing the whole transaction."""
-    hub = FakeHub()
-    hub.pull_body = {
-        "events": [
-            {
-                "origin_device_id": "other",
-                "origin_seq": 1,
-                "table": "activity",
-                "op": "insert",
-                "row_id": "x",
-                "payload": {"type": ["not", "hashable"]},
-                "occurred_at": "2026-08-13T12:00:00Z",
-            }
-        ]
-    }
-    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "payload": {"type": ["not", "hashable"]}}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     _sync_once(store)
-    assert store.origin_cursor("other") == 1
+    assert store.origin_cursor(store.device_id()) == 1
     row = store.row("activity", "x")
     assert row is not None
 
@@ -452,23 +452,13 @@ def test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shap
     unanticipated") still reaches the broad except-Exception net around
     apply_remote/mark_origin and becomes a catchable HubError instead of an
     uncaught crash."""
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "payload": {"type": "message", "body": {1, 2, 3}}}
     hub = FakeHub()
-    hub.pull_body = {
-        "events": [
-            {
-                "origin_device_id": "other",
-                "origin_seq": 1,
-                "table": "activity",
-                "op": "insert",
-                "row_id": "x",
-                "payload": {"type": "message", "body": {1, 2, 3}},
-                "occurred_at": "2026-08-13T12:00:00Z",
-            }
-        ]
-    }
+    hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull event could not be applied"):
-        _sync_once(_paired_store(tmp_path))
+        _sync_once(store)
 
 
 def test_sync_once_accepts_a_numeric_string_origin_seq(
@@ -480,24 +470,19 @@ def test_sync_once_accepts_a_numeric_string_origin_seq(
     `event["origin_seq"] != last_seq + 1` is a plain Python != - "1" != 1 is
     always True - so a genuinely valid next sequence number raised a false
     "origin_seq gap" StoreError."""
-    hub = FakeHub()
-    hub.pull_body = {
-        "events": [
-            {
-                "origin_device_id": "other",
-                "origin_seq": "1",
-                "table": "task",
-                "op": "insert",
-                "row_id": "t1",
-                "payload": {"id": "t1"},
-                "occurred_at": "2026-08-13T12:00:00Z",
-            }
-        ]
-    }
-    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     store = _paired_store(tmp_path)
+    event = {
+        **_valid_pull_event(store.device_id()),
+        "origin_seq": "1",
+        "table": "task",
+        "row_id": "t1",
+        "payload": {"id": "t1"},
+    }
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     _sync_once(store)
-    assert store.origin_cursor("other") == 1
+    assert store.origin_cursor(store.device_id()) == 1
     row = store.row("task", "t1")
     assert row is not None
 
@@ -566,6 +551,43 @@ def test_sync_once_raises_hub_error_on_snapshot_with_unhashable_table(
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull snapshot has an unknown table"):
         _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_raises_hub_error_on_snapshot_with_empty_updated_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: updated_at was presence-checked but not validated as a
+    genuine timestamp. An empty string used to pass validation, get stored
+    as-is on first insert (the row_data upsert only compares updated_at
+    against an existing row on conflict, not on a fresh insert), and only
+    fail later - on the next legitimate update to that same row, which would
+    raise a raw ::timestamptz cast error trying to compare against it."""
+    row = {**_valid_pull_row(), "updated_at": ""}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot updated_at is not a valid timestamp"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for the validate-all-then-apply-all split itself: the
+    row-side sibling of the equivalent tests/test_restore.py test. An earlier
+    version of this PR validated and applied snapshot rows in the same loop,
+    so a batch with one valid row before an invalid one would durably commit
+    the valid row before raising HubError on the invalid one - a partial
+    apply of an atomically-intended batch."""
+    valid_row = {**_valid_pull_row(), "row_id": "valid-1"}
+    invalid_row = {**_valid_pull_row(), "row_id": "invalid-1", "table": "not_a_real_table"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [valid_row, invalid_row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
+    with pytest.raises(HubError, match="pull snapshot has an unknown table"):
+        _sync_once(store)
+    assert store.rows("activity") == []
 
 
 def test_sync_once_accepts_a_snapshot_payload_whose_type_is_not_a_wake_type_shape(

@@ -45,9 +45,9 @@ def test_cmd_restore_dies_on_non_dict_body(tmp_path: Path, monkeypatch: pytest.M
         _run_restore(tmp_path, monkeypatch, None)
 
 
-def _valid_restore_event() -> dict[str, Any]:
+def _valid_restore_event(device_id: str) -> dict[str, Any]:
     return {
-        "origin_device_id": "other",
+        "origin_device_id": device_id,
         "origin_seq": 1,
         "table": "activity",
         "op": "insert",
@@ -55,6 +55,15 @@ def _valid_restore_event() -> dict[str, Any]:
         "payload": {},
         "occurred_at": "2026-08-13T12:00:00Z",
     }
+
+
+def _own_device_id(tmp_path: Path) -> str:
+    _init_store(tmp_path)
+    store = open_store()
+    try:
+        return store.device_id()
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize(
@@ -70,11 +79,31 @@ def test_cmd_restore_dies_on_event_missing_one_required_field(
     the equivalent tests/test_pending.py _sync_once tests) so a future
     accidental narrowing of _PULL_EVENT_FIELDS to any one of them is still
     caught, not just the "several fields missing at once" case."""
-    event = _valid_restore_event()
+    event = _valid_restore_event(_own_device_id(tmp_path))
     del event[field]
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event is missing required fields"):
         _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_dies_on_event_with_foreign_origin_device_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: own_events replays this device's own history
+    (DESIGN.md: "own events, gapless" - foreign data only ever arrives as row
+    snapshots). An event whose origin_device_id doesn't match this device's
+    own used to pass every check and reach apply_remote/mark_origin
+    unchanged, letting a malformed restore response poison this device's own
+    ledger under a foreign device's identity."""
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "origin_device_id": "other"}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event origin_device_id is not this device's own"):
+        _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.rows("activity") == []
+    finally:
+        store.close()
 
 
 def _valid_restore_row() -> dict[str, Any]:
@@ -110,7 +139,7 @@ def test_cmd_restore_dies_on_event_with_non_dict_payload(
     presence was checked but not payload's type - a non-dict payload used to
     pass validation, get committed by apply_remote, and only fail later on
     every future read of that whole table."""
-    event = {**_valid_restore_event(), "payload": ["not", "an", "object"]}
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "payload": ["not", "an", "object"]}
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event payload is not an object"):
         _run_restore(tmp_path, monkeypatch, body)
@@ -124,7 +153,7 @@ def test_cmd_restore_dies_on_event_with_non_dict_payload(
 def test_cmd_restore_dies_on_event_with_unknown_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test: the restore-side sibling of
     test_sync_once_raises_hub_error_on_event_with_unknown_op."""
-    event = {**_valid_restore_event(), "op": "bogus"}
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "op": "bogus"}
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event has an unknown op"):
         _run_restore(tmp_path, monkeypatch, body)
@@ -140,7 +169,7 @@ def test_cmd_restore_dies_on_event_with_unknown_table(
 ) -> None:
     """Regression test: the restore-side sibling of
     test_sync_once_raises_hub_error_on_event_with_unknown_table."""
-    event = {**_valid_restore_event(), "table": "not_a_real_table"}
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "table": "not_a_real_table"}
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event has an unknown table"):
         _run_restore(tmp_path, monkeypatch, body)
@@ -151,7 +180,7 @@ def test_cmd_restore_dies_on_event_with_unhashable_table(
 ) -> None:
     """Regression test: the restore-side sibling of
     test_sync_once_raises_hub_error_on_event_with_unhashable_table."""
-    event = {**_valid_restore_event(), "table": ["activity"]}
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "table": ["activity"]}
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event has an unknown table"):
         _run_restore(tmp_path, monkeypatch, body)
@@ -190,6 +219,43 @@ def test_cmd_restore_dies_on_snapshot_with_unhashable_table(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+def test_cmd_restore_dies_on_snapshot_with_empty_updated_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of the equivalent
+    tests/test_pending.py _sync_once test. updated_at was presence-checked
+    but not validated as a genuine timestamp; an empty string used to pass
+    validation, get stored as-is on first insert, and only fail later on the
+    next legitimate update to that same row via a raw ::timestamptz cast
+    error."""
+    row = {**_valid_restore_row(), "updated_at": ""}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot updated_at is not a valid timestamp"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for the validate-all-then-apply-all split itself: an
+    earlier version of this PR validated and applied snapshot rows in the
+    same loop, so a batch with one valid row before an invalid one would
+    durably commit the valid row before dying on the invalid one - a partial
+    apply of an atomically-intended batch. Proves the fix holds: with a
+    valid row after the invalid one in the list, cmd_restore must still die
+    without committing the valid row at all."""
+    valid_row = {**_valid_restore_row(), "row_id": "valid-1"}
+    invalid_row = {**_valid_restore_row(), "row_id": "invalid-1", "table": "not_a_real_table"}
+    body = {"own_events": [], "inbox": [valid_row, invalid_row]}
+    with pytest.raises(SystemExit, match="restore snapshot has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     "bad_seq",
     [
@@ -207,7 +273,7 @@ def test_cmd_restore_dies_on_non_numeric_origin_seq(
     shares _sync_once's origin_seq coercion (_coerce_pull_event), but had no
     test proving the restore side actually rejects a bad origin_seq rather
     than just accepting a good one."""
-    event = _valid_restore_event()
+    event = _valid_restore_event(_own_device_id(tmp_path))
     event["origin_seq"] = bad_seq
     body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event has a non-numeric origin_seq"):
@@ -276,7 +342,7 @@ def test_cmd_restore_dies_when_apply_remote_hits_an_unanticipated_shape(
     body = {
         "own_events": [
             {
-                "origin_device_id": "other",
+                "origin_device_id": _own_device_id(tmp_path),
                 "origin_seq": 1,
                 "table": "activity",
                 "op": "insert",
