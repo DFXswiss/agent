@@ -66,6 +66,7 @@ def _fix(store: Store, activity_id: str = "fix-1") -> None:
             "payload": {
                 "error_id": "error-seen-12345678",
                 "fingerprint": "api|TimeoutError|abc|prod",
+                "brief": "Investigation summary: see error.seen payload for details.",
             },
             "execution_status": "pending",
         },
@@ -253,6 +254,35 @@ def test_scan_error_fix_marks_ineligible_rows(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "error"
     assert row["execution_error"] == "unmapped-repo"
+
+
+def test_scan_error_fix_requires_brief(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "activity",
+        "insert",
+        "fix-1",
+        {
+            "id": "fix-1",
+            "session_id": "runner-1",
+            "type": "error.fix",
+            "payload": {
+                "error_id": "error-seen-12345678",
+                "fingerprint": "api|TimeoutError|abc|prod",
+            },
+            "execution_status": "pending",
+        },
+    )
+
+    assert scan_error_fix(store, lambda _argv: Completed(0, "", "")) == [
+        "error.fix fix-1 error"
+    ]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["execution_error"] == "brief is required"
 
 
 def test_scan_error_fix_clone_failure_stays_pending_and_cleans_staging(

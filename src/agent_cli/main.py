@@ -3183,13 +3183,21 @@ def cmd_watch(args: list[str]) -> None:
             KNOCK_SUBMIT_POLL_S = 2.0
             KNOCK_READY_TIMEOUT_S = 60.0
             KNOCK_READY_POLL_S = 1.0
+            KNOCK_READY_CONSECUTIVE = 2
 
             def _knock(sid: str, error_id: str) -> None:
                 from .grok_pane import grok_pane_is_idle
 
                 runtime = Runtime()
                 deadline = time.monotonic() + KNOCK_READY_TIMEOUT_S
-                while not grok_pane_is_idle(runtime.capture(sid)):
+                consecutive_idle = 0
+                while consecutive_idle < KNOCK_READY_CONSECUTIVE:
+                    if grok_pane_is_idle(runtime.capture(sid)):
+                        consecutive_idle += 1
+                    else:
+                        consecutive_idle = 0
+                    if consecutive_idle >= KNOCK_READY_CONSECUTIVE:
+                        break
                     if time.monotonic() >= deadline:
                         raise StoreError(f"session {sid} never reached an idle prompt before the knock")
                     time.sleep(KNOCK_READY_POLL_S)

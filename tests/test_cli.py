@@ -1333,6 +1333,82 @@ def test_watch_error_decide_fails_fast_when_pane_never_goes_idle(
     assert calls == []
 
 
+def test_watch_error_decide_requires_two_consecutive_idle_reads(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id)
+    capsys.readouterr()
+
+    calls: list[tuple[str, object]] = []
+    capture_calls = {"n": 0}
+
+    def fake_input_text(self: object, sid: str, data: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_text", (sid, data)))
+        store = Store(tmp_path)
+        try:
+            store.write(
+                "activity",
+                "insert",
+                "fix-from-knock",
+                {
+                    "id": "fix-from-knock",
+                    "session_id": sid,
+                    "type": "error.fix",
+                    "payload": {
+                        "error_id": error_id,
+                        "fingerprint": "traceback-fingerprint",
+                    },
+                    "execution_status": "pending",
+                },
+            )
+        finally:
+            store.close()
+
+    def fake_input_key(self: object, sid: str, key: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_key", (sid, key)))
+
+    def fake_is_busy(self: object, sid: str, *, settle: float | None = None) -> bool:
+        del self, sid, settle
+        return True
+
+    def fake_capture(self: object, sid: str) -> str:
+        del self, sid
+        capture_calls["n"] += 1
+        if capture_calls["n"] == 1:
+            return ""
+        return "❯"
+
+    def fake_deliver(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("deliver should not be called")
+
+    monkeypatch.setattr("agent_cli.runtime.Runtime.available", lambda self: True)
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.exists", lambda self, sid, **kwargs: False
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.start", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.stop", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.capture", fake_capture)
+    monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
+    monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
+
+    run(tmp_path, ["watch", "error-decide"])
+    out = capsys.readouterr().out
+    assert f"error.seen {error_id} decided session=" in out
+    assert any(name == "input_text" for name, _ in calls)
+    assert any(name == "input_key" for name, _ in calls)
+    assert capture_calls["n"] >= 3
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

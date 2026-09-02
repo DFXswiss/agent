@@ -270,6 +270,8 @@ def _pending_fix(store: Store, row: dict[str, Any]) -> tuple[str, str, str]:
     fingerprint = _nonempty_str(payload.get("fingerprint"))
     if fingerprint is None:
         raise StoreError("fingerprint is required")
+    if _nonempty_str(payload.get("brief")) is None:
+        raise StoreError("brief is required")
     session_id = _nonempty_str(row.get("session_id"))
     if session_id is None:
         raise StoreError("session_id is required")
