@@ -304,7 +304,7 @@ def _latest_assigned_marker(
         except ValueError:
             continue
         raw_eid = payload.get("event_id")
-        event_id = raw_eid if isinstance(raw_eid, int) else None
+        event_id = raw_eid if isinstance(raw_eid, int) and not isinstance(raw_eid, bool) else None
         if latest is None or event_dt > latest[0]:
             latest = (event_dt, event_id)
         elif event_dt == latest[0]:
@@ -471,7 +471,7 @@ def scan_assigned(
                     if isinstance(actor_login, str):
                         assigned_by = actor_login
                 raw_id = event.get("id")
-                event_id = raw_id if isinstance(raw_id, int) else None
+                event_id = raw_id if isinstance(raw_id, int) and not isinstance(raw_id, bool) else None
                 if newest_dt is None or event_dt > newest_dt:
                     newest_dt = event_dt
                     newest_at = created_at

@@ -472,6 +472,7 @@ def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
     row = store.row("activity", created[0])
     assert row is not None
     assert row["payload"]["assigned_by"] == "later"
+    assert row["payload"]["event_id"] == 200
 
 
 def test_scan_assigned_same_second_unresolvable_tie_skips_without_persisting(
