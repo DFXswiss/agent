@@ -570,6 +570,22 @@ def test_sync_once_raises_hub_error_on_snapshot_with_empty_updated_at(
         _sync_once(_paired_store(tmp_path))
 
 
+def test_sync_once_raises_hub_error_on_snapshot_with_unparseable_updated_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: sibling of the empty-string test above, for a
+    non-empty but still bogus value. A non-blank string that isn't a real
+    timestamp (e.g. "not-a-timestamp") used to pass a mere non-empty check,
+    hitting the identical stuck-row failure mode later on the first
+    conflicting update."""
+    row = {**_valid_pull_row(), "updated_at": "not-a-timestamp"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot updated_at is not a valid timestamp"):
+        _sync_once(_paired_store(tmp_path))
+
+
 def test_sync_once_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

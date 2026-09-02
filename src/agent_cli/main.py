@@ -14,6 +14,7 @@ import time
 import uuid
 import webbrowser
 from collections.abc import Callable
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -1810,10 +1811,10 @@ def _check_pull_row(row: object) -> dict[str, Any]:
     apply_replica_row indexes directly, and that payload is an object - same
     reasoning as _coerce_pull_event: an unvalidated non-object payload would
     otherwise be stored as-is and only fail later, on every future read of
-    that whole table. updated_at additionally must be a non-empty string:
-    it's stored as-is on first insert (the row_data upsert only compares
-    updated_at against an existing row on conflict), so an empty value isn't
-    rejected until some later write to that same row fails its
+    that whole table. updated_at additionally must actually parse as a
+    timestamp: it's stored as-is on first insert (the row_data upsert only
+    compares updated_at against an existing row on conflict), so a bogus
+    value isn't rejected until some later write to that same row fails its
     ::timestamptz cast - by which point the row is already stuck with a
     value no legitimate update can pass the "newer than" check against."""
     if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
@@ -1822,8 +1823,12 @@ def _check_pull_row(row: object) -> dict[str, Any]:
         raise _PullShapeError("snapshot has an unknown table")
     if not isinstance(row["payload"], dict):
         raise _PullShapeError("snapshot payload is not an object")
-    if not isinstance(row["updated_at"], str) or not row["updated_at"].strip():
+    if not isinstance(row["updated_at"], str):
         raise _PullShapeError("snapshot updated_at is not a valid timestamp")
+    try:
+        datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise _PullShapeError("snapshot updated_at is not a valid timestamp") from exc
     return row
 
 

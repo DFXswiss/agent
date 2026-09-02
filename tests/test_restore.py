@@ -234,6 +234,21 @@ def test_cmd_restore_dies_on_snapshot_with_empty_updated_at(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+def test_cmd_restore_dies_on_snapshot_with_unparseable_updated_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of the equivalent
+    tests/test_pending.py _sync_once test, for a non-empty but still bogus
+    value. A non-blank string that isn't a real timestamp (e.g.
+    "not-a-timestamp") used to pass a mere non-empty check, hitting the
+    identical stuck-row failure mode later on the first conflicting
+    update."""
+    row = {**_valid_restore_row(), "updated_at": "not-a-timestamp"}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot updated_at is not a valid timestamp"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
 def test_cmd_restore_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -242,7 +257,7 @@ def test_cmd_restore_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
     same loop, so a batch with one valid row before an invalid one would
     durably commit the valid row before dying on the invalid one - a partial
     apply of an atomically-intended batch. Proves the fix holds: with a
-    valid row after the invalid one in the list, cmd_restore must still die
+    valid row before the invalid one in the list, cmd_restore must still die
     without committing the valid row at all."""
     valid_row = {**_valid_restore_row(), "row_id": "valid-1"}
     invalid_row = {**_valid_restore_row(), "row_id": "invalid-1", "table": "not_a_real_table"}
