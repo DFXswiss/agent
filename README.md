@@ -2,7 +2,7 @@
 
 Local session-store client. Record sessions, activities and (when a skill is attached) tasks on this machine, then pair the device to the [agent-core](https://github.com/DFXswiss/agent-core) hub with GitHub.
 
-Product decisions (visibility, pairing, sync, restore, what we will not build) are in [DESIGN.md](DESIGN.md). That file also locks the deterministic core: scripts execute, checks measure, gates decide, model text is never a transition, and the hub is not a coding control plane. A draft plus local tests is not a finished pull request; see [CONTRIBUTING.md](CONTRIBUTING.md). Production-error → draft pull request is the opt-in **error-fix** skill on this device, not the hub.
+Product decisions (visibility, pairing, sync, restore, what we will not build) are in [DESIGN.md](DESIGN.md). That file also locks the deterministic core: scripts execute, checks measure, gates decide, model text is never a transition, and the hub is not a coding control plane. A draft plus local tests is not a finished pull request; see [CONTRIBUTING.md](CONTRIBUTING.md). The frozen local-CI comment schema for private product repositories is [docs/local-ci-v1.md](docs/local-ci-v1.md) (`agent local-ci verify`). Production-error → draft pull request is the opt-in **error-fix** skill on this device, not the hub.
 
 This device is the write owner of its own rows. The local store is PostgreSQL on `127.0.0.1`. `device.json` next to it is the device identity: wiping only the database must not mint a new device. The hub holds a full copy. `agent sync` pushes own events and pulls own catch-up, session-mail inbox snapshots, and person-ping snapshots. `agent restore` rebuilds a wiped database from the hub.
 

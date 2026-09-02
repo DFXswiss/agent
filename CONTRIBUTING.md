@@ -21,7 +21,7 @@ Done is all of:
 3. Codex runs only if both grok dimensions are approved. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor.
 4. Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings. Iterate until all four lane verdicts on this head are approved.
 5. Inner implement/review rounds (`review-loop`) are not the PR reviews (`pr-review`).
-6. CI green on **this** head. `skipped` and `cancelled` are not green unless the workflow documents that skip.
+6. CI green on **this** head. This public repository uses GitHub Actions. `skipped` and `cancelled` are not green unless the workflow documents that skip. The local-CI comment schema for **private** product repositories is defined in [docs/local-ci-v1.md](docs/local-ci-v1.md) and verified by `agent local-ci verify`.
 7. Stay draft until the reviews and CI above hold on this head. Then one comment whose review-pass count is those four `approved` verdicts on this head, then mark the GitHub pull request ready. When spine and pr-review are attached, `agent allow --action pr-ready` only checks task state (`pushing` or `pr-review`); it is not the leave-draft verdict. Do not mark ready if it denies.
 8. A human merges. When spine is attached, `agent allow --action task-done` still needs the workflow checklist and both summary sentences.
 

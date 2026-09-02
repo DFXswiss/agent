@@ -45,6 +45,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
 | Pull request done | A draft plus local tests is not done. CONTRIBUTING.md is the contract for this repository. When spine and pr-review are attached, grok then Codex on this head are the gates; `agent allow --action pr-ready` only checks task state. A human merges. |
+| Local CI report | Frozen comment schema `dfx-local-ci/v1` in [docs/local-ci-v1.md](docs/local-ci-v1.md). `agent local-ci verify` parses it and computes pass/fail. Private product repositories attach the block to the ready comment. This public client still uses GitHub Actions for its own PRs. |
 | Merge | The client never merges. A human merges. |
 | Repos | Public MIT: `DFXswiss/agent` (client), `DFXswiss/agent-core` (hub). |
 | Website host | `agent.dfx.swiss` (development: `dev.agent.dfx.swiss`). Singular product name. |
