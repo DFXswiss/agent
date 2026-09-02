@@ -134,6 +134,54 @@ def test_cmd_restore_accepts_a_numeric_string_origin_seq(
         store.close()
 
 
+def test_cmd_restore_dies_on_non_list_snapshot_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_non_list_snapshot_field. A truthy
+    non-list "inbox" (e.g. a malformed hub response sending an object instead
+    of a list) used to raise a raw TypeError from list(...) instead of a
+    clean die()."""
+    body = {"own_events": [], "inbox": {"not": "a list"}}
+    with pytest.raises(SystemExit, match="restore response inbox is not a list"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_dies_when_apply_remote_hits_an_unanticipated_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shape.
+    A payload containing a value json.dumps cannot serialize (a stand-in for
+    "something genuinely unanticipated") reaches the broad except-Exception net
+    around apply_remote/mark_origin and becomes a clean die() instead of an
+    uncaught crash."""
+    body = {
+        "own_events": [
+            {
+                "origin_device_id": "other",
+                "origin_seq": 1,
+                "table": "activity",
+                "op": "insert",
+                "row_id": "x",
+                "payload": {"type": "message", "body": {1, 2, 3}},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        ]
+    }
+    with pytest.raises(SystemExit, match="restore event could not be applied"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_dies_when_apply_replica_row_hits_an_unanticipated_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_when_apply_replica_row_hits_an_unanticipated_shape."""
+    row = {**_valid_restore_row(), "payload": {"type": "message", "body": {1, 2, 3}}}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot could not be applied"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
 def test_cmd_restore_applies_events_and_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
