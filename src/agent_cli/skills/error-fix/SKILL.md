@@ -82,6 +82,7 @@ stay out of this public client.
 ```bash
 agent watch errors   # one scan; knock daemon (no --once) polls every 60s
 agent watch error-fix  # one scan; find-or-create task + worktree; knock daemon polls with grok-usage
+agent watch error-decide  # one scan; one-shot decide session per unconcluded error.seen; not polled by the daemon yet
 ```
 
 This file ships in the packaged tree. `agent skills path` may print an
