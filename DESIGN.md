@@ -412,7 +412,7 @@ agent sync [--follow]
 agent restore
 agent ping send|list|ack
 agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service
-agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
+agent knock [--once]                           # --once drains; without --once is foreground, syncing (push + pull) with the hub after each cycle once paired; user service is the supported always-on path
 agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
