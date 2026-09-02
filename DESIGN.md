@@ -40,7 +40,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
-| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
+| Device daemon | Always-on user service on this device. `agent init` installs and starts it with knock (`LISTEN` plus usage / pending / github pending / mail pending / `pr.merged` polls, plus a hub sync — push then pull — each cycle once paired) and the local dashboard; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL. |
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
@@ -412,7 +412,7 @@ agent sync [--follow]
 agent restore
 agent ping send|list|ack
 agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service
-agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
+agent knock [--once]                           # --once drains; without --once is foreground, syncing (push + pull) with the hub after each cycle once paired; user service is the supported always-on path
 agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
@@ -469,7 +469,7 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, a per-cycle hub sync once paired, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
 
 Later product work (not required to operate v1 after merge):
 
@@ -593,7 +593,7 @@ The script:
 1. Authenticates with credentials that never enter the store or `evidence`.
 2. Pulls new lines since the last cursor (persisted next to the config).
 3. Filters to incident lines only: HTTP access-log lines (`METHOD path status`) are dropped; lines with a logger level token `ERROR` / `FATAL` / `PANIC` / `CRITICAL` are kept; lines with an `*Error` / `*Exception` class are kept; other lines (including ones that merely mention the word "error") are dropped. Optional config strings `line_must_match` / `line_must_not_match` further filter (non-empty regexes; invalid values are rejected at load). Filtered lines advance the cursor but do not insert `error.seen`.
-4. Redacts secrets and obvious personal data **before** any row is written.
+4. Redacts secrets and obvious personal data **before** any row is written. Separately from the `$AGENT_HOME`-configured redaction, an OTel `trace_id`/`span_id`/`traceparent` value (logfmt, colon, JSON, or quoted-value form) is always stripped before hashing — those are per-occurrence random ids, not secrets, but leaving them in would make every occurrence of the same recurring error hash to a different stack signature and never dedupe.
 5. Computes a fingerprint: service + error class + normalized stack signature + environment.
 6. Inserts `error.seen` or **enriches** an existing **open** row with that fingerprint on this session (`count`, `last_seen`, optional extra excerpt, optional `line_fingerprint`). First insert knocks `da ist Post id <uuid>`. Enrichment never knocks. After skip or a terminal implement task, the next match is a new `error.seen` (new id, knocks).
 7. Payload holds a **sanitized** excerpt plus an optional pointer to raw evidence on this disk. It does not hold the full log dump.

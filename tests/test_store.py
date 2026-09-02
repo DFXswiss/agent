@@ -45,6 +45,36 @@ def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
     assert pending[0]["origin_seq"] == 1
 
 
+def test_mark_pushed_does_not_regress_the_cursor(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.mark_pushed(10)
+    store.mark_pushed(3)
+    assert store.sync_get("pushed_origin_seq", "0") == "10"
+
+
+def test_pending_work_skips_a_non_string_type_instead_of_raising(tmp_path: Path) -> None:
+    """Regression test: pending_work's `payload.get("type") not in
+    EXECUTABLE_ACTIVITY_TYPES` used to run unguarded, same defect as the
+    hub-pull path this PR otherwise hardened. Own-origin rows aren't only
+    ever written by this device's own trusted code - cmd_restore applies
+    hub-returned "own_events" via apply_remote(wake=False), so a malformed
+    type can still reach here via a corrupted restore response. A non-string
+    type must be treated as simply not executable, not raise TypeError."""
+    store = Store(tmp_path)
+    store.write(
+        "activity",
+        "insert",
+        "a1",
+        {
+            "id": "a1",
+            "session_id": "s1",
+            "type": ["not", "hashable"],
+            "execution_status": "pending",
+        },
+    )
+    assert store.pending_work() == []
+
+
 def test_remote_gap_fail_closed(tmp_path: Path) -> None:
     store = Store(tmp_path)
     with pytest.raises(StoreError, match="gap"):

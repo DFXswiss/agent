@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urljoin
 
@@ -40,7 +41,17 @@ class Hub:
             detail = _detail(response)
             raise HubError(f"hub {method} {path} → HTTP {response.status_code}: {detail}")
         if response.content:
-            return response.json()
+            try:
+                return response.json()
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+                # RecursionError: CPython's C-accelerated json decoder still
+                # bounds recursion by C stack depth (Py_EnterRecursiveCall),
+                # not just sys.getrecursionlimit() - a pathologically nested
+                # body (adversarial or buggy hub) hits it well before running
+                # out of memory. Confirmed empirically: json.loads('[' * n +
+                # ']' * n) raises RecursionError around n=1_000_000, not
+                # JSONDecodeError, so it needs its own arm in this tuple.
+                raise HubError(f"hub {method} {path} → invalid JSON response") from exc
         return None
 
     def prepare(self, device_id: str, challenge: str, device_name: str) -> dict[str, Any]:
@@ -105,7 +116,7 @@ class Hub:
 def _detail(response: httpx.Response) -> str:
     try:
         body = response.json()
-    except ValueError:
+    except (ValueError, RecursionError):
         return response.text
     if isinstance(body, dict) and "detail" in body:
         return str(body["detail"])

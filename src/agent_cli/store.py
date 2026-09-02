@@ -355,7 +355,8 @@ class Store:
                 self._maybe_wake(event)
             elif inserted:
                 payload = event.get("payload")
-                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                typ = payload.get("type") if isinstance(payload, dict) else None
+                if isinstance(typ, str) and typ in WAKE_ACTIVITY_TYPES:
                     target = self._inbox_target(payload)
                     if target is not None and self._owns_session(target):
                         self.enqueue_wake(event["row_id"], target)
@@ -494,7 +495,8 @@ class Store:
                 self._maybe_wake(event)
             else:
                 payload = event.get("payload")
-                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                typ = payload.get("type") if isinstance(payload, dict) else None
+                if isinstance(typ, str) and typ in WAKE_ACTIVITY_TYPES:
                     target = self._inbox_target(payload)
                     if target is not None and self._owns_session(target):
                         self.enqueue_wake(event["row_id"], target)
@@ -522,7 +524,14 @@ class Store:
 
     @_wrap_pg_errors
     def mark_pushed(self, seq: int) -> None:
-        self.sync_set("pushed_origin_seq", str(seq))
+        # Read-then-write is not atomic across the separate cmd_knock/cmd_sync
+        # --follow processes; a fully concurrent interleaving can still lose an
+        # update. Accepted: ledger_event is append-only and the hub treats the
+        # same event id as idempotent, so the worst case is a redundant re-push,
+        # not data loss. mark_origin below has the identical shape.
+        current = int(self.sync_get("pushed_origin_seq", "0") or "0")
+        if seq > current:
+            self.sync_set("pushed_origin_seq", str(seq))
 
     def origin_cursor(self, origin: str) -> int:
         raw = self.sync_get(f"origin:{origin}", "0")
@@ -645,7 +654,8 @@ class Store:
                 continue
             if payload.get("execution_status") != "pending":
                 continue
-            if payload.get("type") not in EXECUTABLE_ACTIVITY_TYPES:
+            typ = payload.get("type")
+            if not isinstance(typ, str) or typ not in EXECUTABLE_ACTIVITY_TYPES:
                 continue
             payload["_origin_device_id"] = row["origin_device_id"]
             out.append(payload)
@@ -707,14 +717,12 @@ class Store:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             return
-        if payload.get("type") not in WAKE_ACTIVITY_TYPES:
+        typ = payload.get("type")
+        if not isinstance(typ, str) or typ not in WAKE_ACTIVITY_TYPES:
             return
-        if event.get("op") == "update" and payload.get("type") == "error.seen":
+        if event.get("op") == "update" and typ == "error.seen":
             return
-        if (
-            payload.get("type") in DONE_WAKE_ACTIVITY_TYPES
-            and payload.get("execution_status") != "done"
-        ):
+        if typ in DONE_WAKE_ACTIVITY_TYPES and payload.get("execution_status") != "done":
             return
         target = self._inbox_target(payload)
         if target is None:
@@ -733,7 +741,8 @@ class Store:
             return
         if payload.get("execution_status") != "pending":
             return
-        if payload.get("type") not in EXECUTABLE_ACTIVITY_TYPES:
+        typ = payload.get("type")
+        if not isinstance(typ, str) or typ not in EXECUTABLE_ACTIVITY_TYPES:
             return
         sid = payload.get("session_id")
         if not isinstance(sid, str) or sid == "":

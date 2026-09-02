@@ -378,6 +378,130 @@ def test_generic_store_error_from_sync_is_not_retried(
     assert calls == [1], "a genuine data-integrity StoreError must not be retried"
 
 
+def test_subscription_row_with_non_dict_payload_is_skipped_not_committed(tmp_path: Path) -> None:
+    """Regression test: incoming websocket subscription rows went straight to
+    store.apply_replica_row(row) guarded only by isinstance(row, dict) and
+    row.get("table") - never through _check_pull_row. A non-dict payload
+    doesn't raise anywhere in apply_replica_row/_upsert_row (dumps([]) is
+    valid JSON), so it used to get durably committed and only fail later, on
+    every future store.rows()/row() call for that whole table - the same bug
+    class this PR closed for _sync_once/cmd_restore, reachable a third way
+    through the live subscription push path."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        row = {
+            "table": "session",
+            "origin_device_id": "other",
+            "row_id": "s1",
+            "payload": ["not", "an", "object"],
+            "updated_at": "2026-08-13T12:00:00Z",
+        }
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter([json.dumps({"type": "subscription", "rows": [row]})])
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(HubError, match="websocket closed"):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+        assert store.rows("session") == []
+    finally:
+        store.close()
+
+
+def test_subscription_row_with_unhashable_table_is_skipped_not_crashed(tmp_path: Path) -> None:
+    """Regression test: `table not in OWNED_TABLES` inside _check_pull_row
+    requires table to be hashable. A JSON-decoded list/dict for table used to
+    raise a raw TypeError that neither the _PullShapeError catch around
+    _check_pull_row nor the (StoreError, KeyError, TypeError) catch around
+    apply_replica_row (which only wraps the *other* try block) would catch -
+    crashing the whole agent sync --follow daemon on a malformed WS frame."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        row = {
+            "table": ["session"],
+            "origin_device_id": "other",
+            "row_id": "s1",
+            "payload": {"id": "s1"},
+            "updated_at": "2026-08-13T12:00:00Z",
+        }
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter([json.dumps({"type": "subscription", "rows": [row]})])
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(HubError, match="websocket closed"):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+        assert store.rows("session") == []
+    finally:
+        store.close()
+
+
+def test_recursion_error_from_deeply_nested_frame_is_skipped_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: json.loads(raw) on an incoming websocket frame was
+    only guarded by except (TypeError, ValueError) - CPython's C-accelerated
+    json decoder still bounds recursion by C stack depth, not just
+    sys.getrecursionlimit(), so a pathologically deeply-nested frame
+    (adversarial or buggy hub) raises RecursionError, a RuntimeError
+    subclass neither of those catches - the same gap just fixed in
+    Hub.request, reachable a third way through the live websocket loop.
+    Monkeypatches json.loads directly (matching tests/test_hub.py's
+    equivalent test) rather than constructing a real, actually-deeply-nested
+    frame string: relying on CPython's C decoder genuinely overflowing at a
+    specific depth would make this test depend on interpreter/platform
+    internals rather than deterministically exercising the new except arm."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+
+        def raise_recursion_error(_raw: str) -> None:
+            raise RecursionError("Stack overflow while decoding a JSON array")
+
+        monkeypatch.setattr(main_mod.json, "loads", raise_recursion_error)
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter(["[1]"])
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(HubError, match="websocket closed"):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+    finally:
+        store.close()
+
+
 def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -402,9 +526,14 @@ def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
                 pass
 
             def __iter__(self):
-                return iter(
-                    [json.dumps({"type": "subscription", "rows": [{"table": "session", "id": "s1"}]})]
-                )
+                row = {
+                    "table": "session",
+                    "origin_device_id": "other",
+                    "row_id": "s1",
+                    "payload": {"id": "s1"},
+                    "updated_at": "2026-08-13T12:00:00Z",
+                }
+                return iter([json.dumps({"type": "subscription", "rows": [row]})])
 
             def close(self) -> None:
                 pass

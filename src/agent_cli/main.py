@@ -13,6 +13,8 @@ import sys
 import time
 import uuid
 import webbrowser
+from collections.abc import Callable
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,7 @@ from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
+    Completed,
     Runtime,
     grok_model,
     grok_new_session_id,
@@ -44,7 +47,7 @@ from .runtime import (
     tmux_name,
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
-from .store import Store, StoreConnectionError, StoreError, utcnow
+from .store import OWNED_TABLES, Store, StoreConnectionError, StoreError, utcnow
 from .usage import AuthStale, scan_usage, usage_poll_due
 from .watch import (
     assigned_session_id,
@@ -1451,7 +1454,7 @@ def _run_sync_ws_session(
         for raw in ws:
             try:
                 message = json.loads(raw)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, RecursionError):
                 continue
             if not isinstance(message, dict):
                 continue
@@ -1462,7 +1465,9 @@ def _run_sync_ws_session(
                 rows = message.get("rows")
                 if isinstance(rows, list):
                     for row in rows:
-                        if not isinstance(row, dict) or not row.get("table"):
+                        try:
+                            row = _check_pull_row(row)
+                        except _PullShapeError:
                             continue
                         try:
                             store.apply_replica_row(row)
@@ -1489,6 +1494,8 @@ def cmd_restore(_: list[str]) -> None:
             body = hub.restore()
         finally:
             hub.close()
+        if not isinstance(body, dict):
+            die("restore response is not an object")
         if body.get("device_id") != store.device_id():
             die("restore device_id does not match this device")
         if "own_events" in body:
@@ -1497,14 +1504,47 @@ def cmd_restore(_: list[str]) -> None:
             events = body.get("events")
         if not isinstance(events, list):
             die("restore response missing own_events")
+        coerced_events: list[dict[str, Any]] = []
         for event in events:
-            store.apply_remote(event, wake=False)
-            store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        snapshots = list(body.get("inbox") or []) + list(body.get("pings") or [])
+            try:
+                coerced_events.append(_coerce_pull_event(event, store.device_id()))
+            except _PullShapeError as exc:
+                die(f"restore {exc}")
+        snapshots: list[dict[str, Any]] = []
+        for key in ("inbox", "pings"):
+            value = body.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                die(f"restore response {key} is not a list")
+            snapshots.extend(value)
         for row in snapshots:
-            if not isinstance(row, dict):
-                die("restore snapshot is not an object")
-            store.apply_replica_row(row, wake=False)
+            try:
+                _check_pull_row(row)
+            except _PullShapeError as exc:
+                die(f"restore {exc}")
+        # Every event and snapshot's SHAPE is validated above before either
+        # is applied here - a malformed snapshot must not be discovered only
+        # after well-formed events ahead of it in the response are already
+        # durably committed and their origin cursor advanced. This does not
+        # cover semantic conflicts (an origin_seq gap, a foreign row-
+        # ownership conflict): those can only be checked against live store
+        # state at apply time, inside each item's own transaction, so a
+        # batch that's shape-valid throughout can still partially commit
+        # before a later semantic conflict is discovered. Closing that would
+        # need one transaction spanning the whole apply loop, a bigger
+        # change than this fix - tracked separately.
+        for event in coerced_events:
+            try:
+                store.apply_remote(event, wake=False)
+                store.mark_origin(event["origin_device_id"], event["origin_seq"])
+            except Exception as exc:
+                die(f"restore event could not be applied: {exc}")
+        for row in snapshots:
+            try:
+                store.apply_replica_row(row, wake=False)
+            except Exception as exc:
+                die(f"restore snapshot could not be applied: {exc}")
         print(f"restored events={len(events)} snapshots={len(snapshots)}")
     finally:
         store.close()
@@ -1725,7 +1765,112 @@ def cmd_dashboard(args: list[str]) -> None:
         store.close()
 
 
+_PULL_EVENT_FIELDS = ("origin_device_id", "origin_seq", "table", "op", "row_id", "payload", "occurred_at")
+_PULL_ROW_FIELDS = ("table", "origin_device_id", "row_id", "payload", "updated_at")
+
+
+class _PullShapeError(ValueError):
+    """A hub-supplied event/row/response doesn't have the shape callers need.
+    Internal only: every caller catches this and converts it to whatever error
+    convention fits that call site (HubError for _sync_once, die() for the
+    one-shot cmd_restore CLI) - it must never itself propagate out of this
+    module."""
+
+
+def _coerce_pull_event(event: object, own_device_id: str) -> dict[str, Any]:
+    """Validate a pulled/restored event has every field _insert_event_idempotent
+    indexes, and that table/op are shaped the way Store._write_in_txn already
+    requires for this device's own local writes (op/table checked there; the
+    hub-pull/restore path must not be laxer). payload is additionally
+    required to be an object here even though _write_in_txn doesn't check
+    that for local writes either - a payload that isn't one is otherwise
+    stored as-is and only fails later, on every future read of that whole
+    table, not at write time - a risk specific to externally-supplied hub
+    data, not to this codebase's own trusted call sites. Normalize
+    origin_seq to an int (rejecting bool, a fractional float, and anything
+    int() can't convert, including an out-of-range float that would
+    otherwise raise OverflowError). occurred_at must actually parse as a
+    timestamp, same reasoning and check as _check_pull_row's updated_at (a
+    bogus value would otherwise be stored as-is - apply_remote writes it
+    into row_data.updated_at too, via _materialize). Also validates origin_device_id equals
+    own_device_id: DESIGN.md's sync contract is "own events, gapless" -
+    foreign-origin data arrives as row snapshots, never as an event
+    (apply_replica_row already enforces the row-side half of this, ignoring
+    a same-device non-ping snapshot rather than applying it) - so a
+    pulled/restored event claiming a foreign origin_device_id is a
+    malformed hub response, not a normal case apply_remote/mark_origin
+    should accept. row_id must be a non-empty string too, same reasoning as
+    every other field here - an unchecked value (e.g. a list) would only
+    fail later, as a raw type error from whatever stores it. Returns a new
+    dict; the caller's own copy of the raw event is left untouched."""
+    if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
+        raise _PullShapeError("event is missing required fields")
+    if event["origin_device_id"] != own_device_id:
+        raise _PullShapeError("event origin_device_id is not this device's own")
+    if not isinstance(event["table"], str) or event["table"] not in OWNED_TABLES:
+        raise _PullShapeError("event has an unknown table")
+    if not isinstance(event["row_id"], str) or event["row_id"] == "":
+        raise _PullShapeError("event row_id is not a valid id")
+    if not isinstance(event["payload"], dict):
+        raise _PullShapeError("event payload is not an object")
+    if event["op"] not in ("insert", "update", "delete"):
+        raise _PullShapeError("event has an unknown op")
+    if not isinstance(event["occurred_at"], str):
+        raise _PullShapeError("event occurred_at is not a valid timestamp")
+    try:
+        datetime.fromisoformat(re.sub(r"[Zz]$", "+00:00", event["occurred_at"]))
+    except ValueError as exc:
+        raise _PullShapeError("event occurred_at is not a valid timestamp") from exc
+    raw_seq = event["origin_seq"]
+    try:
+        if isinstance(raw_seq, bool):
+            raise ValueError("origin_seq must not be a boolean")
+        if isinstance(raw_seq, float) and not raw_seq.is_integer():
+            raise ValueError("origin_seq must be a whole number")
+        origin_seq = int(raw_seq)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _PullShapeError("event has a non-numeric origin_seq") from exc
+    return {**event, "origin_seq": origin_seq}
+
+
+def _check_pull_row(row: object) -> dict[str, Any]:
+    """Validate a pulled/restored snapshot row has every field
+    apply_replica_row indexes directly, and that payload is an object - same
+    reasoning as _coerce_pull_event: an unvalidated non-object payload would
+    otherwise be stored as-is and only fail later, on every future read of
+    that whole table. updated_at additionally must actually parse as a
+    timestamp: it's stored as-is on first insert (the row_data upsert only
+    compares updated_at against an existing row on conflict), so a bogus
+    value isn't rejected until some later write to that same row fails its
+    ::timestamptz cast - by which point the row is already stuck with a
+    value no legitimate update can pass the "newer than" check against.
+    row_id and origin_device_id must be non-empty strings too, same
+    reasoning - an unchecked value would only fail later, as a raw type
+    error from whatever stores it."""
+    if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
+        raise _PullShapeError("snapshot is missing required fields")
+    if not isinstance(row["table"], str) or row["table"] not in OWNED_TABLES:
+        raise _PullShapeError("snapshot has an unknown table")
+    if not isinstance(row["row_id"], str) or row["row_id"] == "":
+        raise _PullShapeError("snapshot row_id is not a valid id")
+    if not isinstance(row["origin_device_id"], str) or row["origin_device_id"] == "":
+        raise _PullShapeError("snapshot origin_device_id is not a valid id")
+    if not isinstance(row["payload"], dict):
+        raise _PullShapeError("snapshot payload is not an object")
+    if not isinstance(row["updated_at"], str):
+        raise _PullShapeError("snapshot updated_at is not a valid timestamp")
+    try:
+        datetime.fromisoformat(re.sub(r"[Zz]$", "+00:00", row["updated_at"]))
+    except ValueError as exc:
+        raise _PullShapeError("snapshot updated_at is not a valid timestamp") from exc
+    return row
+
+
 def _sync_once(store: Store) -> None:
+    # Every malformed-hub-response check below raises HubError (not die()'s bare
+    # SystemExit): both cmd_knock's _knock_scan_cycle and cmd_sync --follow's
+    # reconnect loop already catch HubError, so a bad response logs/retries in
+    # whichever loop is calling instead of killing that process.
     hub = _hub_from_store(store)
     try:
         pending = store.pending_events()
@@ -1733,24 +1878,59 @@ def _sync_once(store: Store) -> None:
             hub.push(pending)
             store.mark_pushed(pending[-1]["origin_seq"])
         pulled = hub.pull(store.all_cursors())
+        if not isinstance(pulled, dict):
+            raise HubError("pull response is not an object")
         events = pulled.get("events")
         if not isinstance(events, list):
-            die("pull response missing events")
+            raise HubError("pull response missing events")
+        coerced_events: list[dict[str, Any]] = []
         for event in events:
-            store.apply_remote(event)
-            store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        snapshots = (
-            list(pulled.get("inbox") or [])
-            + list(pulled.get("pings") or [])
-            + list(pulled.get("subscriptions") or [])
-        )
+            try:
+                coerced_events.append(_coerce_pull_event(event, store.device_id()))
+            except _PullShapeError as exc:
+                raise HubError(f"pull {exc}") from exc
+        snapshots: list[dict[str, Any]] = []
+        for key in ("inbox", "pings", "subscriptions"):
+            value = pulled.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                raise HubError(f"pull response {key} is not a list")
+            snapshots.extend(value)
         for row in snapshots:
-            if not isinstance(row, dict):
-                die("pull snapshot is not an object")
-        sessions = [r for r in snapshots if isinstance(r, dict) and r.get("table") == "session"]
-        rest = [r for r in snapshots if not (isinstance(r, dict) and r.get("table") == "session")]
-        for row in sessions + rest:
-            store.apply_replica_row(row)
+            try:
+                _check_pull_row(row)
+            except _PullShapeError as exc:
+                raise HubError(f"pull {exc}") from exc
+        # Every event and snapshot's SHAPE is validated above before either
+        # is applied here - a malformed snapshot must not be discovered only
+        # after well-formed events ahead of it in the response are already
+        # durably committed and their origin cursor advanced. This does not
+        # cover semantic conflicts (an origin_seq gap, a foreign row-
+        # ownership conflict): those can only be checked against live store
+        # state at apply time, inside each item's own transaction, so a
+        # batch that's shape-valid throughout can still partially commit
+        # before a later semantic conflict is discovered. Closing that would
+        # need one transaction spanning the whole apply loop, a bigger
+        # change than this fix - tracked separately.
+        for event in coerced_events:
+            # Field presence and origin_seq are validated above, but not the
+            # shape of nested values (e.g. payload["type"]) - apply_remote/
+            # mark_origin can still hit a genuinely unanticipated shape deep
+            # inside store.py. Convert any such failure to a HubError rather
+            # than let it crash whichever loop called _sync_once; HubError/
+            # StoreError themselves pass through unchanged (SystemExit is not
+            # an Exception subclass).
+            try:
+                store.apply_remote(event)
+                store.mark_origin(event["origin_device_id"], event["origin_seq"])
+            except Exception as exc:
+                raise HubError(f"pull event could not be applied: {exc}") from exc
+        for row in snapshots:
+            try:
+                store.apply_replica_row(row)
+            except Exception as exc:
+                raise HubError(f"pull snapshot could not be applied: {exc}") from exc
         print(f"sync pushed={len(pending)} pulled={len(events)} snapshots={len(snapshots)}")
     finally:
         hub.close()
@@ -2904,6 +3084,75 @@ def cmd_lane(args: list[str]) -> None:
         raise SystemExit(2)
 
 
+def _knock_scan_cycle(store: Store, run_argv: Callable[[list[str]], Completed]) -> None:
+    from .pending import scan_pending
+
+    try:
+        usage_id = scan_usage(store)
+        if usage_id:
+            print(f"usage.snapshot {usage_id}")
+    except AuthStale:
+        pass
+    except StoreError as exc:
+        print(f"usage.snapshot error: {exc}", file=sys.stderr)
+    try:
+        created, skipped = scan_merged(store, run_argv)
+        for activity_id in created:
+            print(f"pr.merged {activity_id}")
+        if skipped:
+            print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
+    except StoreError as exc:
+        print(f"pr.merged error: {exc}", file=sys.stderr)
+    hub_url = store.meta("hub_url")
+    hub_token = store.meta("device_token")
+    if hub_url and hub_token:
+        hub = Hub(hub_url, hub_token)
+        try:
+            lines = scan_pending(store, hub)
+            for line in lines:
+                print(line)
+        except (HubError, StoreError) as exc:
+            print(f"pending error: {exc}", file=sys.stderr)
+        finally:
+            hub.close()
+    from .github_act import scan_github
+    from .mail_act import scan_mail
+
+    try:
+        for line in scan_github(store, run_argv):
+            print(line)
+    except StoreError as exc:
+        print(f"github pending error: {exc}", file=sys.stderr)
+    try:
+        for line in scan_mail(store, run_argv):
+            print(line)
+    except StoreError as exc:
+        print(f"mail pending error: {exc}", file=sys.stderr)
+    from .errors import config_path, default_fetch, scan_errors
+
+    if config_path(store.home).is_file():
+        try:
+            created, enriched = scan_errors(store, default_fetch)
+            for activity_id in created:
+                print(f"error.seen {activity_id}")
+            for activity_id in enriched:
+                print(f"error.seen enrich {activity_id}")
+        except StoreError as exc:
+            print(f"error.seen error: {exc}", file=sys.stderr)
+    from .error_fix_act import scan_error_fix
+
+    try:
+        for line in scan_error_fix(store, run_argv):
+            print(line)
+    except StoreError as exc:
+        print(f"error.fix error: {exc}", file=sys.stderr)
+    if hub_url and hub_token:
+        try:
+            _sync_once(store)
+        except (HubError, StoreError) as exc:
+            print(f"sync error: {exc}", file=sys.stderr)
+
+
 def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
@@ -2913,71 +3162,12 @@ def cmd_knock(args: list[str]) -> None:
             for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
             return
-        from .pending import scan_pending
         from .runtime import run_argv
 
         last_poll: float | None = None
         while True:
             if usage_poll_due(last_poll, time.monotonic()):
-                try:
-                    usage_id = scan_usage(store)
-                    if usage_id:
-                        print(f"usage.snapshot {usage_id}")
-                except AuthStale:
-                    pass
-                except StoreError as exc:
-                    print(f"usage.snapshot error: {exc}", file=sys.stderr)
-                try:
-                    created, skipped = scan_merged(store, run_argv)
-                    for activity_id in created:
-                        print(f"pr.merged {activity_id}")
-                    if skipped:
-                        print(f"watch skipped {skipped} pr.open rows", file=sys.stderr)
-                except StoreError as exc:
-                    print(f"pr.merged error: {exc}", file=sys.stderr)
-                hub_url = store.meta("hub_url")
-                hub_token = store.meta("device_token")
-                if hub_url and hub_token:
-                    hub = Hub(hub_url, hub_token)
-                    try:
-                        lines = scan_pending(store, hub)
-                        for line in lines:
-                            print(line)
-                    except (HubError, StoreError) as exc:
-                        print(f"pending error: {exc}", file=sys.stderr)
-                    finally:
-                        hub.close()
-                from .github_act import scan_github
-                from .mail_act import scan_mail
-
-                try:
-                    for line in scan_github(store, run_argv):
-                        print(line)
-                except StoreError as exc:
-                    print(f"github pending error: {exc}", file=sys.stderr)
-                try:
-                    for line in scan_mail(store, run_argv):
-                        print(line)
-                except StoreError as exc:
-                    print(f"mail pending error: {exc}", file=sys.stderr)
-                from .errors import config_path, default_fetch, scan_errors
-
-                if config_path(store.home).is_file():
-                    try:
-                        created, enriched = scan_errors(store, default_fetch)
-                        for activity_id in created:
-                            print(f"error.seen {activity_id}")
-                        for activity_id in enriched:
-                            print(f"error.seen enrich {activity_id}")
-                    except StoreError as exc:
-                        print(f"error.seen error: {exc}", file=sys.stderr)
-                from .error_fix_act import scan_error_fix
-
-                try:
-                    for line in scan_error_fix(store, run_argv):
-                        print(line)
-                except StoreError as exc:
-                    print(f"error.fix error: {exc}", file=sys.stderr)
+                _knock_scan_cycle(store, run_argv)
                 last_poll = time.monotonic()
             activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:

@@ -168,6 +168,91 @@ def test_redact_and_fingerprint() -> None:
     fp = fingerprint(service="api", error_class="TimeoutError", stack_sig=sig, environment="prod")
     assert fp.startswith("api|TimeoutError|")
     assert fp.endswith("|prod")
+    trace_id = "a" * 32
+    span_id = "b" * 16
+    otel = redact(f"TimeoutError boom trace_id={trace_id} span_id={span_id}")
+    assert trace_id not in otel
+    assert span_id not in otel
+    assert "trace_id=[redacted]" in otel
+    assert "span_id=[redacted]" in otel
+    otel_upper = redact(f"TimeoutError boom TRACE_ID={trace_id.upper()} SPAN_ID={span_id.upper()}")
+    assert trace_id.upper() not in otel_upper
+    assert span_id.upper() not in otel_upper
+    traceparent = redact(f"TimeoutError boom traceparent: 00-{trace_id}-{span_id}-01")
+    assert trace_id not in traceparent
+    assert span_id not in traceparent
+    assert "traceparent: [redacted]" in traceparent
+    traceparent_eq = redact(f"TimeoutError boom traceparent=00-{trace_id}-{span_id}-01")
+    assert trace_id not in traceparent_eq
+    assert span_id not in traceparent_eq
+    assert "traceparent=[redacted]" in traceparent_eq
+    otel_colon = redact(f"TimeoutError boom trace_id: {trace_id} span_id: {span_id}")
+    assert trace_id not in otel_colon
+    assert span_id not in otel_colon
+    assert "trace_id: [redacted]" in otel_colon
+    assert "span_id: [redacted]" in otel_colon
+    otel_json = redact(f'TimeoutError boom "trace_id":"{trace_id}","span_id":"{span_id}"')
+    assert trace_id not in otel_json
+    assert span_id not in otel_json
+    assert '"trace_id":"[redacted]"' in otel_json
+    assert '"span_id":"[redacted]"' in otel_json
+    otel_json_spaced = redact(f'TimeoutError boom "trace_id": "{trace_id}", "span_id": "{span_id}"')
+    assert trace_id not in otel_json_spaced
+    assert span_id not in otel_json_spaced
+    assert '"trace_id": "[redacted]"' in otel_json_spaced
+    assert '"span_id": "[redacted]"' in otel_json_spaced
+    otel_quoted_value = redact(f'TimeoutError boom trace_id="{trace_id}" span_id="{span_id}"')
+    assert trace_id not in otel_quoted_value
+    assert span_id not in otel_quoted_value
+    assert 'trace_id="[redacted]"' in otel_quoted_value
+    assert 'span_id="[redacted]"' in otel_quoted_value
+    # Docker json-file log driver wraps an application's JSON log line inside its
+    # own "log" field, escaping the inner quotes - a very plausible real shape
+    # for a containerized service's logs, not a hypothetical one.
+    otel_escaped_json = redact(
+        '{"log":"...{\\"trace_id\\":\\"' + trace_id + '\\",\\"span_id\\":\\"' + span_id + '\\"}..."}'
+    )
+    assert trace_id not in otel_escaped_json
+    assert span_id not in otel_escaped_json
+    assert '\\"trace_id\\":\\"[redacted]\\"' in otel_escaped_json
+    assert '\\"span_id\\":\\"[redacted]\\"' in otel_escaped_json
+    traceparent_value = f"00-{trace_id}-{span_id}-01"
+    traceparent_json = redact(f'TimeoutError boom "traceparent":"{traceparent_value}"')
+    assert trace_id not in traceparent_json
+    assert span_id not in traceparent_json
+    assert '"traceparent":"[redacted]"' in traceparent_json
+    traceparent_json_spaced = redact(f'TimeoutError boom "traceparent": "{traceparent_value}"')
+    assert trace_id not in traceparent_json_spaced
+    assert span_id not in traceparent_json_spaced
+    assert '"traceparent": "[redacted]"' in traceparent_json_spaced
+    traceparent_quoted_value = redact(f'TimeoutError boom traceparent="{traceparent_value}"')
+    assert trace_id not in traceparent_quoted_value
+    assert span_id not in traceparent_quoted_value
+    assert 'traceparent="[redacted]"' in traceparent_quoted_value
+    traceparent_escaped_json = redact('{"log":"...{\\"traceparent\\":\\"' + traceparent_value + '\\"}..."}')
+    assert trace_id not in traceparent_escaped_json
+    assert span_id not in traceparent_escaped_json
+    assert '\\"traceparent\\":\\"[redacted]\\"' in traceparent_escaped_json
+
+
+def test_redact_strips_otel_ids_of_non_standard_length() -> None:
+    """Regression test: _OTEL_TRACE_ID/_OTEL_SPAN_ID required an exact
+    32/16-char hex value. A malformed or non-conformant id (e.g. a span_id
+    of 17-19 hex chars) falls between that exact match and the generic
+    _HEX fallback's 20-char floor, so it used to pass through unredacted -
+    undermining the "always stripped before hashing" dedup guarantee for
+    exactly the malformed values most likely to vary occurrence to
+    occurrence. The label match already does the real specificity work, so
+    matching the value's actual length instead of requiring the standard
+    one only helps."""
+    odd_span_id = "b" * 18
+    otel = redact(f"TimeoutError boom trace_id={'a' * 32} span_id={odd_span_id}")
+    assert odd_span_id not in otel
+    assert "span_id=[redacted]" in otel
+    short_trace_id = "a" * 10
+    otel_short_trace = redact(f"TimeoutError boom trace_id={short_trace_id} span_id={'b' * 16}")
+    assert short_trace_id not in otel_short_trace
+    assert "trace_id=[redacted]" in otel_short_trace
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
@@ -206,6 +291,40 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert again["payload"]["count"] == 2
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
     assert "line_fingerprint" not in payload
+
+
+def test_scan_dedups_across_different_otel_ids(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    line1 = (
+        "TimeoutError boom "
+        "trace_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        "span_id=bbbbbbbbbbbbbbbb"
+    )
+    line2 = (
+        "TimeoutError boom "
+        "trace_id=cccccccccccccccccccccccccccccccc "
+        "span_id=dddddddddddddddd"
+    )
+    calls = {"n": 0}
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ([{"ts": "2026-08-23T16:00:00Z", "line": line1}], "2026-08-23T16:00:00Z")
+        return ([{"ts": "2026-08-23T16:00:01Z", "line": line2}], "2026-08-23T16:00:01Z")
+
+    created, enriched = scan_errors(store, fetch)
+    assert enriched == []
+    assert len(created) == 1
+
+    created2, enriched2 = scan_errors(store, fetch)
+    assert created2 == []
+    assert enriched2 == created
+    again = store.row("activity", created[0])
+    assert again is not None
+    assert again["payload"]["count"] == 2
 
 
 def test_line_fingerprint_is_sha256_of_server_container_line() -> None:
