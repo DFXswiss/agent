@@ -718,6 +718,29 @@ def test_sync_once_rejects_whole_event_batch_when_one_of_two_events_is_invalid(
     assert store.rows("activity") == []
 
 
+def test_sync_once_rejects_whole_response_when_a_valid_event_is_paired_with_an_invalid_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: events were fully validated AND applied (a
+    complete, separate phase, including the store write and cursor advance)
+    before snapshot validation even began - so a well-formed event paired
+    with a malformed snapshot in the same pull response used to durably
+    commit the event before dying on the snapshot, the identical
+    partial-apply bug this PR already fixed twice, once within the events
+    list and once within the snapshots list, just one level up between the
+    two lists themselves."""
+    store = _paired_store(tmp_path)
+    valid_event = {**_valid_pull_event(store.device_id())}
+    invalid_row = {**_valid_pull_row(), "table": "not_a_real_table"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [valid_event], "inbox": [invalid_row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot has an unknown table"):
+        _sync_once(store)
+    assert store.origin_cursor(store.device_id()) == 0
+    assert store.rows("activity") == []
+
+
 def test_sync_once_accepts_a_snapshot_payload_whose_type_is_not_a_wake_type_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

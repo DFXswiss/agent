@@ -1510,12 +1510,6 @@ def cmd_restore(_: list[str]) -> None:
                 coerced_events.append(_coerce_pull_event(event, store.device_id()))
             except _PullShapeError as exc:
                 die(f"restore {exc}")
-        for event in coerced_events:
-            try:
-                store.apply_remote(event, wake=False)
-                store.mark_origin(event["origin_device_id"], event["origin_seq"])
-            except Exception as exc:
-                die(f"restore event could not be applied: {exc}")
         snapshots: list[dict[str, Any]] = []
         for key in ("inbox", "pings"):
             value = body.get(key)
@@ -1529,6 +1523,16 @@ def cmd_restore(_: list[str]) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 die(f"restore {exc}")
+        # Every event and snapshot is validated above before either is
+        # applied here - a malformed snapshot must not be discovered only
+        # after well-formed events ahead of it in the response are already
+        # durably committed and their origin cursor advanced.
+        for event in coerced_events:
+            try:
+                store.apply_remote(event, wake=False)
+                store.mark_origin(event["origin_device_id"], event["origin_seq"])
+            except Exception as exc:
+                die(f"restore event could not be applied: {exc}")
         for row in snapshots:
             try:
                 store.apply_replica_row(row, wake=False)
@@ -1878,19 +1882,6 @@ def _sync_once(store: Store) -> None:
                 coerced_events.append(_coerce_pull_event(event, store.device_id()))
             except _PullShapeError as exc:
                 raise HubError(f"pull {exc}") from exc
-        for event in coerced_events:
-            # Field presence and origin_seq are validated above, but not the
-            # shape of nested values (e.g. payload["type"]) - apply_remote/
-            # mark_origin can still hit a genuinely unanticipated shape deep
-            # inside store.py. Convert any such failure to a HubError rather
-            # than let it crash whichever loop called _sync_once; HubError/
-            # StoreError themselves pass through unchanged (SystemExit is not
-            # an Exception subclass).
-            try:
-                store.apply_remote(event)
-                store.mark_origin(event["origin_device_id"], event["origin_seq"])
-            except Exception as exc:
-                raise HubError(f"pull event could not be applied: {exc}") from exc
         snapshots: list[dict[str, Any]] = []
         for key in ("inbox", "pings", "subscriptions"):
             value = pulled.get(key)
@@ -1904,6 +1895,23 @@ def _sync_once(store: Store) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 raise HubError(f"pull {exc}") from exc
+        # Every event and snapshot is validated above before either is
+        # applied here - a malformed snapshot must not be discovered only
+        # after well-formed events ahead of it in the response are already
+        # durably committed and their origin cursor advanced.
+        for event in coerced_events:
+            # Field presence and origin_seq are validated above, but not the
+            # shape of nested values (e.g. payload["type"]) - apply_remote/
+            # mark_origin can still hit a genuinely unanticipated shape deep
+            # inside store.py. Convert any such failure to a HubError rather
+            # than let it crash whichever loop called _sync_once; HubError/
+            # StoreError themselves pass through unchanged (SystemExit is not
+            # an Exception subclass).
+            try:
+                store.apply_remote(event)
+                store.mark_origin(event["origin_device_id"], event["origin_seq"])
+            except Exception as exc:
+                raise HubError(f"pull event could not be applied: {exc}") from exc
         for row in snapshots:
             try:
                 store.apply_replica_row(row)

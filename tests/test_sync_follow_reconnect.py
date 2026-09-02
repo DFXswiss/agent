@@ -378,9 +378,7 @@ def test_generic_store_error_from_sync_is_not_retried(
     assert calls == [1], "a genuine data-integrity StoreError must not be retried"
 
 
-def test_subscription_row_with_non_dict_payload_is_skipped_not_committed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_subscription_row_with_non_dict_payload_is_skipped_not_committed(tmp_path: Path) -> None:
     """Regression test: incoming websocket subscription rows went straight to
     store.apply_replica_row(row) guarded only by isinstance(row, dict) and
     row.get("table") - never through _check_pull_row. A non-dict payload
@@ -421,9 +419,7 @@ def test_subscription_row_with_non_dict_payload_is_skipped_not_committed(
         store.close()
 
 
-def test_subscription_row_with_unhashable_table_is_skipped_not_crashed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_subscription_row_with_unhashable_table_is_skipped_not_crashed(tmp_path: Path) -> None:
     """Regression test: `table not in OWNED_TABLES` inside _check_pull_row
     requires table to be hashable. A JSON-decoded list/dict for table used to
     raise a raw TypeError that neither the _PullShapeError catch around

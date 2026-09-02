@@ -370,6 +370,30 @@ def test_cmd_restore_rejects_whole_event_batch_when_one_of_two_events_is_invalid
         store.close()
 
 
+def test_cmd_restore_rejects_whole_response_when_a_valid_event_is_paired_with_an_invalid_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_rejects_whole_response_when_a_valid_event_is_paired_with_an_invalid_snapshot.
+    cmd_restore's events were fully validated AND applied (a complete,
+    separate phase, including the store write and cursor advance) before
+    snapshot validation even began - so a well-formed event paired with a
+    malformed snapshot in the same restore response used to durably commit
+    the event before dying on the snapshot."""
+    device_id = _own_device_id(tmp_path)
+    valid_event = _valid_restore_event(device_id)
+    invalid_row = {**_valid_restore_row(), "table": "not_a_real_table"}
+    body = {"own_events": [valid_event], "inbox": [invalid_row]}
+    with pytest.raises(SystemExit, match="restore snapshot has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.origin_cursor(device_id) == 0
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     "bad_seq",
     [
