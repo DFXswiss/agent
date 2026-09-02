@@ -313,6 +313,48 @@ def test_scan_error_decide_stop_runs_when_knock_raises(tmp_path: Path) -> None:
     assert stopped == [sid]
 
 
+def test_scan_error_decide_isolates_store_error_and_continues_backlog(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    older = "aaa11111-seen-eeeeeeee"
+    newer = "bbb22222-seen-ffffffff"
+    _insert_seen(store, rid=newer, first_seen="2026-08-23T17:00:00Z")
+    _insert_seen(store, rid=older, first_seen="2026-08-23T15:00:00Z")
+    started: list[str] = []
+    older_sid = decide_session_id(older)
+    newer_sid = decide_session_id(newer)
+
+    def start(sid: str) -> None:
+        started.append(sid)
+        if sid == older_sid:
+            raise StoreError("owned by another device")
+
+    def knock(sid: str, eid: str) -> None:
+        _insert_conclusion(
+            store,
+            rid=f"fix-{eid}",
+            error_id=eid,
+            session_id=sid,
+        )
+
+    lines = scan_error_decide(
+        store,
+        start=start,
+        stop=lambda _sid: None,
+        knock=knock,
+        sleep=lambda _s: None,
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+    )
+    assert started == [older_sid, newer_sid]
+    assert len(lines) == 2
+    assert "error" in lines[0]
+    assert lines[0].startswith(f"error.seen {older} error session={older_sid}:")
+    assert "owned by another device" in lines[0]
+    assert lines[1] == f"error.seen {newer} decided session={newer_sid}"
+
+
 def test_scan_error_decide_stop_runs_when_start_raises(tmp_path: Path) -> None:
     store = Store(tmp_path)
     error_id = "error-seen-kkkkkkkk"

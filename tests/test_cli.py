@@ -1272,8 +1272,10 @@ def test_watch_error_decide_fails_fast_after_max_retries(
     monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
     monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
 
-    with pytest.raises(SystemExit, match="did not accept the knock after 8 attempts"):
-        run(tmp_path, ["watch", "error-decide"])
+    run(tmp_path, ["watch", "error-decide"])
+    out = capsys.readouterr().out
+    assert f"error.seen {error_id} error session=" in out
+    assert "did not accept the knock after 8 attempts" in out
     assert sum(1 for name, _ in calls if name == "input_key") == 8
 
 

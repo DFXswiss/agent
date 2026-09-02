@@ -683,10 +683,10 @@ The model never receives production credentials. Analysis that only reads the ex
 `agent watch error-decide` drains unconcluded `error.seen` rows on this device one at a time (oldest `payload.first_seen` first; `id` as tiebreaker). For each row it:
 
 1. Ensures a deterministic runner session `error-decide-<id8>` with skills `error-fix`, `spine`, `review-loop`, and `pr-review` (`status: active`).
-2. Starts that session’s tmux pane (grok), knocks `da ist Post id <uuid>` directly into it (not via `knock.deliver`, which would target the scanning session on the `error.seen` row).
+2. Starts that session’s tmux pane (grok), knocks `da ist Post id <uuid>` directly into it (not via `knock.deliver`, which would target the scanning session on the `error.seen` row). It retries the Enter keypress (up to a bounded number of attempts) until the session shows as busy, confirming the knock was actually accepted; if it never is, that row is recorded as failed and the dispatcher moves on to the next one.
 3. Polls until this device writes `error.fix` or `error.skip` for that `error_id`, or until timeout (default 30 minutes).
 4. Stops the pane (`runtime.control: stopped`) and leaves the session `active` — it does not `session close`, so `agent watch error-fix` can still create the implement task under that session without racing the “open tasks” guard.
-5. Moves to the next unconcluded row. No auto-continue / keep-working wiring; each decide session handles one error.
+5. Moves to the next unconcluded row. No auto-continue / keep-working wiring; each decide session handles one error. A row whose session setup or knock fails is recorded as an error line and does not block the rest of the backlog scan.
 
 Empty backlog prints `error.seen decide none`. The exclusive lock `error-decide-act:<device>` is held for the whole scan — the backlog read and the per-row start/knock/wait/stop sequence — so two overlapping invocations of this scan cannot both dispatch the same row. That key never collided with `error-fix-act:<device>`'s own lock in the first place (they are different `pg_advisory_lock(hashtext(...))` keys), so widening the scope does not block conclusion writes; the reason to hold it for the whole scan is purely to serialize overlapping dispatcher invocations against each other. Not wired into `agent daemon` in this revision.
 
