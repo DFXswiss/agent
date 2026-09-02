@@ -586,6 +586,22 @@ def test_sync_once_raises_hub_error_on_snapshot_with_unparseable_updated_at(
         _sync_once(_paired_store(tmp_path))
 
 
+def test_sync_once_accepts_a_lowercase_z_updated_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: str.replace("Z", "+00:00") is case-sensitive, but
+    RFC 3339 (SS5.6) permits a lowercase "z" as the UTC designator just as
+    validly as an uppercase one. A genuinely valid, standards-conformant
+    timestamp ending in a lowercase "z" used to be falsely rejected as an
+    invalid timestamp instead of being accepted."""
+    row = {**_valid_pull_row(), "updated_at": "2026-08-13T12:00:00z"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
+    _sync_once(store)
+    row_stored = store.row("activity", "x")
+    assert row_stored is not None
+
+
 def test_sync_once_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

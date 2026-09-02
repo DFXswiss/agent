@@ -249,6 +249,23 @@ def test_cmd_restore_dies_on_snapshot_with_unparseable_updated_at(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+def test_cmd_restore_accepts_a_lowercase_z_updated_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: the row-side sibling of the equivalent
+    tests/test_pending.py _sync_once test. str.replace("Z", "+00:00") is
+    case-sensitive, but RFC 3339 (SS5.6) permits a lowercase "z" as the UTC
+    designator just as validly as an uppercase one. A genuinely valid,
+    standards-conformant timestamp ending in a lowercase "z" used to be
+    falsely rejected as an invalid timestamp instead of being accepted."""
+    row = {**_valid_restore_row(), "updated_at": "2026-08-13T12:00:00z"}
+    body = {"own_events": [], "inbox": [row]}
+    _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.row("activity", "x") is not None
+    finally:
+        store.close()
+
+
 def test_cmd_restore_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

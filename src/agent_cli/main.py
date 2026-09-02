@@ -1779,11 +1779,12 @@ def _coerce_pull_event(event: object, own_device_id: str) -> dict[str, Any]:
     otherwise raise OverflowError). Also validates origin_device_id equals
     own_device_id: DESIGN.md's sync contract is "own events, gapless" -
     foreign-origin data arrives as row snapshots, never as an event
-    (apply_replica_row already enforces this the other way, rejecting a row
-    that isn't foreign-owned) - so a pulled/restored event claiming a
-    foreign origin_device_id is a malformed hub response, not a normal case
-    apply_remote/mark_origin should accept. Returns a new dict; the caller's
-    own copy of the raw event is left untouched."""
+    (apply_replica_row already enforces the row-side half of this, ignoring
+    a same-device non-ping snapshot rather than applying it) - so a
+    pulled/restored event claiming a foreign origin_device_id is a
+    malformed hub response, not a normal case apply_remote/mark_origin
+    should accept. Returns a new dict; the caller's own copy of the raw
+    event is left untouched."""
     if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
         raise _PullShapeError("event is missing required fields")
     if event["origin_device_id"] != own_device_id:
@@ -1826,7 +1827,7 @@ def _check_pull_row(row: object) -> dict[str, Any]:
     if not isinstance(row["updated_at"], str):
         raise _PullShapeError("snapshot updated_at is not a valid timestamp")
     try:
-        datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+        datetime.fromisoformat(re.sub(r"[Zz]$", "+00:00", row["updated_at"]))
     except ValueError as exc:
         raise _PullShapeError("snapshot updated_at is not a valid timestamp") from exc
     return row
