@@ -58,6 +58,8 @@ def _insert_conclusion(
     }
     if typ == "error.skip":
         payload["reason"] = "noisy"
+    else:
+        payload["brief"] = "Investigation summary: see error.seen payload for details."
     store.write(
         "activity",
         "insert",
