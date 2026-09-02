@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from agent_cli.fixer_act import (
     template_pr_open_payload,
     write_error_fix_spec,
 )
-from agent_cli.git_act import GitActError
+from agent_cli.git_act import GitActError, push_branch
 from agent_cli.lane import LaneResult, findings_header_present
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
@@ -162,7 +163,11 @@ def _bootstrap_error_fix_task(
     worktree = home / "error-fix-work" / tid
     worktree.mkdir(parents=True, exist_ok=True)
     (worktree / ".git").mkdir(exist_ok=True)
-    (worktree / ".spec.md").write_text("# Task\n\nfix it\n", encoding="utf-8")
+    # Spec lives under error-fix-specs (sibling of the git worktree), never
+    # inside the pushed clone.
+    specs = home / "error-fix-specs" / tid
+    specs.mkdir(parents=True, exist_ok=True)
+    (specs / ".spec.md").write_text("# Task\n\nfix it\n", encoding="utf-8")
     capsys.readouterr()
     return tid
 
@@ -400,6 +405,130 @@ def test_write_error_fix_spec_fences_brief_in_task_section(tmp_path: Path) -> No
         store.close()
 
 
+def test_write_error_fix_spec_outside_git_worktree(tmp_path: Path) -> None:
+    """`.spec.md` must live under error-fix-specs, never inside the pushed worktree.
+
+    Real git repo + real runner (no push_branch mock) so the pre-push dirty
+    check would trip if the control file leaked into the clone.
+    """
+    worktree = tmp_path / "error-fix-work" / "tid-real"
+    bare = tmp_path / "remote.git"
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    (worktree / "README").write_text("hi\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README"], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    # push_branch refuses protected names (main/master/develop); use a feature branch.
+    subprocess.run(
+        ["git", "checkout", "-B", "feat-spec-leak"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+
+    def real_runner(argv: list[str]) -> Completed:
+        proc = subprocess.run(argv, capture_output=True, text=True, check=False)
+        return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+
+    store = _store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            ERROR_ID,
+            {
+                "id": ERROR_ID,
+                "session_id": "sess-1",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "repo": "org/app",
+                    "service": "api",
+                    "environment": "prod",
+                    "class": "TimeoutError",
+                },
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "sess-1",
+                "type": "error.fix",
+                "payload": {
+                    "error_id": ERROR_ID,
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "brief": "Timeout in handler; add retry.",
+                },
+                "execution_status": "pending",
+            },
+        )
+        tid = "tid-real"
+        path = write_error_fix_spec(
+            store,
+            tid,
+            error_id=ERROR_ID,
+            session_id="sess-1",
+            repo="org/app",
+        )
+        assert path == tmp_path / "error-fix-specs" / tid / ".spec.md"
+        assert path.is_file()
+        # Spec must not be a descendant of the git worktree.
+        assert worktree.resolve() not in path.resolve().parents
+        assert not str(path.resolve()).startswith(str(worktree.resolve()) + os.sep)
+
+        status = real_runner(
+            [
+                "git",
+                "-C",
+                str(worktree),
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ]
+        )
+        assert status.returncode == 0
+        assert status.stdout.strip() == ""
+        assert ".spec.md" not in status.stdout
+
+        # Real push_branch against the bare remote must succeed (dirty-check clean).
+        sha = push_branch(
+            cwd=str(worktree),
+            runner=real_runner,
+            expected_branch="feat-spec-leak",
+        )
+        assert sha
+    finally:
+        store.close()
+
+
 def test_pushed_passes_expected_branch_from_error_id(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -409,14 +538,16 @@ def test_pushed_passes_expected_branch_from_error_id(
 
     captured: dict[str, object] = {}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         captured["expected_branch"] = expected_branch
+        captured["expected_repo"] = expected_repo
         return "abcdef1234567890abcdef1234567890abcdef12"
 
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
     assert captured.get("expected_branch") == f"error-fix-{ERROR_ID[:8]}"
+    assert captured.get("expected_repo") == "org/app"
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
@@ -432,7 +563,7 @@ def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None: "abcdef1234567890abcdef1234567890abcdef12",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: "abcdef1234567890abcdef1234567890abcdef12",
     )
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
@@ -481,7 +612,7 @@ def test_fixer_threads_pushed_head_into_pr_gate(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -684,7 +815,7 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
     insert_calls = {"n": 0}
     head = f"error-fix-{ERROR_ID[:8]}"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -785,7 +916,7 @@ def test_fixer_stops_on_persistent_gh_pr_create_failure(
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
     create_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -957,6 +1088,36 @@ def test_template_pr_open_payload_brief_with_triple_backtick_line_stays_fenced()
     assert body.count("<summary>Details</summary>") == 1
 
 
+def test_template_pr_open_payload_brief_has_single_trailing_period() -> None:
+    """Non-empty brief first sentence must not get a second appended period."""
+    payload = template_pr_open_payload(
+        session_id="sess-12345678",
+        repo="org/app",
+        error_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        brief="Fix the retry loop. More detail here.",
+        fingerprint="fp-1",
+    )
+    body = str(payload["body"])
+    assert "Brief: Fix the retry loop." in body
+    assert "Brief: Fix the retry loop.." not in body
+
+
+def test_template_pr_open_payload_empty_brief_fallback_has_one_period() -> None:
+    """Empty brief uses the fallback literal with exactly one trailing period."""
+    payload_en = template_pr_open_payload(
+        session_id="sess-12345678",
+        repo="org/app",
+        error_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        brief="",
+        fingerprint="fp-1",
+    )
+    body = str(payload_en["body"])
+    assert "Brief: see task spec." in body
+    assert "Brief: siehe Task-Spec." in body
+    assert "Brief: see task spec.." not in body
+    assert "Brief: siehe Task-Spec.." not in body
+
+
 def test_first_sentence_skips_common_abbreviations() -> None:
     """Period after e.g./Dr./etc. must not truncate the first sentence."""
     brief = "e.g. this is broken and needs fixing. Second sentence here."
@@ -1046,14 +1207,34 @@ def test_runner_to_completed_without_cwd_uses_runner() -> None:
     assert seen == [["echo", "hi"]]
 
 
+def test_runner_to_completed_timeout_returns_124(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """subprocess.TimeoutExpired in the cwd branch becomes Completed(124)."""
+
+    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise subprocess.TimeoutExpired(cmd=["sleep", "999"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    completed = _runner_to_completed(
+        lambda _argv: Completed(1, "", "runner-should-not-run"),
+        ["sleep", "999"],
+        cwd=str(tmp_path),
+    )
+    assert completed.returncode == 124
+    assert completed.stderr
+
+
 def _fake_insert_pr_open_and_scan(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
     """Simulate a successful insert_pr_open_and_scan: writes a real pr.open row
     so _pr_open_row_exists finds it (matches flaky_insert's success branch).
 
     Real insert_pr_open_and_scan leaves execution_status=done after scan_github
     succeeds; only done counts as present under the stricter exists check.
+    Includes result.number so the fixer can persist payload.pr_number.
     """
     activity_id = str(uuid.uuid4())
+    repo = payload.get("repo") if isinstance(payload, dict) else None
     store.write(
         "activity",
         "insert",
@@ -1064,6 +1245,12 @@ def _fake_insert_pr_open_and_scan(store, *, session_id, payload, runner):  # typ
             "type": "pr.open",
             "payload": payload,
             "execution_status": "done",
+            "result": {
+                "repo": repo,
+                "number": 42,
+                "url": f"https://github.com/{repo}/pull/42",
+                "draft": True,
+            },
         },
     )
     return []
@@ -1103,7 +1290,7 @@ def test_fixer_drives_error_fix_task_to_done(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -1154,7 +1341,7 @@ def test_ensure_done_readiness_summary_fallback_uses_distinct_german(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -1219,7 +1406,7 @@ def test_drive_one_reports_contributing_ok_blocked_instead_of_raising(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -1261,7 +1448,7 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -1345,6 +1532,106 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     assert str(approved_gq[-1].get("head_sha") or "").lower() == shas[1]
 
 
+def test_fixer_persists_pr_number_and_queues_gate_findings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After pr.open, payload.pr_number is set so PR-gate rejection queues review.post."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    shas = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ]
+    push_calls = {"n": 0}
+    rejects = {"n": 0}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+        i = push_calls["n"]
+        push_calls["n"] += 1
+        return shas[min(i, len(shas) - 1)]
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if role == "pr-reviewer-quality" and vendor == "grok" and rejects["n"] == 0:
+            rejects["n"] += 1
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS:\n- fix the retry loop\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        # error-fix tasks keep ref as a checkout ref, not a PR number.
+        assert not (
+            isinstance(task.get("ref"), str)
+            and task["ref"].isdigit()
+            and int(task["ref"]) > 0
+        )
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        updated = store.row("task", tid)
+        assert updated is not None
+        payload = updated.get("payload")
+        assert isinstance(payload, dict)
+        assert payload.get("pr_number") == 42
+        review_posts = [
+            r
+            for r in store.rows("activity")
+            if r.get("type") == "review.post"
+        ]
+        assert review_posts, "PR-gate rejection must queue a review.post via pr_number"
+        assert any(
+            isinstance(r.get("payload"), dict) and r["payload"].get("number") == 42
+            for r in review_posts
+        )
+    finally:
+        store.close()
+
+
 def test_rejection_feedback_rewritten_into_spec(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1360,7 +1647,7 @@ def test_rejection_feedback_rewritten_into_spec(
     rejects = {"n": 0}
     findings_marker = "fix the retry loop specifically"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -1428,7 +1715,7 @@ def test_rejection_feedback_rewritten_into_spec(
     finally:
         store.close()
 
-    spec_text = (tmp_path / "error-fix-work" / tid / ".spec.md").read_text(
+    spec_text = (tmp_path / "error-fix-specs" / tid / ".spec.md").read_text(
         encoding="utf-8"
     )
     assert "# Prior Rejection Feedback" in spec_text
@@ -1454,7 +1741,7 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -1557,7 +1844,7 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr(
@@ -1761,7 +2048,7 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
     scan_calls: list[tuple] = []
     insert_calls: list[tuple] = []
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]

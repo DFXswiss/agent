@@ -17,7 +17,7 @@ from .chain import close_allowed, is_error_fix_originated, next_steps
 from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
 from .lane import Runner as LaneRunner, extract_findings_text
 from .runtime import Completed
-from .run_core import DEFAULT_ROUND_CAP, RunOutcome, execute_spine_step
+from .run_core import DEFAULT_ROUND_CAP, RunOutcome, _fence_marker, execute_spine_step
 from .store import Store, StoreError
 
 Runner = Callable[[list[str]], Completed]
@@ -58,20 +58,6 @@ def _first_sentence(text: str) -> str:
     return stripped
 
 
-def _fence_marker(text: str) -> str:
-    """Backtick fence one longer than the longest run inside text (min 3)."""
-    longest = 0
-    run = 0
-    for ch in text:
-        if ch == "`":
-            run += 1
-            if run > longest:
-                longest = run
-        else:
-            run = 0
-    return "`" * max(3, longest + 1)
-
-
 def _error_fix_brief(store: Store, session_id: str, error_id: str) -> str | None:
     """Return payload.brief from the session's error.fix row for this error_id."""
     origin = store.device_id()
@@ -100,7 +86,7 @@ def write_error_fix_spec(
     repo: str,
     rejection_feedback: str | None = None,
 ) -> Path:
-    """Write a five-part spec under $AGENT_HOME/error-fix-work/<task_id>/.spec.md."""
+    """Write a five-part spec under $AGENT_HOME/error-fix-specs/<task_id>/.spec.md."""
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload") if isinstance(seen.get("payload"), dict) else {}
     brief = _error_fix_brief(store, session_id, error_id) or ""
@@ -109,7 +95,8 @@ def write_error_fix_spec(
     environment = _nonempty_str(seen_payload.get("environment")) or ""
     class_name = _nonempty_str(seen_payload.get("class")) or ""
     # Never feed raw log excerpt fields into the spec (DESIGN.md §19.2).
-    parent = Path(store.home) / "error-fix-work" / tid
+    # Sibling of error-fix-work — never inside the pushed git worktree.
+    parent = Path(store.home) / "error-fix-specs" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = parent / ".spec.md"
     if rejection_feedback:
@@ -172,15 +159,19 @@ def template_pr_open_payload(
         suffix = suffix[:69] + "..."
     title = f"{session_id[:8]} - {suffix}"
     brief_summary = _first_sentence(brief).splitlines()[0].strip() if brief else ""
+    # _first_sentence already includes terminal punctuation when non-empty;
+    # only the empty fallback needs a period baked into the literal.
+    brief_part = brief_summary[:200] if brief_summary else "see task spec."
+    brief_part_de = brief_summary[:200] if brief_summary else "siehe Task-Spec."
     en = (
         f"Automated error-fix for `{fingerprint or short}` in `{repo}`. "
         f"Draft only; a human merges. "
-        f"Brief: {brief_summary[:200] if brief_summary else 'see task spec'}."
+        f"Brief: {brief_part}"
     )
     de = (
         f"Automatischer error-fix für `{fingerprint or short}` in `{repo}`. "
         f"Nur Entwurf; ein Mensch merged. "
-        f"Brief: {brief_summary[:200] if brief_summary else 'siehe Task-Spec'}."
+        f"Brief: {brief_part_de}"
     )
     brief_text = brief or "(none)"
     brief_fence = _fence_marker(brief_text)
@@ -222,6 +213,33 @@ def _pr_open_row_exists(store: Store, *, head: str) -> bool:
         if isinstance(payload, dict) and payload.get("head") == head:
             return True
     return False
+
+
+def _pr_open_number(store: Store, *, head: str) -> int | None:
+    """Return result.number from a done pr.open for head, or None if missing."""
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "pr.open":
+            continue
+        if row.get("execution_status") != "done":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or payload.get("head") != head:
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict):
+            return None
+        number = result.get("number")
+        if isinstance(number, bool):
+            return None
+        if isinstance(number, int) and number > 0:
+            return number
+        if isinstance(number, str) and number.isdigit() and int(number) > 0:
+            return int(number)
+        return None
+    return None
 
 
 def _pr_open_pending_row_exists(store: Store, *, head: str) -> bool:
@@ -566,6 +584,20 @@ def _drive_one(
                 # next scan rather than failing it; each cron/knock scan retries.
                 if not _pr_open_row_exists(store, head=pr_head):
                     return f"error-fix-work {tid} pr.open-error (create failed)"
+                # Persist PR number on payload (task.ref stays the checkout ref).
+                pr_number = _pr_open_number(store, head=pr_head)
+                if pr_number is not None:
+                    task = store.row("task", tid) or task
+                    task_payload = (
+                        task.get("payload")
+                        if isinstance(task.get("payload"), dict)
+                        else {}
+                    )
+                    if task_payload.get("pr_number") != pr_number:
+                        task_payload = dict(task_payload)
+                        task_payload["pr_number"] = pr_number
+                        task["payload"] = task_payload
+                        store.write("task", "update", tid, main_mod._strip(task))
             except (StoreError, OSError, SystemExit) as exc:
                 return f"error-fix-work {tid} pr.open-error ({exc})"
             # Fall through so this scan can continue the spine; next scan
@@ -614,7 +646,8 @@ def _drive_one(
                 return f"error-fix-work {tid} contributing_ok-blocked ({exc})"
             continue
 
-        spec_path = worktree / ".spec.md"
+        # Spec lives under error-fix-specs, never inside the pushed worktree.
+        spec_path = Path(store.home) / "error-fix-specs" / tid / ".spec.md"
         if not spec_path.is_file() and error_id and repo:
             write_error_fix_spec(
                 store,
@@ -714,10 +747,12 @@ def _runner_to_completed(
     try:
         if cwd is not None:
             proc = subprocess.run(  # noqa: S603
-                argv, cwd=cwd, capture_output=True, text=True, check=False
+                argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=120
             )
             return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
         return runner(argv)
+    except subprocess.TimeoutExpired as exc:
+        return Completed(124, "", str(exc) or "git/gh call timed out after 120s")
     except OSError as exc:
         return Completed(127, "", str(exc))
 

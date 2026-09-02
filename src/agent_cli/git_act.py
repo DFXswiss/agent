@@ -48,7 +48,54 @@ def _resolve_remote(cwd: str, runner: Runner) -> str:
     raise GitActError("ambiguous remotes (no origin)")
 
 
-def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None) -> str:
+def _normalize_repo_identity(raw: str) -> str | None:
+    """Normalize a git remote URL or org/repo string down to 'org/repo'."""
+    s = raw.strip()
+    if not s:
+        return None
+    if s.endswith(".git"):
+        s = s[: -len(".git")]
+    if "://" in s:
+        after_scheme = s.split("://", 1)[1]
+        parts = after_scheme.split("/")
+        if len(parts) < 3 or not parts[1] or not parts[2]:
+            return None
+        return f"{parts[1]}/{parts[2]}"
+    if "@" in s and ":" in s.rsplit("@", 1)[-1]:
+        path = s.rsplit(":", 1)[-1]
+        parts = path.split("/")
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            return None
+        return f"{parts[0]}/{parts[1]}"
+    parts = s.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
+def _ensure_remote_matches_repo(
+    cwd: str, runner: Runner, remote: str, expected_repo: str
+) -> None:
+    """Fail-closed when remote's push URL does not resolve to expected_repo."""
+    completed = runner(_git(cwd, "remote", "get-url", "--push", remote))
+    if completed.returncode != 0:
+        raise GitActError(_fail_detail(completed, "git remote get-url failed"))
+    url = completed.stdout.strip()
+    got = _normalize_repo_identity(url)
+    want = _normalize_repo_identity(expected_repo)
+    if got is None or want is None or got != want:
+        raise GitActError(
+            f"remote {remote!r} push URL does not match expected repo {expected_repo!r}"
+        )
+
+
+def push_branch(
+    *,
+    cwd: str,
+    runner: Runner,
+    expected_branch: str | None = None,
+    expected_repo: str | None = None,
+) -> str:
     """Push the current branch if needed. Return HEAD sha (lowercase hex)."""
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
     if completed.returncode != 0:
@@ -78,6 +125,8 @@ def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None)
             raise GitActError("no upstream")
         # Fresh branch (e.g. error-fix checkout -B): set upstream on first push.
         remote = _resolve_remote(cwd, runner)
+        if expected_repo is not None:
+            _ensure_remote_matches_repo(cwd, runner, remote, expected_repo)
         merge_ref = f"refs/heads/{branch}"
         merge_short = branch
         if merge_short in PROTECTED:
@@ -112,6 +161,8 @@ def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None)
                 f"branch {branch!r} tracks remote {remote!r} but expected "
                 f"{expected_remote!r} — refusing to push"
             )
+        if expected_repo is not None:
+            _ensure_remote_matches_repo(cwd, runner, remote, expected_repo)
 
         completed = runner(_git(cwd, "fetch", "--", remote))
         if completed.returncode != 0:

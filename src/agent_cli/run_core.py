@@ -49,6 +49,20 @@ _REVIEW_OUTPUT_CONTRACT = (
 ExecArgv = Callable[..., Any]
 
 
+def _fence_marker(text: str) -> str:
+    """Backtick fence one longer than the longest run inside text (min 3)."""
+    longest = 0
+    run = 0
+    for ch in text:
+        if ch == "`":
+            run += 1
+            if run > longest:
+                longest = run
+        else:
+            run = 0
+    return "`" * max(3, longest + 1)
+
+
 class EmptyReviewDiffError(Exception):
     """Raised by build_review_spec_file when the collected diff is empty."""
 
@@ -396,13 +410,14 @@ def build_review_spec_file(
             "then judge logic and correctness of the diff only.\n"
         )
 
+    fence = _fence_marker(diff_text)
     body = (
         f"# Scope\n\n"
         f"Read the unified diff via the Read tool from this absolute path:\n"
         f"`{abs_diff}`\n\n"
         f"Changed paths: {paths_line}\n\n"
         f"Unified diff (also embedded for convenience; the Read path is required):\n\n"
-        f"```diff\n{diff_text}\n```\n\n"
+        f"{fence}diff\n{diff_text}\n{fence}\n\n"
         f"# Dimension\n\n"
         f"{dimension}\n\n"
         f"# Context\n\n"
@@ -854,7 +869,7 @@ def execute_spine_step(
         run_cwd = cwd or os.getcwd()
         from .git_act import GitActError, push_branch
 
-        from .error_fix_act import _nonempty_str
+        from .error_fix_act import _nonempty_str, _repo_ok
 
         payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
         raw_error_id = payload.get("error_id")
@@ -890,6 +905,7 @@ def execute_spine_step(
                 cwd=run_cwd,
                 runner=lambda argv: exec_argv(argv, cwd=run_cwd),
                 expected_branch=expected_branch,
+                expected_repo=_repo_ok(task.get("repo")),
             )
         except GitActError as exc:
             return RunOutcome(

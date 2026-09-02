@@ -230,13 +230,19 @@ def tmux_wrap_argv(inner: list[str], *, name: str, cwd: str) -> list[str]:
 
 def parse_status(output: str, returncode: int) -> str:
     matches = list(_STATUS_RE.finditer(output))
-    if matches:
-        return matches[-1].group(1).lower()
+    matched = matches[-1].group(1).lower() if matches else None
+    # Trust embedded STATUS only when it already implies failure, or when the
+    # process actually exited 0. A crash/timeout after printing STATUS: complete
+    # must not auto-approve.
+    if matched in ("timeout", "unavailable"):
+        return matched
+    if matched is not None and returncode == 0:
+        return matched
     if returncode == 124:
         return "timeout"
     if returncode != 0:
         return "unavailable"
-    return "partial"
+    return matched if matched is not None else "partial"
 
 
 def _default_runner(argv: list[str], stdin_text: str | None) -> subprocess.CompletedProcess[str]:

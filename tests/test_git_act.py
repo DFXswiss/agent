@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
 from agent_cli.git_act import GitActError, measure_mergeable, push_branch
+from agent_cli.main import _exec_argv
 from agent_cli.runtime import Completed
 
 pytestmark = pytest.mark.no_pg
@@ -35,6 +37,13 @@ def _remote(argv: list[str]) -> Completed | None:
     return None
 
 
+def _remote_push_url(argv: list[str], *, url: str) -> Completed | None:
+    """Fake `git remote get-url --push <remote>`."""
+    if argv[:3] == ["git", "-C", CWD] and argv[3:6] == ["remote", "get-url", "--push"]:
+        return Completed(0, url + "\n", "")
+    return None
+
+
 def _assert_git_c(argv: list[str]) -> None:
     assert argv[:3] == ["git", "-C", CWD]
     for flag in FORCE_FLAGS:
@@ -59,6 +68,9 @@ def test_push_ahead_one_pushes_without_force() -> None:
         rem = _remote(argv)
         if rem is not None:
             return rem
+        url = _remote_push_url(argv, url="git@github.com:org/app.git")
+        if url is not None:
+            return url
         if "fetch" in argv:
             assert argv == ["git", "-C", CWD, "fetch", "--", "origin"]
             return Completed(0, "", "")
@@ -80,6 +92,75 @@ def test_push_ahead_one_pushes_without_force() -> None:
     for argv in calls:
         for flag in FORCE_FLAGS:
             assert flag not in argv
+
+
+def test_push_expected_repo_url_mismatch_refused() -> None:
+    """Remote named origin is not enough — push URL must match expected_repo."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="git@github.com:other/repo.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="some/other-repo")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_url_match_succeeds() -> None:
+    """Matching push URL (SSH form) allows the normal ahead-one push path."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="https://github.com/org/app.git")
+        if url is not None:
+            return url
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0\t1\n", "")
+        if argv == PUSH_ARGV:
+            return Completed(0, "", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, SHA + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    got = push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert got == SHA
+    assert PUSH_ARGV in calls
 
 
 def test_push_ahead_zero_skips_push() -> None:
@@ -372,6 +453,18 @@ def test_push_upstream_feat_main_not_protected() -> None:
 
     assert push_branch(cwd=CWD, runner=runner) == SHA
     assert not any(len(a) > 3 and a[3] == "push" for a in calls)
+
+
+def test_exec_argv_timeout_returns_124(monkeypatch: pytest.MonkeyPatch) -> None:
+    """subprocess.TimeoutExpired from main._exec_argv becomes Completed(124)."""
+
+    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise subprocess.TimeoutExpired(cmd=["sleep", "999"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    completed = _exec_argv(["sleep", "999"], cwd="/tmp")
+    assert completed.returncode == 124
+    assert completed.stderr
 
 
 def test_mergeable_open_empty_checks() -> None:

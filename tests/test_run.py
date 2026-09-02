@@ -669,6 +669,62 @@ def test_build_review_spec_file_raises_unavailable_despite_dirty_worktree_diff(
         store.close()
 
 
+def test_build_review_spec_file_fences_diff_with_triple_backtick_line(
+    tmp_path: Path,
+) -> None:
+    """A diff containing a lone ``` line must use a longer fence so embedding stays intact."""
+    diff_with_fence = (
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n"
+        "+++ b/README.md\n"
+        "@@ -1,3 +1,5 @@\n"
+        " # Title\n"
+        "+\n"
+        "+```\n"
+        "+code sample\n"
+        "+```\n"
+    )
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "abc123\n", "")
+        if "diff" in argv and "--name-only" in argv:
+            return Completed(0, "README.md\n", "")
+        if "diff" in argv:
+            return Completed(0, diff_with_fence, "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        path = build_review_spec_file(
+            store,
+            "fence-tid",
+            role="pr-reviewer-quality",
+            round_num=1,
+            implement_spec_file=None,
+            cwd=str(tmp_path),
+            exec_argv=fake_exec,
+        )
+        body = Path(path).read_text(encoding="utf-8")
+        assert diff_with_fence in body
+        # Opening fence must be longer than 3 backticks (diff contains ```).
+        marker = "````"
+        assert f"{marker}diff\n" in body
+        assert body.count(marker) >= 2
+        # Diff content appears between the longer fences, not broken out early.
+        open_at = body.index(f"{marker}diff\n")
+        close_at = body.index(f"\n{marker}\n", open_at + len(marker))
+        embedded = body[open_at:close_at]
+        assert "+```\n" in embedded
+        assert "+code sample\n" in embedded
+    finally:
+        store.close()
+
+
 def test_launch_oserror_does_not_leave_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1002,7 +1058,7 @@ def test_run_pushed_calls_push_branch(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abc1234"
 
@@ -1027,7 +1083,7 @@ def test_pushed_passes_expected_branch_none_for_ordinary_task(
 
     captured: dict[str, object] = {}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         captured["expected_branch"] = expected_branch
         return "abc1234"
 
@@ -1063,7 +1119,7 @@ def test_pushed_fails_loudly_on_stale_whitespace_only_error_id(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abc1234"
 
@@ -1097,7 +1153,7 @@ def test_pushed_fails_loudly_on_error_id_without_error_fix_confirmed(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abc1234"
 
@@ -1223,7 +1279,7 @@ def test_run_mergeable_after_gates(
 
     push_called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         push_called["n"] += 1
         return "abc1234"
 
@@ -1784,7 +1840,7 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
     shas = [old_sha, new_sha]
     push_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]

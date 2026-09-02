@@ -276,6 +276,25 @@ def test_parse_status_rc_zero_partial() -> None:
     assert parse_status("no status here", 0) == "partial"
 
 
+def test_parse_status_complete_body_with_timeout_rc_is_timeout() -> None:
+    """A clean STATUS: complete body must not win over returncode 124."""
+    body = "STATUS: complete\nFINDINGS: none\n"
+    assert parse_status(body, 124) == "timeout"
+    assert parse_status(body, 124) != "complete"
+
+
+def test_parse_status_complete_body_with_nonzero_rc_is_unavailable() -> None:
+    """A clean STATUS: complete body must not win over a nonzero returncode."""
+    body = "STATUS: complete\nFINDINGS: none\n"
+    assert parse_status(body, 1) == "unavailable"
+    assert parse_status(body, 1) != "complete"
+
+
+def test_parse_status_complete_body_with_zero_rc_still_complete() -> None:
+    body = "STATUS: complete\nFINDINGS: none\n"
+    assert parse_status(body, 0) == "complete"
+
+
 def test_has_single_terminal_report_accepts_one_block() -> None:
     text = "STATUS: complete\nFINDINGS: none\n"
     assert has_single_terminal_report(text) is True

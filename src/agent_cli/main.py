@@ -1077,12 +1077,22 @@ def cmd_check(args: list[str]) -> None:
 def _task_pull_request(task: dict) -> tuple[str, int] | None:
     """The task's pull request as (repo, number), or None when it has none."""
     repo = _repo_ok(task.get("repo"))
-    ref = task.get("ref")
     if repo is None:
         return None
-    if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
+    ref = task.get("ref")
+    if isinstance(ref, str) and ref.isdigit() and int(ref) > 0:
+        return repo, int(ref)
+    # error-fix tasks keep task["ref"] as a git checkout ref; the PR number
+    # lives on payload.pr_number (set by the fixer after pr.open succeeds).
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    pr_number = payload.get("pr_number")
+    if isinstance(pr_number, bool):
         return None
-    return repo, int(ref)
+    if isinstance(pr_number, int) and pr_number > 0:
+        return repo, pr_number
+    if isinstance(pr_number, str) and pr_number.isdigit() and int(pr_number) > 0:
+        return repo, int(pr_number)
+    return None
 
 
 def _queue_gate_findings(
@@ -2528,7 +2538,11 @@ def _exec_argv(argv: list[str], *, cwd: str | None = None) -> "Completed":
     import subprocess
 
     try:
-        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+        proc = subprocess.run(  # noqa: S603
+            argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=120
+        )
+    except subprocess.TimeoutExpired as exc:
+        return Completed(124, "", str(exc) or "git/gh call timed out after 120s")
     except OSError as exc:
         return Completed(127, "", str(exc))
     return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
