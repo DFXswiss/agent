@@ -124,6 +124,17 @@ class LocalCiTests(unittest.TestCase):
         self.assertTrue(verdict.ok)
         self.assertEqual(verdict.status, "not_applicable")
 
+    def test_expect_private_rejects_public_payload(self) -> None:
+        payload = _payload(private=False)
+        verdict = verify_comment(_comment(payload), expect_private=True)
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("private must be true" in r for r in verdict.reasons))
+
+    def test_expect_head_mismatch(self) -> None:
+        verdict = verify_comment(_comment(_payload()), expect_head="0" * 40)
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("expect_head" in r for r in verdict.reasons))
+
     def test_orphan_run_rejected(self) -> None:
         payload = _payload(runs=[_run(), _run(id="extra", name="Extra", command="true")])
         with self.assertRaisesRegex(LocalCiError, "not in required"):

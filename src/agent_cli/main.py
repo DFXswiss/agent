@@ -1060,10 +1060,15 @@ def _read_text_arg(args: list[str]) -> str:
 
 def cmd_local_ci(args: list[str]) -> None:
     if not args or args[0] not in ("verify", "parse", "render"):
-        die("Usage: agent local-ci verify|parse|render [--file PATH] [--require-ids id,id] [--json]")
+        die(
+            "Usage: agent local-ci verify|parse|render [--file PATH] "
+            "[--require-ids id,id] [--expect-head SHA] [--expect-private] [--json]"
+        )
     action = args[0]
     rest = args[1:]
     as_json = "--json" in rest
+    expect_private = "--expect-private" in rest
+    expect_head = flag(rest, "--expect-head")
     require_raw = flag(rest, "--require-ids")
     require_ids = None
     if require_raw:
@@ -1105,7 +1110,12 @@ def cmd_local_ci(args: list[str]) -> None:
             else:
                 print(f"local-ci repo={report.repo} head={report.head} required={len(report.required)}")
             return
-        verdict = verify_comment(raw, require_ids=require_ids)
+        verdict = verify_comment(
+            raw,
+            require_ids=require_ids,
+            expect_head=expect_head,
+            expect_private=True if expect_private else None,
+        )
     except LocalCiError as exc:
         die(str(exc))
     if as_json:

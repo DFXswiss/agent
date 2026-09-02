@@ -219,10 +219,26 @@ def parse_comment(comment: str) -> LocalCiReport:
     return parse_payload(payload)
 
 
-def evaluate(report: LocalCiReport, *, require_ids: frozenset[str] | None = None) -> LocalCiVerdict:
-    if not report.private:
-        return LocalCiVerdict(ok=True, status="not_applicable", reasons=("private is false",), report=report)
+def evaluate(
+    report: LocalCiReport,
+    *,
+    require_ids: frozenset[str] | None = None,
+    expect_head: str | None = None,
+    expect_private: bool | None = None,
+) -> LocalCiVerdict:
     reasons: list[str] = []
+    if expect_private is True and report.private is not True:
+        reasons.append("private must be true")
+    if expect_head is not None:
+        wanted = expect_head.lower()
+        if HEAD_RE.match(wanted) is None:
+            return LocalCiVerdict(ok=False, status="fail", reasons=("expect_head is not a 40-character hex SHA",), report=report)
+        if report.head != wanted:
+            reasons.append("head does not match expect_head")
+    if not report.private and expect_private is not True:
+        if reasons:
+            return LocalCiVerdict(ok=False, status="fail", reasons=tuple(reasons), report=report)
+        return LocalCiVerdict(ok=True, status="not_applicable", reasons=("private is false",), report=report)
     required = set(report.required)
     if require_ids is not None:
         if required != set(require_ids):
@@ -249,9 +265,20 @@ def evaluate(report: LocalCiReport, *, require_ids: frozenset[str] | None = None
     return LocalCiVerdict(ok=True, status="pass", report=report)
 
 
-def verify_comment(comment: str, *, require_ids: frozenset[str] | None = None) -> LocalCiVerdict:
+def verify_comment(
+    comment: str,
+    *,
+    require_ids: frozenset[str] | None = None,
+    expect_head: str | None = None,
+    expect_private: bool | None = None,
+) -> LocalCiVerdict:
     report = parse_comment(comment)
-    return evaluate(report, require_ids=require_ids)
+    return evaluate(
+        report,
+        require_ids=require_ids,
+        expect_head=expect_head,
+        expect_private=expect_private,
+    )
 
 
 def render_block(report: LocalCiReport) -> str:

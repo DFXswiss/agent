@@ -53,6 +53,8 @@ There is no `verdict` field. The script computes it.
    (no pull-request CI jobs in the repository) is a pass.
 
 `--require-ids a,b,c` additionally demands that `required` is exactly that set.
+`--expect-head SHA` demands the payload head matches. `--expect-private` demands
+`private` is true and rejects `not_applicable`.
 
 Parse errors exit with `agent: …`. A computed fail exits `1` after printing
 `local-ci fail …`.
