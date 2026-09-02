@@ -247,6 +247,38 @@ def test_sync_once_applies_subscription_snapshots(tmp_path: Path, monkeypatch: p
     assert row["_origin_device_id"] == "other-device"
 
 
+def test_sync_once_dies_on_non_dict_pull_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: Hub.request returns None for a 2xx response with an empty
+    body. _sync_once used to call pulled.get("events") straight on that, raising a
+    raw AttributeError instead of a catchable HubError/SystemExit - which would
+    have escaped _knock_scan_cycle's (HubError, StoreError, SystemExit) guard and
+    killed the whole knock daemon."""
+    store = Store(tmp_path)
+    store.set_meta("hub_url", "http://hub.example")
+    store.set_meta("device_token", "tok")
+    hub = FakeHub()
+    hub.pull_body = None  # type: ignore[assignment]
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(SystemExit, match="pull response is not an object"):
+        _sync_once(store)
+
+
+def test_sync_once_dies_on_event_missing_origin_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: a pull event missing origin_device_id/origin_seq used to
+    raise a raw KeyError from event["origin_device_id"], same uncaught-crash risk
+    as the non-dict pull response above."""
+    store = Store(tmp_path)
+    store.set_meta("hub_url", "http://hub.example")
+    store.set_meta("device_token", "tok")
+    hub = FakeHub()
+    hub.pull_body = {"events": [{"table": "activity", "row_id": "x"}]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(SystemExit, match="origin_device_id/origin_seq"):
+        _sync_once(store)
+
+
 def test_watch_pending_skips_other_executable_types(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

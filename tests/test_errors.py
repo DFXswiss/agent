@@ -175,6 +175,13 @@ def test_redact_and_fingerprint() -> None:
     assert span_id not in otel
     assert "trace_id=[redacted]" in otel
     assert "span_id=[redacted]" in otel
+    otel_upper = redact(f"TimeoutError boom TRACE_ID={trace_id.upper()} SPAN_ID={span_id.upper()}")
+    assert trace_id.upper() not in otel_upper
+    assert span_id.upper() not in otel_upper
+    traceparent = redact(f"TimeoutError boom traceparent: 00-{trace_id}-{span_id}-01")
+    assert trace_id not in traceparent
+    assert span_id not in traceparent
+    assert "traceparent: [redacted]" in traceparent
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:

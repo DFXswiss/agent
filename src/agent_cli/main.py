@@ -1735,10 +1735,14 @@ def _sync_once(store: Store) -> None:
             hub.push(pending)
             store.mark_pushed(pending[-1]["origin_seq"])
         pulled = hub.pull(store.all_cursors())
+        if not isinstance(pulled, dict):
+            die("pull response is not an object")
         events = pulled.get("events")
         if not isinstance(events, list):
             die("pull response missing events")
         for event in events:
+            if not isinstance(event, dict) or "origin_device_id" not in event or "origin_seq" not in event:
+                die("pull event missing origin_device_id/origin_seq")
             store.apply_remote(event)
             store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
         snapshots = (

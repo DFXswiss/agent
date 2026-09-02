@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urljoin
 
@@ -40,7 +41,10 @@ class Hub:
             detail = _detail(response)
             raise HubError(f"hub {method} {path} → HTTP {response.status_code}: {detail}")
         if response.content:
-            return response.json()
+            try:
+                return response.json()
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+                raise HubError(f"hub {method} {path} → invalid JSON response") from exc
         return None
 
     def prepare(self, device_id: str, challenge: str, device_name: str) -> dict[str, Any]:

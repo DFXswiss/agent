@@ -522,6 +522,11 @@ class Store:
 
     @_wrap_pg_errors
     def mark_pushed(self, seq: int) -> None:
+        # Read-then-write is not atomic across the separate cmd_knock/cmd_sync
+        # --follow processes; a fully concurrent interleaving can still lose an
+        # update. Accepted: ledger_event is append-only and the hub treats the
+        # same event id as idempotent, so the worst case is a redundant re-push,
+        # not data loss. mark_origin below has the identical shape.
         current = int(self.sync_get("pushed_origin_seq", "0") or "0")
         if seq > current:
             self.sync_set("pushed_origin_seq", str(seq))
