@@ -19,3 +19,27 @@ def test_request_invalid_json_response_raises_hub_error_not_json_decode_error() 
         hub = Hub("https://hub.example", "tok", client=client)
         with pytest.raises(HubError, match="invalid JSON"):
             hub.pull({})
+
+
+def test_request_recursion_error_response_raises_hub_error_not_recursion_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: CPython's C-accelerated json decoder still bounds
+    recursion by C stack depth, not just sys.getrecursionlimit() - a
+    pathologically deeply-nested response body (adversarial or buggy hub)
+    can raise RecursionError, a RuntimeError subclass the previous except
+    tuple (JSONDecodeError/UnicodeDecodeError/ValueError) didn't catch. That
+    would have escaped every caller's HubError/StoreError guard the same way
+    a raw json.JSONDecodeError used to before this method existed."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="[1]")
+
+    def raise_recursion_error(self: httpx.Response) -> None:
+        raise RecursionError("Stack overflow while decoding a JSON array")
+
+    monkeypatch.setattr(httpx.Response, "json", raise_recursion_error)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        hub = Hub("https://hub.example", "tok", client=client)
+        with pytest.raises(HubError, match="invalid JSON"):
+            hub.pull({})

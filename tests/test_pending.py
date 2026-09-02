@@ -642,6 +642,34 @@ def test_sync_once_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
     assert store.rows("activity") == []
 
 
+def test_sync_once_rejects_whole_event_batch_when_one_of_two_events_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the event-side sibling of
+    test_sync_once_rejects_whole_batch_when_one_of_two_snapshots_is_invalid.
+    The events loop kept validating and applying each event in the same
+    iteration even after the snapshots loop was split into a
+    validate-all-then-apply-all pattern to fix exactly this partial-apply
+    shape - a batch with one valid event before an invalid one used to
+    durably commit the valid event (and advance its origin cursor) before
+    raising HubError on the invalid one."""
+    store = _paired_store(tmp_path)
+    valid_event = {**_valid_pull_event(store.device_id()), "row_id": "valid-1"}
+    invalid_event = {
+        **_valid_pull_event(store.device_id()),
+        "origin_seq": 2,
+        "row_id": "invalid-1",
+        "table": "not_a_real_table",
+    }
+    hub = FakeHub()
+    hub.pull_body = {"events": [valid_event, invalid_event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event has an unknown table"):
+        _sync_once(store)
+    assert store.origin_cursor(store.device_id()) == 0
+    assert store.rows("activity") == []
+
+
 def test_sync_once_accepts_a_snapshot_payload_whose_type_is_not_a_wake_type_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

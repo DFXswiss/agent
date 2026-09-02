@@ -304,6 +304,36 @@ def test_cmd_restore_rejects_whole_batch_when_one_of_two_snapshots_is_invalid(
         store.close()
 
 
+def test_cmd_restore_rejects_whole_event_batch_when_one_of_two_events_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the event-side sibling of
+    test_cmd_restore_rejects_whole_batch_when_one_of_two_snapshots_is_invalid.
+    cmd_restore's events loop kept validating and applying each event in the
+    same iteration even after its snapshots loop was split into a
+    validate-all-then-apply-all pattern to fix exactly this partial-apply
+    shape - a batch with one valid event before an invalid one used to
+    durably commit the valid event (and advance its origin cursor) before
+    dying on the invalid one."""
+    device_id = _own_device_id(tmp_path)
+    valid_event = {**_valid_restore_event(device_id), "row_id": "valid-1"}
+    invalid_event = {
+        **_valid_restore_event(device_id),
+        "origin_seq": 2,
+        "row_id": "invalid-1",
+        "table": "not_a_real_table",
+    }
+    body = {"own_events": [valid_event, invalid_event]}
+    with pytest.raises(SystemExit, match="restore event has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.origin_cursor(device_id) == 0
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     "bad_seq",
     [

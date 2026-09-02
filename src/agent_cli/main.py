@@ -1504,11 +1504,13 @@ def cmd_restore(_: list[str]) -> None:
             events = body.get("events")
         if not isinstance(events, list):
             die("restore response missing own_events")
+        coerced_events: list[dict[str, Any]] = []
         for event in events:
             try:
-                event = _coerce_pull_event(event, store.device_id())
+                coerced_events.append(_coerce_pull_event(event, store.device_id()))
             except _PullShapeError as exc:
                 die(f"restore {exc}")
+        for event in coerced_events:
             try:
                 store.apply_remote(event, wake=False)
                 store.mark_origin(event["origin_device_id"], event["origin_seq"])
@@ -1859,11 +1861,13 @@ def _sync_once(store: Store) -> None:
         events = pulled.get("events")
         if not isinstance(events, list):
             raise HubError("pull response missing events")
+        coerced_events: list[dict[str, Any]] = []
         for event in events:
             try:
-                event = _coerce_pull_event(event, store.device_id())
+                coerced_events.append(_coerce_pull_event(event, store.device_id()))
             except _PullShapeError as exc:
                 raise HubError(f"pull {exc}") from exc
+        for event in coerced_events:
             # Field presence and origin_seq are validated above, but not the
             # shape of nested values (e.g. payload["type"]) - apply_remote/
             # mark_origin can still hit a genuinely unanticipated shape deep

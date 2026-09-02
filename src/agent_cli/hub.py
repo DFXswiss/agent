@@ -43,7 +43,14 @@ class Hub:
         if response.content:
             try:
                 return response.json()
-            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+                # RecursionError: CPython's C-accelerated json decoder still
+                # bounds recursion by C stack depth (Py_EnterRecursiveCall),
+                # not just sys.getrecursionlimit() - a pathologically nested
+                # body (adversarial or buggy hub) hits it well before running
+                # out of memory. Confirmed empirically: json.loads('[' * n +
+                # ']' * n) raises RecursionError around n=1_000_000, not
+                # JSONDecodeError, so it needs its own arm in this tuple.
                 raise HubError(f"hub {method} {path} → invalid JSON response") from exc
         return None
 
