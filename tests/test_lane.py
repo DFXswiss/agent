@@ -108,6 +108,13 @@ def test_count_findings_absent_header_is_zero() -> None:
     assert count_findings("STATUS: complete\nREASON: ok\n") == 0
 
 
+def test_review_output_contract_echo_parses_as_zero_findings() -> None:
+    """Unfilled review-output-contract template must not count as a real finding."""
+    from agent_cli.run_core import _REVIEW_OUTPUT_CONTRACT
+
+    assert count_findings(_REVIEW_OUTPUT_CONTRACT) == 0
+
+
 def test_grok_implementer_argv() -> None:
     argv = grok_argv(spec_file="/tmp/spec.md", cwd="/work", write=True)
     assert "--session-id" not in argv

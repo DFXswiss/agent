@@ -115,6 +115,22 @@ def test_push_protected_branch_develop() -> None:
     assert not any("push" in a for a in calls)
 
 
+def test_push_expected_branch_mismatch() -> None:
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="expects 'error-fix-aaaaaaaa'"):
+        push_branch(
+            cwd=CWD, runner=runner, expected_branch="error-fix-aaaaaaaa"
+        )
+    assert not any("push" in a for a in calls)
+
+
 def test_push_dirty_porcelain() -> None:
     def runner(argv: list[str]) -> Completed:
         if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:

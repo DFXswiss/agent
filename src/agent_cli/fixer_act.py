@@ -1,7 +1,8 @@
 """Automated fixer driver for error-fix implement tasks.
 
 Drains open tasks with payload.error_id from spec_written through a draft
-pr.open using script control flow and lane.launch() only — no Claude session.
+pr.open, the PR gates, and task state done using script control flow and
+lane.launch() only — no Claude session. A human still merges the PR.
 """
 
 from __future__ import annotations

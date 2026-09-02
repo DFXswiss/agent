@@ -254,6 +254,26 @@ def test_write_error_fix_spec_omits_raw_log_fields(tmp_path: Path) -> None:
         store.close()
 
 
+def test_pushed_passes_expected_branch_from_error_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """error-fix tasks derive expected_branch=error-fix-<id8> for push_branch."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    captured: dict[str, object] = {}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+        captured["expected_branch"] = expected_branch
+        return "abcdef1234567890abcdef1234567890abcdef12"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert captured.get("expected_branch") == f"error-fix-{ERROR_ID[:8]}"
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+
 def test_fixer_threads_pushed_head_into_pr_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -263,7 +283,7 @@ def test_fixer_threads_pushed_head_into_pr_gate(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -279,8 +299,18 @@ def test_fixer_threads_pushed_head_into_pr_gate(
             stderr="",
         )
 
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
     monkeypatch.setattr(
         "agent_cli.fixer_act.insert_pr_open_and_scan",
         _fake_insert_pr_open_and_scan,
@@ -456,7 +486,7 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
     insert_calls = {"n": 0}
     head = f"error-fix-{ERROR_ID[:8]}"
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -557,7 +587,7 @@ def test_fixer_stops_on_persistent_gh_pr_create_failure(
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
     create_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -730,10 +760,21 @@ def test_fixer_drives_error_fix_task_to_done(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
     monkeypatch.setattr(
-        "agent_cli.git_act.push_branch", lambda *, cwd, runner: pushed_sha
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
     monkeypatch.setattr(
         "agent_cli.fixer_act.insert_pr_open_and_scan",
         _fake_insert_pr_open_and_scan,
@@ -775,7 +816,7 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -811,6 +852,12 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
         if argv and argv[0] == "pytest":
             return Completed(0, "ok\n", "")
         return Completed(0, "", "")
@@ -872,7 +919,7 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -896,6 +943,12 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
         if argv and argv[0] == "pytest":
             return Completed(0, "ok\n", "")
         return Completed(0, "", "")
@@ -957,7 +1010,8 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
     real_execute = fixer_mod.execute_spine_step
 
     monkeypatch.setattr(
-        "agent_cli.git_act.push_branch", lambda *, cwd, runner: pushed_sha
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr(
@@ -1129,7 +1183,7 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
     scan_calls: list[tuple] = []
     insert_calls: list[tuple] = []
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]

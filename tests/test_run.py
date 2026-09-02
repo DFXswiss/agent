@@ -419,6 +419,81 @@ def test_build_review_spec_oserror_does_not_leave_working_agent(
     assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 
+def test_empty_review_diff_short_circuits_before_launch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty collected review diff must fail the step without launching the lane."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # close implementer_done → reviewer next
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "agent_cli.run_core._collect_review_diff", lambda *_a, **_k: ("", [])
+    )
+
+    def boom_launch(**_kwargs: object) -> object:
+        raise AssertionError("launch must not be called")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
+    with pytest.raises(SystemExit):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert _checklist(tmp_path, tid).get("reviewer_approved") != "ja"
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
+def test_empty_diff_text_with_nonempty_changed_paths_still_short_circuits(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty diff_text must fail even when changed_paths is non-empty; launch must not run."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # close implementer_done → reviewer next
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "agent_cli.run_core._collect_review_diff",
+        lambda *_a, **_k: ("", ["some/file.py"]),
+    )
+
+    def boom_launch(**_kwargs: object) -> object:
+        raise AssertionError("launch must not be called")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
+    with pytest.raises(SystemExit):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert _checklist(tmp_path, tid).get("reviewer_approved") != "ja"
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
 def test_launch_oserror_does_not_leave_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -474,6 +549,16 @@ def test_launch_oserror_on_retry_does_not_leave_working_agent(
             )
         raise OSError("missing vendor CLI binary")
 
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     with pytest.raises(OSError):
         run(
@@ -516,6 +601,16 @@ def test_run_spec_file_reviewer_complete_auto_approves(
             stderr="",
         )
 
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     run(
         tmp_path,
@@ -562,6 +657,16 @@ def test_run_spec_file_reviewer_complete_without_findings_header_retries_then_fa
             stderr="",
         )
 
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     with pytest.raises(SystemExit) as exc:
         run(
@@ -607,6 +712,16 @@ def test_run_spec_file_vendor_unavailable_exits_nonzero(
             stderr="command not found",
         )
 
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     with pytest.raises(SystemExit) as exc:
         run(
@@ -652,6 +767,16 @@ def test_run_spec_file_reviewer_retry_exhaustion_finishes_working_agent(
             stderr="",
         )
 
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     with pytest.raises(SystemExit) as exc:
         run(
@@ -702,7 +827,7 @@ def test_run_pushed_calls_push_branch(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abc1234"
 
@@ -715,6 +840,27 @@ def test_run_pushed_calls_push_branch(
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
     assert called["n"] == 1
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+
+def test_pushed_passes_expected_branch_none_for_ordinary_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ordinary implement tasks have no payload.error_id → expected_branch=None."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    captured: dict[str, object] = {}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+        captured["expected_branch"] = expected_branch
+        return "abc1234"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert "expected_branch" in captured
+    assert captured["expected_branch"] is None
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
@@ -831,7 +977,7 @@ def test_run_mergeable_after_gates(
 
     push_called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         push_called["n"] += 1
         return "abc1234"
 
@@ -1362,7 +1508,7 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
     shas = [old_sha, new_sha]
     push_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -1370,6 +1516,12 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
     def fake_exec(argv, *, cwd=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
         if argv and argv[0] == "pytest":
             return Completed(0, "ok\n", "")
         return Completed(0, "", "")

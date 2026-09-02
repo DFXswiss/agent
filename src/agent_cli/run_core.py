@@ -43,11 +43,16 @@ _REVIEW_OUTPUT_CONTRACT = (
     "REASON: [...]\n"
     "SCOPE: [...]\n"
     "DIMENSION: [...]\n"
-    "FINDINGS: [...]\n"
+    "FINDINGS: none\n"
     "NOT-VERIFIABLE: [...]\n"
     "GAPS: [...]"
 )
 ExecArgv = Callable[..., Any]
+
+
+class EmptyReviewDiffError(Exception):
+    """Raised by build_review_spec_file when the collected diff is empty."""
+
 
 # Checklist keys reset when a PR-reviewer dimension is rejected (new head).
 _PR_REJECT_RESET_KEYS = (
@@ -326,6 +331,8 @@ def build_review_spec_file(
 ) -> str:
     """Write a four-part review prompt under $AGENT_HOME/review-work/<task_id>/; return its path."""
     diff_text, changed_paths = _collect_review_diff(cwd, exec_argv)
+    if not diff_text.strip():
+        raise EmptyReviewDiffError("empty review diff")
     parent = Path(store.home) / "review-work" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     round_bit = round_num if round_num is not None else 0
@@ -816,10 +823,14 @@ def execute_spine_step(
         run_cwd = cwd or os.getcwd()
         from .git_act import GitActError, push_branch
 
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        error_id = str(payload.get("error_id") or "").strip()
+        expected_branch = f"error-fix-{error_id[:8]}" if error_id else None
         try:
             sha = push_branch(
                 cwd=run_cwd,
                 runner=lambda argv: exec_argv(argv, cwd=run_cwd),
+                expected_branch=expected_branch,
             )
         except GitActError as exc:
             return RunOutcome(
@@ -1028,6 +1039,19 @@ def execute_spine_step(
                     implement_spec_file=spec_file,
                     cwd=run_cwd,
                     exec_argv=exec_argv,
+                )
+            except EmptyReviewDiffError as exc:
+                working = main_mod._find_working_agent(
+                    store, tid, role=role, vendor=vendor, round_num=round_num
+                )
+                if working is not None:
+                    _agent_finish(str(working["id"]), "unavailable", note=str(exc))
+                return RunOutcome(
+                    kind="failed",
+                    key=step.key,
+                    step=step,
+                    reason=str(exc),
+                    message=str(exc),
                 )
             except OSError:
                 working = main_mod._find_working_agent(

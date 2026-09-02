@@ -28,7 +28,7 @@ def _fail_detail(completed: Completed, fallback: str) -> str:
     return detail or fallback
 
 
-def push_branch(*, cwd: str, runner: Runner) -> str:
+def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None) -> str:
     """Push the current branch if needed. Return HEAD sha (lowercase hex)."""
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
     if completed.returncode != 0:
@@ -36,6 +36,10 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
     branch = completed.stdout.strip()
     if not branch:
         raise GitActError("empty branch name")
+    if expected_branch is not None and branch != expected_branch:
+        raise GitActError(
+            f"on branch {branch!r} but task expects {expected_branch!r} — refusing to push"
+        )
     if branch in PROTECTED:
         raise GitActError(f"refusing to push protected branch {branch}")
 

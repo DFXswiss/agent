@@ -77,7 +77,7 @@ agent pg status
 agent pg stop
 ```
 
-`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`.
+`agent run` records a local check when `local_check_pass` is open and there is no fresh pass/skip for the current HEAD (a prior fail on that HEAD is rerun). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer and PR-reviewer lanes auto-pass when `STATUS: complete` and `FINDINGS:` parses to zero.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
@@ -96,6 +96,7 @@ agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapsh
 agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
+agent watch error-fix-work  # one scan; drains error-fix implement tasks from spec_written through PR gates to done; not wired into agent daemon
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 # agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```

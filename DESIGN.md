@@ -419,7 +419,7 @@ agent watch grok-usage                         # one scan; knock child (under th
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
-agent watch error-fix-work                    # one scan; drains error-fix implement tasks from spec_written through a draft pr.open (§21.7); not wired into agent daemon
+agent watch error-fix-work                    # one scan; drains error-fix implement tasks from spec_written through PR gates to done (§21.7); not wired into agent daemon
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard [--port 7845]
@@ -676,13 +676,13 @@ For confirmed error-fix tasks only (same `error_fix_confirmed` condition), `clos
 
 ### 21.7 Automated fixer driver
 
-`agent watch error-fix-work` drains open error-fix `implement` tasks on this device (`payload.error_id` set and a matching `error.fix` confirmed for that id in the same session, state not `done`/`failed`) from `spec_written` through a draft `pr.open`, using only script control flow and the `grok`/`codex` CLIs via `lane.launch()`. It is not wired into `agent daemon`.
+`agent watch error-fix-work` drains open error-fix `implement` tasks on this device (`payload.error_id` set and a matching `error.fix` confirmed for that id in the same session, state not `done`/`failed`) from `spec_written` through a draft `pr.open`, the PR gates (`grok_pr_quality`, `grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`, plus the scripted `contributing_ok` carve-out), and task state `done`, using only script control flow and the `grok`/`codex` CLIs via `lane.launch()`. A human still merges the PR; the spine has no `merged` step. It is not wired into `agent daemon`.
 
 - Scripts the five-part spec under `$AGENT_HOME/error-fix-work/<task_id>/.spec.md` from the `error.fix` brief plus `error.seen` metadata (never raw log excerpts), closes `spec_written` via the script carve-out above, then `agent round start`.
 - Walks the spine with the same step executor as `agent run` (including auto pass/fail for reviewer and PR-reviewer lanes from `STATUS:` + `FINDINGS:`). Round retries reset the relevant checklist keys to `nein` and call `agent round start`. Cap is `task.current_round` against 5: exceeding it sets `task state failed` and stops touching that task.
 - If a vendor CLI binary is missing (`OSError` / `FileNotFoundError` before any `LaneResult`) or a lane returns `LaneResult(status="unavailable")` on both the initial attempt and the one retry, the driver leaves task and checklist state untouched for retry, but releases any already-started agent row (`cmd_agent finish --verdict unavailable`) rather than leaving it `working` forever — notes the CLI looks unavailable, and moves on; the next scan retries after a human fixes PATH/auth.
 - Each scan re-checks from the ledger (not per-call local state) whether `pushed` is closed but no successful (`done`) `pr.open` activity row exists yet for that task's branch head. A mid-flight `pending` row is resumed via `scan_github` (no duplicate insert); an `error` row or missing row triggers a fresh `insert_pr_open_and_scan` — so a failed insert is not silently skipped by the next scan.
-- After `pushed`, inserts a pending `pr.open` (title/body per CONTRIBUTING) and runs `agent github pending`.
+- After `pushed`, inserts a pending `pr.open` (title/body per CONTRIBUTING) and runs `agent github pending`, then continues through the PR gates to `done`.
 - Failing a task via lane retry-exhaustion also finishes the still-working agent row (`blocked` for implementer, `rejected` for reviewer/pr-reviewer roles) so the row does not block a later manual round-start recovery.
 
 ## 22. Static supervise loop (v1)
