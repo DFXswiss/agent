@@ -1121,7 +1121,7 @@ def execute_spine_step(
                 )
             except ReviewDiffUnavailableError as exc:
                 # External/transient git failure — leave task untouched for retry
-                # (same shape as vendor_unavailable in _retry_launch_once).
+                # (same shape as vendor_unavailable in _lane_retry_then_fail).
                 working = main_mod._find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )

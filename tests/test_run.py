@@ -1730,8 +1730,7 @@ def test_local_check_reruns_after_pr_rejection_with_new_head(
                     row["id"],
                     {k: v for k, v in row.items() if not str(k).startswith("_")},
                 )
-        # Also reopen pushed so spine lands on local_check_pass first... actually
-        # after local_check_pass=nein with prior steps ja, next is local_check_pass.
+        # local_check_pass=nein with prior steps ja -> next spine step is local_check_pass.
         check_calls = {"n": 0}
 
         def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
