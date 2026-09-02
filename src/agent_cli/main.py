@@ -1776,7 +1776,10 @@ def _coerce_pull_event(event: object, own_device_id: str) -> dict[str, Any]:
     data, not to this codebase's own trusted call sites. Normalize
     origin_seq to an int (rejecting bool, a fractional float, and anything
     int() can't convert, including an out-of-range float that would
-    otherwise raise OverflowError). Also validates origin_device_id equals
+    otherwise raise OverflowError). occurred_at must actually parse as a
+    timestamp, same reasoning and check as _check_pull_row's updated_at (a
+    bogus value would otherwise be stored as-is - apply_remote writes it
+    into row_data.updated_at too, via _materialize). Also validates origin_device_id equals
     own_device_id: DESIGN.md's sync contract is "own events, gapless" -
     foreign-origin data arrives as row snapshots, never as an event
     (apply_replica_row already enforces the row-side half of this, ignoring
@@ -1795,6 +1798,12 @@ def _coerce_pull_event(event: object, own_device_id: str) -> dict[str, Any]:
         raise _PullShapeError("event payload is not an object")
     if event["op"] not in ("insert", "update", "delete"):
         raise _PullShapeError("event has an unknown op")
+    if not isinstance(event["occurred_at"], str):
+        raise _PullShapeError("event occurred_at is not a valid timestamp")
+    try:
+        datetime.fromisoformat(re.sub(r"[Zz]$", "+00:00", event["occurred_at"]))
+    except ValueError as exc:
+        raise _PullShapeError("event occurred_at is not a valid timestamp") from exc
     raw_seq = event["origin_seq"]
     try:
         if isinstance(raw_seq, bool):

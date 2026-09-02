@@ -361,6 +361,26 @@ def test_sync_once_raises_hub_error_on_event_with_unknown_op(
     assert store.rows("activity") == []
 
 
+def test_sync_once_raises_hub_error_on_event_with_unparseable_occurred_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the event-side sibling of
+    test_sync_once_raises_hub_error_on_snapshot_with_unparseable_updated_at.
+    occurred_at was presence-checked only, like updated_at used to be; a
+    bogus non-timestamp string used to pass validation and be stored as-is
+    by apply_remote (which writes it into row_data.updated_at too, via
+    _materialize)."""
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "occurred_at": "not-a-timestamp"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event occurred_at is not a valid timestamp"):
+        _sync_once(store)
+    assert store.origin_cursor(store.device_id()) == 0
+    assert store.rows("activity") == []
+
+
 def test_sync_once_raises_hub_error_on_event_with_unknown_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -164,6 +164,22 @@ def test_cmd_restore_dies_on_event_with_unknown_op(tmp_path: Path, monkeypatch: 
         store.close()
 
 
+def test_cmd_restore_dies_on_event_with_unparseable_occurred_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_unparseable_occurred_at."""
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "occurred_at": "not-a-timestamp"}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event occurred_at is not a valid timestamp"):
+        _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.rows("activity") == []
+    finally:
+        store.close()
+
+
 def test_cmd_restore_dies_on_event_with_unknown_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
