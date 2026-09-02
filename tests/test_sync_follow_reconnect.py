@@ -471,18 +471,27 @@ def test_recursion_error_from_deeply_nested_frame_is_skipped_not_crashed(
     sys.getrecursionlimit(), so a pathologically deeply-nested frame
     (adversarial or buggy hub) raises RecursionError, a RuntimeError
     subclass neither of those catches - the same gap just fixed in
-    Hub.request, reachable a third way through the live websocket loop."""
+    Hub.request, reachable a third way through the live websocket loop.
+    Monkeypatches json.loads directly (matching tests/test_hub.py's
+    equivalent test) rather than constructing a real, actually-deeply-nested
+    frame string: relying on CPython's C decoder genuinely overflowing at a
+    specific depth would make this test depend on interpreter/platform
+    internals rather than deterministically exercising the new except arm."""
     _init_paired_store(tmp_path)
     store = open_store()
     try:
-        nested_frame = "[" * 1_000_000 + "]" * 1_000_000
+
+        def raise_recursion_error(_raw: str) -> None:
+            raise RecursionError("Stack overflow while decoding a JSON array")
+
+        monkeypatch.setattr(main_mod.json, "loads", raise_recursion_error)
 
         class _SubscriptionWs:
             def send(self, data: str) -> None:
                 pass
 
             def __iter__(self):
-                return iter([nested_frame])
+                return iter(["[1]"])
 
             def close(self) -> None:
                 pass

@@ -1529,14 +1529,7 @@ def cmd_restore(_: list[str]) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 die(f"restore {exc}")
-        # session rows first, same as _sync_once: apply_replica_row's
-        # wake=False branch still calls _owns_session, which depends on the
-        # parent session row already being present - restoring a session's
-        # mail before its own session row would silently skip enqueueing
-        # that message's wake, since ownership can't be confirmed yet.
-        sessions = [r for r in snapshots if r.get("table") == "session"]
-        rest = [r for r in snapshots if r.get("table") != "session"]
-        for row in sessions + rest:
+        for row in snapshots:
             try:
                 store.apply_replica_row(row, wake=False)
             except Exception as exc:
