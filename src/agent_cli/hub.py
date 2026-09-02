@@ -116,7 +116,7 @@ class Hub:
 def _detail(response: httpx.Response) -> str:
     try:
         body = response.json()
-    except ValueError:
+    except (ValueError, RecursionError):
         return response.text
     if isinstance(body, dict) and "detail" in body:
         return str(body["detail"])

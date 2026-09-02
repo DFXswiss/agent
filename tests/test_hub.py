@@ -43,3 +43,28 @@ def test_request_recursion_error_response_raises_hub_error_not_recursion_error(
         hub = Hub("https://hub.example", "tok", client=client)
         with pytest.raises(HubError, match="invalid JSON"):
             hub.pull({})
+
+
+def test_request_recursion_error_on_error_response_body_falls_back_to_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: the row-side sibling of the test above, for _detail()
+    - called only for an HTTP >= 400 response to build the error message.
+    _detail() had its own separate response.json() call with its own except
+    tuple (bare ValueError), never updated when the success-path tuple above
+    gained RecursionError. A >= 400 response with a pathologically nested
+    error body used to crash Hub.request with an uncaught RecursionError
+    instead of falling back to the raw response text like every other
+    unparseable error body already does."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="bad request, raw text")
+
+    def raise_recursion_error(self: httpx.Response) -> None:
+        raise RecursionError("Stack overflow while decoding a JSON array")
+
+    monkeypatch.setattr(httpx.Response, "json", raise_recursion_error)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        hub = Hub("https://hub.example", "tok", client=client)
+        with pytest.raises(HubError, match="bad request, raw text"):
+            hub.pull({})

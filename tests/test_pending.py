@@ -415,6 +415,23 @@ def test_sync_once_raises_hub_error_on_event_with_unhashable_table(
         _sync_once(store)
 
 
+@pytest.mark.parametrize("bad_row_id", ["", ["not", "a", "string"]])
+def test_sync_once_raises_hub_error_on_event_with_invalid_row_id(
+    bad_row_id: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: row_id was presence-checked only, like every other
+    field here before it got its own validation - an empty string or a
+    non-string value used to pass validation untouched and only fail later,
+    as a raw type/constraint error from whatever eventually stores it."""
+    store = _paired_store(tmp_path)
+    event = {**_valid_pull_event(store.device_id()), "row_id": bad_row_id}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event row_id is not a valid id"):
+        _sync_once(store)
+
+
 @pytest.mark.parametrize(
     "bad_seq",
     [
@@ -570,6 +587,37 @@ def test_sync_once_raises_hub_error_on_snapshot_with_unhashable_table(
     hub.pull_body = {"events": [], "inbox": [row]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull snapshot has an unknown table"):
+        _sync_once(_paired_store(tmp_path))
+
+
+@pytest.mark.parametrize("bad_row_id", ["", ["not", "a", "string"]])
+def test_sync_once_raises_hub_error_on_snapshot_with_invalid_row_id(
+    bad_row_id: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_invalid_row_id."""
+    row = {**_valid_pull_row(), "row_id": bad_row_id}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot row_id is not a valid id"):
+        _sync_once(_paired_store(tmp_path))
+
+
+@pytest.mark.parametrize("bad_origin_device_id", ["", ["not", "a", "string"]])
+def test_sync_once_raises_hub_error_on_snapshot_with_invalid_origin_device_id(
+    bad_origin_device_id: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: unlike an event's origin_device_id (checked for
+    ownership), a snapshot row's origin_device_id is legitimately foreign -
+    but it was still only presence-checked, never type/emptiness-checked,
+    before apply_replica_row compares it against this device's own id and
+    stores it as the row's recorded owner."""
+    row = {**_valid_pull_row(), "origin_device_id": bad_origin_device_id}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot origin_device_id is not a valid id"):
         _sync_once(_paired_store(tmp_path))
 
 

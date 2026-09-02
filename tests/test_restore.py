@@ -202,6 +202,18 @@ def test_cmd_restore_dies_on_event_with_unhashable_table(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+@pytest.mark.parametrize("bad_row_id", ["", ["not", "a", "string"]])
+def test_cmd_restore_dies_on_event_with_invalid_row_id(
+    bad_row_id: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_invalid_row_id."""
+    event = {**_valid_restore_event(_own_device_id(tmp_path)), "row_id": bad_row_id}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event row_id is not a valid id"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
 def test_cmd_restore_dies_on_snapshot_with_non_dict_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -232,6 +244,30 @@ def test_cmd_restore_dies_on_snapshot_with_unhashable_table(
     row = {**_valid_restore_row(), "table": ["activity"]}
     body = {"own_events": [], "inbox": [row]}
     with pytest.raises(SystemExit, match="restore snapshot has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+@pytest.mark.parametrize("bad_row_id", ["", ["not", "a", "string"]])
+def test_cmd_restore_dies_on_snapshot_with_invalid_row_id(
+    bad_row_id: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_snapshot_with_invalid_row_id."""
+    row = {**_valid_restore_row(), "row_id": bad_row_id}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot row_id is not a valid id"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+@pytest.mark.parametrize("bad_origin_device_id", ["", ["not", "a", "string"]])
+def test_cmd_restore_dies_on_snapshot_with_invalid_origin_device_id(
+    bad_origin_device_id: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_snapshot_with_invalid_origin_device_id."""
+    row = {**_valid_restore_row(), "origin_device_id": bad_origin_device_id}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot origin_device_id is not a valid id"):
         _run_restore(tmp_path, monkeypatch, body)
 
 

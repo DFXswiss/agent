@@ -1454,7 +1454,7 @@ def _run_sync_ws_session(
         for raw in ws:
             try:
                 message = json.loads(raw)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, RecursionError):
                 continue
             if not isinstance(message, dict):
                 continue
@@ -1529,7 +1529,14 @@ def cmd_restore(_: list[str]) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 die(f"restore {exc}")
-        for row in snapshots:
+        # session rows first, same as _sync_once: apply_replica_row's
+        # wake=False branch still calls _owns_session, which depends on the
+        # parent session row already being present - restoring a session's
+        # mail before its own session row would silently skip enqueueing
+        # that message's wake, since ownership can't be confirmed yet.
+        sessions = [r for r in snapshots if r.get("table") == "session"]
+        rest = [r for r in snapshots if r.get("table") != "session"]
+        for row in sessions + rest:
             try:
                 store.apply_replica_row(row, wake=False)
             except Exception as exc:
@@ -1788,14 +1795,18 @@ def _coerce_pull_event(event: object, own_device_id: str) -> dict[str, Any]:
     a same-device non-ping snapshot rather than applying it) - so a
     pulled/restored event claiming a foreign origin_device_id is a
     malformed hub response, not a normal case apply_remote/mark_origin
-    should accept. Returns a new dict; the caller's own copy of the raw
-    event is left untouched."""
+    should accept. row_id must be a non-empty string too, same reasoning as
+    every other field here - an unchecked value (e.g. a list) would only
+    fail later, as a raw type error from whatever stores it. Returns a new
+    dict; the caller's own copy of the raw event is left untouched."""
     if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
         raise _PullShapeError("event is missing required fields")
     if event["origin_device_id"] != own_device_id:
         raise _PullShapeError("event origin_device_id is not this device's own")
     if not isinstance(event["table"], str) or event["table"] not in OWNED_TABLES:
         raise _PullShapeError("event has an unknown table")
+    if not isinstance(event["row_id"], str) or event["row_id"] == "":
+        raise _PullShapeError("event row_id is not a valid id")
     if not isinstance(event["payload"], dict):
         raise _PullShapeError("event payload is not an object")
     if event["op"] not in ("insert", "update", "delete"):
@@ -1828,11 +1839,18 @@ def _check_pull_row(row: object) -> dict[str, Any]:
     compares updated_at against an existing row on conflict), so a bogus
     value isn't rejected until some later write to that same row fails its
     ::timestamptz cast - by which point the row is already stuck with a
-    value no legitimate update can pass the "newer than" check against."""
+    value no legitimate update can pass the "newer than" check against.
+    row_id and origin_device_id must be non-empty strings too, same
+    reasoning - an unchecked value would only fail later, as a raw type
+    error from whatever stores it."""
     if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
         raise _PullShapeError("snapshot is missing required fields")
     if not isinstance(row["table"], str) or row["table"] not in OWNED_TABLES:
         raise _PullShapeError("snapshot has an unknown table")
+    if not isinstance(row["row_id"], str) or row["row_id"] == "":
+        raise _PullShapeError("snapshot row_id is not a valid id")
+    if not isinstance(row["origin_device_id"], str) or row["origin_device_id"] == "":
+        raise _PullShapeError("snapshot origin_device_id is not a valid id")
     if not isinstance(row["payload"], dict):
         raise _PullShapeError("snapshot payload is not an object")
     if not isinstance(row["updated_at"], str):

@@ -462,6 +462,41 @@ def test_subscription_row_with_unhashable_table_is_skipped_not_crashed(
         store.close()
 
 
+def test_recursion_error_from_deeply_nested_frame_is_skipped_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: json.loads(raw) on an incoming websocket frame was
+    only guarded by except (TypeError, ValueError) - CPython's C-accelerated
+    json decoder still bounds recursion by C stack depth, not just
+    sys.getrecursionlimit(), so a pathologically deeply-nested frame
+    (adversarial or buggy hub) raises RecursionError, a RuntimeError
+    subclass neither of those catches - the same gap just fixed in
+    Hub.request, reachable a third way through the live websocket loop."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        nested_frame = "[" * 1_000_000 + "]" * 1_000_000
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter([nested_frame])
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(HubError, match="websocket closed"):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+    finally:
+        store.close()
+
+
 def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
