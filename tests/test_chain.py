@@ -430,6 +430,12 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertTrue(allowed.allowed)
 
+        snap_whitespace_id = {
+            "payload": {"error_id": "   "},
+            "error_fix_confirmed": True,
+        }
+        self.assertFalse(is_error_fix_originated(snap_whitespace_id))
+
     def test_error_fix_deviation_n_a_script_carve_out(self) -> None:
         """Confirmed error-fix may script-author deviation_* only as n_a."""
         cl = _pending("implement")

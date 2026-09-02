@@ -53,6 +53,10 @@ class EmptyReviewDiffError(Exception):
     """Raised by build_review_spec_file when the collected diff is empty."""
 
 
+class ReviewDiffUnavailableError(Exception):
+    """Raised when a git probe failed while collecting the review diff."""
+
+
 # Checklist keys reset when a PR-reviewer dimension is rejected (new head).
 _PR_REJECT_RESET_KEYS = (
     "implementer_done",
@@ -269,8 +273,13 @@ def _interpret_lane(
 
 def _collect_review_diff(
     cwd: str, exec_argv: ExecArgv
-) -> tuple[str, list[str]]:
-    """Materialize unified diff + changed paths against a base branch."""
+) -> tuple[str, list[str], bool]:
+    """Materialize unified diff + changed paths against a base branch.
+
+    The third return value is True only when every diff-producing git probe
+    that actually ran exited 0. The base-ref rev-parse search is excluded —
+    a missing candidate ref is expected control flow, not a probe failure.
+    """
     base_ref: str | None = None
     for candidate in _BASE_CANDIDATES:
         completed = exec_argv(["git", "rev-parse", "--verify", candidate], cwd=cwd)
@@ -279,18 +288,26 @@ def _collect_review_diff(
             break
     chunks: list[str] = []
     paths: list[str] = []
+    probes_ok = True
     if base_ref is not None:
         mb = exec_argv(["git", "merge-base", "HEAD", base_ref], cwd=cwd)
+        mb_rc = int(getattr(mb, "returncode", 1))
+        if mb_rc != 0:
+            probes_ok = False
         base_sha = str(getattr(mb, "stdout", "") or "").strip()
-        if int(getattr(mb, "returncode", 1)) == 0 and base_sha:
+        if mb_rc == 0 and base_sha:
             range_spec = f"{base_sha}...HEAD"
             diff = exec_argv(["git", "diff", range_spec], cwd=cwd)
-            if int(getattr(diff, "returncode", 1)) == 0:
+            if int(getattr(diff, "returncode", 1)) != 0:
+                probes_ok = False
+            else:
                 text = str(getattr(diff, "stdout", "") or "")
                 if text.strip():
                     chunks.append(text)
             names = exec_argv(["git", "diff", "--name-only", range_spec], cwd=cwd)
-            if int(getattr(names, "returncode", 1)) == 0:
+            if int(getattr(names, "returncode", 1)) != 0:
+                probes_ok = False
+            else:
                 paths.extend(
                     p.strip()
                     for p in str(getattr(names, "stdout", "") or "").splitlines()
@@ -298,12 +315,16 @@ def _collect_review_diff(
                 )
     for argv_extra in (["HEAD"], ["--cached"]):
         diff = exec_argv(["git", "diff", *argv_extra], cwd=cwd)
-        if int(getattr(diff, "returncode", 1)) == 0:
+        if int(getattr(diff, "returncode", 1)) != 0:
+            probes_ok = False
+        else:
             text = str(getattr(diff, "stdout", "") or "")
             if text.strip():
                 chunks.append(text)
         names = exec_argv(["git", "diff", "--name-only", *argv_extra], cwd=cwd)
-        if int(getattr(names, "returncode", 1)) == 0:
+        if int(getattr(names, "returncode", 1)) != 0:
+            probes_ok = False
+        else:
             paths.extend(
                 p.strip()
                 for p in str(getattr(names, "stdout", "") or "").splitlines()
@@ -316,7 +337,7 @@ def _collect_review_diff(
         if p not in seen:
             seen.add(p)
             unique_paths.append(p)
-    return "\n".join(chunks), unique_paths
+    return "\n".join(chunks), unique_paths, probes_ok
 
 
 def build_review_spec_file(
@@ -330,9 +351,13 @@ def build_review_spec_file(
     exec_argv: ExecArgv,
 ) -> str:
     """Write a four-part review prompt under $AGENT_HOME/review-work/<task_id>/; return its path."""
-    diff_text, changed_paths = _collect_review_diff(cwd, exec_argv)
+    diff_text, changed_paths, probes_ok = _collect_review_diff(cwd, exec_argv)
     if not diff_text.strip():
-        raise EmptyReviewDiffError("empty review diff")
+        if probes_ok:
+            raise EmptyReviewDiffError("empty review diff")
+        raise ReviewDiffUnavailableError(
+            "git probe failed while collecting the review diff"
+        )
     parent = Path(store.home) / "review-work" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     round_bit = round_num if round_num is not None else 0
@@ -385,7 +410,7 @@ def build_review_spec_file(
         f"`STATUS: complete` and nothing is wrong.\n\n"
         f"Do not execute software — no tests, builds, package managers, shells, "
         f"or project scripts. Read/Grep/Glob only. Cite every finding with "
-        f"`Datei:Zeile` / `file:line`. If a judgment needs a test run, put the "
+        f"`file:line`. If a judgment needs a test run, put the "
         f"command under NOT-VERIFIABLE instead of running it.\n"
     )
     spec_path.write_text(body, encoding="utf-8")
@@ -1087,6 +1112,20 @@ def execute_spine_step(
                     kind="failed",
                     key=step.key,
                     step=step,
+                    reason=str(exc),
+                    message=str(exc),
+                )
+            except ReviewDiffUnavailableError as exc:
+                # External/transient git failure — leave task untouched for retry
+                # (same shape as vendor_unavailable in _retry_launch_once).
+                working = main_mod._find_working_agent(
+                    store, tid, role=role, vendor=vendor, round_num=round_num
+                )
+                if working is not None:
+                    _agent_finish(str(working["id"]), "unavailable", note=str(exc))
+                return RunOutcome(
+                    kind="vendor_unavailable",
+                    key=step.key,
                     reason=str(exc),
                     message=str(exc),
                 )

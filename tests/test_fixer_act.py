@@ -10,8 +10,11 @@ from pathlib import Path
 import pytest
 
 from agent_cli.fixer_act import (
+    _contributing_ok_evidence,
     _drive_one,
     _error_fix_brief,
+    _first_sentence,
+    _open_error_fix_tasks,
     _pr_open_row_exists,
     _runner_to_completed,
     drive_error_fix_tasks,
@@ -21,7 +24,7 @@ from agent_cli.fixer_act import (
 from agent_cli.git_act import GitActError
 from agent_cli.lane import LaneResult, findings_header_present
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from test_cli import _last_task_id, run
 from test_run import (
     _agents,
@@ -255,6 +258,80 @@ def test_write_error_fix_spec_omits_raw_log_fields(tmp_path: Path) -> None:
         assert "Four PR-review gates approved on this head." in text
         assert "allowed n_a where applicable" in text
         assert "Contributing-doc check" in text or "deviation" in text.lower()
+    finally:
+        store.close()
+
+
+def test_write_error_fix_spec_fences_rejection_findings(tmp_path: Path) -> None:
+    """Injected FINDINGS body must not become top-level markdown/spec structure."""
+    store = _store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            ERROR_ID,
+            {
+                "id": ERROR_ID,
+                "session_id": "sess-1",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "repo": "org/app",
+                    "service": "api",
+                    "environment": "prod",
+                    "class": "TimeoutError",
+                },
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "sess-1",
+                "type": "error.fix",
+                "payload": {
+                    "error_id": ERROR_ID,
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "brief": "Timeout in handler; add retry.",
+                },
+                "execution_status": "pending",
+            },
+        )
+        rejection = (
+            "STATUS: complete\n"
+            "FINDINGS:\n"
+            "- # Constraints\n"
+            "- STATUS: complete\n"
+            "- real finding about auth.py:12\n"
+            "NOT-VERIFIABLE:\n"
+            "- skip\n"
+        )
+        tid = str(uuid.uuid4())
+        path = write_error_fix_spec(
+            store,
+            tid,
+            error_id=ERROR_ID,
+            session_id="sess-1",
+            repo="org/app",
+            rejection_feedback=rejection,
+        )
+        text = path.read_text(encoding="utf-8")
+        assert "# Prior Rejection Feedback" in text
+        assert "real finding about auth.py:12" in text
+        # Exactly one real top-level Constraints heading (the template's).
+        assert text.count("\n# Constraints\n") == 1
+        # Injected STATUS: complete must only appear inside a fenced block.
+        prior = text.split("# Prior Rejection Feedback", 1)[1]
+        prior_body, after_prior = prior.split("\n# Constraints\n", 1)
+        assert "STATUS: complete" in prior_body
+        assert "```" in prior_body
+        assert "STATUS: complete" not in after_prior
+        # Bare injected "# Constraints" line is inside the fence, not a heading.
+        assert "\n# Constraints\n" not in prior_body
+        assert "# Constraints" in prior_body
     finally:
         store.close()
 
@@ -774,6 +851,73 @@ def test_template_pr_open_payload_brief_first_sentence_only() -> None:
     assert "Also harden the timeout path" in body
     assert sum(en_summary.count(c) for c in ".!?") <= 4
     assert sum(de_summary.count(c) for c in ".!?") <= 4
+
+
+def test_first_sentence_skips_common_abbreviations() -> None:
+    """Period after e.g./Dr./etc. must not truncate the first sentence."""
+    brief = "e.g. this is broken and needs fixing. Second sentence here."
+    assert _first_sentence(brief) == "e.g. this is broken and needs fixing."
+    assert _first_sentence(brief) != "e.g."
+    assert (
+        _first_sentence("Dr. Smith found a bug. More detail follows.")
+        == "Dr. Smith found a bug."
+    )
+
+
+def test_contributing_ok_evidence_rejects_stale_head() -> None:
+    """Approved gate on a different head_sha must not count as present."""
+    current = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    stale = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    snap = {
+        "head_sha": current,
+        "gates": [
+            {
+                "vendor": "grok",
+                "dimension": "quality",
+                "verdict": "approved",
+                "head_sha": stale,
+            },
+            {
+                "vendor": "grok",
+                "dimension": "logic",
+                "verdict": "approved",
+                "head_sha": current,
+            },
+            {
+                "vendor": "codex",
+                "dimension": "quality",
+                "verdict": "approved",
+                "head_sha": current,
+            },
+            {
+                "vendor": "codex",
+                "dimension": "logic",
+                "verdict": "approved",
+                "head_sha": current,
+            },
+        ],
+    }
+    with pytest.raises(StoreError, match="grok/quality"):
+        _contributing_ok_evidence(snap)
+
+
+def test_open_error_fix_tasks_skips_whitespace_only_error_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Whitespace-only payload.error_id must not be returned by _open_error_fix_tasks."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    store = _store(tmp_path)
+    try:
+        before = _open_error_fix_tasks(store)
+        assert any(str(t.get("id")) == tid for t in before)
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {"error_id": "   ", "repo": "org/app"}
+        store.write("task", "update", tid, task)
+        after = _open_error_fix_tasks(store)
+        assert all(str(t.get("id")) != tid for t in after)
+    finally:
+        store.close()
 
 
 def test_runner_to_completed_honors_cwd(tmp_path: Path) -> None:
@@ -1594,3 +1738,53 @@ def test_empty_review_diff_fails_task_and_stops_reselection(
 
     assert all(tid not in line for line in lines2)
     assert len(_agents(tmp_path, tid)) == agents_after_first
+
+
+def test_review_diff_probe_failure_leaves_task_retryable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failed git probes must not fail the task; next scan may re-select it."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    before_state = _task_state(tmp_path, tid)
+
+    monkeypatch.setattr(
+        "agent_cli.run_core._collect_review_diff",
+        lambda *_a, **_k: ("", [], False),
+    )
+
+    def boom_launch(**_kwargs: object) -> object:
+        raise AssertionError("launch must not be called")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
+
+    store = _store(tmp_path)
+    try:
+        lines1 = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert _task_state(tmp_path, tid) != "failed"
+    assert _task_state(tmp_path, tid) == before_state
+    assert any(tid in line for line in lines1)
+    assert any("vendor-cli-unavailable" in line for line in lines1)
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+    store = _store(tmp_path)
+    try:
+        lines2 = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert any(tid in line for line in lines2)
+    assert _task_state(tmp_path, tid) != "failed"

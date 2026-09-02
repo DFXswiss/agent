@@ -13,6 +13,7 @@ from agent_cli.lane import (
     _run_in_tmux,
     codex_argv,
     count_findings,
+    extract_findings_text,
     grok_argv,
     has_single_terminal_report,
     launch,
@@ -106,6 +107,35 @@ def test_count_findings_unbulleted_preamble_word_is_not_terminator(word: str) ->
 def test_count_findings_absent_header_is_zero() -> None:
     """Absent FINDINGS: also returns 0; callers use findings_header_present() to distinguish."""
     assert count_findings("STATUS: complete\nREASON: ok\n") == 0
+
+
+def test_extract_findings_text_body_until_terminator() -> None:
+    """extract_findings_text keeps raw body lines up to NOT-VERIFIABLE/GAPS/end."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "- real one\n"
+        "- real two\n"
+        "NOT-VERIFIABLE:\n"
+        "- skip me\n"
+    )
+    assert extract_findings_text(text) == "- real one\n- real two"
+
+    gaps_text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "1. alpha\n"
+        "2) beta\n"
+        "GAPS:\n"
+        "- later\n"
+    )
+    assert extract_findings_text(gaps_text) == "1. alpha\n2) beta"
+
+    end_text = "STATUS: complete\nFINDINGS:\n- only finding\n"
+    assert extract_findings_text(end_text) == "- only finding"
+
+    assert extract_findings_text("STATUS: complete\nREASON: ok\n") == ""
+    assert extract_findings_text("FINDINGS: none\n") == "none"
 
 
 def test_review_output_contract_echo_parses_as_zero_findings() -> None:

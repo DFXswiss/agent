@@ -431,7 +431,8 @@ def test_empty_review_diff_short_circuits_before_launch(
     spec.write_text("review this\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "agent_cli.run_core._collect_review_diff", lambda *_a, **_k: ("", [])
+        "agent_cli.run_core._collect_review_diff",
+        lambda *_a, **_k: ("", [], True),
     )
 
     def boom_launch(**_kwargs: object) -> object:
@@ -469,7 +470,7 @@ def test_empty_diff_text_with_nonempty_changed_paths_still_short_circuits(
 
     monkeypatch.setattr(
         "agent_cli.run_core._collect_review_diff",
-        lambda *_a, **_k: ("", ["some/file.py"]),
+        lambda *_a, **_k: ("", ["some/file.py"], True),
     )
 
     def boom_launch(**_kwargs: object) -> object:
@@ -491,6 +492,48 @@ def test_empty_diff_text_with_nonempty_changed_paths_still_short_circuits(
             ],
         )
     assert _checklist(tmp_path, tid).get("reviewer_approved") != "ja"
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
+def test_review_diff_probe_failure_leaves_task_untouched(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failed git probes with empty diff must not fail the task (retryable)."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # close implementer_done → reviewer next
+    capsys.readouterr()
+    before_state = _task_state(tmp_path, tid)
+    before_reviewer = _checklist(tmp_path, tid).get("reviewer_approved")
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "agent_cli.run_core._collect_review_diff",
+        lambda *_a, **_k: ("", [], False),
+    )
+
+    def boom_launch(**_kwargs: object) -> object:
+        raise AssertionError("launch must not be called")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
+    with pytest.raises(SystemExit):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert _task_state(tmp_path, tid) == before_state
+    assert _task_state(tmp_path, tid) != "failed"
+    assert _checklist(tmp_path, tid).get("reviewer_approved") == before_reviewer
     assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 

@@ -254,10 +254,13 @@ def is_error_fix_originated(snapshot: dict[str, Any] | None) -> bool:
     an error.seen / error.skip without error.fix must not get the
     spec_written script carve-out.
     """
+    from .error_fix_act import _nonempty_str
+
     if not isinstance(snapshot, dict):
         return False
     payload = snapshot.get("payload")
-    if not isinstance(payload, dict) or not payload.get("error_id"):
+    raw = payload.get("error_id") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or not _nonempty_str(raw):
         return False
     return bool(snapshot.get("error_fix_confirmed"))
 

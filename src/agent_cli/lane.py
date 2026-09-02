@@ -67,18 +67,11 @@ def has_single_terminal_report(text: str) -> bool:
     return status_n == 1 and findings_n == 1
 
 
-def count_findings(text: str) -> int:
-    """Count non-empty FINDINGS entries. Empty / 0 / none → 0.
-
-    Absent FINDINGS: header also returns 0; callers that must distinguish
-    "explicitly zero" from "unparseable" should use findings_header_present().
-
-    Calibrated to the grok-reviewer / codex-reviewer report contract:
-    STATUS / REASON / SCOPE / DIMENSION / FINDINGS / NOT-VERIFIABLE / GAPS.
-    """
+def _findings_body_lines(text: str) -> list[str] | None:
+    """Return FINDINGS-section body lines, or None when no FINDINGS: header."""
     match = _FINDINGS_HEADER_RE.search(text)
     if match is None:
-        return 0
+        return None
     same_line = (match.group(1) or "").strip()
     after = text[match.end() :]
     body_lines: list[str] = []
@@ -88,6 +81,29 @@ def count_findings(text: str) -> int:
         if _FINDINGS_TERMINATOR_RE.match(line):
             break
         body_lines.append(line)
+    return body_lines
+
+
+def extract_findings_text(text: str) -> str:
+    """Return the raw FINDINGS-section body (no bullet stripping), or ''."""
+    body_lines = _findings_body_lines(text)
+    if body_lines is None:
+        return ""
+    return "\n".join(body_lines).strip()
+
+
+def count_findings(text: str) -> int:
+    """Count non-empty FINDINGS entries. Empty / 0 / none → 0.
+
+    Absent FINDINGS: header also returns 0; callers that must distinguish
+    "explicitly zero" from "unparseable" should use findings_header_present().
+
+    Calibrated to the grok-reviewer / codex-reviewer report contract:
+    STATUS / REASON / SCOPE / DIMENSION / FINDINGS / NOT-VERIFIABLE / GAPS.
+    """
+    body_lines = _findings_body_lines(text)
+    if body_lines is None:
+        return 0
     entries = 0
     for raw in body_lines:
         stripped = raw.strip()

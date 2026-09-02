@@ -15,7 +15,7 @@ from typing import Any
 
 from .chain import close_allowed, is_error_fix_originated, next_steps
 from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
-from .lane import Runner as LaneRunner
+from .lane import Runner as LaneRunner, extract_findings_text
 from .runtime import Completed
 from .run_core import DEFAULT_ROUND_CAP, RunOutcome, execute_spine_step
 from .store import Store, StoreError
@@ -26,15 +26,50 @@ Runner = Callable[[list[str]], Completed]
 _MAX_STEPS_PER_TASK = 40
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+# Longer forms first so "Mrs" wins over "Mr" on endswith checks.
+_ABBREVIATIONS = ("Mrs", "e.g", "i.e", "etc", "Dr", "Mr", "vs")
+
+
+def _ends_with_abbrev(prefix: str) -> bool:
+    """True when prefix ends with a denylisted abbreviation (word-bounded)."""
+    for abbr in _ABBREVIATIONS:
+        if not prefix.endswith(abbr):
+            continue
+        start = len(prefix) - len(abbr)
+        if start == 0 or not prefix[start - 1].isalnum():
+            return True
+    return False
 
 
 def _first_sentence(text: str) -> str:
-    """Return the first sentence of text, split on '. '/'!'/'?' boundaries."""
+    """Return the first sentence of text, split on '. '/'!'/'?' boundaries.
+
+    Periods after common abbreviations (e.g., Dr., vs.) are not boundaries.
+    """
     stripped = text.strip()
     if not stripped:
         return ""
-    match = _SENTENCE_BOUNDARY_RE.search(stripped)
-    return stripped[: match.start()] if match else stripped
+    for match in _SENTENCE_BOUNDARY_RE.finditer(stripped):
+        punct_pos = match.start() - 1
+        if punct_pos >= 0 and stripped[punct_pos] == ".":
+            if _ends_with_abbrev(stripped[:punct_pos]):
+                continue
+        return stripped[: match.start()]
+    return stripped
+
+
+def _fence_marker(text: str) -> str:
+    """Backtick fence one longer than the longest run inside text (min 3)."""
+    longest = 0
+    run = 0
+    for ch in text:
+        if ch == "`":
+            run += 1
+            if run > longest:
+                longest = run
+        else:
+            run = 0
+    return "`" * max(3, longest + 1)
 
 
 def _error_fix_brief(store: Store, session_id: str, error_id: str) -> str | None:
@@ -77,11 +112,15 @@ def write_error_fix_spec(
     parent = Path(store.home) / "error-fix-work" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = parent / ".spec.md"
-    rejection_section = (
-        f"# Prior Rejection Feedback\n\n{rejection_feedback}\n\n"
-        if rejection_feedback
-        else ""
-    )
+    if rejection_feedback:
+        extracted = extract_findings_text(rejection_feedback)
+        content = extracted if extracted else rejection_feedback
+        fence = _fence_marker(content)
+        rejection_section = (
+            f"# Prior Rejection Feedback\n\n{fence}\n{content}\n{fence}\n\n"
+        )
+    else:
+        rejection_section = ""
     body = (
         f"# Context\n\n"
         f"- repo: `{repo}`\n"
@@ -257,25 +296,42 @@ def _close_spec_written(store: Store, tid: str, *, evidence: str) -> None:
 
 
 def _contributing_ok_evidence(snap: dict[str, Any]) -> str:
-    """Cite approved PR-gate records already in the ledger (vendor/dim/verdict@head)."""
+    """Cite approved PR-gate records already in the ledger (vendor/dim/verdict@head).
+
+    Only rows with verdict==approved on the snapshot's current head_sha count
+    (same head scoping as chain._latest_gate). Missing/unapproved pairs raise
+    StoreError instead of writing a literal "missing" into evidence.
+    """
     want = (
         ("grok", "quality"),
         ("grok", "logic"),
         ("codex", "quality"),
         ("codex", "logic"),
     )
+    want_head = str(snap.get("head_sha") or "").strip().lower()
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for g in snap.get("gates") or []:
         if not isinstance(g, dict):
             continue
+        if str(g.get("verdict") or "") != "approved":
+            continue
+        g_head = str(g.get("head_sha") or "").strip().lower()
+        if g_head != want_head:
+            continue
         vendor = str(g.get("vendor") or "")
         dim = str(g.get("dimension") or "")
         by_key[(vendor, dim)] = g
+    missing = [f"{vendor}/{dim}" for vendor, dim in want if (vendor, dim) not in by_key]
+    if missing:
+        raise StoreError(
+            "approved PR gates missing or not on current head: "
+            + ", ".join(missing)
+        )
     parts: list[str] = []
     head = ""
     for vendor, dim in want:
-        g = by_key.get((vendor, dim)) or {}
-        verd = str(g.get("verdict") or "missing")
+        g = by_key[(vendor, dim)]
+        verd = str(g.get("verdict") or "")
         sha = str(g.get("head_sha") or "")
         if sha and not head:
             head = sha
@@ -386,7 +442,7 @@ def _open_error_fix_tasks(store: Store) -> list[dict[str, Any]]:
         if state in ("done", "failed"):
             continue
         payload = row.get("payload")
-        if not isinstance(payload, dict) or not payload.get("error_id"):
+        if not isinstance(payload, dict) or not _nonempty_str(payload.get("error_id")):
             continue
         out.append(row)
     out.sort(key=lambda r: str(r.get("id") or ""))
