@@ -1121,6 +1121,7 @@ def test_watch_error_decide_uses_runtime_input_not_deliver(
                     "payload": {
                         "error_id": error_id,
                         "fingerprint": "traceback-fingerprint",
+                        "brief": "Investigation summary: see error.seen payload for details.",
                     },
                     "execution_status": "pending",
                 },
@@ -1196,6 +1197,7 @@ def test_watch_error_decide_retries_enter_until_busy(
                         "payload": {
                             "error_id": error_id,
                             "fingerprint": "traceback-fingerprint",
+                            "brief": "Investigation summary: see error.seen payload for details.",
                         },
                         "execution_status": "pending",
                     },
@@ -1359,6 +1361,7 @@ def test_watch_error_decide_requires_two_consecutive_idle_reads(
                     "payload": {
                         "error_id": error_id,
                         "fingerprint": "traceback-fingerprint",
+                        "brief": "Investigation summary: see error.seen payload for details.",
                     },
                     "execution_status": "pending",
                 },
