@@ -131,8 +131,14 @@ class LocalCiTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalCiError, "unknown keys"):
             parse_comment(_comment(payload))
 
-    def test_empty_required_rejected(self) -> None:
-        with self.assertRaisesRegex(LocalCiError, "non-empty"):
+    def test_empty_required_and_runs_pass(self) -> None:
+        payload = _payload(required=[], runs=[])
+        verdict = verify_comment(_comment(payload))
+        self.assertTrue(verdict.ok)
+        self.assertEqual(verdict.status, "pass")
+
+    def test_empty_required_with_runs_rejected(self) -> None:
+        with self.assertRaisesRegex(LocalCiError, "both be empty"):
             parse_comment(_comment(_payload(required=[])))
 
     def test_pass_with_nonzero_exit_fails(self) -> None:

@@ -25,8 +25,8 @@ Every key is required. Unknown keys are rejected.
 | `head` | 40-character lowercase hex SHA of the pull-request head |
 | `private` | JSON boolean. `true` for the private-repo local-CI gate |
 | `recorded_at` | UTC `YYYY-MM-DDTHH:MM:SSZ` |
-| `required` | Non-empty unique kebab-case ids. This is the full `ci:full` job set |
-| `runs` | Non-empty array, one object per id that ran |
+| `required` | Unique kebab-case ids. This is the full `ci:full` job set. Empty only when the repository has no pull-request CI jobs |
+| `runs` | One object per id that ran. Empty only when `required` is empty |
 
 Each run object:
 
@@ -49,7 +49,8 @@ There is no `verdict` field. The script computes it.
 1. The comment parses.
 2. `private` is `false` (`not_applicable`), **or**
 3. `private` is `true` and every `required` id has a run with `result=pass`,
-   `exit_code=0`, and `duration_s <= timeout_s`.
+   `exit_code=0`, and `duration_s <= timeout_s`. An empty `required` list
+   (no pull-request CI jobs in the repository) is a pass.
 
 `--require-ids a,b,c` additionally demands that `required` is exactly that set.
 

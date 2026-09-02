@@ -143,8 +143,8 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
     if RECORDED_RE.match(recorded_at) is None:
         raise LocalCiError("recorded_at must be UTC ISO-8601 YYYY-MM-DDTHH:MM:SSZ")
     required_raw = raw["required"]
-    if not isinstance(required_raw, list) or not required_raw:
-        raise LocalCiError("required must be a non-empty array of ids")
+    if not isinstance(required_raw, list):
+        raise LocalCiError("required must be an array of ids")
     required: list[str] = []
     seen: set[str] = set()
     for item in required_raw:
@@ -156,8 +156,10 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
         seen.add(ident)
         required.append(ident)
     runs_raw = raw["runs"]
-    if not isinstance(runs_raw, list) or not runs_raw:
-        raise LocalCiError("runs must be a non-empty array")
+    if not isinstance(runs_raw, list):
+        raise LocalCiError("runs must be an array")
+    if bool(required_raw) != bool(runs_raw):
+        raise LocalCiError("required and runs must both be empty or both be non-empty")
     runs: list[LocalCiRun] = []
     run_ids: set[str] = set()
     for index, item in enumerate(runs_raw):
