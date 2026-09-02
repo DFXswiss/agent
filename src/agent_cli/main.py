@@ -1904,9 +1904,7 @@ def _sync_once(store: Store) -> None:
                 _check_pull_row(row)
             except _PullShapeError as exc:
                 raise HubError(f"pull {exc}") from exc
-        sessions = [r for r in snapshots if r.get("table") == "session"]
-        rest = [r for r in snapshots if r.get("table") != "session"]
-        for row in sessions + rest:
+        for row in snapshots:
             try:
                 store.apply_replica_row(row)
             except Exception as exc:
