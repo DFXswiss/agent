@@ -387,6 +387,112 @@ def test_run_missing_spec_file_does_not_leave_working_agent(
     assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 
+def test_build_review_spec_oserror_does_not_leave_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError from build_review_spec_file must release the working agent, then re-raise."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # close implementer_done → reviewer next
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+
+    def boom(*_args: object, **_kwargs: object) -> str:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("agent_cli.run_core.build_review_spec_file", boom)
+    with pytest.raises(OSError):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
+def test_launch_oserror_does_not_leave_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError from launch must release the working agent, then re-raise."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+
+    def boom(**_kwargs: object) -> object:
+        raise OSError("missing vendor CLI binary")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", boom)
+    with pytest.raises(OSError):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
+def test_launch_oserror_on_retry_does_not_leave_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError from launch on the RETRY attempt must release the working agent, then re-raise."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # implementer_done
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return LaneResult(
+                role="reviewer",
+                vendor="grok",
+                status="complete",
+                argv=["grok"],
+                returncode=0,
+                stdout="STATUS: complete\n",  # no FINDINGS: header -> unparseable -> retry
+                stderr="",
+            )
+        raise OSError("missing vendor CLI binary")
+
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    with pytest.raises(OSError):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert calls["n"] == 2
+    assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
+
+
 def test_run_spec_file_reviewer_complete_auto_approves(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -940,7 +1046,6 @@ def test_execute_spine_step_unbounded_round_cap_without_kwarg(
                 assert "round cap" not in (outcome.message or "")
                 assert "round cap" not in (outcome.reason or "")
             assert outcome.kind == "rejected_new_round"
-            assert int((store.row("task", tid) or {}).get("current_round") or 0) > 5 or True
         final_round = int((store.row("task", tid) or {}).get("current_round") or 0)
         assert final_round > 5
         assert "round cap" not in str(outcome.message or "")
@@ -1021,6 +1126,177 @@ def test_local_check_reruns_after_pr_rejection_with_new_head(
             and c.get("result") == "pass"
             and str(c.get("head_sha") or "").lower() == new_sha
             for c in checks
+        )
+    finally:
+        store.close()
+
+
+def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a PR-gate rejection + re-push, a snapshot built the way a fresh
+    process would (no in-memory head threaded through) must not resolve to
+    the stale pre-rejection head via an old, superseded gate row."""
+    from agent_cli import main as main_mod
+    from agent_cli.chain import close_allowed
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    old_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    new_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    shas = [old_sha, new_sha]
+    push_calls = {"n": 0}
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        i = push_calls["n"]
+        push_calls["n"] += 1
+        return shas[min(i, len(shas) - 1)]
+
+    def fake_exec(argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+
+    store = _store(tmp_path)
+    try:
+        # 1) local_check_pass, then close "pushed" @ old_sha.
+        outcome = None
+        for expected_key in ("local_check_pass", "pushed"):
+            outcome = execute_spine_step(
+                store,
+                tid,
+                head=None,
+                spec_file=str(spec),
+                cwd=str(tmp_path),
+                tmux=False,
+                exec_argv=fake_exec,
+            )
+            assert outcome.kind == "closed" and outcome.key == expected_key
+        head = outcome.head_sha
+        assert head == old_sha
+
+        # 2) grok_pr_quality approves @ old_sha.
+        def approve_launch(**kwargs):  # type: ignore[no-untyped-def]
+            return LaneResult(
+                role=kwargs["role"],
+                vendor=kwargs["vendor"],
+                status="complete",
+                argv=[kwargs["vendor"]],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS: none\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr("agent_cli.run_core.launch", approve_launch)
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=head,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.key == "grok_pr_quality"
+        assert _checklist(tmp_path, tid)["grok_pr_quality"] == "ja"
+
+        # 3) grok_pr_logic rejects @ old_sha -> resets the spine, new round.
+        def reject_launch(**kwargs):  # type: ignore[no-untyped-def]
+            return LaneResult(
+                role=kwargs["role"],
+                vendor=kwargs["vendor"],
+                status="complete",
+                argv=[kwargs["vendor"]],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS:\n- fix the retry loop\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr("agent_cli.run_core.launch", reject_launch)
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=head,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.kind == "rejected_new_round"
+        assert _checklist(tmp_path, tid)["grok_pr_quality"] != "ja"
+        assert _checklist(tmp_path, tid)["pushed"] != "ja"
+
+        # 4) Re-drive implementer_done -> reviewer_approved -> local_check_pass
+        #    -> pushed @ new_sha. Deliberately stop here -- grok_pr_quality /
+        #    grok_pr_logic for the new round have NOT run yet, so the only
+        #    gate rows in the ledger are the stale old_sha ones from step 2/3.
+        def pass_launch(**kwargs):  # type: ignore[no-untyped-def]
+            return LaneResult(
+                role=kwargs["role"],
+                vendor=kwargs["vendor"],
+                status="complete",
+                argv=[kwargs["vendor"]],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS: none\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr("agent_cli.run_core.launch", pass_launch)
+        outcome = None
+        for expected_key in (
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+        ):
+            outcome = execute_spine_step(
+                store,
+                tid,
+                head=None,
+                spec_file=str(spec),
+                cwd=str(tmp_path),
+                tmux=False,
+                exec_argv=fake_exec,
+            )
+            assert outcome.key == expected_key, (
+                outcome.key,
+                outcome.kind,
+                outcome.reason,
+            )
+        assert _checklist(tmp_path, tid)["pushed"] == "ja"
+        assert outcome is not None
+        assert outcome.head_sha == new_sha
+
+        # 5) The scenario under test: a snapshot built the way a brand-new
+        #    process would build it -- no extra_head, nothing threaded in memory.
+        fresh_snap = main_mod._chain_snapshot(store, tid)
+        assert fresh_snap["head_sha"] == new_sha, (
+            f"fresh snapshot resolved head={fresh_snap['head_sha']!r}, expected "
+            f"the current pushed sha {new_sha!r} (stale-head cross-scan bug)"
+        )
+        verdict = close_allowed(
+            "implement",
+            "grok_pr_quality",
+            checklist=fresh_snap["checklist"],
+            source="script",
+            evidence="run auto",
+            snapshot=fresh_snap,
+        )
+        assert not verdict.allowed, (
+            "grok_pr_quality must not auto-close from the stale pre-rejection "
+            "approval recorded at the old head"
         )
     finally:
         store.close()

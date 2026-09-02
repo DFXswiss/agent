@@ -54,6 +54,8 @@ from .watch import (
     scan_merged,
 )
 
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
 CHECKLIST = {
     "implement": (
         "session_registered",
@@ -2197,9 +2199,33 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
     last_round = rounds_ordered[-1] if rounds_ordered else {}
     head = extra_head or ""
     if not head and str((task.get("checklist") or {}).get("pushed") or "") == "ja":
-        for g in task.get("gates") or []:
-            if g.get("head_sha"):
-                head = str(g["head_sha"])
+        # Primary: the SHA the "pushed" step itself recorded when it closed
+        # (run_core.execute_spine_step sets evidence=f"pushed {sha}"). Gate rows
+        # for a superseded head are never deleted on PR-gate rejection
+        # (_PR_REJECT_RESET_KEYS only resets checklist status), so trusting
+        # "the last gate's head_sha" can resolve to a stale, pre-rejection head
+        # across a fresh scan/process boundary with no in-memory head to correct it.
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") != tid or row.get("key") != "pushed":
+                continue
+            if row.get("status") != "ja":
+                continue
+            ev = str(row.get("evidence") or "").strip().lower()
+            for token in ev.replace(":", " ").split():
+                if _SHA_RE.fullmatch(token):
+                    head = token
+                    break
+            break
+        if not head:
+            # Fallback: most recent local_check with its own head_sha and a
+            # pass/skip result.
+            for c in task.get("local_checks") or []:
+                if str(c.get("result") or "") in ("pass", "skip") and c.get("head_sha"):
+                    head = str(c["head_sha"])
+        if not head:
+            # Unresolvable: do not fall back to empty (== unscoped matching
+            # downstream) and never to a stale gate's head.
+            head = "unresolved-pushed-head"
     payload = task.get("payload") or {}
     error_id = ""
     if isinstance(payload, dict):
@@ -3097,10 +3123,9 @@ def cmd_watch(args: list[str]) -> None:
             from .fixer_act import drive_error_fix_tasks
             from .runtime import run_argv
 
+            # Empty scan stays silent, same as sibling watches "errors" and
+            # "error-fix" (no "… none" line).
             lines = drive_error_fix_tasks(store, run_argv)
-            if not lines:
-                print("error-fix-work none")
-                return
             for line in lines:
                 print(line)
             return

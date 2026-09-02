@@ -12,6 +12,7 @@ from agent_cli.lane import (
     LaneResult,
     _run_in_tmux,
     codex_argv,
+    count_findings,
     grok_argv,
     has_single_terminal_report,
     launch,
@@ -25,6 +26,42 @@ pytestmark = pytest.mark.no_pg
 
 def run(argv: list[str]) -> None:
     main(argv)
+
+
+def test_count_findings_none_token() -> None:
+    assert count_findings("STATUS: complete\nFINDINGS: none\n") == 0
+
+
+def test_count_findings_zero_token() -> None:
+    assert count_findings("STATUS: complete\nFINDINGS: 0\n") == 0
+
+
+def test_count_findings_bulleted_entries() -> None:
+    text = "STATUS: complete\nFINDINGS:\n- a\n* b\n• c\n"
+    assert count_findings(text) == 3
+
+
+def test_count_findings_numbered_entries() -> None:
+    text = "STATUS: complete\nFINDINGS:\n1. a\n2) b\n"
+    assert count_findings(text) == 2
+
+
+def test_count_findings_stops_at_next_section_header() -> None:
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "- real one\n"
+        "- real two\n"
+        "NOT-VERIFIABLE:\n"
+        "- skip me\n"
+        "- skip me too\n"
+    )
+    assert count_findings(text) == 2
+
+
+def test_count_findings_absent_header_is_zero() -> None:
+    """Absent FINDINGS: also returns 0; callers use findings_header_present() to distinguish."""
+    assert count_findings("STATUS: complete\nREASON: ok\n") == 0
 
 
 def test_grok_implementer_argv() -> None:

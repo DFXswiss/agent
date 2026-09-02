@@ -25,7 +25,6 @@ from .lane import (
     launch,
     Runner as LaneRunner,
 )
-from .runtime import Completed
 from .store import Store
 
 DEFAULT_ROUND_CAP = 5
@@ -48,7 +47,6 @@ _REVIEW_OUTPUT_CONTRACT = (
     "NOT-VERIFIABLE: [...]\n"
     "GAPS: [...]"
 )
-Runner = Callable[[list[str]], Completed]
 ExecArgv = Callable[..., Any]
 
 # Checklist keys reset when a PR-reviewer dimension is rejected (new head).
@@ -326,9 +324,9 @@ def build_review_spec_file(
     cwd: str,
     exec_argv: ExecArgv,
 ) -> str:
-    """Write a four-part review prompt under $AGENT_HOME; return its path."""
+    """Write a four-part review prompt under $AGENT_HOME/review-work/<task_id>/; return its path."""
     diff_text, changed_paths = _collect_review_diff(cwd, exec_argv)
-    parent = Path(store.home) / "error-fix-work" / tid
+    parent = Path(store.home) / "review-work" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     round_bit = round_num if round_num is not None else 0
     diff_path = parent / f"review-{role}-round{round_bit}.diff"
@@ -644,14 +642,28 @@ def _lane_retry_then_fail(
     exec_argv: ExecArgv | None = None,
 ) -> RunOutcome:
     """Re-invoke launch once; on second unparseable/non-pass, fail the task."""
-    second = launch(
-        role=role,
-        vendor=vendor,
-        spec_file=spec_file,
-        cwd=cwd,
-        runner=runner,
-        tmux=tmux,
-    )
+    try:
+        second = launch(
+            role=role,
+            vendor=vendor,
+            spec_file=spec_file,
+            cwd=cwd,
+            runner=runner,
+            tmux=tmux,
+        )
+    except OSError:
+        from . import main as main_mod
+
+        working = main_mod._find_working_agent(
+            store, tid, role=role, vendor=vendor, round_num=round_num
+        )
+        if working is not None:
+            _agent_finish(
+                str(working["id"]),
+                "unavailable",
+                note=f"launch failed ({role} {vendor})",
+            )
+        raise
     decision2, findings2 = _interpret_lane(role, second)
     if decision2 == "pass":
         return _finish_agent_pass(
@@ -833,6 +845,8 @@ def execute_spine_step(
         snap = main_mod._chain_snapshot(store, tid, extra_head=head)
 
     evidence: str | None = None
+    if step.key == "pushed":
+        evidence = f"pushed {head}"
     if step.key == "mergeable":
         run_cwd = cwd or os.getcwd()
         from .git_act import GitActError, measure_mergeable
@@ -999,24 +1013,49 @@ def execute_spine_step(
             )
         launch_spec = spec_file
         if role in _REVIEW_ROLES:
-            launch_spec = build_review_spec_file(
-                store,
-                tid,
-                role=role,
-                round_num=round_num,
-                implement_spec_file=spec_file,
-                cwd=run_cwd,
-                exec_argv=exec_argv,
-            )
+            try:
+                launch_spec = build_review_spec_file(
+                    store,
+                    tid,
+                    role=role,
+                    round_num=round_num,
+                    implement_spec_file=spec_file,
+                    cwd=run_cwd,
+                    exec_argv=exec_argv,
+                )
+            except OSError:
+                working = main_mod._find_working_agent(
+                    store, tid, role=role, vendor=vendor, round_num=round_num
+                )
+                if working is not None:
+                    _agent_finish(
+                        str(working["id"]),
+                        "unavailable",
+                        note=f"review-spec write failed ({role} {vendor})",
+                    )
+                raise
         # OSError propagates to caller (fixer catches; cmd_run surfaces).
-        result = launch(
-            role=role,
-            vendor=vendor,
-            spec_file=launch_spec,
-            cwd=run_cwd,
-            runner=runner,
-            tmux=tmux,
-        )
+        try:
+            result = launch(
+                role=role,
+                vendor=vendor,
+                spec_file=launch_spec,
+                cwd=run_cwd,
+                runner=runner,
+                tmux=tmux,
+            )
+        except OSError:
+            working = main_mod._find_working_agent(
+                store, tid, role=role, vendor=vendor, round_num=round_num
+            )
+            if working is not None:
+                _agent_finish(
+                    str(working["id"]),
+                    "unavailable",
+                    note=f"launch failed ({role} {vendor})",
+                )
+            raise
+
         decision, findings_text = _interpret_lane(role, result)
         if decision == "pass":
             out = _finish_agent_pass(
@@ -1069,7 +1108,7 @@ def execute_spine_step(
         )
 
     # Script step: close if allowed
-    close_ev = evidence if step.key == "mergeable" else "run auto"
+    close_ev = evidence if step.key in ("mergeable", "pushed") else "run auto"
     verdict = close_allowed(
         wf,
         step.key,
@@ -1088,7 +1127,7 @@ def execute_spine_step(
             message=verdict.reason,
         )
     close_evidence = (
-        evidence if step.key == "mergeable" else f"run auto:{verdict.reason}"
+        evidence if step.key in ("mergeable", "pushed") else f"run auto:{verdict.reason}"
     )
     _close_step(tid=tid, key=step.key, evidence=str(close_evidence), head=head)
     return RunOutcome(

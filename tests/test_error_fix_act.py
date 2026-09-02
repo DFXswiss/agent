@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from agent_cli import error_fix_act as error_fix_act_mod
-from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
+from agent_cli.error_fix_act import (
+    find_or_create_implement_task,
+    has_error_fix_activity,
+    scan_error_fix,
+)
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, utcnow
 
@@ -470,3 +474,39 @@ def test_scan_inactive_session_after_clone_stays_pending(tmp_path: Path) -> None
     assert row["execution_status"] == "pending"
     assert store.rows("task") == []
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
+
+
+def test_has_error_fix_activity_true_for_matching_fix(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    assert has_error_fix_activity(store, "runner-1", "error-seen-12345678") is True
+
+
+def test_has_error_fix_activity_false_for_seen_only(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    assert has_error_fix_activity(store, "runner-1", "error-seen-12345678") is False
+
+
+def test_has_error_fix_activity_false_for_empty_error_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    assert has_error_fix_activity(store, "runner-1", "") is False
+
+
+def test_has_error_fix_activity_false_for_mismatched_ids(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    assert (
+        has_error_fix_activity(store, "runner-1", "other-error-id-00000000") is False
+    )
+    assert (
+        has_error_fix_activity(store, "other-session", "error-seen-12345678") is False
+    )

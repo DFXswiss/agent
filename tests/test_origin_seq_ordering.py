@@ -12,6 +12,7 @@ from agent_cli.main import (
     _chain_snapshot,
     _latest_checks,
     _latest_gates,
+    _origin_seq_sort_key,
     load_task_dict,
     main,
 )
@@ -233,6 +234,15 @@ def test_missing_origin_seq_sorts_before_stamped_rows(tmp_path: Path) -> None:
         assert latest[("grok-pr", "quality")]["id"] == "g-stamped"
     finally:
         store.close()
+
+
+def test_origin_seq_sort_key_missing_sorts_before_stamped() -> None:
+    """Hand-built dicts without origin_seq sort before any stamped row, even with a newer timestamp."""
+    missing = _origin_seq_sort_key({"recorded_at": "2099-01-01"}, "recorded_at")
+    stamped = _origin_seq_sort_key(
+        {"recorded_at": "2000-01-01", "origin_seq": 1}, "recorded_at"
+    )
+    assert missing < stamped
 
 
 def test_check_record_stamps_origin_seq_via_command(

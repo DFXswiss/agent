@@ -29,7 +29,7 @@ _STATUS_RE = re.compile(
 # FINDINGS section: header line, then entries until the next ALL-CAPS section header
 # (STATUS / REASON / SCOPE / DIMENSION / NOT-VERIFIABLE / GAPS / …) or end of text.
 _FINDINGS_HEADER_RE = re.compile(r"(?m)^FINDINGS:[ \t]*(.*)$", re.IGNORECASE)
-_SECTION_HEADER_RE = re.compile(r"(?m)^[A-Z][A-Z0-9_-]*:[ \t]")
+_SECTION_HEADER_RE = re.compile(r"(?m)^[A-Z][A-Z0-9_-]*:([ \t]|$)")
 _ZERO_TOKENS = frozenset({"", "0", "none", "n/a", "-", "—", "–"})
 
 

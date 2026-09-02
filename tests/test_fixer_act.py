@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.fixer_act import _drive_one, _pr_open_row_exists, _runner_to_completed
+from agent_cli.fixer_act import (
+    _drive_one,
+    _pr_open_row_exists,
+    _runner_to_completed,
+    drive_error_fix_tasks,
+    template_pr_open_payload,
+)
 from agent_cli.git_act import GitActError
 from agent_cli.lane import LaneResult, findings_header_present
 from agent_cli.runtime import Completed
@@ -209,7 +215,7 @@ def test_fixer_threads_pushed_head_into_pr_gate(
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr(
         "agent_cli.fixer_act.insert_pr_open_and_scan",
-        lambda *a, **k: [],
+        _fake_insert_pr_open_and_scan,
     )
 
     store = _store(tmp_path)
@@ -365,6 +371,8 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
         if insert_calls["n"] == 1:
             raise OSError("github temporarily unavailable")
         # Mirror real insert_pr_open_and_scan enough for the ledger-derived retry check.
+        # Real insert_pr_open_and_scan leaves execution_status=done after scan_github
+        # succeeds; only done counts as present under the stricter exists check.
         activity_id = str(uuid.uuid4())
         store.write(
             "activity",
@@ -375,7 +383,7 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
                 "session_id": session_id,
                 "type": "pr.open",
                 "payload": payload,
-                "execution_status": "pending",
+                "execution_status": "done",
             },
         )
         return []
@@ -410,13 +418,14 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
 
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        second = _drive_one(
             store,
             task,
             runner=lambda argv: Completed(0, "", ""),
             round_cap=5,
             lane_runner=None,
         )
+        assert "pr.open-error" not in second
         pr_rows_after = [
             r
             for r in store.rows("activity")
@@ -430,6 +439,121 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
         store.close()
 
     assert insert_calls["n"] == 2
+
+
+def test_fixer_stops_on_persistent_gh_pr_create_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gh pr create failure must not advance the spine or reach done/failed."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+    create_calls = {"n": 0}
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        return pushed_sha
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "pr-reviewer-quality")
+        vendor = str(kwargs.get("vendor") or "grok")
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def failing_gh(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                1, "", 'no pull requests found for branch "error-fix-aaaaaaaa"'
+            )
+        if argv[:3] == ["gh", "pr", "create"]:
+            create_calls["n"] += 1
+            return Completed(1, "", "gh: persistent auth failure")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        first = _drive_one(
+            store,
+            task,
+            runner=failing_gh,
+            round_cap=5,
+            lane_runner=None,
+        )
+        assert "pr.open-error" in first
+        assert "done" not in first.split()[-1]
+        assert _task_state(tmp_path, tid) not in ("done", "failed")
+        cl = _checklist(tmp_path, tid)
+        assert cl.get("contributing_ok") != "ja"
+        assert cl.get("grok_pr_quality") != "ja"
+        assert create_calls["n"] >= 1
+        first_creates = create_calls["n"]
+
+        task = store.row("task", tid)
+        assert task is not None
+        second = _drive_one(
+            store,
+            task,
+            runner=failing_gh,
+            round_cap=5,
+            lane_runner=None,
+        )
+        assert "pr.open-error" in second
+        assert _task_state(tmp_path, tid) not in ("done", "failed")
+        assert create_calls["n"] > first_creates
+        cl2 = _checklist(tmp_path, tid)
+        assert cl2.get("contributing_ok") != "ja"
+    finally:
+        store.close()
+
+
+def test_template_pr_open_payload_title_and_body() -> None:
+    """template_pr_open_payload follows CONTRIBUTING.md PR title/body conventions."""
+    session_id = "sess-12345678"
+    error_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    payload = template_pr_open_payload(
+        session_id=session_id,
+        repo="org/app",
+        error_id=error_id,
+        brief="brief text",
+        fingerprint="fp-1",
+        title_suffix="Fix the thing",
+    )
+    assert payload["title"] == f"{session_id[:8]} - Fix the thing"
+    assert payload["head"] == f"error-fix-{error_id[:8]}"
+    body = str(payload["body"])
+    assert "EN:\n" in body
+    assert "\nDE:\n" in body
+    assert "<details>" in body
+    assert "<summary>Details</summary>" in body
+    assert "</details>" in body
+    assert error_id in body
+    assert f"error-fix-{error_id[:8]}" in body
+
+    long_suffix = "x" * 80
+    long_payload = template_pr_open_payload(
+        session_id=session_id,
+        repo="org/app",
+        error_id=error_id,
+        brief="brief",
+        fingerprint="fp",
+        title_suffix=long_suffix,
+    )
+    # truncation: suffix[:69] + "..." when len(suffix) > 72
+    expected_suffix = long_suffix[:69] + "..."
+    assert long_payload["title"] == f"{session_id[:8]} - {expected_suffix}"
+    assert len(expected_suffix) == 72
 
 
 def test_runner_to_completed_honors_cwd(tmp_path: Path) -> None:
@@ -452,6 +576,29 @@ def test_runner_to_completed_without_cwd_uses_runner() -> None:
     completed = _runner_to_completed(runner, ["echo", "hi"], cwd=None)
     assert completed.stdout == "from-runner"
     assert seen == [["echo", "hi"]]
+
+
+def _fake_insert_pr_open_and_scan(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
+    """Simulate a successful insert_pr_open_and_scan: writes a real pr.open row
+    so _pr_open_row_exists finds it (matches flaky_insert's success branch).
+
+    Real insert_pr_open_and_scan leaves execution_status=done after scan_github
+    succeeds; only done counts as present under the stricter exists check.
+    """
+    activity_id = str(uuid.uuid4())
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": session_id,
+            "type": "pr.open",
+            "payload": payload,
+            "execution_status": "done",
+        },
+    )
+    return []
 
 
 def _pass_lane(**kwargs):  # type: ignore[no-untyped-def]
@@ -483,7 +630,7 @@ def test_fixer_drives_error_fix_task_to_done(
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr(
         "agent_cli.fixer_act.insert_pr_open_and_scan",
-        lambda *a, **k: [],
+        _fake_insert_pr_open_and_scan,
     )
 
     store = _store(tmp_path)
@@ -567,7 +714,7 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
     monkeypatch.setattr(
         "agent_cli.fixer_act.insert_pr_open_and_scan",
-        lambda *a, **k: [],
+        _fake_insert_pr_open_and_scan,
     )
 
     store = _store(tmp_path)
@@ -651,7 +798,8 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
     monkeypatch.setattr(
-        "agent_cli.fixer_act.insert_pr_open_and_scan", lambda *a, **k: []
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
     )
 
     calls: list[tuple[str | None, str, str | None]] = []
@@ -708,7 +856,7 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr(
         "agent_cli.fixer_act.insert_pr_open_and_scan",
-        lambda *a, **k: [],
+        _fake_insert_pr_open_and_scan,
     )
     # Stop short of done so gates (and thus recoverable head_sha) remain.
     monkeypatch.setattr(
@@ -830,3 +978,200 @@ def test_pr_open_row_exists_excludes_error_status(
         assert _pr_open_row_exists(store, head=head) is False
     finally:
         store.close()
+
+
+def test_pr_open_row_exists_excludes_pending_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing pr.open with execution_status=pending must not count as present."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    head = f"error-fix-{ERROR_ID[:8]}"
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        activity_id = str(uuid.uuid4())
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {"head": head, "repo": "org/app", "title": "x", "body": "y"},
+                "execution_status": "pending",
+            },
+        )
+        assert _pr_open_row_exists(store, head=head) is False
+    finally:
+        store.close()
+
+
+def test_fixer_resumes_pending_pr_open_via_scan_github(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mid-flight pending pr.open must resume via scan_github, not a duplicate insert."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+    head = f"error-fix-{ERROR_ID[:8]}"
+    activity_id = str(uuid.uuid4())
+    scan_calls: list[tuple] = []
+    insert_calls: list[tuple] = []
+
+    def fake_push(*, cwd: str, runner):  # type: ignore[no-untyped-def]
+        return pushed_sha
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "pr-reviewer-quality")
+        vendor = str(kwargs.get("vendor") or "grok")
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_scan_github(store, runner):  # type: ignore[no-untyped-def]
+        scan_calls.append((store, runner))
+        row = store.row("activity", activity_id)
+        assert row is not None
+        updated = {k: v for k, v in row.items() if not str(k).startswith("_")}
+        updated["execution_status"] = "done"
+        store.write("activity", "update", activity_id, updated)
+        return []
+
+    def fake_insert(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
+        insert_calls.append((store, session_id, payload, runner))
+        return []
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.github_act.scan_github", fake_scan_github)
+    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", fake_insert)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {"head": head, "repo": "org/app", "title": "x", "body": "y"},
+                "execution_status": "pending",
+            },
+        )
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert len(scan_calls) == 1
+    assert insert_calls == []
+    assert "pr.open-error" not in result
+
+
+def test_drive_error_fix_tasks_isolates_per_task_crash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One task's SystemExit must not abort the scan for other open tasks."""
+    tid1 = _bootstrap_error_fix_task(tmp_path, capsys)
+    error_id_2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    store = _store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            error_id_2,
+            {
+                "id": error_id_2,
+                "session_id": "sess-1",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": "api|ValueError|def|prod",
+                    "repo": "org/app",
+                    "service": "api",
+                    "class": "ValueError",
+                },
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "fix-2",
+            {
+                "id": "fix-2",
+                "session_id": "sess-1",
+                "type": "error.fix",
+                "payload": {
+                    "error_id": error_id_2,
+                    "fingerprint": "api|ValueError|def|prod",
+                    "brief": "ValueError in handler; harden input.",
+                },
+                "execution_status": "pending",
+            },
+        )
+    finally:
+        store.close()
+    run(
+        tmp_path,
+        [
+            "task",
+            "create",
+            "--session",
+            "sess-1",
+            "--workflow",
+            "implement",
+            "--error-id",
+            error_id_2,
+            "--title",
+            "Fix value error",
+        ],
+    )
+    tid2 = _last_task_id(capsys.readouterr().out)
+    first_tid, second_tid = sorted([tid1, tid2])
+
+    def fake_drive_one(store, task, runner, *, round_cap, lane_runner=None):  # type: ignore[no-untyped-def]
+        tid = str(task["id"])
+        if tid == first_tid:
+            raise SystemExit("round still has a working agent")
+        return f"error-fix-work {tid} done"
+
+    monkeypatch.setattr("agent_cli.fixer_act._drive_one", fake_drive_one)
+
+    store = _store(tmp_path)
+    try:
+        lines = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert len(lines) == 2
+    assert first_tid in lines[0]
+    assert "scan-error" in lines[0]
+    assert "SystemExit" in lines[0]
+    assert lines[1] == f"error-fix-work {second_tid} done"

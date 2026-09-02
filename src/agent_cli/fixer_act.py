@@ -13,6 +13,7 @@ from typing import Any
 
 from .chain import close_allowed, is_error_fix_originated, next_steps
 from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
+from .lane import Runner as LaneRunner
 from .runtime import Completed
 from .run_core import DEFAULT_ROUND_CAP, RunOutcome, execute_spine_step
 from .store import Store, StoreError
@@ -137,10 +138,12 @@ def template_pr_open_payload(
 
 
 def _pr_open_row_exists(store: Store, *, head: str) -> bool:
-    """True when a non-failed pr.open already exists for this branch head.
+    """True when a successful pr.open already exists for this branch head.
 
-    `done` (success) and `pending` (in-flight) skip re-insert. `error` does
-    not — the driver must retry after a failed `gh pr create`.
+    Only `done` skips the insert/resume path entirely. A `pending` row is
+    resumed via scan_github (no re-insert); an `error` row triggers a fresh
+    insert_pr_open_and_scan. A real insert_pr_open_and_scan leaves `done` or
+    `error` synchronously via scan_github.
     """
     origin = store.device_id()
     for row in store.rows("activity"):
@@ -148,7 +151,23 @@ def _pr_open_row_exists(store: Store, *, head: str) -> bool:
             continue
         if row.get("type") != "pr.open":
             continue
-        if row.get("execution_status") not in ("done", "pending"):
+        if row.get("execution_status") != "done":
+            continue
+        payload = row.get("payload")
+        if isinstance(payload, dict) and payload.get("head") == head:
+            return True
+    return False
+
+
+def _pr_open_pending_row_exists(store: Store, *, head: str) -> bool:
+    """True when a mid-flight pr.open (execution_status=pending) exists for head."""
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "pr.open":
+            continue
+        if row.get("execution_status") != "pending":
             continue
         payload = row.get("payload")
         if isinstance(payload, dict) and payload.get("head") == head:
@@ -186,7 +205,7 @@ def insert_pr_open_and_scan(
     return scan_github(store, runner)
 
 
-def _close_spec_written(store: Store, tid: str, *, error_id: str, evidence: str) -> None:
+def _close_spec_written(store: Store, tid: str, *, evidence: str) -> None:
     from . import main as main_mod
 
     snap = main_mod._chain_snapshot(store, tid)
@@ -358,7 +377,7 @@ def _drive_one(
     runner: Runner,
     *,
     round_cap: int,
-    lane_runner: Any = None,
+    lane_runner: LaneRunner | None = None,
 ) -> str:
     from . import main as main_mod
 
@@ -395,22 +414,40 @@ def _drive_one(
             and not _pr_open_row_exists(store, head=f"error-fix-{error_id[:8]}")
         ):
             try:
-                seen = _error_seen(store, session_id, error_id)
-                seen_payload = (
-                    seen.get("payload") if isinstance(seen.get("payload"), dict) else {}
-                )
-                fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
-                pr_payload = template_pr_open_payload(
-                    session_id=session_id,
-                    repo=repo,
-                    error_id=error_id,
-                    brief=brief,
-                    fingerprint=fingerprint,
-                    title_suffix=str(task.get("title") or ""),
-                )
-                insert_pr_open_and_scan(
-                    store, session_id=session_id, payload=pr_payload, runner=runner
-                )
+                pr_head = f"error-fix-{error_id[:8]}"
+                if _pr_open_pending_row_exists(store, head=pr_head):
+                    # Crash between insert and scan left a pending row — resume
+                    # it rather than inserting a duplicate.
+                    from .github_act import scan_github
+
+                    scan_github(store, runner)
+                else:
+                    seen = _error_seen(store, session_id, error_id)
+                    seen_payload = (
+                        seen.get("payload")
+                        if isinstance(seen.get("payload"), dict)
+                        else {}
+                    )
+                    fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
+                    pr_payload = template_pr_open_payload(
+                        session_id=session_id,
+                        repo=repo,
+                        error_id=error_id,
+                        brief=brief,
+                        fingerprint=fingerprint,
+                        title_suffix=str(task.get("title") or ""),
+                    )
+                    insert_pr_open_and_scan(
+                        store,
+                        session_id=session_id,
+                        payload=pr_payload,
+                        runner=runner,
+                    )
+                # Persistent gh pr create failures are almost always external
+                # (auth/rate-limit/permissions). Leave the task untouched for the
+                # next scan rather than failing it; each cron/knock scan retries.
+                if not _pr_open_row_exists(store, head=pr_head):
+                    return f"error-fix-work {tid} pr.open-error (create failed)"
             except (StoreError, OSError, SystemExit) as exc:
                 return f"error-fix-work {tid} pr.open-error ({exc})"
             # Fall through so this scan can continue the spine; next scan
@@ -439,7 +476,7 @@ def _drive_one(
             )
             evidence = f"auto spec from error.fix brief (error_id={error_id[:8]})"
             try:
-                _close_spec_written(store, tid, error_id=error_id, evidence=evidence)
+                _close_spec_written(store, tid, evidence=evidence)
             except (StoreError, SystemExit) as exc:
                 return f"error-fix-work {tid} spec_written-blocked ({exc})"
             # First round (current_round 0 → 1), same as test_run bootstrap.
@@ -573,19 +610,26 @@ def drive_error_fix_tasks(
     runner: Runner,
     *,
     round_cap: int = DEFAULT_ROUND_CAP,
-    lane_runner: Any = None,
+    lane_runner: LaneRunner | None = None,
 ) -> list[str]:
     """Drive every open error-fix implement task one scan. Return summary lines."""
     with store.exclusive("error-fix-work:" + store.device_id()):
         lines: list[str] = []
         for task in _open_error_fix_tasks(store):
-            lines.append(
-                _drive_one(
-                    store,
-                    task,
-                    runner,
-                    round_cap=round_cap,
-                    lane_runner=lane_runner,
+            tid = str(task.get("id") or "")
+            try:
+                lines.append(
+                    _drive_one(
+                        store,
+                        task,
+                        runner,
+                        round_cap=round_cap,
+                        lane_runner=lane_runner,
+                    )
                 )
-            )
+            except (Exception, SystemExit) as exc:
+                lines.append(
+                    f"error-fix-work {tid} scan-error "
+                    f"({type(exc).__name__}: {exc})"
+                )
         return lines

@@ -1080,6 +1080,24 @@ def test_watch_error_fix_empty_scan_prints_nothing(
     assert "error.fix x task=t worktree=/tmp/w" in capsys.readouterr().out
 
 
+def test_watch_error_fix_work_empty_scan_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.drive_error_fix_tasks", lambda store, runner: []
+    )
+    run(tmp_path, ["watch", "error-fix-work"])
+    assert capsys.readouterr().out == ""
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.drive_error_fix_tasks",
+        lambda store, runner: ["error-fix-work t1 done"],
+    )
+    run(tmp_path, ["watch", "error-fix-work"])
+    assert "error-fix-work t1 done" in capsys.readouterr().out
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

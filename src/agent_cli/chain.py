@@ -330,21 +330,23 @@ def _latest_gate(
 ) -> dict[str, Any] | None:
     """Latest gate for stage/dimension.
 
-    `load_task_dict` now orders gates by payload origin_seq, so last-wins is the
-    true latest write. Head preference is kept deliberately: when snapshot.head_sha
-    is set, a gate for that head wins over a chronologically later gate for a
-    different head — a head-scoped guarantee, not the same as pure "true latest".
+    `load_task_dict` orders gates by payload origin_seq (oldest→newest), so the
+    last matching entry is the true latest write. When snapshot.head_sha is set,
+    only gates for that exact head are considered — a stale approval for another
+    head must not satisfy the step (same strict scoping as local_check_pass).
+    When no head is bound yet, all gates for the stage/dimension are considered.
     """
     want = str(snapshot.get("head_sha") or "").strip().lower()
     hit = None
-    hit_for_head = None
     for g in snapshot.get("gates") or []:
-        if g.get("stage") == stage and g.get("dimension") == dimension:
-            hit = g
+        if g.get("stage") != stage or g.get("dimension") != dimension:
+            continue
+        if want:
             g_head = str(g.get("head_sha") or "").strip().lower()
-            if want and g_head == want:
-                hit_for_head = g
-    return hit_for_head if hit_for_head is not None else hit
+            if g_head != want:
+                continue
+        hit = g
+    return hit
 
 
 def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:

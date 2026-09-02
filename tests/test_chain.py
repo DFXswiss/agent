@@ -275,6 +275,68 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertTrue(v2.allowed)
 
+    def test_gate_close_rejects_stale_head_approval(self) -> None:
+        """An approved gate for a different head must not satisfy the current head."""
+        cl = _pending("implement")
+        for k in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+        ):
+            cl[k] = "ja"
+        head_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        head_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        stale = close_allowed(
+            "implement",
+            "grok_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="review",
+            snapshot={
+                "head_sha": head_a,
+                "gates": [
+                    {
+                        "stage": "grok-pr",
+                        "dimension": "quality",
+                        "vendor": "grok",
+                        "verdict": "approved",
+                        "head_sha": head_b,
+                    }
+                ],
+            },
+        )
+        self.assertFalse(stale.allowed)
+        fresh = close_allowed(
+            "implement",
+            "grok_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="review",
+            snapshot={
+                "head_sha": head_a,
+                "gates": [
+                    {
+                        "stage": "grok-pr",
+                        "dimension": "quality",
+                        "vendor": "grok",
+                        "verdict": "approved",
+                        "head_sha": head_b,
+                    },
+                    {
+                        "stage": "grok-pr",
+                        "dimension": "quality",
+                        "vendor": "grok",
+                        "verdict": "approved",
+                        "head_sha": head_a,
+                    },
+                ],
+            },
+        )
+        self.assertTrue(fresh.allowed)
+
     def test_no_evidence_denied(self) -> None:
         cl = _pending("implement")
         v = close_allowed(

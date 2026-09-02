@@ -47,7 +47,10 @@ rules live in DESIGN.md §§14–15, §19, and §21.
    (never the origin checkout). Mandatory checks must `pass`, then
    `pr.open` opens a **draft** via `agent github pending`. A retry reuses
    head `error-fix-<id8>`. Gates run on that head after `pushed`. A human
-   merges.
+   merges. `agent watch error-fix-work` (DESIGN.md §21.7) automates this same
+   path end to end — from `spec_written` through the draft `pr.open` — using
+   only script control flow and the `grok`/`codex` CLIs, with no manual
+   `agent run` steps; it is not wired into `agent daemon`.
 
 ```bash
 agent activity add --session <id> --type error.skip --payload-file <path>
