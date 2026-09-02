@@ -898,6 +898,17 @@ def execute_spine_step(
                 reason="task payload.error_id is set but error_fix_confirmed is False",
                 message="task payload.error_id is set but error_fix_confirmed is False",
             )
+        if error_id and _repo_ok(task.get("repo")) is None:
+            # Missing/malformed/stale task.repo would pass expected_repo=None
+            # and skip the push-destination allowlist check entirely while
+            # still pushing under the expected_branch-only identity check.
+            return RunOutcome(
+                kind="failed",
+                key=step.key,
+                step=step,
+                reason="task.repo could not be resolved for the push-destination check",
+                message="task.repo could not be resolved for the push-destination check",
+            )
         # error_id non-empty here implies is_error_fix_originated (gated above).
         expected_branch = f"error-fix-{error_id[:8]}" if error_id else None
         try:

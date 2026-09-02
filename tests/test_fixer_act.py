@@ -551,6 +551,39 @@ def test_pushed_passes_expected_branch_from_error_id(
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
+def test_pushed_fails_loudly_on_unresolvable_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """error-fix tasks must fail closed when task.repo cannot be resolved
+    for the push-destination check — expected_repo=None would silently skip
+    it while still pushing under the expected_branch-only identity check."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["repo"] = "not-a-repo"
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+    def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError(
+            "push_branch must not run when task.repo is unresolvable"
+        )
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", boom)
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["run", "--task", tid])
+    assert (
+        "task.repo could not be resolved for the push-destination check"
+        in str(exc.value.code)
+    )
+    assert _checklist(tmp_path, tid)["pushed"] != "ja"
+
+
 def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
