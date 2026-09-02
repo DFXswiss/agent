@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import stat
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -226,13 +227,29 @@ def policy_present(home: Path) -> bool:
     """Whether `home / "policy.json"` exists as something readable as a
     policy. A directory, broken symlink, or other non-regular entry at that
     path is a misconfiguration, not "no policy" — callers must not treat it
-    as the backward-compatible absent case."""
+    as the backward-compatible absent case. Uses os.lstat/os.stat directly
+    (rather than pathlib's is_file/exists/is_symlink, which swallow any
+    OSError — not just ENOENT — and would make a real stat failure such as
+    EACCES or ESTALE indistinguishable from "no policy")."""
     path = home / "policy.json"
-    if path.is_file():
+    try:
+        lst = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise StoreError(f"{path} could not be checked: {exc}") from exc
+    if stat.S_ISLNK(lst.st_mode):
+        try:
+            st = os.stat(path)
+        except FileNotFoundError:
+            raise StoreError(f"{path} exists but is not a regular file") from None
+        except OSError as exc:
+            raise StoreError(f"{path} could not be checked: {exc}") from exc
+    else:
+        st = lst
+    if stat.S_ISREG(st.st_mode):
         return True
-    if path.exists() or path.is_symlink():
-        raise StoreError(f"{path} exists but is not a regular file")
-    return False
+    raise StoreError(f"{path} exists but is not a regular file")
 
 
 def load_policy(home: Path) -> Any:

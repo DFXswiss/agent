@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli import watch
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from agent_cli.watch import (
@@ -1224,6 +1225,19 @@ def test_policy_present_raises_when_policy_json_is_a_broken_symlink(
 ) -> None:
     (tmp_path / "policy.json").symlink_to(tmp_path / "missing-target")
     with pytest.raises(StoreError, match="not a regular file"):
+        policy_present(tmp_path)
+
+
+def test_policy_present_raises_instead_of_silently_absent_on_stat_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
+
+    def fake_lstat(path: object, *args: object, **kwargs: object) -> object:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(watch.os, "lstat", fake_lstat)
+    with pytest.raises(StoreError, match="could not be checked"):
         policy_present(tmp_path)
 
 

@@ -2077,6 +2077,28 @@ def test_watch_assigned_requires_watch_json(tmp_path: Path) -> None:
         run(tmp_path, ["watch", "assigned"])
 
 
+def test_watch_assigned_prints_denied_on_policy_rejection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    (tmp_path / "watch.json").write_text(
+        json.dumps({"assigned_repos": ["Owner/repo"]}), encoding="utf-8"
+    )
+    monkeypatch.setattr("agent_cli.main.scan_assigned", lambda store, runner, now: ([], 0))
+    monkeypatch.setattr(
+        "agent_cli.main.pending_assigned",
+        lambda store, sid: [{"id": "asg-1"}],
+    )
+    monkeypatch.setattr(
+        "agent_cli.main.dispatch_assigned",
+        lambda store, activity_id, **kwargs: "denied",
+    )
+    capsys.readouterr()
+    run(tmp_path, ["watch", "assigned"])
+    out = capsys.readouterr().out
+    assert "assigned denied asg-1" in out
+
+
 def test_watch_usage_mentions_assigned(tmp_path: Path) -> None:
     run(tmp_path, ["init"])
     with pytest.raises(SystemExit, match=r"assigned \[--follow\]\|grok-usage"):
