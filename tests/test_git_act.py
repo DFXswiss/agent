@@ -189,7 +189,7 @@ def test_push_no_upstream_sets_upstream_with_origin() -> None:
             return Completed(0, SHA + "\n", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    got = push_branch(cwd=CWD, runner=runner)
+    got = push_branch(cwd=CWD, runner=runner, expected_branch="feat-x")
     assert got == SHA
     assert SET_UPSTREAM_PUSH in calls
     for argv in calls:
@@ -210,6 +210,24 @@ def test_push_no_upstream_ambiguous_remotes_errors() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="ambiguous remotes"):
+        push_branch(cwd=CWD, runner=runner, expected_branch="feat-x")
+
+
+def test_push_no_upstream_without_expected_branch_fails_closed() -> None:
+    """Ordinary (non-error-fix) tasks keep the original fail-closed behavior:
+    no upstream configured means a human must push manually, not a silent
+    auto-set-upstream push."""
+
+    def runner(argv: list[str]) -> Completed:
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv:
+            return Completed(1, "", "no upstream configured")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="no upstream"):
         push_branch(cwd=CWD, runner=runner)
 
 

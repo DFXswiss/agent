@@ -823,9 +823,11 @@ def execute_spine_step(
         run_cwd = cwd or os.getcwd()
         from .git_act import GitActError, push_branch
 
+        from .error_fix_act import _nonempty_str
+
         payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
         raw_error_id = payload.get("error_id")
-        error_id = str(raw_error_id or "").strip()
+        error_id = _nonempty_str(raw_error_id) or ""
         if not error_id and isinstance(raw_error_id, str) and raw_error_id != "":
             # Present but strips to empty (e.g. stale pre-round-24 store row
             # with a whitespace-only error_id — creation-time validation now

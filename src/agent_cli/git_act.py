@@ -71,6 +71,11 @@ def push_branch(*, cwd: str, runner: Runner, expected_branch: str | None = None)
 
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "@{upstream}"))
     if completed.returncode != 0 or not completed.stdout.strip():
+        if expected_branch is None:
+            # No identity to check against: keep the original fail-closed
+            # behavior for ordinary (non-error-fix) tasks — a human must
+            # push manually rather than this silently auto-setting upstream.
+            raise GitActError("no upstream")
         # Fresh branch (e.g. error-fix checkout -B): set upstream on first push.
         remote = _resolve_remote(cwd, runner)
         merge_ref = f"refs/heads/{branch}"
