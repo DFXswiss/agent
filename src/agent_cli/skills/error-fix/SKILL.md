@@ -38,8 +38,10 @@ rules live in DESIGN.md §§14–15, §19, and §21.
    - `error.fix` — local intent (`execution_status=pending`) to patch.
      Do not insert `error.fix` when `repo` is missing or a draft already
      exists. `agent task create` for this `error_id` is find-or-create.
-     The JSON payload contains `error_id` and `fingerprint`; `error.skip`
-     also requires `reason`.
+     The JSON payload contains `error_id`, `fingerprint`, and `brief` (short
+     text: what's broken, likely cause, where to look — write it from your own
+     investigation above, never a placeholder); `error.skip` also requires
+     `reason`.
 5. On `error.fix`, `agent watch error-fix` find-or-creates a spine
    `implement` task on this session, copies `error_id` and `repo` from that
    `error.seen` row into the task payload, and clones

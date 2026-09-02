@@ -1080,6 +1080,212 @@ def test_watch_error_fix_empty_scan_prints_nothing(
     assert "error.fix x task=t worktree=/tmp/w" in capsys.readouterr().out
 
 
+def test_watch_error_decide_empty_scan_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    monkeypatch.setattr("agent_cli.error_decide_act.scan_error_decide", lambda store, **kwargs: [])
+    run(tmp_path, ["watch", "error-decide"])
+    assert capsys.readouterr().out == "error.seen decide none\n"
+    monkeypatch.setattr(
+        "agent_cli.error_decide_act.scan_error_decide",
+        lambda store, **kwargs: ["error.seen x decided session=error-decide-x"],
+    )
+    run(tmp_path, ["watch", "error-decide"])
+    assert "error.seen x decided session=error-decide-x" in capsys.readouterr().out
+
+
+def test_watch_error_decide_uses_runtime_input_not_deliver(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id)
+    capsys.readouterr()
+
+    calls: list[tuple[str, object]] = []
+
+    def fake_input_text(self: object, sid: str, data: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_text", (sid, data)))
+        store = Store(tmp_path)
+        try:
+            store.write(
+                "activity",
+                "insert",
+                "fix-from-knock",
+                {
+                    "id": "fix-from-knock",
+                    "session_id": sid,
+                    "type": "error.fix",
+                    "payload": {
+                        "error_id": error_id,
+                        "fingerprint": "traceback-fingerprint",
+                    },
+                    "execution_status": "pending",
+                },
+            )
+        finally:
+            store.close()
+
+    def fake_input_key(self: object, sid: str, key: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_key", (sid, key)))
+
+    def fake_is_busy(self: object, sid: str, *, settle: float | None = None) -> bool:
+        del self, sid, settle
+        return True
+
+    def fake_deliver(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("deliver should not be called")
+
+    monkeypatch.setattr("agent_cli.runtime.Runtime.available", lambda self: True)
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.exists", lambda self, sid, **kwargs: False
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.start", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.stop", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
+    monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
+
+    run(tmp_path, ["watch", "error-decide"])
+    out = capsys.readouterr().out
+    assert f"error.seen {error_id} decided session=" in out
+    assert any(name == "input_text" for name, _ in calls)
+    assert any(name == "input_key" for name, _ in calls)
+
+
+def test_watch_error_decide_retries_enter_until_busy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id)
+    capsys.readouterr()
+
+    calls: list[tuple[str, object]] = []
+    busy_calls = {"n": 0}
+    key_calls = {"n": 0}
+
+    def fake_input_text(self: object, sid: str, data: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_text", (sid, data)))
+
+    def fake_input_key(self: object, sid: str, key: str, *, target: str | None = None) -> None:
+        del self, target
+        key_calls["n"] += 1
+        calls.append(("input_key", (sid, key)))
+        if key_calls["n"] == 3:
+            store = Store(tmp_path)
+            try:
+                store.write(
+                    "activity",
+                    "insert",
+                    "fix-from-knock",
+                    {
+                        "id": "fix-from-knock",
+                        "session_id": sid,
+                        "type": "error.fix",
+                        "payload": {
+                            "error_id": error_id,
+                            "fingerprint": "traceback-fingerprint",
+                        },
+                        "execution_status": "pending",
+                    },
+                )
+            finally:
+                store.close()
+
+    def fake_is_busy(self: object, sid: str, *, settle: float | None = None) -> bool:
+        del self, sid, settle
+        busy_calls["n"] += 1
+        return busy_calls["n"] >= 3
+
+    def fake_deliver(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("deliver should not be called")
+
+    monkeypatch.setattr("agent_cli.runtime.Runtime.available", lambda self: True)
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.exists", lambda self, sid, **kwargs: False
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.start", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.stop", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
+    monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
+
+    run(tmp_path, ["watch", "error-decide"])
+    out = capsys.readouterr().out
+    assert f"error.seen {error_id} decided session=" in out
+    assert sum(1 for name, _ in calls if name == "input_key") == 3
+
+
+def test_watch_error_decide_gives_up_after_max_retries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id)
+    capsys.readouterr()
+
+    calls: list[tuple[str, object]] = []
+    mono_calls = {"n": 0}
+
+    def fake_input_text(self: object, sid: str, data: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_text", (sid, data)))
+
+    def fake_input_key(self: object, sid: str, key: str, *, target: str | None = None) -> None:
+        del self, target
+        calls.append(("input_key", (sid, key)))
+
+    def fake_is_busy(self: object, sid: str, *, settle: float | None = None) -> bool:
+        del self, sid, settle
+        return False
+
+    def fake_deliver(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("deliver should not be called")
+
+    def fake_mono() -> float:
+        mono_calls["n"] += 1
+        if mono_calls["n"] == 1:
+            return 0.0
+        return 999999.0
+
+    monkeypatch.setattr("agent_cli.runtime.Runtime.available", lambda self: True)
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.exists", lambda self, sid, **kwargs: False
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.start", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "agent_cli.runtime.Runtime.stop", lambda self, *args, **kwargs: None
+    )
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_text", fake_input_text)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.input_key", fake_input_key)
+    monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
+    monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
+    monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
+    monkeypatch.setattr("agent_cli.error_decide_act.time.monotonic", fake_mono)
+
+    run(tmp_path, ["watch", "error-decide"])
+    out = capsys.readouterr().out
+    assert f"error.seen {error_id} timeout session=" in out
+    assert sum(1 for name, _ in calls if name == "input_key") == 8
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1469,7 +1675,11 @@ def test_activity_add_error_fix_happy_path(tmp_path: Path) -> None:
     _add_cli_error_conclusion(
         tmp_path,
         typ="error.fix",
-        payload={"error_id": error_id, "fingerprint": fingerprint},
+        payload={
+            "error_id": error_id,
+            "fingerprint": fingerprint,
+            "brief": "Investigation summary: see error.seen payload for details.",
+        },
     )
 
     store = Store(tmp_path)
@@ -1521,7 +1731,11 @@ def test_activity_add_error_fix_requires_mapped_repo(tmp_path: Path) -> None:
         _add_cli_error_conclusion(
             tmp_path,
             typ="error.fix",
-            payload={"error_id": error_id, "fingerprint": fingerprint},
+            payload={
+                "error_id": error_id,
+                "fingerprint": fingerprint,
+                "brief": "Investigation summary: see error.seen payload for details.",
+            },
         )
 
 
@@ -1561,7 +1775,11 @@ def test_activity_add_refuses_second_error_conclusion(tmp_path: Path) -> None:
         _add_cli_error_conclusion(
             tmp_path,
             typ="error.fix",
-            payload={"error_id": error_id, "fingerprint": fingerprint},
+            payload={
+                "error_id": error_id,
+                "fingerprint": fingerprint,
+                "brief": "Investigation summary: see error.seen payload for details.",
+            },
         )
 
 
@@ -1574,6 +1792,19 @@ def test_activity_add_error_skip_requires_reason(tmp_path: Path) -> None:
         _add_cli_error_conclusion(
             tmp_path,
             typ="error.skip",
+            payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_error_fix_requires_brief(tmp_path: Path) -> None:
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    with pytest.raises(SystemExit, match="brief is required"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.fix",
             payload={"error_id": error_id, "fingerprint": fingerprint},
         )
 
@@ -1592,7 +1823,11 @@ def test_activity_add_error_conclusion_rejects_fingerprint_mismatch(
         _add_cli_error_conclusion(
             tmp_path,
             typ="error.fix",
-            payload={"error_id": error_id, "fingerprint": "different-fingerprint"},
+            payload={
+                "error_id": error_id,
+                "fingerprint": "different-fingerprint",
+                "brief": "Investigation summary: see error.seen payload for details.",
+            },
         )
 
 
@@ -1621,7 +1856,11 @@ def test_activity_add_error_fix_rejects_already_open_draft(tmp_path: Path) -> No
         _add_cli_error_conclusion(
             tmp_path,
             typ="error.fix",
-            payload={"error_id": error_id, "fingerprint": fingerprint},
+            payload={
+                "error_id": error_id,
+                "fingerprint": fingerprint,
+                "brief": "Investigation summary: see error.seen payload for details.",
+            },
         )
 
 
@@ -1650,7 +1889,11 @@ def test_activity_add_error_fix_rejects_draft_by_head(tmp_path: Path) -> None:
         _add_cli_error_conclusion(
             tmp_path,
             typ="error.fix",
-            payload={"error_id": error_id, "fingerprint": fingerprint},
+            payload={
+                "error_id": error_id,
+                "fingerprint": fingerprint,
+                "brief": "Investigation summary: see error.seen payload for details.",
+            },
         )
 
 
@@ -1742,7 +1985,11 @@ def test_activity_add_error_fix_after_merged_draft_is_allowed(tmp_path: Path) ->
     _add_cli_error_conclusion(
         tmp_path,
         typ="error.fix",
-        payload={"error_id": second_id, "fingerprint": fingerprint},
+        payload={
+            "error_id": second_id,
+            "fingerprint": fingerprint,
+            "brief": "Investigation summary: see error.seen payload for details.",
+        },
     )
 
 
@@ -2100,7 +2347,11 @@ def test_session_close_refuses_pending_error_fix(tmp_path: Path) -> None:
     _add_cli_error_conclusion(
         tmp_path,
         typ="error.fix",
-        payload={"error_id": error_id, "fingerprint": fingerprint},
+        payload={
+            "error_id": error_id,
+            "fingerprint": fingerprint,
+            "brief": "Investigation summary: see error.seen payload for details.",
+        },
     )
     with pytest.raises(SystemExit, match="pending error.fix"):
         run(tmp_path, ["session", "close", "--id", "error-session"])

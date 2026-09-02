@@ -557,7 +557,7 @@ def cmd_activity(args: list[str]) -> None:
 
             _require_skill(session, "error-fix")
             with store.exclusive("error-fix-act:" + store.device_id()):
-                validate_conclusion(store, sid, typ, raw)
+                validate_conclusion(store, typ, raw)
                 activity_id = str(uuid.uuid4())
                 store.write(
                     "activity",
@@ -3078,10 +3078,11 @@ def cmd_watch(args: list[str]) -> None:
         "grok-usage",
         "errors",
         "error-fix",
+        "error-decide",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix|error-decide"
         )
     store = open_store()
     try:
@@ -3115,7 +3116,7 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix|error-decide"
                 )
             follow = extra == ["--follow"]
             while True:
@@ -3173,6 +3174,33 @@ def cmd_watch(args: list[str]) -> None:
             lines = scan_error_fix(store, run_argv)
             for line in lines:
                 print(line)
+            return
+        if args[0] == "error-decide":
+            from .error_decide_act import scan_error_decide
+            from .knock import knock_text
+
+            KNOCK_SUBMIT_RETRIES = 8
+            KNOCK_SUBMIT_POLL_S = 2.0
+
+            def _knock(sid: str, error_id: str) -> None:
+                runtime = Runtime()
+                runtime.input_text(sid, knock_text(error_id))
+                for _ in range(KNOCK_SUBMIT_RETRIES):
+                    runtime.input_key(sid, "enter")
+                    time.sleep(KNOCK_SUBMIT_POLL_S)
+                    if runtime.is_busy(sid):
+                        return
+
+            lines = scan_error_decide(
+                store,
+                start=lambda sid: _session_start(store, Runtime(), sid, None, None, None, provider="grok"),
+                stop=lambda sid: _session_stop(store, Runtime(), sid),
+                knock=_knock,
+            )
+            for line in lines:
+                print(line)
+            if not lines:
+                print("error.seen decide none")
             return
         from .pending import scan_pending
 
