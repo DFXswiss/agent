@@ -1080,7 +1080,7 @@ def test_watch_error_fix_empty_scan_prints_nothing(
     assert "error.fix x task=t worktree=/tmp/w" in capsys.readouterr().out
 
 
-def test_watch_error_decide_empty_scan_prints_nothing(
+def test_watch_error_decide_empty_scan_prints_decide_none(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
