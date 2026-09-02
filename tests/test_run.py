@@ -558,6 +558,25 @@ def test_collect_review_diff_no_base_candidate_resolves_marks_probes_not_ok(
     assert probes_ok is False
 
 
+def test_collect_review_diff_empty_merge_base_stdout_marks_probes_not_ok(
+    tmp_path: Path,
+) -> None:
+    """merge-base exit 0 with empty/whitespace stdout must set probes_ok False."""
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "   \n", "")
+        # Supplemental HEAD / --cached probes succeed but empty.
+        return Completed(0, "", "")
+
+    _diff, _paths, probes_ok = _collect_review_diff(str(tmp_path), fake_exec)
+    assert probes_ok is False
+
+
 def test_build_review_spec_file_raises_unavailable_when_no_base_resolves(
     tmp_path: Path,
 ) -> None:
@@ -566,6 +585,37 @@ def test_build_review_spec_file_raises_unavailable_when_no_base_resolves(
     def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             return Completed(1, "", "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        with pytest.raises(ReviewDiffUnavailableError) as ei:
+            build_review_spec_file(
+                store,
+                "some-tid",
+                role="reviewer",
+                round_num=1,
+                implement_spec_file=None,
+                cwd=str(tmp_path),
+                exec_argv=fake_exec,
+            )
+        assert not isinstance(ei.value, EmptyReviewDiffError)
+    finally:
+        store.close()
+
+
+def test_build_review_spec_file_raises_unavailable_when_merge_base_stdout_empty(
+    tmp_path: Path,
+) -> None:
+    """Empty merge-base stdout → ReviewDiffUnavailableError, not EmptyReviewDiffError."""
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "", "")
         return Completed(0, "", "")
 
     store = _store(tmp_path)

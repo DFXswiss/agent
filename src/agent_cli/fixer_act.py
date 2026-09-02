@@ -171,7 +171,7 @@ def template_pr_open_payload(
     if len(suffix) > 72:
         suffix = suffix[:69] + "..."
     title = f"{session_id[:8]} - {suffix}"
-    brief_summary = _first_sentence(brief) if brief else ""
+    brief_summary = _first_sentence(brief).splitlines()[0].strip() if brief else ""
     en = (
         f"Automated error-fix for `{fingerprint or short}` in `{repo}`. "
         f"Draft only; a human merges. "
@@ -421,6 +421,13 @@ def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
         one = (brief or task.get("title") or "error-fix").splitlines()[0].strip()
         if len(one) > 120:
             one = one[:117] + "..."
+        de_one = (
+            f"Automatischer error-fix-Patch. Brief: {one}"
+            if one
+            else "Automatischer error-fix Patch."
+        )
+        if len(de_one) > 120:
+            de_one = de_one[:117] + "..."
         main_mod.cmd_task(
             [
                 "summary",
@@ -429,7 +436,7 @@ def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
                 "--en",
                 one or "error-fix patch.",
                 "--de",
-                one or "error-fix Patch.",
+                de_one,
             ]
         )
 

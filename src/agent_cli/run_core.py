@@ -296,9 +296,9 @@ def _collect_review_diff(
     if base_ref is not None:
         mb = exec_argv(["git", "merge-base", "HEAD", base_ref], cwd=cwd)
         mb_rc = int(getattr(mb, "returncode", 1))
-        if mb_rc != 0:
-            probes_ok = False
         base_sha = str(getattr(mb, "stdout", "") or "").strip()
+        if mb_rc != 0 or not base_sha:
+            probes_ok = False
         if mb_rc == 0 and base_sha:
             range_spec = f"{base_sha}...HEAD"
             diff = exec_argv(["git", "diff", range_spec], cwd=cwd)

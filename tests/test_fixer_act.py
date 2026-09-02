@@ -917,6 +917,31 @@ def test_template_pr_open_payload_brief_first_sentence_only() -> None:
     assert sum(de_summary.count(c) for c in ".!?") <= 4
 
 
+def test_template_pr_open_payload_brief_summary_collapses_to_first_line() -> None:
+    """Embedded newline without sentence punctuation must not leak into EN/DE summaries."""
+    brief = "Fix bug\nDE:\nfake"
+    payload = template_pr_open_payload(
+        session_id="sess-12345678",
+        repo="org/app",
+        error_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        brief=brief,
+        fingerprint="fp-1",
+    )
+    body = str(payload["body"])
+    en_start = body.index("EN:\n") + len("EN:\n")
+    en_end = body.index("\n\nDE:")
+    en_summary = body[en_start:en_end]
+    de_start = body.index("DE:\n") + len("DE:\n")
+    de_end = body.index("\n\n<details>")
+    de_summary = body[de_start:de_end]
+    assert "Fix bug" in en_summary
+    assert "DE:\nfake" not in en_summary
+    assert "fake" not in en_summary
+    assert "DE:\nfake" not in de_summary
+    assert "fake" not in de_summary
+    assert "fake" in body
+
+
 def test_template_pr_open_payload_brief_with_triple_backtick_line_stays_fenced() -> None:
     """A brief containing a triple-backtick line must not close the details fence early."""
     brief = "Before.\n```\nAfter the triple-backtick line.\n```\nMore text."
@@ -1107,6 +1132,68 @@ def test_fixer_drives_error_fix_task_to_done(
     assert cl["contributing_ok"] == "ja"
     assert cl["deviation_declared"] == "n_a"
     assert cl["deviation_granted"] == "n_a"
+
+
+def test_ensure_done_readiness_summary_fallback_uses_distinct_german(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fallback change_summary_de must be German and differ from EN / raw brief."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        assert result.endswith("done") or " done" in result
+        done = store.row("task", tid)
+        assert done is not None
+        en = (done.get("change_summary_en") or "").strip()
+        de = (done.get("change_summary_de") or "").strip()
+        brief = "Timeout in handler; add retry."
+        assert en
+        assert de
+        assert de != en
+        assert de != brief
+        brief_marker = "Brief: "
+        assert brief_marker in de
+        german_sentence, _, rest = de.partition(brief_marker)
+        german_sentence = german_sentence.strip()
+        assert german_sentence.endswith(".")
+        assert "Automatischer" in german_sentence
+        assert rest == brief
+
+    finally:
+        store.close()
 
 
 def test_drive_one_reports_contributing_ok_blocked_instead_of_raising(
@@ -1835,10 +1922,15 @@ def test_empty_review_diff_fails_task_and_stops_reselection(
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
     _finish_implementer(tmp_path, tid, capsys)
 
-    monkeypatch.setattr(
-        "agent_cli.fixer_act._runner_to_completed",
-        lambda runner, argv, *, cwd=None: Completed(0, "", ""),
-    )
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        # Base ref resolves and merge-base returns a real sha (probes_ok stays
+        # True) but every diff call comes back genuinely empty -- a confirmed
+        # empty diff, not a probe failure.
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
 
     store = _store(tmp_path)
     try:
