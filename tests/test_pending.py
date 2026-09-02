@@ -308,9 +308,10 @@ def test_sync_once_raises_hub_error_on_event_with_non_dict_payload(
     get committed by apply_remote (Store._maybe_wake/_maybe_work each already
     return early on a non-dict payload, so nothing rolls back the write), and
     only fail later - on every future store.rows()/store.row() call for that
-    whole table, not at write time. Store._write_in_txn already rejects this
-    shape for this device's own local writes; the hub-pull path must not be
-    laxer."""
+    whole table, not at write time. Store._write_in_txn doesn't check this
+    shape either for local writes, but that's this codebase's own trusted
+    code constructing payloads, not externally-supplied hub data - the risk
+    this test guards against is specific to the pull path."""
     event = {**_valid_pull_event(), "payload": ["not", "an", "object"]}
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
@@ -349,6 +350,22 @@ def test_sync_once_raises_hub_error_on_event_with_unknown_table(
     committing an orphaned row under a table name no application code ever
     reads back."""
     event = {**_valid_pull_event(), "table": "not_a_real_table"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event has an unknown table"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_raises_hub_error_on_event_with_unhashable_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: `table not in OWNED_TABLES` (a frozenset) requires
+    table to be hashable - the exact bug class already fixed for
+    payload["type"] elsewhere in this PR (isinstance(typ, str) guards in
+    store.py). A JSON-decoded list/dict for table used to raise a raw
+    TypeError instead of a catchable HubError."""
+    event = {**_valid_pull_event(), "table": ["activity"]}
     hub = FakeHub()
     hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
@@ -531,6 +548,19 @@ def test_sync_once_raises_hub_error_on_snapshot_with_unknown_table(
     """Regression test: the row-side sibling of
     test_sync_once_raises_hub_error_on_event_with_unknown_table."""
     row = {**_valid_pull_row(), "table": "not_a_real_table"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot has an unknown table"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_raises_hub_error_on_snapshot_with_unhashable_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_unhashable_table."""
+    row = {**_valid_pull_row(), "table": ["activity"]}
     hub = FakeHub()
     hub.pull_body = {"events": [], "inbox": [row]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)

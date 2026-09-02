@@ -146,6 +146,17 @@ def test_cmd_restore_dies_on_event_with_unknown_table(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+def test_cmd_restore_dies_on_event_with_unhashable_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_unhashable_table."""
+    event = {**_valid_restore_event(), "table": ["activity"]}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
 def test_cmd_restore_dies_on_snapshot_with_non_dict_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -163,6 +174,17 @@ def test_cmd_restore_dies_on_snapshot_with_unknown_table(
     """Regression test: the row-side sibling of
     test_cmd_restore_dies_on_event_with_unknown_table."""
     row = {**_valid_restore_row(), "table": "not_a_real_table"}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot has an unknown table"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_dies_on_snapshot_with_unhashable_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_cmd_restore_dies_on_event_with_unhashable_table."""
+    row = {**_valid_restore_row(), "table": ["activity"]}
     body = {"own_events": [], "inbox": [row]}
     with pytest.raises(SystemExit, match="restore snapshot has an unknown table"):
         _run_restore(tmp_path, monkeypatch, body)

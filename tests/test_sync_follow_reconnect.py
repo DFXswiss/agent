@@ -421,6 +421,47 @@ def test_subscription_row_with_non_dict_payload_is_skipped_not_committed(
         store.close()
 
 
+def test_subscription_row_with_unhashable_table_is_skipped_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: `table not in OWNED_TABLES` inside _check_pull_row
+    requires table to be hashable. A JSON-decoded list/dict for table used to
+    raise a raw TypeError that neither the _PullShapeError catch around
+    _check_pull_row nor the (StoreError, KeyError, TypeError) catch around
+    apply_replica_row (which only wraps the *other* try block) would catch -
+    crashing the whole agent sync --follow daemon on a malformed WS frame."""
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        row = {
+            "table": ["session"],
+            "origin_device_id": "other",
+            "row_id": "s1",
+            "payload": {"id": "s1"},
+            "updated_at": "2026-08-13T12:00:00Z",
+        }
+
+        class _SubscriptionWs:
+            def send(self, data: str) -> None:
+                pass
+
+            def __iter__(self):
+                return iter([json.dumps({"type": "subscription", "rows": [row]})])
+
+            def close(self) -> None:
+                pass
+
+        class _FakeHub:
+            def connect_sync_ws(self) -> _SubscriptionWs:
+                return _SubscriptionWs()
+
+        with pytest.raises(HubError, match="websocket closed"):
+            main_mod._run_sync_ws_session(store, _FakeHub(), _FakeRuntime(), {}, {}, {})
+        assert store.rows("session") == []
+    finally:
+        store.close()
+
+
 def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

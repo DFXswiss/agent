@@ -1765,18 +1765,21 @@ class _PullShapeError(ValueError):
 
 def _coerce_pull_event(event: object) -> dict[str, Any]:
     """Validate a pulled/restored event has every field _insert_event_idempotent
-    indexes, that payload/op are shaped the way a local write already requires
-    (Store._write_in_txn rejects both the same way for this device's own
-    writes - the hub-pull/restore path must not be laxer, since a payload
-    that isn't an object is otherwise stored as-is and only fails later, on
-    every future read of that whole table, not at write time), and normalize
+    indexes, and that table/op are shaped the way Store._write_in_txn already
+    requires for this device's own local writes (op/table checked there; the
+    hub-pull/restore path must not be laxer). payload is additionally
+    required to be an object here even though _write_in_txn doesn't check
+    that for local writes either - a payload that isn't one is otherwise
+    stored as-is and only fails later, on every future read of that whole
+    table, not at write time - a risk specific to externally-supplied hub
+    data, not to this codebase's own trusted call sites. Normalize
     origin_seq to an int (rejecting bool, a fractional float, and anything
     int() can't convert, including an out-of-range float that would
     otherwise raise OverflowError). Returns a new dict; the caller's own copy
     of the raw event is left untouched."""
     if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
         raise _PullShapeError("event is missing required fields")
-    if event["table"] not in OWNED_TABLES:
+    if not isinstance(event["table"], str) or event["table"] not in OWNED_TABLES:
         raise _PullShapeError("event has an unknown table")
     if not isinstance(event["payload"], dict):
         raise _PullShapeError("event payload is not an object")
@@ -1802,7 +1805,7 @@ def _check_pull_row(row: object) -> dict[str, Any]:
     that whole table."""
     if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
         raise _PullShapeError("snapshot is missing required fields")
-    if row["table"] not in OWNED_TABLES:
+    if not isinstance(row["table"], str) or row["table"] not in OWNED_TABLES:
         raise _PullShapeError("snapshot has an unknown table")
     if not isinstance(row["payload"], dict):
         raise _PullShapeError("snapshot payload is not an object")
