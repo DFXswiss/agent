@@ -498,7 +498,7 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 
 A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition. Opening a draft is not done.
 
-No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, timeout, or unavailable review output is not zero findings). A patch that does not apply is a failed check, not a debate.
+No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, timeout, or unavailable review output is not zero findings). A patch that does not apply is a failed check, not a debate. The structured `FINDINGS:` section is the sole source of truth for a review verdict; a real finding stated only in a reviewer's free-text preamble and not restated there is not mechanically detectable and is accepted residual risk, not something a heuristic tries to close.
 
 ### 19.2 Untrusted inputs
 

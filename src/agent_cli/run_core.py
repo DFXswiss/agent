@@ -9,14 +9,14 @@ OSError from a missing vendor CLI binary propagates (fixer catches it).
 from __future__ import annotations
 
 import os
-import re
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .chain import NO_AUTO_CLOSE, Step, close_allowed, next_steps
+from .chain import NO_AUTO_CLOSE, Step, close_allowed, is_error_fix_originated, next_steps
+from .git_act import _SHA_RE
 from .lane import (
     LaneResult,
     count_findings,
@@ -28,7 +28,6 @@ from .lane import (
 from .store import Store
 
 DEFAULT_ROUND_CAP = 5
-_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _REVIEW_ROLES = frozenset({"reviewer", "pr-reviewer-quality", "pr-reviewer-logic"})
 _BASE_CANDIDATES = (
     "origin/develop",
@@ -338,7 +337,7 @@ def build_review_spec_file(
     round_bit = round_num if round_num is not None else 0
     diff_path = parent / f"review-{role}-round{round_bit}.diff"
     spec_path = parent / f"review-{role}-round{round_bit}.md"
-    diff_path.write_text(diff_text if diff_text.strip() else "(empty diff)\n", encoding="utf-8")
+    diff_path.write_text(diff_text, encoding="utf-8")
     abs_diff = str(diff_path.resolve())
     paths_line = ", ".join(changed_paths) if changed_paths else "(none)"
 
@@ -373,7 +372,7 @@ def build_review_spec_file(
         f"`{abs_diff}`\n\n"
         f"Changed paths: {paths_line}\n\n"
         f"Unified diff (also embedded for convenience; the Read path is required):\n\n"
-        f"```diff\n{diff_text if diff_text.strip() else '(empty diff)'}\n```\n\n"
+        f"```diff\n{diff_text}\n```\n\n"
         f"# Dimension\n\n"
         f"{dimension}\n\n"
         f"# Context\n\n"
@@ -841,6 +840,18 @@ def execute_spine_step(
                 reason="task payload.error_id is whitespace-only",
                 message="task payload.error_id is whitespace-only",
             )
+        if error_id and not is_error_fix_originated(snap):
+            # payload.error_id alone is not enough — same gate as chain.py's
+            # script carve-outs. Falling through to expected_branch=None would
+            # skip the push identity check as if this were an ordinary task.
+            return RunOutcome(
+                kind="failed",
+                key=step.key,
+                step=step,
+                reason="task payload.error_id is set but error_fix_confirmed is False",
+                message="task payload.error_id is set but error_fix_confirmed is False",
+            )
+        # error_id non-empty here implies is_error_fix_originated (gated above).
         expected_branch = f"error-fix-{error_id[:8]}" if error_id else None
         try:
             sha = push_branch(

@@ -47,6 +47,20 @@ def has_single_terminal_report(text: str) -> bool:
     Multiple STATUS or FINDINGS headers (e.g. an early example block plus a
     real report) are unparseable — callers must not trust parse_status /
     count_findings on such transcripts.
+
+    Known limitation, accepted by design: this does not attempt to detect a
+    real finding stated only in free-text preamble/reasoning narration ahead
+    of an otherwise clean STATUS: complete / FINDINGS: none block. Reasoning
+    narration before the terminal report is normal, expected model output
+    (the review contract says reports must "end with" this block, not
+    "consist solely of" it) — rejecting on any preamble text caused
+    near-universal false-fail retries on legitimate reports. Distinguishing
+    harmless narration from a stated finding is a semantic judgment on
+    natural-language text, not a mechanical one; no regex/keyword heuristic
+    here would be reliable, so none is attempted (matches this system's
+    "model text is never itself a transition" principle, DESIGN.md §19).
+    The structured FINDINGS: section remains the sole source of truth for
+    pass/fail.
     """
     status_n = len(list(_STATUS_RE.finditer(text)))
     findings_n = len(list(_FINDINGS_HEADER_RE.finditer(text)))

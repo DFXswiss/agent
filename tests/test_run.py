@@ -901,6 +901,40 @@ def test_pushed_fails_loudly_on_stale_whitespace_only_error_id(
     assert _checklist(tmp_path, tid)["pushed"] != "ja"
 
 
+def test_pushed_fails_loudly_on_error_id_without_error_fix_confirmed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """payload.error_id without a confirmed error.fix activity must not get
+    the unattended auto-push shortcut (non-None expected_branch). Writing the
+    payload directly bypasses error-fix bootstrap, so error_fix_confirmed
+    stays False — same gate as chain.is_error_fix_originated."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {"error_id": "abc123def456"}
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+    called = {"n": 0}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+        called["n"] += 1
+        return "abc1234"
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    with pytest.raises(SystemExit) as exc:
+        run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert "error_fix_confirmed" in str(exc.value.code)
+    assert called["n"] == 0
+    assert _checklist(tmp_path, tid)["pushed"] != "ja"
+
+
 def _bootstrap_resolve(home: Path, capsys: pytest.CaptureFixture[str]) -> str:
     run(home, ["init"])
     run(
@@ -1074,6 +1108,37 @@ def test_interpret_lane_rejects_multiple_report_blocks() -> None:
     decision, _findings = _interpret_lane("reviewer", result)
     assert decision != "pass"
     assert decision == "retry"
+
+
+def test_interpret_lane_accepts_preamble_before_clean_report() -> None:
+    """Reasoning narration before a clean STATUS/FINDINGS block still passes.
+
+    Covers the gap left by reverting the preamble-emptiness check in
+    has_single_terminal_report: legitimate reasoning narration ahead of an
+    otherwise clean terminal report must still resolve to "pass".
+    """
+    from agent_cli.lane import LaneResult
+    from agent_cli.run_core import _interpret_lane
+
+    stdout = (
+        "Let me walk through the diff section by section and check each "
+        "changed file against the review dimension before concluding.\n"
+        "\n"
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+    )
+    result = LaneResult(
+        role="reviewer",
+        vendor="grok",
+        status="complete",
+        argv=["grok"],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+    )
+    decision, findings = _interpret_lane("reviewer", result)
+    assert decision == "pass"
+    assert findings is None
 
 
 def test_reviewer_gets_distinct_review_spec_with_diff_and_contract(

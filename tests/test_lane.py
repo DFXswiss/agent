@@ -251,6 +251,24 @@ def test_has_single_terminal_report_accepts_one_block() -> None:
     assert has_single_terminal_report(text) is True
 
 
+def test_has_single_terminal_report_accepts_preamble_before_status() -> None:
+    """Reasoning narration before a clean STATUS/FINDINGS block is accepted.
+
+    Reasoning narration ahead of the terminal report is normal, expected
+    model output (the review contract says reports must "end with" the
+    block, not "consist solely of" it) — rejecting on any preamble text
+    would false-fail near-universally on legitimate reports.
+    """
+    text = (
+        "Let me walk through the diff section by section and check each "
+        "changed file against the review dimension before concluding.\n"
+        "\n"
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+    )
+    assert has_single_terminal_report(text) is True
+
+
 def test_has_single_terminal_report_rejects_example_plus_real() -> None:
     """Early example STATUS/FINDINGS plus a real report → unparseable."""
     text = (

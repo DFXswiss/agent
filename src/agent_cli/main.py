@@ -28,6 +28,7 @@ from .chain import (
     required_source,
     to_json as step_to_json,
 )
+from .git_act import _SHA_RE
 from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
@@ -53,8 +54,6 @@ from .watch import (
     scan_assigned,
     scan_merged,
 )
-
-_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 CHECKLIST = {
     "implement": (
