@@ -330,9 +330,10 @@ def _latest_gate(
 ) -> dict[str, Any] | None:
     """Latest gate for stage/dimension.
 
-    When snapshot.head_sha is set, prefer a gate recorded for that head so a
-    same-second reject@old then approve@new pair cannot lose to list-order ties
-    on second-resolution recorded_at.
+    `load_task_dict` now orders gates by payload origin_seq, so last-wins is the
+    true latest write. Head preference is kept deliberately: when snapshot.head_sha
+    is set, a gate for that head wins over a chronologically later gate for a
+    different head — a head-scoped guarantee, not the same as pure "true latest".
     """
     want = str(snapshot.get("head_sha") or "").strip().lower()
     hit = None

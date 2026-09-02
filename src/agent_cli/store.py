@@ -71,6 +71,9 @@ OWNED_TABLES = frozenset(
     }
 )
 
+# Tables whose row payload must carry the same origin_seq as ledger_event.
+ORIGIN_SEQ_STAMPED_TABLES = frozenset({"review_gate", "local_check", "agent"})
+
 WAKE_ACTIVITY_TYPES = frozenset({"message", "pr.merged", "error.seen"})
 DONE_WAKE_ACTIVITY_TYPES = frozenset({"pr.merged"})
 
@@ -316,6 +319,14 @@ class Store:
             raise StoreError(f"{table} {row_id} does not exist")
         seq = self.next_seq()
         occurred = utcnow()
+        # Stamp origin_seq only on insert for every ORIGIN_SEQ_STAMPED_TABLES
+        # entry. agent rows are inserted once and later updated (e.g. finish);
+        # re-stamping on update would move them in origin_seq order relative to
+        # other agents. review_gate/local_check are insert-only today; the same
+        # insert-only rule keeps all three tables consistent and avoids that
+        # footgun if updates are ever added.
+        if table in ORIGIN_SEQ_STAMPED_TABLES and op == "insert":
+            payload["origin_seq"] = seq
         encoded = dumps(payload)
         self.conn.execute(
             "INSERT INTO ledger_event (origin_device_id, origin_seq, table_name, op, row_id, payload, occurred_at) "

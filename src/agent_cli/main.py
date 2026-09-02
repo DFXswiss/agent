@@ -2076,11 +2076,27 @@ def _find_round(store: Store, task_id: str, round_num: object) -> dict:
     return matches[0]
 
 
+def _origin_seq_sort_key(row: dict, ts_field: str, *extra_fallback: str) -> tuple:
+    """Oldest→newest by payload origin_seq (Store.next_seq at write time).
+
+    Rows written before origin_seq was stamped sort before every stamped row;
+    among themselves they keep the old timestamp (and optional extra) order.
+    """
+    fallback = (str(row.get(ts_field) or ""), *(str(row.get(f) or "") for f in extra_fallback))
+    raw = row.get("origin_seq")
+    if raw is not None:
+        try:
+            return (1, int(raw), *("" for _ in fallback))
+        except (TypeError, ValueError):
+            pass
+    return (0, 0, *fallback)
+
+
 def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
     gates = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
-    # rows() is updated_at DESC; reverse for older-first, then stable sort by recorded_at.
+    # rows() is updated_at DESC; reverse for older-first, then origin_seq order.
     ordered = list(reversed(gates))
-    ordered.sort(key=lambda g: g.get("recorded_at") or "")
+    ordered.sort(key=lambda g: _origin_seq_sort_key(g, "recorded_at"))
     latest: dict[tuple[str, str], dict] = {}
     for g in ordered:
         latest[(g.get("stage"), g.get("dimension"))] = g
@@ -2090,7 +2106,7 @@ def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
 def _latest_checks(store: Store, task_id: str) -> dict[str, dict]:
     checks = [c for c in store.rows("local_check") if c.get("task_id") == task_id]
     ordered = list(reversed(checks))
-    ordered.sort(key=lambda c: c.get("ran_at") or "")
+    ordered.sort(key=lambda c: _origin_seq_sort_key(c, "ran_at"))
     latest: dict[str, dict] = {}
     for c in ordered:
         latest[c["name"]] = c
@@ -2108,12 +2124,11 @@ def load_task_dict(store: Store, tid: str) -> dict:
         if r.get("task_id") == tid
     }
     checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
-    # Keep full history (like gates). ran_at is second-resolution; same-second
-    # ties plus ORDER BY updated_at DESC without a secondary key are unstable,
-    # so collapsing to latest-by-name can drop a fresh head-bound pass and
-    # leave only a stale row — chain._artifact_ok matches by head over this list.
+    # Keep full history (like gates). Order by origin_seq so same-second ran_at
+    # ties cannot drop a fresh head-bound pass — chain._artifact_ok / allow
+    # last-wins walk this list oldest→newest.
     ordered_checks = list(reversed(checks))
-    ordered_checks.sort(key=lambda c: c.get("ran_at") or "")
+    ordered_checks.sort(key=lambda c: _origin_seq_sort_key(c, "ran_at"))
     local_checks = [
         {
             "name": c.get("name"),
@@ -2125,7 +2140,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
     ]
     gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
     ordered_gates = list(reversed(gates_raw))
-    ordered_gates.sort(key=lambda g: g.get("recorded_at") or "")
+    ordered_gates.sort(key=lambda g: _origin_seq_sort_key(g, "recorded_at"))
     gates = [
         {
             "stage": g.get("stage"),
@@ -2166,7 +2181,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
     session = store.row("session", sid) if sid else None
     agents_raw = [a for a in store.rows("agent") if a.get("task_id") == tid]
     agents_ordered = list(reversed(agents_raw))
-    agents_ordered.sort(key=lambda a: (a.get("started_at") or "", str(a.get("id") or "")))
+    agents_ordered.sort(key=lambda a: _origin_seq_sort_key(a, "started_at", "id"))
     agents = [
         {
             "role": a.get("role"),
