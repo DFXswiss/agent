@@ -45,24 +45,59 @@ def test_cmd_restore_dies_on_non_dict_body(tmp_path: Path, monkeypatch: pytest.M
         _run_restore(tmp_path, monkeypatch, None)
 
 
-def test_cmd_restore_dies_on_event_missing_required_fields(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _valid_restore_event() -> dict[str, Any]:
+    return {
+        "origin_device_id": "other",
+        "origin_seq": 1,
+        "table": "activity",
+        "op": "insert",
+        "row_id": "x",
+        "payload": {},
+        "occurred_at": "2026-08-13T12:00:00Z",
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["origin_device_id", "origin_seq", "table", "op", "row_id", "payload", "occurred_at"],
+)
+def test_cmd_restore_dies_on_event_missing_one_required_field(
+    field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: a restored event missing any field
+    """Regression test: a restored event missing any single one of the fields
     _insert_event_idempotent indexes used to raise a raw KeyError deep inside
-    store.apply_remote instead of a clean die()."""
-    body = {"own_events": [{"table": "activity", "row_id": "x"}]}
+    store.apply_remote instead of a clean die(). Parametrized per field (like
+    the equivalent tests/test_pending.py _sync_once tests) so a future
+    accidental narrowing of _PULL_EVENT_FIELDS to any one of them is still
+    caught, not just the "several fields missing at once" case."""
+    event = _valid_restore_event()
+    del event[field]
+    body = {"own_events": [event]}
     with pytest.raises(SystemExit, match="restore event is missing required fields"):
         _run_restore(tmp_path, monkeypatch, body)
 
 
-def test_cmd_restore_dies_on_snapshot_missing_required_fields(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _valid_restore_row() -> dict[str, Any]:
+    return {
+        "table": "activity",
+        "origin_device_id": "other",
+        "row_id": "x",
+        "payload": {},
+        "updated_at": "2026-08-13T12:00:00Z",
+    }
+
+
+@pytest.mark.parametrize("field", ["table", "origin_device_id", "row_id", "payload", "updated_at"])
+def test_cmd_restore_dies_on_snapshot_missing_one_required_field(
+    field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: a restored snapshot row missing any field
-    apply_replica_row indexes used to raise a raw KeyError instead of a clean
-    die()."""
-    body = {"own_events": [], "inbox": [{"table": "activity", "row_id": "x"}]}
+    """Regression test: a restored snapshot row missing any single one of the
+    fields apply_replica_row indexes used to raise a raw KeyError instead of a
+    clean die(). Parametrized per field, same reasoning as the event test
+    above."""
+    row = _valid_restore_row()
+    del row[field]
+    body = {"own_events": [], "inbox": [row]}
     with pytest.raises(SystemExit, match="restore snapshot is missing required fields"):
         _run_restore(tmp_path, monkeypatch, body)
 

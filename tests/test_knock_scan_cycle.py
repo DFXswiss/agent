@@ -108,9 +108,12 @@ def test_knock_scan_cycle_logs_and_continues_on_malformed_pull_response(
     """Regression test: _sync_once() raises HubError when the hub returns a
     malformed pull payload. A narrow except that only caught (HubError, StoreError)
     still covers this - HubError is exactly what the malformed-response checks
-    raise - so the daemon logs and moves on instead of dying, without needing to
-    also catch bare SystemExit (nothing else _sync_once can raise from this call
-    site is a plain SystemExit)."""
+    raise - so the daemon logs and moves on instead of dying. _sync_once's
+    _hub_from_store() call can still raise a bare SystemExit ("device is not
+    paired") if pairing is ever revoked concurrently with this call, but no
+    code path in this repo clears hub_url/device_token once set (verified:
+    they're write-once, only ever set by cmd_pair) - not reachable today, only
+    a future concern if an unpair command is ever added."""
 
     def _raise(_store: object) -> None:
         raise HubError("pull response missing events")
