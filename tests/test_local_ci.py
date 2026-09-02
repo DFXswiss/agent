@@ -56,8 +56,8 @@ def _payload(**overrides: object) -> dict:
 
 def _comment(payload: dict) -> str:
     return (
-        "EN:\nReady after 1 review pass.\nFits Frick names to 35 characters.\n\n"
-        "DE:\nBereit nach 1 Review-Durchlauf.\nKappt Frick-Namen auf 35 Zeichen.\n\n"
+        "EN:\nReady after 1 review pass.\nTruncates sample display names to 35 characters.\n\n"
+        "DE:\nBereit nach 1 Review-Durchlauf.\nKürzt Beispiel-Anzeigenamen auf 35 Zeichen.\n\n"
         "<details>\n<summary>Details</summary>\n\n"
         f"{BEGIN_MARK}\n```json\n{json.dumps(payload)}\n```\n{END_MARK}\n\n"
         "</details>\n"
