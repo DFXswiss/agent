@@ -247,36 +247,87 @@ def test_sync_once_applies_subscription_snapshots(tmp_path: Path, monkeypatch: p
     assert row["_origin_device_id"] == "other-device"
 
 
+def _paired_store(tmp_path: Path) -> Store:
+    store = Store(tmp_path)
+    store.set_meta("hub_url", "http://hub.example")
+    store.set_meta("device_token", "tok")
+    return store
+
+
 def test_sync_once_dies_on_non_dict_pull_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test: Hub.request returns None for a 2xx response with an empty
     body. _sync_once used to call pulled.get("events") straight on that, raising a
-    raw AttributeError instead of a catchable HubError/SystemExit - which would
-    have escaped _knock_scan_cycle's (HubError, StoreError, SystemExit) guard and
-    killed the whole knock daemon."""
-    store = Store(tmp_path)
-    store.set_meta("hub_url", "http://hub.example")
-    store.set_meta("device_token", "tok")
+    raw AttributeError instead of a catchable HubError - which would have escaped
+    both _knock_scan_cycle's and cmd_sync --follow's guards and killed whichever
+    process called it."""
     hub = FakeHub()
     hub.pull_body = None  # type: ignore[assignment]
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
-    with pytest.raises(SystemExit, match="pull response is not an object"):
-        _sync_once(store)
+    with pytest.raises(HubError, match="pull response is not an object"):
+        _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_dies_on_event_missing_origin_fields(
+def test_sync_once_dies_on_event_missing_required_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: a pull event missing origin_device_id/origin_seq used to
-    raise a raw KeyError from event["origin_device_id"], same uncaught-crash risk
-    as the non-dict pull response above."""
-    store = Store(tmp_path)
-    store.set_meta("hub_url", "http://hub.example")
-    store.set_meta("device_token", "tok")
+    """Regression test: a pull event missing any of the fields
+    _insert_event_idempotent indexes directly (table, op, row_id, payload,
+    occurred_at, origin_device_id, origin_seq) used to raise a raw KeyError deep
+    inside store.apply_remote instead of a catchable HubError raised before that
+    call - same uncaught-crash risk as the non-dict pull response above."""
     hub = FakeHub()
     hub.pull_body = {"events": [{"table": "activity", "row_id": "x"}]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
-    with pytest.raises(SystemExit, match="origin_device_id/origin_seq"):
-        _sync_once(store)
+    with pytest.raises(HubError, match="pull event is missing required fields"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_dies_on_non_numeric_origin_seq(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: int(event["origin_seq"]) used to run unguarded; a
+    non-numeric origin_seq raised a raw ValueError instead of a catchable
+    HubError."""
+    hub = FakeHub()
+    hub.pull_body = {
+        "events": [
+            {
+                "origin_device_id": "other",
+                "origin_seq": "not-a-number",
+                "table": "activity",
+                "op": "insert",
+                "row_id": "x",
+                "payload": {},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="non-numeric origin_seq"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_dies_on_non_list_snapshot_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: list(pulled.get("inbox") or []) used to run unguarded; a
+    truthy non-iterable value (e.g. a malformed hub response sending an object
+    instead of a list) raised a raw TypeError instead of a catchable HubError."""
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": {"not": "a list"}}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="inbox is not a list"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_dies_on_snapshot_missing_required_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: apply_replica_row indexes row["origin_device_id"],
+    row["payload"], row["updated_at"] directly; a snapshot row missing any of
+    those used to raise a raw KeyError instead of a catchable HubError raised
+    before that call."""
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [{"table": "activity", "row_id": "x"}]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot is missing required fields"):
+        _sync_once(_paired_store(tmp_path))
 
 
 def test_watch_pending_skips_other_executable_types(tmp_path: Path) -> None:

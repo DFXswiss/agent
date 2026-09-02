@@ -1727,7 +1727,15 @@ def cmd_dashboard(args: list[str]) -> None:
         store.close()
 
 
+_PULL_EVENT_FIELDS = ("origin_device_id", "origin_seq", "table", "op", "row_id", "payload", "occurred_at")
+_PULL_ROW_FIELDS = ("table", "origin_device_id", "row_id", "payload", "updated_at")
+
+
 def _sync_once(store: Store) -> None:
+    # Every malformed-hub-response check below raises HubError (not die()'s bare
+    # SystemExit): both cmd_knock's _knock_scan_cycle and cmd_sync --follow's
+    # reconnect loop already catch HubError, so a bad response logs/retries in
+    # whichever loop is calling instead of killing that process.
     hub = _hub_from_store(store)
     try:
         pending = store.pending_events()
@@ -1736,25 +1744,32 @@ def _sync_once(store: Store) -> None:
             store.mark_pushed(pending[-1]["origin_seq"])
         pulled = hub.pull(store.all_cursors())
         if not isinstance(pulled, dict):
-            die("pull response is not an object")
+            raise HubError("pull response is not an object")
         events = pulled.get("events")
         if not isinstance(events, list):
-            die("pull response missing events")
+            raise HubError("pull response missing events")
         for event in events:
-            if not isinstance(event, dict) or "origin_device_id" not in event or "origin_seq" not in event:
-                die("pull event missing origin_device_id/origin_seq")
+            if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
+                raise HubError("pull event is missing required fields")
+            try:
+                origin_seq = int(event["origin_seq"])
+            except (TypeError, ValueError) as exc:
+                raise HubError("pull event has a non-numeric origin_seq") from exc
             store.apply_remote(event)
-            store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        snapshots = (
-            list(pulled.get("inbox") or [])
-            + list(pulled.get("pings") or [])
-            + list(pulled.get("subscriptions") or [])
-        )
+            store.mark_origin(event["origin_device_id"], origin_seq)
+        snapshots: list[dict[str, Any]] = []
+        for key in ("inbox", "pings", "subscriptions"):
+            value = pulled.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                raise HubError(f"pull response {key} is not a list")
+            snapshots.extend(value)
         for row in snapshots:
-            if not isinstance(row, dict):
-                die("pull snapshot is not an object")
-        sessions = [r for r in snapshots if isinstance(r, dict) and r.get("table") == "session"]
-        rest = [r for r in snapshots if not (isinstance(r, dict) and r.get("table") == "session")]
+            if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
+                raise HubError("pull snapshot is missing required fields")
+        sessions = [r for r in snapshots if r.get("table") == "session"]
+        rest = [r for r in snapshots if r.get("table") != "session"]
         for row in sessions + rest:
             store.apply_replica_row(row)
         print(f"sync pushed={len(pending)} pulled={len(events)} snapshots={len(snapshots)}")
