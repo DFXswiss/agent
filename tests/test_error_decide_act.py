@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import socket
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,7 @@ from agent_cli.error_decide_act import (
     scan_error_decide,
     unconcluded_seen_rows,
 )
-from agent_cli.store import Store, utcnow
+from agent_cli.store import Store, StoreError, utcnow
 
 
 def _insert_seen(
@@ -335,3 +337,88 @@ def test_ensure_decide_session_unions_missing_skills(tmp_path: Path) -> None:
     assert session is not None
     skills = session.get("skills")
     assert skills == ["error-fix", "custom-extra", "spine", "review-loop", "pr-review"]
+
+
+def test_ensure_decide_session_rejects_non_runner_kind(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    error_id = "error-seen-iiiiiiii"
+    sid = decide_session_id(error_id)
+    now = utcnow()
+    store.write(
+        "session",
+        "insert",
+        sid,
+        {
+            "id": sid,
+            "kind": "human",
+            "started_at": now,
+            "last_seen_at": now,
+            "host": socket.gethostname(),
+            "status": "active",
+            "skills": ["error-fix", "spine", "review-loop", "pr-review"],
+        },
+    )
+    with pytest.raises(StoreError, match="must be runner"):
+        _ensure_decide_session(store, sid, now)
+
+
+def test_scan_error_decide_lock_serializes_overlapping_scans(tmp_path: Path) -> None:
+    # Two independent Store connections against the same tmp_path (same device
+    # identity, same AGENT_PG_DSN test database) so the exclusive lock under test
+    # is the real pg_advisory_lock, not just the in-process threading.RLock that
+    # each Store instance also happens to hold internally.
+    store_a = Store(tmp_path)
+    store_b = Store(tmp_path)
+    error_id = "error-seen-jjjjjjjj"
+    _insert_seen(store_a, rid=error_id)
+
+    barrier = threading.Barrier(2)
+    started: list[str] = []
+    started_lock = threading.Lock()
+    errors: list[BaseException] = []
+
+    def start(sid: str) -> None:
+        with started_lock:
+            started.append(sid)
+
+    def make_knock(store: Store) -> Callable[[str, str], None]:
+        def knock(sid: str, eid: str) -> None:
+            # If the lock only covered the backlog read (the pre-fix bug), both
+            # threads could reach this point concurrently and the barrier would
+            # release both parties. With the lock held for the whole scan, only
+            # one thread is ever here at a time, so the second party never shows
+            # up and this always times out - that timeout is the proof of
+            # serialization, not a test bug, so it is swallowed below.
+            try:
+                barrier.wait(timeout=0.3)
+            except threading.BrokenBarrierError:
+                pass
+            _insert_conclusion(store, rid=f"fix-{sid}", error_id=eid, session_id=sid)
+
+        return knock
+
+    def run(store: Store) -> None:
+        try:
+            scan_error_decide(
+                store,
+                start=start,
+                stop=lambda _sid: None,
+                knock=make_knock(store),
+                sleep=lambda _s: None,
+                timeout_s=5.0,
+                poll_interval_s=0.01,
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced via assertion below
+            errors.append(exc)
+
+    t1 = threading.Thread(target=run, args=(store_a,))
+    t2 = threading.Thread(target=run, args=(store_b,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert not t1.is_alive()
+    assert not t2.is_alive()
+    assert not errors
+    assert started == [decide_session_id(error_id)]

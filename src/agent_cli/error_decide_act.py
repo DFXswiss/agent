@@ -80,6 +80,8 @@ def _ensure_decide_session(store: Store, sid: str, now: str) -> None:
         raise StoreError(f"session {sid} is owned by another device")
     if existing.get("status") == "closed":
         raise StoreError(f"session {sid} is closed")
+    if existing.get("kind") != "runner":
+        raise StoreError(f"session {sid} is kind={existing.get('kind')}, error-decide worker must be runner")
     required = ["error-fix", "spine", "review-loop", "pr-review"]
     current_skills = existing.get("skills")
     current = list(current_skills) if isinstance(current_skills, list) else []
@@ -117,32 +119,34 @@ def scan_error_decide(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
 ) -> list[str]:
-    # Hold only for the backlog read; start/knock/wait/stop must not block
-    # error-fix-act writers of error.fix/error.skip.
+    # Held for the whole scan so two overlapping invocations don't double-dispatch
+    # the same row. This key never collides with error-fix-act's own lock (different
+    # pg_advisory_lock hashtext keys), so it doesn't block conclusion writes from the
+    # sessions this dispatcher starts.
     with store.exclusive("error-decide-act:" + store.device_id()):
         backlog = unconcluded_seen_rows(store)
-    lines: list[str] = []
-    for row in backlog:
-        error_id = str(row["id"])
-        if _has_conclusion(store, error_id):
-            continue
-        sid = decide_session_id(error_id)
-        now = utcnow()
-        _ensure_decide_session(store, sid, now)
-        start(sid)
-        try:
-            knock(sid, error_id)
-            decided = _wait_for_conclusion(
-                store,
-                error_id,
-                timeout_s=timeout_s,
-                poll_interval_s=poll_interval_s,
-                sleep=sleep,
-            )
-        finally:
-            stop(sid)
-        if decided:
-            lines.append(f"error.seen {error_id} decided session={sid}")
-        else:
-            lines.append(f"error.seen {error_id} timeout session={sid}")
-    return lines
+        lines: list[str] = []
+        for row in backlog:
+            error_id = str(row["id"])
+            if _has_conclusion(store, error_id):
+                continue
+            sid = decide_session_id(error_id)
+            now = utcnow()
+            _ensure_decide_session(store, sid, now)
+            start(sid)
+            try:
+                knock(sid, error_id)
+                decided = _wait_for_conclusion(
+                    store,
+                    error_id,
+                    timeout_s=timeout_s,
+                    poll_interval_s=poll_interval_s,
+                    sleep=sleep,
+                )
+            finally:
+                stop(sid)
+            if decided:
+                lines.append(f"error.seen {error_id} decided session={sid}")
+            else:
+                lines.append(f"error.seen {error_id} timeout session={sid}")
+        return lines

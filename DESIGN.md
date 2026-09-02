@@ -419,6 +419,7 @@ agent watch grok-usage                         # one scan; knock child (under th
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
+agent watch error-decide                      # one scan; one-shot decide session per unconcluded error.seen; not wired into agent daemon in this revision
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard [--port 7845]
@@ -687,7 +688,7 @@ The model never receives production credentials. Analysis that only reads the ex
 4. Stops the pane (`runtime.control: stopped`) and leaves the session `active` — it does not `session close`, so `agent watch error-fix` can still create the implement task under that session without racing the “open tasks” guard.
 5. Moves to the next unconcluded row. No auto-continue / keep-working wiring; each decide session handles one error.
 
-Empty backlog prints `error.seen decide none`. The exclusive lock `error-decide-act:<device>` covers only the backlog read; it is released before start/knock/wait/stop so it never blocks `error-fix-act:<device>` writers of conclusions. Not wired into `agent daemon` in this revision.
+Empty backlog prints `error.seen decide none`. The exclusive lock `error-decide-act:<device>` is held for the whole scan — the backlog read and the per-row start/knock/wait/stop sequence — so two overlapping invocations of this scan cannot both dispatch the same row. That key never collided with `error-fix-act:<device>`'s own lock in the first place (they are different `pg_advisory_lock(hashtext(...))` keys), so widening the scope does not block conclusion writes; the reason to hold it for the whole scan is purely to serialize overlapping dispatcher invocations against each other. Not wired into `agent daemon` in this revision.
 
 ## 22. Static supervise loop (v1)
 
