@@ -216,6 +216,23 @@ def test_redact_and_fingerprint() -> None:
     assert span_id not in otel_escaped_json
     assert '\\"trace_id\\":\\"[redacted]\\"' in otel_escaped_json
     assert '\\"span_id\\":\\"[redacted]\\"' in otel_escaped_json
+    traceparent_value = f"00-{trace_id}-{span_id}-01"
+    traceparent_json = redact(f'TimeoutError boom "traceparent":"{traceparent_value}"')
+    assert trace_id not in traceparent_json
+    assert span_id not in traceparent_json
+    assert '"traceparent":"[redacted]"' in traceparent_json
+    traceparent_json_spaced = redact(f'TimeoutError boom "traceparent": "{traceparent_value}"')
+    assert trace_id not in traceparent_json_spaced
+    assert span_id not in traceparent_json_spaced
+    assert '"traceparent": "[redacted]"' in traceparent_json_spaced
+    traceparent_quoted_value = redact(f'TimeoutError boom traceparent="{traceparent_value}"')
+    assert trace_id not in traceparent_quoted_value
+    assert span_id not in traceparent_quoted_value
+    assert 'traceparent="[redacted]"' in traceparent_quoted_value
+    traceparent_escaped_json = redact('{"log":"...{\\"traceparent\\":\\"' + traceparent_value + '\\"}..."}')
+    assert trace_id not in traceparent_escaped_json
+    assert span_id not in traceparent_escaped_json
+    assert '\\"traceparent\\":\\"[redacted]\\"' in traceparent_escaped_json
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:

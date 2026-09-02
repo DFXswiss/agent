@@ -300,6 +300,43 @@ def test_sync_once_raises_hub_error_on_event_missing_one_required_field(
         _sync_once(_paired_store(tmp_path))
 
 
+def test_sync_once_raises_hub_error_on_event_with_non_dict_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: field presence was checked but not payload's type.
+    A non-dict payload (e.g. a JSON list) used to pass validation untouched,
+    get committed by apply_remote (Store._maybe_wake/_maybe_work each already
+    return early on a non-dict payload, so nothing rolls back the write), and
+    only fail later - on every future store.rows()/store.row() call for that
+    whole table, not at write time. Store._write_in_txn already rejects this
+    shape for this device's own local writes; the hub-pull path must not be
+    laxer."""
+    event = {**_valid_pull_event(), "payload": ["not", "an", "object"]}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
+    with pytest.raises(HubError, match="pull event payload is not an object"):
+        _sync_once(store)
+    assert store.origin_cursor("other") == 0
+    assert store.rows("activity") == []
+
+
+def test_sync_once_raises_hub_error_on_event_with_unknown_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: sibling of the non-dict-payload test above, for op.
+    Store._write_in_txn rejects any op outside insert/update/delete for a
+    local write; the hub-pull path must reject it too, not silently accept
+    and materialize a row under an op nothing else in the codebase expects."""
+    event = {**_valid_pull_event(), "op": "bogus"}
+    hub = FakeHub()
+    hub.pull_body = {"events": [event]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event has an unknown op"):
+        _sync_once(_paired_store(tmp_path))
+
+
 @pytest.mark.parametrize(
     "bad_seq",
     [

@@ -1762,12 +1762,21 @@ class _PullShapeError(ValueError):
 
 def _coerce_pull_event(event: object) -> dict[str, Any]:
     """Validate a pulled/restored event has every field _insert_event_idempotent
-    indexes, and normalize origin_seq to an int (rejecting bool, a fractional
-    float, and anything int() can't convert, including an out-of-range float
-    that would otherwise raise OverflowError). Returns a new dict; the caller's
-    own copy of the raw event is left untouched."""
+    indexes, that payload/op are shaped the way a local write already requires
+    (Store._write_in_txn rejects both the same way for this device's own
+    writes - the hub-pull/restore path must not be laxer, since a payload
+    that isn't an object is otherwise stored as-is and only fails later, on
+    every future read of that whole table, not at write time), and normalize
+    origin_seq to an int (rejecting bool, a fractional float, and anything
+    int() can't convert, including an out-of-range float that would
+    otherwise raise OverflowError). Returns a new dict; the caller's own copy
+    of the raw event is left untouched."""
     if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
         raise _PullShapeError("event is missing required fields")
+    if not isinstance(event["payload"], dict):
+        raise _PullShapeError("event payload is not an object")
+    if event["op"] not in ("insert", "update", "delete"):
+        raise _PullShapeError("event has an unknown op")
     raw_seq = event["origin_seq"]
     try:
         if isinstance(raw_seq, bool):
@@ -1782,9 +1791,14 @@ def _coerce_pull_event(event: object) -> dict[str, Any]:
 
 def _check_pull_row(row: object) -> dict[str, Any]:
     """Validate a pulled/restored snapshot row has every field
-    apply_replica_row indexes directly."""
+    apply_replica_row indexes directly, and that payload is an object - same
+    reasoning as _coerce_pull_event: an unvalidated non-object payload would
+    otherwise be stored as-is and only fail later, on every future read of
+    that whole table."""
     if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
         raise _PullShapeError("snapshot is missing required fields")
+    if not isinstance(row["payload"], dict):
+        raise _PullShapeError("snapshot payload is not an object")
     return row
 
 

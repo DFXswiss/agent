@@ -102,6 +102,45 @@ def test_cmd_restore_dies_on_snapshot_missing_one_required_field(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+def test_cmd_restore_dies_on_event_with_non_dict_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_non_dict_payload. Field
+    presence was checked but not payload's type - a non-dict payload used to
+    pass validation, get committed by apply_remote, and only fail later on
+    every future read of that whole table."""
+    event = {**_valid_restore_event(), "payload": ["not", "an", "object"]}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event payload is not an object"):
+        _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.rows("task") == []
+    finally:
+        store.close()
+
+
+def test_cmd_restore_dies_on_event_with_unknown_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_event_with_unknown_op."""
+    event = {**_valid_restore_event(), "op": "bogus"}
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event has an unknown op"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_dies_on_snapshot_with_non_dict_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_cmd_restore_dies_on_event_with_non_dict_payload."""
+    row = {**_valid_restore_row(), "payload": ["not", "an", "object"]}
+    body = {"own_events": [], "inbox": [row]}
+    with pytest.raises(SystemExit, match="restore snapshot payload is not an object"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
 @pytest.mark.parametrize(
     "bad_seq",
     [
