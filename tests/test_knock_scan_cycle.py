@@ -8,6 +8,7 @@ import pytest
 from agent_cli import main as main_mod
 from agent_cli.hub import HubError
 from agent_cli.main import open_store
+from agent_cli.runtime import Completed
 
 
 def _init_paired_store(tmp_path: Path) -> None:
@@ -67,7 +68,7 @@ def test_knock_scan_cycle_syncs_when_paired(
 
     store = open_store()
     try:
-        main_mod._knock_scan_cycle(store, lambda _argv: None)
+        main_mod._knock_scan_cycle(store, lambda _argv: Completed(0, "", ""))
     finally:
         store.close()
 
@@ -95,7 +96,7 @@ def test_knock_scan_cycle_skips_sync_when_unpaired(
 
     store = open_store()
     try:
-        main_mod._knock_scan_cycle(store, lambda _argv: None)
+        main_mod._knock_scan_cycle(store, lambda _argv: Completed(0, "", ""))
     finally:
         store.close()
 
@@ -125,7 +126,7 @@ def test_knock_scan_cycle_logs_and_continues_on_malformed_pull_response(
 
     store = open_store()
     try:
-        main_mod._knock_scan_cycle(store, lambda _argv: None)
+        main_mod._knock_scan_cycle(store, lambda _argv: Completed(0, "", ""))
     finally:
         store.close()
 
