@@ -1100,3 +1100,23 @@ def test_task_pull_request_error_fix_uses_payload_pr_number_not_ref() -> None:
         "ref": "7",
     }
     assert _task_pull_request(ordinary_no_payload) == ("org/app", 7)
+
+
+def test_task_pull_request_prefers_payload_repo_over_task_repo() -> None:
+    """When task.repo and payload.repo both resolve but differ, payload wins —
+    same precedence as fixer_act._drive_one (which creates the PR) and
+    run_core's push-destination check. The pr_number backfilled by the fixer
+    lives on payload, so it belongs to the payload-resolved repo, not
+    task.repo."""
+    from agent_cli.main import _task_pull_request  # noqa: PLC0415
+
+    task = {
+        "repo": "org/task-repo",
+        "ref": "some-branch",
+        "payload": {
+            "error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "repo": "org/payload-repo",
+            "pr_number": 99,
+        },
+    }
+    assert _task_pull_request(task) == ("org/payload-repo", 99)

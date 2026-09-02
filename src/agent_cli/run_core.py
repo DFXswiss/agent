@@ -875,8 +875,8 @@ def execute_spine_step(
         raw_error_id = payload.get("error_id")
         error_id = _nonempty_str(raw_error_id) or ""
         if not error_id and isinstance(raw_error_id, str) and raw_error_id != "":
-            # Present but strips to empty (e.g. stale pre-round-24 store row
-            # with a whitespace-only error_id — creation-time validation now
+            # Present but strips to empty (e.g. a stale store row with a
+            # whitespace-only error_id — creation-time validation now
             # rejects this for new tasks). Fail loudly instead of silently
             # downgrading to expected_branch=None, which would skip the push
             # identity check entirely as if error_id were absent.

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import subprocess
 
 import pytest
 
 from agent_cli.git_act import GitActError, measure_mergeable, push_branch
-from agent_cli.main import _exec_argv
 from agent_cli.runtime import Completed
 
 pytestmark = pytest.mark.no_pg
@@ -919,18 +917,6 @@ def test_push_upstream_feat_main_not_protected() -> None:
 
     assert push_branch(cwd=CWD, runner=runner) == SHA
     assert not any(len(a) > 3 and a[3] == "push" for a in calls)
-
-
-def test_exec_argv_timeout_returns_124(monkeypatch: pytest.MonkeyPatch) -> None:
-    """subprocess.TimeoutExpired from main._exec_argv becomes Completed(124)."""
-
-    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        raise subprocess.TimeoutExpired(cmd=["sleep", "999"], timeout=120)
-
-    monkeypatch.setattr(subprocess, "run", boom)
-    completed = _exec_argv(["sleep", "999"], cwd="/tmp")
-    assert completed.returncode == 124
-    assert completed.stderr
 
 
 def test_mergeable_open_empty_checks() -> None:

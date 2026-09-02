@@ -156,7 +156,7 @@ def validate_conclusion(
 
     Callers MUST write the returned dict, not the original `payload`, to the
     store. Validation checks the stripped (normalized) error_id/fingerprint/
-    reason; every downstream comparison this PR touches
+    reason; every downstream comparison
     (has_error_fix_activity, _chain_snapshot's error_fix_confirmed,
     fixer_act._error_fix_brief) does exact `==` against whatever was
     persisted. Persisting the raw, unstripped payload would validate one

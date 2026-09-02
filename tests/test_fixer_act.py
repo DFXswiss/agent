@@ -21,6 +21,7 @@ from agent_cli.fixer_act import (
     _pr_open_row_exists,
     _runner_to_completed,
     drive_error_fix_tasks,
+    insert_pr_open_and_scan,
     template_pr_open_payload,
     write_error_fix_spec,
 )
@@ -536,6 +537,50 @@ def test_write_error_fix_spec_outside_git_worktree(tmp_path: Path) -> None:
             expected_repo="org/app",
         )
         assert sha
+    finally:
+        store.close()
+
+
+def test_insert_pr_open_and_scan_writes_pending_and_calls_scan_github(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """insert_pr_open_and_scan inserts pending pr.open then returns scan_github."""
+    calls: list[tuple[object, object]] = []
+
+    def fake_scan_github(store: Store, runner: object) -> list[str]:
+        calls.append((store, runner))
+        return ["scanned"]
+
+    monkeypatch.setattr("agent_cli.github_act.scan_github", fake_scan_github)
+
+    def fake_runner(_argv: list[str]) -> Completed:
+        raise AssertionError("runner must not be invoked directly")
+
+    payload = {
+        "repo": "org/app",
+        "title": "t",
+        "body": "b",
+        "head": "h",
+        "base": "main",
+    }
+    session_id = "sess-insert-pr-open"
+    store = _store(tmp_path)
+    try:
+        result = insert_pr_open_and_scan(
+            store,
+            session_id=session_id,
+            payload=payload,
+            runner=fake_runner,
+        )
+        assert result == ["scanned"]
+        assert len(calls) == 1
+        assert calls[0][0] is store
+        assert calls[0][1] is fake_runner
+        rows = [r for r in store.rows("activity") if r.get("type") == "pr.open"]
+        assert len(rows) == 1
+        assert rows[0].get("execution_status") == "pending"
+        assert rows[0].get("payload") == payload
+        assert rows[0].get("session_id") == session_id
     finally:
         store.close()
 

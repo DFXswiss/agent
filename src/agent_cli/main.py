@@ -1078,10 +1078,10 @@ def _task_pull_request(task: dict) -> tuple[str, int] | None:
     """The task's pull request as (repo, number), or None when it has none."""
     from .error_fix_act import _nonempty_str
 
-    repo = _repo_ok(task.get("repo"))
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    repo = _repo_ok(payload.get("repo") or task.get("repo"))
     if repo is None:
         return None
-    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
     is_error_fix = bool(_nonempty_str(payload.get("error_id")))
     ref = task.get("ref")
     if (

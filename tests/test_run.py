@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from agent_cli.lane import LaneResult
+from agent_cli.main import _exec_argv
 from agent_cli.run_core import (
     EmptyReviewDiffError,
     ReviewDiffUnavailableError,
@@ -1993,3 +1995,15 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
         )
     finally:
         store.close()
+
+
+def test_exec_argv_timeout_returns_124(monkeypatch: pytest.MonkeyPatch) -> None:
+    """subprocess.TimeoutExpired from main._exec_argv becomes Completed(124)."""
+
+    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise subprocess.TimeoutExpired(cmd=["sleep", "999"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    completed = _exec_argv(["sleep", "999"], cwd="/tmp")
+    assert completed.returncode == 124
+    assert completed.stderr
