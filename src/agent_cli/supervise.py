@@ -23,9 +23,12 @@ from .store import Store, StoreError, utcnow
 from .watch import (
     _ensure_assigned_session,
     _issue_number,
+    _paired_login,
+    _policy_admits,
     assigned_workspace_root,
     dispatch_assigned,
     pending_assigned,
+    policy_present,
 )
 
 ANSWER_YES = "Ja"
@@ -215,6 +218,19 @@ def enqueue_assigned(
     if existing is not None:
         return existing
     now = utcnow()
+    # Pairing is only load-bearing once a policy is active to check the
+    # actor against — without one, requiring it would break manual enqueue
+    # for operators who never opted into policy.json (DESIGN.md: enqueues
+    # "without hub pairing"). Still resolve it best-effort either way; only
+    # a policy in play makes a broken pairing fatal.
+    if policy_present(store.home):
+        assigned_by = _paired_login(store, runner)
+    else:
+        assigned_by = ""
+        try:
+            assigned_by = _paired_login(store, runner)
+        except StoreError:
+            pass
     _ensure_assigned_session(store, session_id, now)
     url = f"https://github.com/{repo}/issues/{number}"
     title = ""
@@ -259,6 +275,7 @@ def enqueue_assigned(
                 "title": title,
                 "body": body,
                 "assigned_at": now,
+                "assigned_by": assigned_by,
                 "assignee": assignee,
                 "mandate": "github-assignment",
             },
@@ -315,6 +332,7 @@ def tick(
     ask: bool = False,
     pane: str | None = None,
     working: bool | None = None,
+    runner: Callable[[list[str]], Completed] | None = None,
 ) -> str:
     if SESSION_RE.match(session_id) is None:
         raise StoreError("session id may contain only A-Za-z0-9_-")
@@ -343,6 +361,8 @@ def tick(
             last_answer = last_payload.get("answer")
     pane_missing = not runtime.exists(session_id)
     if last_kind is None and not pane_missing:
+        if not _policy_admits(store, head, runner):
+            return f"supervise denied assigned={assigned_id}"
         _log(
             store,
             session_id,
@@ -365,7 +385,10 @@ def tick(
             knock=knock,
             workspace_root=root,
             pane_up=lambda sid: runtime.exists(sid),
+            runner=runner,
         )
+        if dispatched == "denied":
+            return f"supervise denied assigned={assigned_id}"
     else:
         dispatched = "held"
     if last_kind is None:

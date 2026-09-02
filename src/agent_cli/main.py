@@ -3126,7 +3126,7 @@ def cmd_watch(args: list[str]) -> None:
                 if pending:
                     head_id = pending[0].get("id")
                     if isinstance(head_id, str) and head_id:
-                        dispatch_assigned(
+                        dispatched = dispatch_assigned(
                             store,
                             head_id,
                             sync=lambda: _sync_once(store),
@@ -3143,7 +3143,10 @@ def cmd_watch(args: list[str]) -> None:
                             knock=lambda activity_id: deliver(store, Runtime(), activity_id),
                             workspace_root=workspace_root,
                             pane_up=lambda session_id: Runtime().exists(session_id),
+                            runner=run_argv,
                         )
+                        if dispatched == "denied":
+                            print(f"assigned denied {head_id}")
                 for activity_id in created:
                     print(f"issue.assigned {activity_id}")
                 if not created:
@@ -3261,6 +3264,7 @@ def cmd_supervise(args: list[str]) -> None:
                 knock=lambda activity_id: deliver(store, runtime, activity_id),
                 pane=pane,
                 working=working,
+                runner=run_argv,
             )
             print(line)
             try:

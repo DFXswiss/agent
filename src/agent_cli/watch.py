@@ -6,12 +6,15 @@ import json
 import os
 import re
 import socket
+import stat
 import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .ingest import _repo_is_private
+from .jobs import Verdict, admits
 from .runtime import Completed
 from .store import Store, StoreError
 
@@ -220,6 +223,47 @@ def load_watch_config(home: Path) -> tuple[list[str], str]:
     return list(repos), session_id
 
 
+def policy_present(home: Path) -> bool:
+    """Whether `home / "policy.json"` exists as something readable as a
+    policy. A directory, broken symlink, or other non-regular entry at that
+    path is a misconfiguration, not "no policy" — callers must not treat it
+    as the backward-compatible absent case. Uses os.lstat/os.stat directly
+    (rather than pathlib's is_file/exists/is_symlink, which swallow any
+    OSError — not just ENOENT — and would make a real stat failure such as
+    EACCES or ESTALE indistinguishable from "no policy")."""
+    path = home / "policy.json"
+    try:
+        lst = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise StoreError(f"{path} could not be checked: {exc}") from exc
+    if stat.S_ISLNK(lst.st_mode):
+        try:
+            st = os.stat(path)
+        except FileNotFoundError:
+            raise StoreError(f"{path} exists but is not a regular file") from None
+        except OSError as exc:
+            raise StoreError(f"{path} could not be checked: {exc}") from exc
+    else:
+        st = lst
+    if stat.S_ISREG(st.st_mode):
+        return True
+    raise StoreError(f"{path} exists but is not a regular file")
+
+
+def load_policy(home: Path) -> Any:
+    """The parsed `home / "policy.json"` object, or None if the file does not
+    exist or its JSON value is itself `null`."""
+    if not policy_present(home):
+        return None
+    path = home / "policy.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise StoreError(f"{path} is invalid JSON") from exc
+
+
 def assigned_session_id(home: Path) -> str:
     _repos, sid = load_watch_config(home)
     return sid
@@ -242,9 +286,15 @@ def _paired_login(store: Store, runner: Callable[[list[str]], Completed]) -> str
     return paired.lower()
 
 
-def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None:
+def _latest_assigned_marker(
+    store: Store, repo: str, number: int
+) -> tuple[datetime, int | None] | None:
+    """The (assigned_at, event_id) of the most recently recorded assignment
+    activity for repo/number, or None if none stored. Among rows tied on
+    assigned_at, the highest present event_id wins; None if none of the
+    tied rows have one."""
     repo_key = repo.lower()
-    latest: datetime | None = None
+    latest: tuple[datetime, int | None] | None = None
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
             continue
@@ -271,9 +321,35 @@ def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None
             event_dt = _parse_gh_time(raw_at)
         except ValueError:
             continue
-        if latest is None or event_dt > latest:
-            latest = event_dt
+        raw_eid = payload.get("event_id")
+        event_id = raw_eid if isinstance(raw_eid, int) and not isinstance(raw_eid, bool) else None
+        if latest is None or event_dt > latest[0]:
+            latest = (event_dt, event_id)
+        elif event_dt == latest[0]:
+            if event_id is not None and (latest[1] is None or event_id > latest[1]):
+                latest = (event_dt, event_id)
     return latest
+
+
+def _assignment_is_newer(
+    dt: datetime, event_id: int | None, marker: tuple[datetime, int | None] | None
+) -> bool:
+    """Whether (dt, event_id) is provably newer than `marker`. A same-
+    timestamp tie needs the candidate's own id to be known: an unresolvable
+    candidate never wins (fail closed), but an unresolvable STORED marker
+    (a legacy row predating this field) must not permanently block every
+    future candidate at that timestamp — so a resolvable candidate beats a
+    marker with no id."""
+    if marker is None:
+        return True
+    prev_dt, prev_id = marker
+    if dt > prev_dt:
+        return True
+    if dt < prev_dt:
+        return False
+    if event_id is None:
+        return False
+    return prev_id is None or event_id > prev_id
 
 
 def _ensure_assigned_session(store: Store, sid: str, now: str) -> None:
@@ -384,6 +460,8 @@ def scan_assigned(
                 continue
             newest_at: str | None = None
             newest_dt: datetime | None = None
+            newest_by = ""
+            newest_id: int | None = None
             for event in events:
                 if not isinstance(event, dict):
                     continue
@@ -404,13 +482,37 @@ def scan_assigned(
                     continue
                 if event_dt < cursor_dt:
                     continue
+                actor = event.get("actor")
+                assigned_by = ""
+                if isinstance(actor, dict):
+                    actor_login = actor.get("login")
+                    if isinstance(actor_login, str):
+                        assigned_by = actor_login
+                raw_id = event.get("id")
+                event_id = raw_id if isinstance(raw_id, int) and not isinstance(raw_id, bool) else None
                 if newest_dt is None or event_dt > newest_dt:
                     newest_dt = event_dt
                     newest_at = created_at
+                    newest_by = assigned_by
+                    newest_id = event_id
+                elif event_dt == newest_dt:
+                    if event_id is not None and newest_id is not None and event_id > newest_id:
+                        newest_by = assigned_by
+                        newest_id = event_id
+                    elif event_id is None or newest_id is None:
+                        newest_by = ""
+                        newest_id = None
             if newest_at is None or newest_dt is None:
                 continue
-            previous_at = _latest_assigned_at(store, repo, number)
-            if previous_at is not None and newest_dt <= previous_at:
+            # An unresolvable actor only jams the queue once a policy is
+            # active to reject it (admits() denies on a missing actor and
+            # nothing acks a denial). Without a policy, drop nothing that
+            # GitHub reported as assigned — that would be a needless
+            # behavior change for operators who never opted into policy.json.
+            if newest_by == "" and policy_present(store.home):
+                continue
+            previous = _latest_assigned_marker(store, repo, number)
+            if not _assignment_is_newer(newest_dt, newest_id, previous):
                 continue
             title = issue.get("title")
             body = issue.get("body")
@@ -423,6 +525,8 @@ def scan_assigned(
                     "title": title if isinstance(title, str) else "",
                     "body": body if isinstance(body, str) else "",
                     "assigned_at": newest_at,
+                    "assigned_by": newest_by,
+                    "event_id": newest_id,
                 }
             )
     found.sort(key=lambda item: (str(item["assigned_at"]), str(item["repo"]).lower(), int(item["number"])))
@@ -434,12 +538,13 @@ def scan_assigned(
         repo = str(item["repo"])
         number = int(item["number"])
         assigned_at = str(item["assigned_at"])
+        event_id = item["event_id"]
         try:
             assigned_dt = _parse_gh_time(assigned_at)
         except ValueError:
             continue
-        previous_at = _latest_assigned_at(store, repo, number)
-        if previous_at is not None and assigned_dt <= previous_at:
+        previous = _latest_assigned_marker(store, repo, number)
+        if not _assignment_is_newer(assigned_dt, event_id, previous):
             continue
         activity_id = str(uuid.uuid4())
         lock_key = f"assigned:{repo.lower()}:{number}:{assigned_at}"
@@ -458,15 +563,16 @@ def scan_assigned(
                     "title": item["title"],
                     "body": item["body"],
                     "assigned_at": assigned_at,
+                    "assigned_by": item["assigned_by"],
+                    "event_id": event_id,
                     "assignee": login,
                     "mandate": "github-assignment",
                 },
                 "execution_status": "done",
             },
             lock_key=lock_key,
-            skip=lambda r=repo, n=number, dt=assigned_dt: (
-                _latest_assigned_at(store, r, n) is not None
-                and _latest_assigned_at(store, r, n) >= dt
+            skip=lambda r=repo, n=number, dt=assigned_dt, eid=event_id: (
+                not _assignment_is_newer(dt, eid, _latest_assigned_marker(store, r, n))
             ),
         )
         if event is not None:
@@ -510,7 +616,7 @@ def acked_assigned_ids(store: Store, session_id: str) -> set[str]:
 
 def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
     acked = acked_assigned_ids(store, session_id)
-    ranked: list[tuple[str, str, dict[str, Any]]] = []
+    ranked: list[tuple[str, int, str, dict[str, Any]]] = []
     for row in store.rows("activity"):
         if row.get("type") != "issue.assigned":
             continue
@@ -523,13 +629,22 @@ def pending_assigned(store: Store, session_id: str) -> list[dict[str, Any]]:
             continue
         payload = row.get("payload")
         assigned_at = ""
-        if isinstance(payload, dict) and isinstance(payload.get("assigned_at"), str):
-            assigned_at = payload["assigned_at"]
-        ranked.append((assigned_at, aid, row))
+        event_id = -1
+        if isinstance(payload, dict):
+            if isinstance(payload.get("assigned_at"), str):
+                assigned_at = payload["assigned_at"]
+            raw_id = payload.get("event_id")
+            if isinstance(raw_id, int) and not isinstance(raw_id, bool):
+                event_id = raw_id
+        # Same-timestamp rows can coexist (a later scan may add one for a
+        # genuinely later same-second GitHub event, see _assignment_is_newer)
+        # — order those by event_id, not by the random activity uuid, so the
+        # chronologically later one is processed after the earlier one.
+        ranked.append((assigned_at, event_id, aid, row))
     ranked.sort()
     inflight: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
-    for _assigned_at, aid, row in ranked:
+    for _assigned_at, _event_id, aid, row in ranked:
         if store.wake_delivered(aid):
             inflight.append(row)
         else:
@@ -578,6 +693,30 @@ def _write_assigned_queue_files(
     (cwd / "QUEUE.md").write_text("\n".join(queue), encoding="utf-8")
 
 
+def _policy_admits(
+    store: Store,
+    head: dict[str, Any],
+    runner: Callable[[list[str]], Completed] | None,
+) -> bool:
+    """Whether `head` (an issue.assigned activity row) is admitted by the
+    policy at `store.home / "policy.json"`. No policy file present admits
+    unconditionally — this is what keeps the gate backward-compatible."""
+    if not policy_present(store.home):
+        return True
+    policy = load_policy(store.home)
+    payload = head.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    repo = payload.get("repo")
+    repo = repo if isinstance(repo, str) else ""
+    assigned_by = payload.get("assigned_by")
+    assigned_by = assigned_by if isinstance(assigned_by, str) else ""
+    private = True if runner is None else _repo_is_private(repo, runner)
+    verdict: Verdict = admits(
+        policy, actor=assigned_by, repo=repo, job_type="implement", private=private
+    )
+    return verdict.admitted
+
+
 def dispatch_assigned(
     store: Store,
     activity_id: str,
@@ -587,6 +726,7 @@ def dispatch_assigned(
     knock: Callable[[str], Any],
     workspace_root: Path,
     pane_up: Callable[[str], bool] | None = None,
+    runner: Callable[[list[str]], Completed] | None = None,
 ) -> str:
     activity = store.row("activity", activity_id)
     if activity is None:
@@ -615,6 +755,12 @@ def dispatch_assigned(
     head_id = head.get("id")
     if not isinstance(head_id, str) or head_id == "":
         raise StoreError(f"session {sid} queue head is missing an id")
+    # Denial must not create this head's workspace files, claim its wake entry, or
+    # start a session, so the same head re-evaluates identically next tick — this
+    # does not cover the sync() call above, which is local to dispatch_assigned
+    # and always runs before the policy check regardless of the denial outcome.
+    if not _policy_admits(store, head, runner):
+        return "denied"
     cwd = workspace_root / sid
     cwd.mkdir(parents=True, exist_ok=True)
     _write_assigned_queue_files(cwd, sid, head, pending)

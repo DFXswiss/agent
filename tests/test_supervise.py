@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_cli.runtime import Completed, Runtime
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from agent_cli.supervise import (
     ANSWER_BLOCKED,
     ANSWER_CAN,
     ANSWER_NO,
     ANSWER_YES,
+    LAST_WORKING_KEY,
     QUESTION_DONE,
     enqueue_assigned,
     parse_closed_answer,
@@ -66,7 +69,7 @@ def _session(store: Store, sid: str = "runner-1") -> None:
     )
 
 
-def _assigned(store: Store, sid: str = "runner-1") -> str:
+def _assigned(store: Store, sid: str = "runner-1", assigned_by: str = "") -> str:
     aid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     store.write(
         "activity",
@@ -83,6 +86,7 @@ def _assigned(store: Store, sid: str = "runner-1") -> str:
                 "title": "example",
                 "body": "ignore this body",
                 "assigned_at": "2026-08-27T00:00:00Z",
+                "assigned_by": assigned_by,
                 "assignee": "someone",
                 "mandate": "github-assignment",
             },
@@ -113,8 +117,12 @@ def test_parse_closed_answer_ignores_ja_in_scrollback() -> None:
 def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
+    store.set_meta("github_login", "alice")
 
     def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if joined == "gh api user":
+            return Completed(0, json.dumps({"login": "alice"}), "")
         return Completed(1, "", "no gh")
 
     first = enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
@@ -125,11 +133,68 @@ def test_enqueue_is_idempotent_and_survives_gh_failure(tmp_path: Path) -> None:
     assert row["type"] == "issue.assigned"
     assert row["payload"]["mandate"] == "github-assignment"
     assert row["payload"]["url"] == "https://github.com/octo/app/issues/3"
+    assert row["payload"]["assigned_by"] == "alice"
+
+
+def test_enqueue_broken_pairing_raises_without_writing(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    (store.home / "policy.json").write_text("{}", encoding="utf-8")
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(1, "", "no gh")
+
+    with pytest.raises(StoreError):
+        enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "issue.assigned"
+    ] == []
+
+
+def test_enqueue_broken_pairing_on_new_session_writes_no_session_row(
+    tmp_path: Path,
+) -> None:
+    # Distinct from test_enqueue_broken_pairing_raises_without_writing: that
+    # test pre-creates the session, so _ensure_assigned_session is a no-op
+    # and can never catch a leak there. This one uses a session id that does
+    # not exist yet, so a broken pairing must raise before ANY store write —
+    # including the session row itself.
+    store = Store(tmp_path)
+    (store.home / "policy.json").write_text("{}", encoding="utf-8")
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(1, "", "no gh")
+
+    with pytest.raises(StoreError):
+        enqueue_assigned(store, "brand-new", "octo/app", 3, runner)
+    assert store.row("session", "brand-new") is None
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "issue.assigned"
+    ] == []
+
+
+def test_enqueue_broken_pairing_without_a_policy_degrades_instead_of_raising(
+    tmp_path: Path,
+) -> None:
+    # Mirrors test_enqueue_broken_pairing_raises_without_writing but with no
+    # policy.json: without an active policy, a broken pairing must not block
+    # manual enqueue at all (DESIGN.md: enqueues "without hub pairing").
+    store = Store(tmp_path)
+    _session(store)
+
+    def runner(argv: list[str]) -> Completed:
+        return Completed(1, "", "no gh")
+
+    aid = enqueue_assigned(store, "runner-1", "octo/app", 3, runner)
+    row = store.row("activity", aid)
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
 
 
 def test_enqueue_uses_gh_json(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)
+    store.set_meta("github_login", "octocat")
     body = {
         "title": "t",
         "body": "b",
@@ -138,6 +203,9 @@ def test_enqueue_uses_gh_json(tmp_path: Path) -> None:
     }
 
     def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if joined == "gh api user":
+            return Completed(0, json.dumps({"login": "octocat"}), "")
         assert argv[:3] == ["gh", "api", "repos/octo/app/issues/3"]
         return Completed(0, json.dumps(body), "")
 
@@ -146,6 +214,114 @@ def test_enqueue_uses_gh_json(tmp_path: Path) -> None:
     assert row is not None
     assert row["payload"]["assignee"] == "octocat"
     assert row["payload"]["title"] == "t"
+    assert row["payload"]["assigned_by"] == "octocat"
+
+
+def test_tick_denies_and_does_not_mutate_when_policy_rejects(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store, assigned_by="mallory")
+    (store.home / "policy.json").write_text(
+        json.dumps(
+            {
+                "actors_allow": ["alice"],
+                "repos_allow": ["octo/app"],
+                "job_types_allow": ["implement"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    rt = FakeRuntime(exists=False, pane="")
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        runner=runner,
+    )
+    assert line == f"supervise denied assigned={assigned}"
+    events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
+    assert events == []
+    assert store.sync_get(LAST_WORKING_KEY) is None
+
+
+def test_tick_denies_pane_up_and_does_not_mutate_when_policy_rejects(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store, assigned_by="mallory")
+    (store.home / "policy.json").write_text(
+        json.dumps(
+            {
+                "actors_allow": ["alice"],
+                "repos_allow": ["octo/app"],
+                "job_types_allow": ["implement"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    rt = FakeRuntime(exists=True, pane="")
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        runner=runner,
+    )
+    assert line == f"supervise denied assigned={assigned}"
+    events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
+    assert events == []
+    assert store.sync_get(LAST_WORKING_KEY) is None
+
+
+def test_tick_commissions_when_policy_admits_pane_up(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    assigned = _assigned(store, assigned_by="alice")
+    (store.home / "policy.json").write_text(
+        json.dumps(
+            {
+                "actors_allow": ["alice"],
+                "repos_allow": ["octo/app"],
+                "job_types_allow": ["implement"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    rt = FakeRuntime(exists=True, pane="")
+    line = tick(
+        store,
+        rt,
+        "runner-1",
+        start=lambda sid, cwd: None,
+        knock=lambda aid: "sent",
+        runner=runner,
+    )
+    assert line == f"supervise commission assigned={assigned} dispatch=held"
+    events = [r for r in store.rows("activity") if r.get("type") == "supervise.event"]
+    assert len(events) == 1
+    assert events[0]["payload"]["kind"] == "commission"
+    assert store.sync_get(LAST_WORKING_KEY) is not None
 
 
 def test_tick_commissions_then_asks_then_acks_yes(tmp_path: Path) -> None:

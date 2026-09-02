@@ -5,13 +5,16 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli import watch
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from agent_cli.watch import (
     ISSUE_LIST_LIMIT,
     dispatch_assigned,
+    load_policy,
     load_watch_config,
     pending_assigned,
+    policy_present,
     scan_assigned,
     scan_merged,
 )
@@ -288,6 +291,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "bob"},
                         }
                     ]
                 ),
@@ -303,6 +307,7 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     assert row["type"] == "issue.assigned"
     assert row["payload"]["number"] == 8
     assert row["payload"]["mandate"] == "github-assignment"
+    assert row["payload"]["assigned_by"] == "bob"
     assert row["session_id"] == "assigned"
     session = store.row("session", row["session_id"])
     assert session is not None
@@ -311,6 +316,416 @@ def test_scan_assigned_inserts_after_cursor_once(tmp_path: Path) -> None:
     again, skipped_again = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
     assert skipped_again == 0
     assert again == []
+
+
+def test_scan_assigned_missing_actor_skips_without_persisting(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    _write_admit_policy(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
+    assert skipped == 0
+
+
+def test_scan_assigned_missing_actor_still_persists_without_a_policy(
+    tmp_path: Path,
+) -> None:
+    # Same fixture as test_scan_assigned_missing_actor_skips_without_persisting,
+    # minus the policy.json: without an active policy there is nothing to jam,
+    # so this must keep the pre-policy behavior of enqueueing what GitHub
+    # reported as assigned, even with a blank assigned_by.
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                        }
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == ""
+
+
+def test_scan_assigned_same_second_uses_higher_event_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "first"},
+                        },
+                        {
+                            "id": 200,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "later"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == "later"
+    assert row["payload"]["event_id"] == 200
+
+
+def test_scan_assigned_same_second_unresolvable_tie_skips_without_persisting(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    _write_admit_policy(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "first"},
+                        },
+                        {
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "middle"},
+                        },
+                        {
+                            "id": 200,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "later"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T12:00:00Z")
+    assert created == []
+    assert skipped == 0
+
+
+def test_scan_assigned_resolvable_candidate_beats_a_blanked_stored_marker(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    # Legacy stored marker with no event_id (field added later): scan_assigned
+    # no longer manufactures these, but a resolvable candidate at the same
+    # timestamp must still beat a stored marker with no id.
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {
+            "id": "assigned",
+            "kind": "runner",
+            "status": "active",
+            "started_at": "2026-01-01T00:00:00Z",
+            "last_seen_at": "2026-01-01T00:00:00Z",
+            "host": "test",
+        },
+    )
+    store.sync_set("assigned_session_id", "assigned")
+    store.write(
+        "activity",
+        "insert",
+        "legacy-blanked",
+        {
+            "id": "legacy-blanked",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "url": "https://github.com/Owner/repo/issues/8",
+                "title": "Fix it",
+                "body": "SECRET_BODY_DO_NOT_COPY",
+                "assigned_at": "2026-01-01T00:00:00Z",
+                "assigned_by": "",
+                "event_id": None,
+                "mandate": "github-assignment",
+            },
+            "execution_status": "done",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "first"},
+                        },
+                        {
+                            "id": 300,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "resolved"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["id"] != "legacy-blanked"
+    assert row["payload"]["assigned_by"] == "resolved"
+    assert row["payload"]["event_id"] == 300
+
+
+def test_scan_assigned_same_second_higher_event_id_across_scans(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.set_meta("github_login", "alice")
+    _write_assigned_repos(tmp_path)
+    store.sync_set("assigned_watch_since", "2020-01-01T00:00:00Z")
+    events_calls = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "api", "user"]:
+            return Completed(0, json.dumps({"login": "alice"}), "")
+        if argv[:3] == ["gh", "issue", "list"]:
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 8,
+                            "title": "Fix it",
+                            "url": "https://github.com/Owner/repo/issues/8",
+                            "body": "SECRET_BODY_DO_NOT_COPY",
+                        }
+                    ]
+                ),
+                "",
+            )
+        if argv[:2] == ["gh", "api"] and any("events" in part for part in argv):
+            events_calls["n"] += 1
+            if events_calls["n"] == 1:
+                return Completed(
+                    0,
+                    json.dumps(
+                        [
+                            {
+                                "id": 100,
+                                "event": "assigned",
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "assignee": {"login": "alice"},
+                                "actor": {"login": "A"},
+                            }
+                        ]
+                    ),
+                    "",
+                )
+            return Completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "id": 100,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "A"},
+                        },
+                        {
+                            "id": 200,
+                            "event": "assigned",
+                            "created_at": "2026-01-01T00:00:00Z",
+                            "assignee": {"login": "alice"},
+                            "actor": {"login": "B"},
+                        },
+                    ]
+                ),
+                "",
+            )
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    created, skipped = scan_assigned(store, runner, now="2026-01-01T00:00:00Z")
+    assert skipped == 0
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None
+    assert row["payload"]["assigned_by"] == "A"
+    assert row["payload"]["event_id"] == 100
+
+    # `now` here must not advance the watch cursor past the events'
+    # `created_at` (both "2026-01-01T00:00:00Z"), or scan_assigned's
+    # no-backfill rule filters them out before the tie-break/marker
+    # comparison this test exercises ever runs.
+    created2, skipped2 = scan_assigned(store, runner, now="2026-08-23T13:00:00Z")
+    assert skipped2 == 0
+    assert len(created2) == 1
+    row2 = store.row("activity", created2[0])
+    assert row2 is not None
+    assert row2["id"] != created[0]
+    assert row2["payload"]["assigned_by"] == "B"
+    assert row2["payload"]["event_id"] == 200
 
 
 def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) -> None:
@@ -357,6 +772,7 @@ def test_scan_assigned_does_not_mutate_existing_runner_skills(tmp_path: Path) ->
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -405,6 +821,7 @@ def test_scan_assigned_equal_cursor_inserts_once(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -616,6 +1033,379 @@ def test_dispatch_assigned_writes_mandate_and_starts(tmp_path: Path) -> None:
     assert "SECRET_BODY_DO_NOT_COPY" not in queue
 
 
+def test_dispatch_assigned_without_policy_json_is_unchanged(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    sid = "assigned"
+    store.write(
+        "session",
+        "insert",
+        sid,
+        {"id": sid, "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-1",
+        {
+            "id": "asg-1",
+            "session_id": sid,
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "url": "https://github.com/Owner/repo/issues/8",
+                "title": "t",
+                "body": "SECRET_BODY_DO_NOT_COPY",
+                "mandate": "github-assignment",
+            },
+            "execution_status": "done",
+        },
+    )
+    assert load_policy(store.home) is None
+    assert not (store.home / "policy.json").exists()
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "started"
+    assert start_log == [(sid, tmp_path / "sessions" / sid)]
+    assert knock_log == ["asg-1"]
+
+
+def _write_admit_policy(home: Path, **over: object) -> None:
+    policy: dict = {
+        "actors_allow": ["bob"],
+        "repos_allow": ["Owner/repo"],
+        "job_types_allow": ["implement"],
+    }
+    policy.update(over)
+    (home / "policy.json").write_text(json.dumps(policy), encoding="utf-8")
+
+
+def _insert_assigned_activity(
+    store: Store,
+    *,
+    sid: str = "assigned",
+    aid: str = "asg-1",
+    attached: bool = False,
+    assigned_by: str = "bob",
+    repo: str = "Owner/repo",
+) -> None:
+    session: dict = {"id": sid, "kind": "runner", "status": "active"}
+    if attached:
+        session["runtime"] = {"control": "attached"}
+    store.write("session", "insert", sid, session)
+    store.write(
+        "activity",
+        "insert",
+        aid,
+        {
+            "id": aid,
+            "session_id": sid,
+            "type": "issue.assigned",
+            "payload": {
+                "repo": repo,
+                "number": 8,
+                "url": f"https://github.com/{repo}/issues/8",
+                "title": "t",
+                "body": "SECRET_BODY_DO_NOT_COPY",
+                "assigned_by": assigned_by,
+                "mandate": "github-assignment",
+            },
+            "execution_status": "done",
+        },
+    )
+
+
+def test_dispatch_assigned_denies_when_policy_rejects_actor(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path, actors_allow=["alice"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+        runner=runner,
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+    assert not (workspace_root / "assigned" / "MANDATE.md").exists()
+    assert store.row("activity", "asg-1") is not None
+    assert not store.wake_delivered("asg-1")
+
+
+def test_dispatch_assigned_denies_when_job_types_allow_omits_implement(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path, job_types_allow=["pr-review"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+        runner=runner,
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+
+
+def test_dispatch_assigned_denies_when_policy_json_is_null(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    (tmp_path / "policy.json").write_text("null", encoding="utf-8")
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+    assert not (workspace_root / "assigned" / "MANDATE.md").exists()
+    assert store.row("activity", "asg-1") is not None
+    assert not store.wake_delivered("asg-1")
+
+
+def test_load_policy_raises_on_invalid_json(tmp_path: Path) -> None:
+    (tmp_path / "policy.json").write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(StoreError, match="invalid JSON"):
+        load_policy(tmp_path)
+
+
+def test_policy_present_false_when_absent(tmp_path: Path) -> None:
+    assert policy_present(tmp_path) is False
+
+
+def test_policy_present_raises_when_policy_json_is_a_directory(tmp_path: Path) -> None:
+    (tmp_path / "policy.json").mkdir()
+    with pytest.raises(StoreError, match="not a regular file"):
+        policy_present(tmp_path)
+
+
+def test_policy_present_raises_when_policy_json_is_a_broken_symlink(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "policy.json").symlink_to(tmp_path / "missing-target")
+    with pytest.raises(StoreError, match="not a regular file"):
+        policy_present(tmp_path)
+
+
+def test_policy_present_raises_instead_of_silently_absent_on_stat_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
+
+    def fake_lstat(path: object, *args: object, **kwargs: object) -> object:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(watch.os, "lstat", fake_lstat)
+    with pytest.raises(StoreError, match="could not be checked"):
+        policy_present(tmp_path)
+
+
+def test_dispatch_assigned_raises_when_policy_json_is_invalid(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    (tmp_path / "policy.json").write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(StoreError, match="invalid JSON"):
+        dispatch_assigned(
+            store,
+            "asg-1",
+            sync=lambda: None,
+            start=lambda s, cwd: None,
+            knock=lambda aid: None,
+            workspace_root=tmp_path / "sessions",
+        )
+
+
+def test_dispatch_assigned_denies_when_policy_rejects_attached(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store, attached=True)
+    _write_admit_policy(tmp_path, actors_allow=["alice"])
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        if ".private" in " ".join(argv):
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+        runner=runner,
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+    assert not (workspace_root / "assigned" / "MANDATE.md").exists()
+    assert store.row("activity", "asg-1") is not None
+    assert not store.wake_delivered("asg-1")
+
+
+def test_dispatch_assigned_starts_when_policy_admits(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+        runner=runner,
+    )
+    assert status == "started"
+    assert start_log == [("assigned", workspace_root / "assigned")]
+    assert knock_log == ["asg-1"]
+
+
+def test_dispatch_assigned_kicks_when_policy_admits_attached(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store, attached=True)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "false", "")
+        raise AssertionError(argv)
+
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+        runner=runner,
+    )
+    assert status == "kicked"
+    assert start_log == []
+    assert knock_log == ["asg-1"]
+
+
+def test_dispatch_assigned_private_repo_needs_naming_twice(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    workspace_root = tmp_path / "sessions"
+
+    def runner(argv: list[str]) -> Completed:
+        joined = " ".join(argv)
+        if ".private" in joined:
+            return Completed(0, "true", "")
+        raise AssertionError(argv)
+
+    denied = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+        runner=runner,
+    )
+    assert denied == "denied"
+    assert start_log == []
+    assert knock_log == []
+    _write_admit_policy(
+        tmp_path,
+        agent_identity={"private_repos_allow": ["Owner/repo"]},
+    )
+    admitted = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=workspace_root,
+        runner=runner,
+    )
+    assert admitted == "started"
+    assert start_log == [("assigned", workspace_root / "assigned")]
+    assert knock_log == ["asg-1"]
+
+
+def test_dispatch_assigned_denies_when_runner_missing_and_repo_not_private_allowed(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _insert_assigned_activity(store)
+    _write_admit_policy(tmp_path)
+    start_log: list[tuple[str, Path]] = []
+    knock_log: list[str] = []
+    status = dispatch_assigned(
+        store,
+        "asg-1",
+        sync=lambda: None,
+        start=lambda s, cwd: start_log.append((s, cwd)),
+        knock=lambda aid: knock_log.append(aid),
+        workspace_root=tmp_path / "sessions",
+    )
+    assert status == "denied"
+    assert start_log == []
+    assert knock_log == []
+
+
 def test_dispatch_assigned_kicks_when_attached(tmp_path: Path) -> None:
     store = Store(tmp_path)
     sid = "assigned"
@@ -702,6 +1492,7 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-02-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -716,6 +1507,7 @@ def test_scan_assigned_two_issues_share_one_session(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -845,6 +1637,62 @@ def test_pending_assigned_keeps_delivered_inflight_as_head(tmp_path: Path) -> No
     assert [row["id"] for row in pending] == ["asg-old"]
 
 
+def test_pending_assigned_orders_same_timestamp_rows_by_event_id(
+    tmp_path: Path,
+) -> None:
+    # Two rows can share an assigned_at when a later scan adds a genuinely
+    # later same-second event (see _assignment_is_newer) — order those by
+    # event_id, not by the random activity uuid. Ids are chosen so that
+    # sorting by id alone (the pre-fix behavior) would give the WRONG
+    # order, so this genuinely fails without the event_id-aware sort key.
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "assigned",
+        {"id": "assigned", "kind": "runner", "status": "active"},
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-aaa-higher-event-id",
+        {
+            "id": "asg-aaa-higher-event-id",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "assigned_at": "2026-06-01T00:00:00Z",
+                "event_id": 200,
+            },
+            "execution_status": "done",
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "asg-zzz-lower-event-id",
+        {
+            "id": "asg-zzz-lower-event-id",
+            "session_id": "assigned",
+            "type": "issue.assigned",
+            "payload": {
+                "repo": "Owner/repo",
+                "number": 8,
+                "assigned_at": "2026-06-01T00:00:00Z",
+                "event_id": 100,
+            },
+            "execution_status": "done",
+        },
+    )
+    pending = pending_assigned(store, "assigned")
+    assert [row["id"] for row in pending] == [
+        "asg-zzz-lower-event-id",
+        "asg-aaa-higher-event-id",
+    ]
+
+
 def test_scan_assigned_reassignment_while_pending_enqueues(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.set_meta("github_login", "alice")
@@ -900,6 +1748,7 @@ def test_scan_assigned_reassignment_while_pending_enqueues(tmp_path: Path) -> No
                             "event": "assigned",
                             "created_at": "2026-06-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -979,6 +1828,7 @@ def test_scan_assigned_after_ack_allows_new_assignment(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-06-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
@@ -1122,6 +1972,7 @@ def test_scan_assigned_rejects_non_runner_session(tmp_path: Path) -> None:
                             "event": "assigned",
                             "created_at": "2026-01-01T00:00:00Z",
                             "assignee": {"login": "alice"},
+                            "actor": {"login": "alice"},
                         }
                     ]
                 ),
