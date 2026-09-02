@@ -267,31 +267,60 @@ def test_sync_once_raises_hub_error_on_non_dict_pull_response(tmp_path: Path, mo
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_raises_hub_error_on_event_missing_required_fields(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _valid_pull_event() -> dict[str, Any]:
+    return {
+        "origin_device_id": "other",
+        "origin_seq": 1,
+        "table": "activity",
+        "op": "insert",
+        "row_id": "x",
+        "payload": {},
+        "occurred_at": "2026-08-13T12:00:00Z",
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["origin_device_id", "origin_seq", "table", "op", "row_id", "payload", "occurred_at"],
+)
+def test_sync_once_raises_hub_error_on_event_missing_one_required_field(
+    field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: a pull event missing any of the fields
-    _insert_event_idempotent indexes directly (table, op, row_id, payload,
-    occurred_at, origin_device_id, origin_seq) used to raise a raw KeyError deep
+    """Regression test: a pull event missing any single one of the fields
+    _insert_event_idempotent indexes directly used to raise a raw KeyError deep
     inside store.apply_remote instead of a catchable HubError raised before that
-    call - same uncaught-crash risk as the non-dict pull response above."""
+    call. Parametrized per field so a future accidental narrowing of
+    _PULL_EVENT_FIELDS to any one of them is still caught."""
+    event = _valid_pull_event()
+    del event[field]
     hub = FakeHub()
-    hub.pull_body = {"events": [{"table": "activity", "row_id": "x"}]}
+    hub.pull_body = {"events": [event]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull event is missing required fields"):
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_raises_hub_error_on_non_numeric_origin_seq(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regression test: int(event["origin_seq"]) used to run unguarded; a
-    non-numeric origin_seq raised a raw ValueError instead of a catchable
-    HubError."""
+@pytest.mark.parametrize(
+    "bad_seq",
+    [
+        "not-a-number",
+        1e309,  # float('inf') once parsed - int() raises OverflowError, not ValueError
+        True,  # bool is an int subclass in Python - int(True) == 1 would pass silently
+        1.5,  # non-integral float - int(1.5) == 1 would silently truncate
+    ],
+)
+def test_sync_once_raises_hub_error_on_non_numeric_origin_seq(
+    bad_seq: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: int(event["origin_seq"]) used to run unguarded (raising a
+    raw ValueError on garbage, OverflowError on an out-of-range float) and also
+    silently accepted a bool or a fractional float as a valid sequence number."""
     hub = FakeHub()
     hub.pull_body = {
         "events": [
             {
                 "origin_device_id": "other",
-                "origin_seq": "not-a-number",
+                "origin_seq": bad_seq,
                 "table": "activity",
                 "op": "insert",
                 "row_id": "x",
@@ -302,6 +331,35 @@ def test_sync_once_raises_hub_error_on_non_numeric_origin_seq(tmp_path: Path, mo
     }
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="non-numeric origin_seq"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: field presence is validated, but not the shape of nested
+    values. A payload whose "type" is an unhashable value (e.g. a list) makes
+    Store._maybe_wake's `payload.get("type") not in WAKE_ACTIVITY_TYPES` raise a
+    raw TypeError from deep inside store.apply_remote, well past the field
+    presence check - a shape neither _PULL_EVENT_FIELDS nor any single previous
+    fix anticipated. The broad safety net around apply_remote/mark_origin must
+    catch this too, not just the specific shapes already known about."""
+    hub = FakeHub()
+    hub.pull_body = {
+        "events": [
+            {
+                "origin_device_id": "other",
+                "origin_seq": 1,
+                "table": "activity",
+                "op": "insert",
+                "row_id": "x",
+                "payload": {"type": ["not", "hashable"]},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull event could not be applied"):
         _sync_once(_paired_store(tmp_path))
 
 
@@ -347,15 +405,30 @@ def test_sync_once_raises_hub_error_on_non_list_snapshot_field(tmp_path: Path, m
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_raises_hub_error_on_snapshot_missing_required_fields(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _valid_pull_row() -> dict[str, Any]:
+    return {
+        "table": "activity",
+        "origin_device_id": "other",
+        "row_id": "x",
+        "payload": {},
+        "updated_at": "2026-08-13T12:00:00Z",
+    }
+
+
+@pytest.mark.parametrize("field", ["table", "origin_device_id", "row_id", "payload", "updated_at"])
+def test_sync_once_raises_hub_error_on_snapshot_missing_one_required_field(
+    field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: apply_replica_row indexes row["origin_device_id"],
-    row["payload"], row["updated_at"] directly; a snapshot row missing any of
-    those used to raise a raw KeyError instead of a catchable HubError raised
-    before that call."""
+    """Regression test: apply_replica_row indexes row["table"],
+    row["origin_device_id"], row["row_id"], row["payload"], row["updated_at"]
+    directly; a snapshot row missing any single one of those used to raise a raw
+    KeyError instead of a catchable HubError raised before that call.
+    Parametrized per field so a future accidental narrowing of _PULL_ROW_FIELDS
+    to any one of them is still caught."""
+    row = _valid_pull_row()
+    del row[field]
     hub = FakeHub()
-    hub.pull_body = {"events": [], "inbox": [{"table": "activity", "row_id": "x"}]}
+    hub.pull_body = {"events": [], "inbox": [row]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull snapshot is missing required fields"):
         _sync_once(_paired_store(tmp_path))

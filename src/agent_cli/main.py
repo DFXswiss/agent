@@ -1752,12 +1752,26 @@ def _sync_once(store: Store) -> None:
             if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
                 raise HubError("pull event is missing required fields")
             try:
-                origin_seq = int(event["origin_seq"])
-            except (TypeError, ValueError) as exc:
+                raw_seq = event["origin_seq"]
+                if isinstance(raw_seq, bool):
+                    raise ValueError("origin_seq must not be a boolean")
+                if isinstance(raw_seq, float) and not raw_seq.is_integer():
+                    raise ValueError("origin_seq must be a whole number")
+                origin_seq = int(raw_seq)
+            except (TypeError, ValueError, OverflowError) as exc:
                 raise HubError("pull event has a non-numeric origin_seq") from exc
             event = {**event, "origin_seq": origin_seq}
-            store.apply_remote(event)
-            store.mark_origin(event["origin_device_id"], origin_seq)
+            # Field presence is checked above, but not the shape of nested values
+            # (e.g. payload["type"]) - apply_remote/mark_origin can still hit a
+            # genuinely unanticipated shape deep inside store.py. Convert any such
+            # failure to a HubError rather than let it crash whichever loop called
+            # _sync_once; HubError/StoreError themselves pass through unchanged
+            # (SystemExit is not an Exception subclass).
+            try:
+                store.apply_remote(event)
+                store.mark_origin(event["origin_device_id"], origin_seq)
+            except Exception as exc:
+                raise HubError(f"pull event could not be applied: {exc}") from exc
         snapshots: list[dict[str, Any]] = []
         for key in ("inbox", "pings", "subscriptions"):
             value = pulled.get(key)
@@ -1772,7 +1786,10 @@ def _sync_once(store: Store) -> None:
         sessions = [r for r in snapshots if r.get("table") == "session"]
         rest = [r for r in snapshots if r.get("table") != "session"]
         for row in sessions + rest:
-            store.apply_replica_row(row)
+            try:
+                store.apply_replica_row(row)
+            except Exception as exc:
+                raise HubError(f"pull snapshot could not be applied: {exc}") from exc
         print(f"sync pushed={len(pending)} pulled={len(events)} snapshots={len(snapshots)}")
     finally:
         hub.close()
