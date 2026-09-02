@@ -85,6 +85,7 @@ class RunOutcome:
     close_evidence: str | None = None
     verdict: str | None = None  # approved|rejected|done|… when an agent finished
     message: str | None = None
+    rejection_findings: str | None = None
 
 
 def _checklist_set(tid: str, key: str, status: str, *, evidence: str | None = None) -> None:
@@ -627,6 +628,8 @@ def _finish_agent_fail(
     )
     out.lane_result = result
     out.key = step.key
+    if out.kind == "rejected_new_round":
+        out.rejection_findings = evidence
     return out
 
 
@@ -1073,6 +1076,13 @@ def execute_spine_step(
                 )
                 if working is not None:
                     _agent_finish(str(working["id"]), "unavailable", note=str(exc))
+                _check_record(
+                    tid=tid,
+                    name="empty-review-diff",
+                    command=f"role={role} vendor={vendor}",
+                    result="fail",
+                    output=str(exc),
+                )
                 return RunOutcome(
                     kind="failed",
                     key=step.key,

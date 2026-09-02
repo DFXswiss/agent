@@ -251,6 +251,10 @@ def test_write_error_fix_spec_omits_raw_log_fields(tmp_path: Path) -> None:
         assert secret_excerpt not in text
         assert secret_message not in text
         assert secret_stack not in text
+        assert "gates approved on this head (or allowed n_a)" not in text
+        assert "Four PR-review gates approved on this head." in text
+        assert "allowed n_a where applicable" in text
+        assert "Contributing-doc check" in text or "deviation" in text.lower()
     finally:
         store.close()
 
@@ -745,6 +749,33 @@ def test_template_pr_open_payload_title_and_body() -> None:
     assert len(expected_suffix) == 72
 
 
+def test_template_pr_open_payload_brief_first_sentence_only() -> None:
+    """Visible EN/DE summaries keep only the first brief sentence (CONTRIBUTING cap)."""
+    brief = (
+        "Fix the retry loop. Also harden the timeout path. And add a regression test."
+    )
+    payload = template_pr_open_payload(
+        session_id="sess-12345678",
+        repo="org/app",
+        error_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        brief=brief,
+        fingerprint="fp-1",
+    )
+    body = str(payload["body"])
+    en_start = body.index("EN:\n") + len("EN:\n")
+    en_end = body.index("\n\nDE:")
+    en_summary = body[en_start:en_end]
+    de_start = body.index("DE:\n") + len("DE:\n")
+    de_end = body.index("\n\n<details>")
+    de_summary = body[de_start:de_end]
+    assert "Fix the retry loop." in en_summary
+    assert "Also harden the timeout path" not in en_summary
+    assert "Also harden the timeout path" not in de_summary
+    assert "Also harden the timeout path" in body
+    assert sum(en_summary.count(c) for c in ".!?") <= 4
+    assert sum(de_summary.count(c) for c in ".!?") <= 4
+
+
 def test_runner_to_completed_honors_cwd(tmp_path: Path) -> None:
     completed = _runner_to_completed(
         lambda _argv: Completed(1, "", "runner-should-not-run"),
@@ -953,6 +984,96 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     assert str(approved_gq[-1].get("head_sha") or "").lower() == shas[1]
 
 
+def test_rejection_feedback_rewritten_into_spec(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected PR-gate round must rewrite .spec.md with Prior Rejection Feedback."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    shas = [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ]
+    push_calls = {"n": 0}
+    rejects = {"n": 0}
+    findings_marker = "fix the retry loop specifically"
+
+    def fake_push(*, cwd: str, runner, expected_branch=None):  # type: ignore[no-untyped-def]
+        i = push_calls["n"]
+        push_calls["n"] += 1
+        return shas[min(i, len(shas) - 1)]
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if (
+            role == "pr-reviewer-quality"
+            and vendor == "grok"
+            and rejects["n"] == 0
+        ):
+            rejects["n"] += 1
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout=f"STATUS: complete\nFINDINGS:\n- {findings_marker}\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    spec_text = (tmp_path / "error-fix-work" / tid / ".spec.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Prior Rejection Feedback" in spec_text
+    assert findings_marker in spec_text
+
+
 def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1057,6 +1178,17 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
 
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
 
     pushed_sha = "cccccccccccccccccccccccccccccccccccccccc"
     real_ensure = fixer_mod._ensure_done_readiness
@@ -1420,3 +1552,45 @@ def test_drive_error_fix_tasks_isolates_per_task_crash(
     assert "scan-error" in lines[0]
     assert "SystemExit" in lines[0]
     assert lines[1] == f"error-fix-work {second_tid} done"
+
+
+def test_empty_review_diff_fails_task_and_stops_reselection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EmptyReviewDiffError must fail the task so the next scan does not re-select it."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed",
+        lambda runner, argv, *, cwd=None: Completed(0, "", ""),
+    )
+
+    store = _store(tmp_path)
+    try:
+        lines1 = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert _task_state(tmp_path, tid) == "failed"
+    assert any(tid in line for line in lines1)
+    agents_after_first = len(_agents(tmp_path, tid))
+
+    store = _store(tmp_path)
+    try:
+        lines2 = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert all(tid not in line for line in lines2)
+    assert len(_agents(tmp_path, tid)) == agents_after_first

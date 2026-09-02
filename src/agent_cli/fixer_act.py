@@ -7,6 +7,7 @@ lane.launch() only — no Claude session. A human still merges the PR.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -23,6 +24,17 @@ Runner = Callable[[list[str]], Completed]
 
 # Bound the per-task step loop (rounds × spine length, with headroom).
 _MAX_STEPS_PER_TASK = 40
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _first_sentence(text: str) -> str:
+    """Return the first sentence of text, split on '. '/'!'/'?' boundaries."""
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    match = _SENTENCE_BOUNDARY_RE.search(stripped)
+    return stripped[: match.start()] if match else stripped
 
 
 def _error_fix_brief(store: Store, session_id: str, error_id: str) -> str | None:
@@ -51,6 +63,7 @@ def write_error_fix_spec(
     error_id: str,
     session_id: str,
     repo: str,
+    rejection_feedback: str | None = None,
 ) -> Path:
     """Write a five-part spec under $AGENT_HOME/error-fix-work/<task_id>/.spec.md."""
     seen = _error_seen(store, session_id, error_id)
@@ -64,6 +77,11 @@ def write_error_fix_spec(
     parent = Path(store.home) / "error-fix-work" / tid
     parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = parent / ".spec.md"
+    rejection_section = (
+        f"# Prior Rejection Feedback\n\n{rejection_feedback}\n\n"
+        if rejection_feedback
+        else ""
+    )
     body = (
         f"# Context\n\n"
         f"- repo: `{repo}`\n"
@@ -74,6 +92,7 @@ def write_error_fix_spec(
         f"- class: `{class_name}`\n\n"
         f"# Task\n\n"
         f"{brief or '(no brief provided)'}\n\n"
+        f"{rejection_section}"
         f"# Constraints\n\n"
         f"- Patch only what the brief requires.\n"
         f"- Do not commit secrets, credentials, or raw production log lines.\n"
@@ -85,7 +104,8 @@ def write_error_fix_spec(
         f"# Definition of Done\n\n"
         f"- Spec implemented and inner reviewer approved.\n"
         f"- Local checks pass; branch pushed; draft PR opened.\n"
-        f"- Four PR-review gates approved on this head (or allowed n_a).\n"
+        f"- Four PR-review gates approved on this head.\n"
+        f"- Contributing-doc check and any declared deviation resolved (allowed n_a where applicable).\n"
     )
     path.write_text(body, encoding="utf-8")
     return path
@@ -110,15 +130,16 @@ def template_pr_open_payload(
     if len(suffix) > 72:
         suffix = suffix[:69] + "..."
     title = f"{session_id[:8]} - {suffix}"
+    brief_summary = _first_sentence(brief) if brief else ""
     en = (
         f"Automated error-fix for `{fingerprint or short}` in `{repo}`. "
         f"Draft only; a human merges. "
-        f"Brief: {brief[:200] if brief else 'see task spec'}."
+        f"Brief: {brief_summary[:200] if brief_summary else 'see task spec'}."
     )
     de = (
         f"Automatischer error-fix für `{fingerprint or short}` in `{repo}`. "
         f"Nur Entwurf; ein Mensch merged. "
-        f"Brief: {brief[:200] if brief else 'siehe Task-Spec'}."
+        f"Brief: {brief_summary[:200] if brief_summary else 'siehe Task-Spec'}."
     )
     details = (
         f"<details>\n"
@@ -587,6 +608,15 @@ def _drive_one(
             # rejection keeps key="reviewer_approved" and does not reset pushed.
             if outcome.key != "reviewer_approved":
                 head = None
+            if error_id and repo and outcome.rejection_findings:
+                write_error_fix_spec(
+                    store,
+                    tid,
+                    error_id=error_id,
+                    session_id=session_id,
+                    repo=repo,
+                    rejection_feedback=outcome.rejection_findings,
+                )
             continue
 
         if outcome.kind in ("closed", "agent_closed"):
