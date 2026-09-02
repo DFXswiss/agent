@@ -578,7 +578,7 @@ Attach `error-fix` together with `spine`, `review-loop`, and `pr-review` on the 
 |---|---|
 | Log credentials and adapter config | `$AGENT_HOME` on this device, not git, not the hub |
 | Watcher process | This device. Script, not the model. |
-| Analysis and “fix or skip” | Any runner session on this device (same `_origin_device_id`; not the scanning session only) |
+| Analysis and “fix or skip” | Any session on this device (same `_origin_device_id`; not the scanning session only) |
 | Isolated worktree, checks, draft pull request | This device |
 | Merge | A human |
 | Hub | Replica + fan-out of the rows this device already wrote |
