@@ -1075,3 +1075,28 @@ def test_a_rejected_gate_never_approves(tmp_path: Path, capsys: pytest.CaptureFi
 
     src = inspect.getsource(_queue_gate_findings)
     assert "APPROVE" not in src
+
+
+def test_task_pull_request_error_fix_uses_payload_pr_number_not_ref() -> None:
+    """error-fix tasks resolve PR via payload.pr_number; digit-string ref is ignored."""
+    from agent_cli.main import _task_pull_request  # noqa: PLC0415
+
+    error_fix_task = {
+        "repo": "org/app",
+        "ref": "7",
+        "payload": {"error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "pr_number": 42},
+    }
+    assert _task_pull_request(error_fix_task) == ("org/app", 42)
+
+    ordinary_task = {
+        "repo": "org/app",
+        "ref": "7",
+        "payload": {},
+    }
+    assert _task_pull_request(ordinary_task) == ("org/app", 7)
+
+    ordinary_no_payload = {
+        "repo": "org/app",
+        "ref": "7",
+    }
+    assert _task_pull_request(ordinary_no_payload) == ("org/app", 7)

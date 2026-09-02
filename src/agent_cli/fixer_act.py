@@ -543,14 +543,14 @@ def _drive_one(
             head = snap_head
 
         checklist = snap["checklist"]
+        pr_head = f"error-fix-{error_id[:8]}" if error_id else ""
         if (
             error_id
             and repo
             and checklist.get("pushed") == "ja"
-            and not _pr_open_row_exists(store, head=f"error-fix-{error_id[:8]}")
+            and not _pr_open_row_exists(store, head=pr_head)
         ):
             try:
-                pr_head = f"error-fix-{error_id[:8]}"
                 if _pr_open_pending_row_exists(store, head=pr_head):
                     # Crash between insert and scan left a pending row — resume
                     # it rather than inserting a duplicate.
@@ -584,7 +584,19 @@ def _drive_one(
                 # next scan rather than failing it; each cron/knock scan retries.
                 if not _pr_open_row_exists(store, head=pr_head):
                     return f"error-fix-work {tid} pr.open-error (create failed)"
-                # Persist PR number on payload (task.ref stays the checkout ref).
+            except (StoreError, OSError, SystemExit) as exc:
+                return f"error-fix-work {tid} pr.open-error ({exc})"
+            # Fall through so this scan can continue the spine; next scan
+            # skips once the pr.open row exists.
+
+        # Independent of the block above: backfill payload.pr_number whenever a
+        # done pr.open row exists for this head, regardless of whether THIS scan
+        # created it (or it was created — and left unbackfilled — in an earlier,
+        # since-crashed scan). Must not be nested inside the "does pr.open need
+        # creating" guard above, since that guard is permanently False once the
+        # row is done, which would otherwise permanently skip a missed backfill.
+        if error_id and repo and pr_head and _pr_open_row_exists(store, head=pr_head):
+            try:
                 pr_number = _pr_open_number(store, head=pr_head)
                 if pr_number is not None:
                     task = store.row("task", tid) or task
@@ -600,8 +612,6 @@ def _drive_one(
                         store.write("task", "update", tid, main_mod._strip(task))
             except (StoreError, OSError, SystemExit) as exc:
                 return f"error-fix-work {tid} pr.open-error ({exc})"
-            # Fall through so this scan can continue the spine; next scan
-            # skips once the pr.open row exists.
 
         ready = next_steps(str(snap["workflow"]), snap["checklist"], spine_only=True)
         if not ready:

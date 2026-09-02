@@ -49,7 +49,14 @@ def _resolve_remote(cwd: str, runner: Runner) -> str:
 
 
 def _normalize_repo_identity(raw: str) -> str | None:
-    """Normalize a git remote URL or org/repo string down to 'org/repo'."""
+    """Normalize a git remote URL or org/repo string down to 'org/repo'.
+
+    URL and SCP-style forms must resolve to host github.com (case-insensitive) —
+    the fixer's own clone step always targets https://github.com/{repo}.git, so an
+    unattended push must never be accepted merely because the trailing org/repo path
+    matches while the host points somewhere else. The bare 'org/repo' string form
+    (used to normalize expected_repo itself) has no host to check.
+    """
     s = raw.strip()
     if not s:
         return None
@@ -60,8 +67,14 @@ def _normalize_repo_identity(raw: str) -> str | None:
         parts = after_scheme.split("/")
         if len(parts) < 3 or not parts[1] or not parts[2]:
             return None
+        host = parts[0].rsplit("@", 1)[-1].split(":", 1)[0]
+        if host.lower() != "github.com":
+            return None
         return f"{parts[1]}/{parts[2]}"
     if "@" in s and ":" in s.rsplit("@", 1)[-1]:
+        host = s.rsplit("@", 1)[-1].split(":", 1)[0]
+        if host.lower() != "github.com":
+            return None
         path = s.rsplit(":", 1)[-1]
         parts = path.split("/")
         if len(parts) != 2 or not parts[0] or not parts[1]:

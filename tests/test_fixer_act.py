@@ -1532,6 +1532,88 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     assert str(approved_gq[-1].get("head_sha") or "").lower() == shas[1]
 
 
+def test_fixer_backfills_pr_number_when_pr_open_already_done(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Crash window: done pr.open exists but payload.pr_number unset — backfill on next scan."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pr_head = f"error-fix-{ERROR_ID[:8]}"
+    activity_id = str(uuid.uuid4())
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ),
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task_payload = (
+            task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        )
+        assert "pr_number" not in task_payload
+
+        # Simulate earlier scan that created a done pr.open then crashed before
+        # backfilling payload.pr_number — row already exists coming into this scan.
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "sess-1",
+                "type": "pr.open",
+                "payload": {
+                    "repo": "org/app",
+                    "title": "sess-1 - Fix timeout",
+                    "head": pr_head,
+                    "body": "EN:\nDraft\n",
+                },
+                "execution_status": "done",
+                "result": {
+                    "repo": "org/app",
+                    "number": 42,
+                    "url": "https://github.com/org/app/pull/42",
+                    "draft": True,
+                },
+            },
+        )
+        assert _pr_open_row_exists(store, head=pr_head)
+
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        updated = store.row("task", tid)
+        assert updated is not None
+        payload = updated.get("payload")
+        assert isinstance(payload, dict)
+        assert payload.get("pr_number") == 42
+    finally:
+        store.close()
+
+
 def test_fixer_persists_pr_number_and_queues_gate_findings(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

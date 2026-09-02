@@ -1076,15 +1076,26 @@ def cmd_check(args: list[str]) -> None:
 
 def _task_pull_request(task: dict) -> tuple[str, int] | None:
     """The task's pull request as (repo, number), or None when it has none."""
+    from .error_fix_act import _nonempty_str
+
     repo = _repo_ok(task.get("repo"))
     if repo is None:
         return None
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    is_error_fix = bool(_nonempty_str(payload.get("error_id")))
     ref = task.get("ref")
-    if isinstance(ref, str) and ref.isdigit() and int(ref) > 0:
+    if (
+        not is_error_fix
+        and isinstance(ref, str)
+        and ref.isdigit()
+        and int(ref) > 0
+    ):
         return repo, int(ref)
     # error-fix tasks keep task["ref"] as a git checkout ref; the PR number
     # lives on payload.pr_number (set by the fixer after pr.open succeeds).
-    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    # For error-fix tasks specifically, ref is never consulted for the PR
+    # number even when it happens to be a positive digit string (e.g. an
+    # operator-set --ref on task create).
     pr_number = payload.get("pr_number")
     if isinstance(pr_number, bool):
         return None

@@ -163,6 +163,102 @@ def test_push_expected_repo_url_match_succeeds() -> None:
     assert PUSH_ARGV in calls
 
 
+def test_push_expected_repo_hostile_host_url_form_refused() -> None:
+    """Trailing org/repo match is not enough — host must be github.com."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="https://evil.com/org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_hostile_host_scp_form_refused() -> None:
+    """SCP-style hostile host with matching org/repo path must be refused."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="git@evil.com:org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
+def test_push_expected_repo_userinfo_confusion_host_refused() -> None:
+    """Userinfo-confusion URL (github.com@evil.com) must resolve to evil.com."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="https://github.com@evil.com/org/app.git")
+        if url is not None:
+            return url
+        if "push" in argv or "fetch" in argv:
+            raise AssertionError("must not fetch/push when expected_repo mismatches")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="does not match expected repo"):
+        push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    assert not any("push" in a for a in calls)
+    assert not any("fetch" in a for a in calls)
+
+
 def test_push_ahead_zero_skips_push() -> None:
     calls: list[list[str]] = []
 
