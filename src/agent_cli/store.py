@@ -355,7 +355,8 @@ class Store:
                 self._maybe_wake(event)
             elif inserted:
                 payload = event.get("payload")
-                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                typ = payload.get("type") if isinstance(payload, dict) else None
+                if isinstance(typ, str) and typ in WAKE_ACTIVITY_TYPES:
                     target = self._inbox_target(payload)
                     if target is not None and self._owns_session(target):
                         self.enqueue_wake(event["row_id"], target)
@@ -494,7 +495,8 @@ class Store:
                 self._maybe_wake(event)
             else:
                 payload = event.get("payload")
-                if isinstance(payload, dict) and payload.get("type") in WAKE_ACTIVITY_TYPES:
+                typ = payload.get("type") if isinstance(payload, dict) else None
+                if isinstance(typ, str) and typ in WAKE_ACTIVITY_TYPES:
                     target = self._inbox_target(payload)
                     if target is not None and self._owns_session(target):
                         self.enqueue_wake(event["row_id"], target)
@@ -714,14 +716,12 @@ class Store:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             return
-        if payload.get("type") not in WAKE_ACTIVITY_TYPES:
+        typ = payload.get("type")
+        if not isinstance(typ, str) or typ not in WAKE_ACTIVITY_TYPES:
             return
-        if event.get("op") == "update" and payload.get("type") == "error.seen":
+        if event.get("op") == "update" and typ == "error.seen":
             return
-        if (
-            payload.get("type") in DONE_WAKE_ACTIVITY_TYPES
-            and payload.get("execution_status") != "done"
-        ):
+        if typ in DONE_WAKE_ACTIVITY_TYPES and payload.get("execution_status") != "done":
             return
         target = self._inbox_target(payload)
         if target is None:
@@ -740,7 +740,8 @@ class Store:
             return
         if payload.get("execution_status") != "pending":
             return
-        if payload.get("type") not in EXECUTABLE_ACTIVITY_TYPES:
+        typ = payload.get("type")
+        if not isinstance(typ, str) or typ not in EXECUTABLE_ACTIVITY_TYPES:
             return
         sid = payload.get("session_id")
         if not isinstance(sid, str) or sid == "":

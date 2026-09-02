@@ -334,16 +334,18 @@ def test_sync_once_raises_hub_error_on_non_numeric_origin_seq(
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shape(
+def test_sync_once_accepts_an_activity_payload_whose_type_is_not_a_wake_type_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: field presence is validated, but not the shape of nested
-    values. A payload whose "type" is an unhashable value (e.g. a list) makes
-    Store._maybe_wake's `payload.get("type") not in WAKE_ACTIVITY_TYPES` raise a
-    raw TypeError from deep inside store.apply_remote, well past the field
-    presence check - a shape neither _PULL_EVENT_FIELDS nor any single previous
-    fix anticipated. The broad safety net around apply_remote/mark_origin must
-    catch this too, not just the specific shapes already known about."""
+    """Regression test: a payload whose "type" is an unhashable value (e.g. a
+    list) used to make Store._maybe_wake's `payload.get("type") not in
+    WAKE_ACTIVITY_TYPES` raise a raw TypeError from deep inside
+    store.apply_remote - a shape neither _PULL_EVENT_FIELDS nor the broad
+    except-Exception safety net's introduction actually fixed, just quietly
+    converted into a permanent HubError retry loop (the cursor never advances,
+    so the hub keeps re-serving the same event forever). _maybe_wake now treats
+    a non-string type as simply "not a wake type" and lets the event apply
+    normally instead of failing the whole transaction."""
     hub = FakeHub()
     hub.pull_body = {
         "events": [
@@ -354,6 +356,39 @@ def test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shap
                 "op": "insert",
                 "row_id": "x",
                 "payload": {"type": ["not", "hashable"]},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
+    _sync_once(store)
+    assert store.origin_cursor("other") == 1
+    row = store.row("activity", "x")
+    assert row is not None
+
+
+def test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for the general safety net itself: field presence is
+    validated, but not every possible shape of every nested value can be
+    anticipated and fixed at its root (unlike the non-string-type case above).
+    A payload containing a value json.dumps cannot serialize (impossible from a
+    real JSON hub response, but a stand-in for "something genuinely
+    unanticipated") still reaches the broad except-Exception net around
+    apply_remote/mark_origin and becomes a catchable HubError instead of an
+    uncaught crash."""
+    hub = FakeHub()
+    hub.pull_body = {
+        "events": [
+            {
+                "origin_device_id": "other",
+                "origin_seq": 1,
+                "table": "activity",
+                "op": "insert",
+                "row_id": "x",
+                "payload": {"type": "message", "body": {1, 2, 3}},
                 "occurred_at": "2026-08-13T12:00:00Z",
             }
         ]
@@ -431,6 +466,38 @@ def test_sync_once_raises_hub_error_on_snapshot_missing_one_required_field(
     hub.pull_body = {"events": [], "inbox": [row]}
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
     with pytest.raises(HubError, match="pull snapshot is missing required fields"):
+        _sync_once(_paired_store(tmp_path))
+
+
+def test_sync_once_accepts_a_snapshot_payload_whose_type_is_not_a_wake_type_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_sync_once_accepts_an_activity_payload_whose_type_is_not_a_wake_type_shape.
+    apply_replica_row also calls _maybe_wake, so the same non-string-type fix
+    must let the row apply normally instead of raising."""
+    row = {**_valid_pull_row(), "payload": {"type": ["not", "hashable"]}}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
+    _sync_once(store)
+    stored = store.row("activity", "x")
+    assert stored is not None
+
+
+def test_sync_once_raises_hub_error_when_apply_replica_row_hits_an_unanticipated_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_sync_once_raises_hub_error_when_apply_remote_hits_an_unanticipated_shape,
+    proving the broad safety net around store.apply_replica_row catches a
+    genuinely unanticipated shape too, not just the event-side one."""
+    row = {**_valid_pull_row(), "payload": {"type": "message", "body": {1, 2, 3}}}
+    hub = FakeHub()
+    hub.pull_body = {"events": [], "inbox": [row]}
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    with pytest.raises(HubError, match="pull snapshot could not be applied"):
         _sync_once(_paired_store(tmp_path))
 
 
