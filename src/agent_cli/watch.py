@@ -236,7 +236,8 @@ def policy_present(home: Path) -> bool:
 
 
 def load_policy(home: Path) -> Any:
-    """The parsed `home / "policy.json"` object, or None if the file does not exist."""
+    """The parsed `home / "policy.json"` object, or None if the file does not
+    exist or its JSON value is itself `null`."""
     if not policy_present(home):
         return None
     path = home / "policy.json"
