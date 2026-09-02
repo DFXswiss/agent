@@ -40,7 +40,7 @@ def _run(**overrides: object) -> dict:
 def _payload(**overrides: object) -> dict:
     base: dict = {
         "schema": "dfx-local-ci/v1",
-        "repo": "DFXswiss/backend",
+        "repo": "example/private-app",
         "head": HEAD,
         "private": True,
         "recorded_at": "2026-09-02T15:00:00Z",

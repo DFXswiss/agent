@@ -21,7 +21,6 @@ from urllib.parse import urlparse
 from websockets.exceptions import WebSocketException
 
 from .allow import ACTIONS, evaluate_allow, ready_for_done_blocking
-from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .chain import (
     NO_AUTO_CLOSE,
     close_allowed,
@@ -35,6 +34,7 @@ from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
+from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
     Runtime,
