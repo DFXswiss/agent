@@ -3190,6 +3190,7 @@ def cmd_watch(args: list[str]) -> None:
                     time.sleep(KNOCK_SUBMIT_POLL_S)
                     if runtime.is_busy(sid):
                         return
+                raise StoreError(f"session {sid} did not accept the knock after {KNOCK_SUBMIT_RETRIES} attempts")
 
             lines = scan_error_decide(
                 store,

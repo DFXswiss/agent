@@ -133,8 +133,8 @@ def scan_error_decide(
             sid = decide_session_id(error_id)
             now = utcnow()
             _ensure_decide_session(store, sid, now)
-            start(sid)
             try:
+                start(sid)
                 knock(sid, error_id)
                 decided = _wait_for_conclusion(
                     store,

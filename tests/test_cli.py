@@ -1232,7 +1232,7 @@ def test_watch_error_decide_retries_enter_until_busy(
     assert sum(1 for name, _ in calls if name == "input_key") == 3
 
 
-def test_watch_error_decide_gives_up_after_max_retries(
+def test_watch_error_decide_fails_fast_after_max_retries(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -1240,7 +1240,6 @@ def test_watch_error_decide_gives_up_after_max_retries(
     capsys.readouterr()
 
     calls: list[tuple[str, object]] = []
-    mono_calls = {"n": 0}
 
     def fake_input_text(self: object, sid: str, data: str, *, target: str | None = None) -> None:
         del self, target
@@ -1257,12 +1256,6 @@ def test_watch_error_decide_gives_up_after_max_retries(
     def fake_deliver(*_args: object, **_kwargs: object) -> str:
         raise AssertionError("deliver should not be called")
 
-    def fake_mono() -> float:
-        mono_calls["n"] += 1
-        if mono_calls["n"] == 1:
-            return 0.0
-        return 999999.0
-
     monkeypatch.setattr("agent_cli.runtime.Runtime.available", lambda self: True)
     monkeypatch.setattr(
         "agent_cli.runtime.Runtime.exists", lambda self, sid, **kwargs: False
@@ -1278,11 +1271,9 @@ def test_watch_error_decide_gives_up_after_max_retries(
     monkeypatch.setattr("agent_cli.runtime.Runtime.is_busy", fake_is_busy)
     monkeypatch.setattr("agent_cli.knock.deliver", fake_deliver)
     monkeypatch.setattr("agent_cli.main.time.sleep", lambda _s: None)
-    monkeypatch.setattr("agent_cli.error_decide_act.time.monotonic", fake_mono)
 
-    run(tmp_path, ["watch", "error-decide"])
-    out = capsys.readouterr().out
-    assert f"error.seen {error_id} timeout session=" in out
+    with pytest.raises(SystemExit, match="did not accept the knock after 8 attempts"):
+        run(tmp_path, ["watch", "error-decide"])
     assert sum(1 for name, _ in calls if name == "input_key") == 8
 
 

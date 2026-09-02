@@ -313,6 +313,34 @@ def test_scan_error_decide_stop_runs_when_knock_raises(tmp_path: Path) -> None:
     assert stopped == [sid]
 
 
+def test_scan_error_decide_stop_runs_when_start_raises(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    error_id = "error-seen-kkkkkkkk"
+    _insert_seen(store, rid=error_id)
+    stopped: list[str] = []
+    knocked: list[str] = []
+
+    def start(_sid: str) -> None:
+        raise RuntimeError("boom")
+
+    def knock(sid: str, _eid: str) -> None:
+        knocked.append(sid)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        scan_error_decide(
+            store,
+            start=start,
+            stop=lambda sid: stopped.append(sid),
+            knock=knock,
+            sleep=lambda _s: None,
+            timeout_s=1.0,
+            poll_interval_s=0.01,
+        )
+    sid = decide_session_id(error_id)
+    assert stopped == [sid]
+    assert knocked == []
+
+
 def test_ensure_decide_session_unions_missing_skills(tmp_path: Path) -> None:
     store = Store(tmp_path)
     error_id = "error-seen-hhhhhhhh"
