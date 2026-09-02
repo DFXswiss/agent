@@ -134,20 +134,31 @@ def scan_error_decide(
             now = utcnow()
             try:
                 _ensure_decide_session(store, sid, now)
-                try:
-                    start(sid)
-                    knock(sid, error_id)
-                    decided = _wait_for_conclusion(
-                        store,
-                        error_id,
-                        timeout_s=timeout_s,
-                        poll_interval_s=poll_interval_s,
-                        sleep=sleep,
-                    )
-                finally:
-                    stop(sid)
             except (StoreError, SystemExit) as exc:
                 lines.append(f"error.seen {error_id} error session={sid}: {exc}")
+                continue
+            failure: StoreError | SystemExit | None = None
+            decided = False
+            try:
+                start(sid)
+                knock(sid, error_id)
+                decided = _wait_for_conclusion(
+                    store,
+                    error_id,
+                    timeout_s=timeout_s,
+                    poll_interval_s=poll_interval_s,
+                    sleep=sleep,
+                )
+            except (StoreError, SystemExit) as exc:
+                failure = exc
+            finally:
+                try:
+                    stop(sid)
+                except (StoreError, SystemExit) as stop_exc:
+                    if failure is None:
+                        failure = stop_exc
+            if failure is not None:
+                lines.append(f"error.seen {error_id} error session={sid}: {failure}")
                 continue
             if decided:
                 lines.append(f"error.seen {error_id} decided session={sid}")

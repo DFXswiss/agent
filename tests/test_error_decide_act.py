@@ -383,6 +383,69 @@ def test_scan_error_decide_stop_runs_when_start_raises(tmp_path: Path) -> None:
     assert knocked == []
 
 
+def test_scan_error_decide_preserves_start_error_when_stop_also_raises(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    error_id = "error-seen-llllllll"
+    _insert_seen(store, rid=error_id)
+    stopped: list[str] = []
+
+    def start(_sid: str) -> None:
+        raise StoreError("boom")
+
+    def stop(sid: str) -> None:
+        stopped.append(sid)
+        raise StoreError("stop boom")
+
+    lines = scan_error_decide(
+        store,
+        start=start,
+        stop=stop,
+        knock=lambda _sid, _eid: None,
+        sleep=lambda _s: None,
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+    )
+    sid = decide_session_id(error_id)
+    assert stopped == [sid]
+    assert len(lines) == 1
+    assert "boom" in lines[0]
+    assert "stop boom" not in lines[0]
+    assert lines[0].startswith(f"error.seen {error_id} error session={sid}:")
+
+
+def test_scan_error_decide_reports_stop_error_after_success(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    error_id = "error-seen-mmmmmmmm"
+    _insert_seen(store, rid=error_id)
+    stopped: list[str] = []
+
+    def knock(sid: str, eid: str) -> None:
+        _insert_conclusion(store, rid="fix-1", error_id=eid, session_id=sid)
+
+    def stop(sid: str) -> None:
+        stopped.append(sid)
+        raise StoreError("stop failed")
+
+    lines = scan_error_decide(
+        store,
+        start=lambda _sid: None,
+        stop=stop,
+        knock=knock,
+        sleep=lambda _s: None,
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+    )
+    sid = decide_session_id(error_id)
+    assert stopped == [sid]
+    assert len(lines) == 1
+    assert "error" in lines[0]
+    assert "stop failed" in lines[0]
+    assert "decided" not in lines[0]
+    assert lines[0].startswith(f"error.seen {error_id} error session={sid}:")
+
+
 def test_ensure_decide_session_unions_missing_skills(tmp_path: Path) -> None:
     store = Store(tmp_path)
     error_id = "error-seen-hhhhhhhh"
