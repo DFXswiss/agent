@@ -57,6 +57,7 @@ agent activity add --session <id> --type error.skip --payload-file <path>
 agent activity add --session <id> --type error.fix --payload-file <path>
 agent task create --session <id> --workflow implement --title "Fix error" --error-id <error.seen-id>
 agent watch error-fix
+agent watch error-fix-work  # one scan; drains spec_written through draft pr.open (§21.7); not wired into agent daemon
 agent github pending
 ```
 
@@ -79,6 +80,7 @@ stay out of this public client.
 ```bash
 agent watch errors   # one scan; knock daemon (no --once) polls every 60s
 agent watch error-fix  # one scan; find-or-create task + worktree; knock daemon polls with grok-usage
+agent watch error-fix-work  # one scan; drains spec_written through draft pr.open (§21.7); not wired into agent daemon
 ```
 
 This file ships in the packaged tree. `agent skills path` may print an

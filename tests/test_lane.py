@@ -59,6 +59,50 @@ def test_count_findings_stops_at_next_section_header() -> None:
     assert count_findings(text) == 2
 
 
+def test_count_findings_terminator_is_case_insensitive() -> None:
+    """Non-canonical-case NOT-VERIFIABLE:/GAPS: still terminate the body."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "- real one\n"
+        "- real two\n"
+        "Not-Verifiable:\n"
+        "- skip me\n"
+        "gaps:\n"
+        "- skip me too\n"
+    )
+    assert count_findings(text) == 2
+
+
+def test_count_findings_unbulleted_error_line_is_not_section_header() -> None:
+    """Unbulleted ALL-CAPS lines inside FINDINGS: must not truncate the body."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "ERROR: SQL injection in auth.py:42\n"
+        "GAPS:\n"
+        "- later section\n"
+    )
+    assert count_findings(text) >= 1
+
+
+@pytest.mark.parametrize(
+    "word",
+    ["REASON", "SCOPE", "DIMENSION", "STATUS"],
+)
+def test_count_findings_unbulleted_preamble_word_is_not_terminator(word: str) -> None:
+    """Unbulleted FINDINGS lines starting with preamble words must count, not truncate."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        f"{word}: null dereference in parser.py:88\n"
+        "- second real finding\n"
+        "GAPS:\n"
+        "- later section\n"
+    )
+    assert count_findings(text) >= 1
+
+
 def test_count_findings_absent_header_is_zero() -> None:
     """Absent FINDINGS: also returns 0; callers use findings_header_present() to distinguish."""
     assert count_findings("STATUS: complete\nREASON: ok\n") == 0

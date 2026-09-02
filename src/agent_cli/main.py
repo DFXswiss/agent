@@ -958,8 +958,9 @@ def cmd_agent(args: list[str]) -> None:
                 print(f"agent {aid} verdict={verdict}")
                 return
             if role == "implementer":
+                # unavailable already handled by the early return above.
                 if verdict not in ("done", "blocked"):
-                    die("implementer verdict must be done|blocked|unavailable")
+                    die("implementer verdict must be done|blocked")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "implementing":
@@ -977,8 +978,9 @@ def cmd_agent(args: list[str]) -> None:
                 task["updated_at"] = utcnow()
                 store.write("task", "update", task["id"], _strip(task))
             elif role == "reviewer":
+                # unavailable already handled by the early return above.
                 if verdict not in ("approved", "rejected"):
-                    die("reviewer verdict must be approved|rejected|unavailable")
+                    die("reviewer verdict must be approved|rejected")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "reviewing":
@@ -997,8 +999,9 @@ def cmd_agent(args: list[str]) -> None:
                 task["updated_at"] = utcnow()
                 store.write("task", "update", task["id"], _strip(task))
             elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
+                # unavailable already handled by the early return above.
                 if verdict not in ("approved", "rejected"):
-                    die("pr-reviewer verdict must be approved|rejected|unavailable")
+                    die("pr-reviewer verdict must be approved|rejected")
                 _require_owned(store, task, "task")
             else:
                 die(f"unknown agent role: {role}")
@@ -1030,6 +1033,10 @@ def cmd_check(args: list[str]) -> None:
         die("result must be pass|fail|skip")
     if result == "skip" and (output is None or output == ""):
         die("skip requires --output")
+    if head:
+        head = head.lower()
+        if not _SHA_RE.fullmatch(head):
+            die("--head must be a git SHA (lowercase hex, length 7-40)")
     store = open_store()
     try:
         task = _need(store, "task", tid)

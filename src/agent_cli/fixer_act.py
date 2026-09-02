@@ -388,7 +388,6 @@ def _drive_one(
     repo = _repo_ok(payload.get("repo") or task.get("repo")) or ""
     brief = _error_fix_brief(store, session_id, error_id) or ""
     worktree = Path(store.home) / "error-fix-work" / tid
-    cwd = str(worktree) if worktree.is_dir() else str(store.home)
     # Thread pushed SHA across steps (mirrors cmd_run's extra_head=head).
     head: str | None = None
     steps = 0
@@ -398,6 +397,9 @@ def _drive_one(
         task = store.row("task", tid) or task
         if str(task.get("state") or "") in ("done", "failed"):
             return f"error-fix-work {tid} state={task.get('state')}"
+        if not (worktree / ".git").is_dir():
+            return f"error-fix-work {tid} worktree-not-ready"
+        cwd = str(worktree)
 
         snap = main_mod._chain_snapshot(store, tid, extra_head=head)
         if not is_error_fix_originated(snap):

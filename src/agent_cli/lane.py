@@ -26,10 +26,13 @@ _STATUS_RE = re.compile(
     r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
     re.IGNORECASE,
 )
-# FINDINGS section: header line, then entries until the next ALL-CAPS section header
-# (STATUS / REASON / SCOPE / DIMENSION / NOT-VERIFIABLE / GAPS / …) or end of text.
+# FINDINGS section: header line, then entries until NOT-VERIFIABLE / GAPS /
+# a duplicate FINDINGS header, or end of text. STATUS / REASON / SCOPE /
+# DIMENSION are not terminators — they may appear as finding text.
 _FINDINGS_HEADER_RE = re.compile(r"(?m)^FINDINGS:[ \t]*(.*)$", re.IGNORECASE)
-_SECTION_HEADER_RE = re.compile(r"(?m)^[A-Z][A-Z0-9_-]*:([ \t]|$)")
+_FINDINGS_TERMINATOR_RE = re.compile(
+    r"(?m)^(?:FINDINGS|NOT-VERIFIABLE|GAPS):([ \t]|$)", re.IGNORECASE
+)
 _ZERO_TOKENS = frozenset({"", "0", "none", "n/a", "-", "—", "–"})
 
 
@@ -68,7 +71,7 @@ def count_findings(text: str) -> int:
     if same_line:
         body_lines.append(same_line)
     for line in after.splitlines():
-        if _SECTION_HEADER_RE.match(line):
+        if _FINDINGS_TERMINATOR_RE.match(line):
             break
         body_lines.append(line)
     entries = 0

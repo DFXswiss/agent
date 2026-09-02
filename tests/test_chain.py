@@ -275,6 +275,41 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertTrue(v2.allowed)
 
+    def test_local_check_bound_head_last_wins_over_earlier_fail(self) -> None:
+        """Same-head fail then later pass must allow closing local_check_pass."""
+        cl = _pending("implement")
+        for k in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+        ):
+            cl[k] = "ja"
+        head = "cccccccccccccccccccccccccccccccccccccccc"
+        allowed = close_allowed(
+            "implement",
+            "local_check_pass",
+            checklist=cl,
+            source="script",
+            evidence="run auto",
+            snapshot={
+                "head_sha": head,
+                "local_checks": [
+                    {
+                        "name": "local",
+                        "result": "fail",
+                        "head_sha": head,
+                    },
+                    {
+                        "name": "local",
+                        "result": "pass",
+                        "head_sha": head,
+                    },
+                ],
+            },
+        )
+        self.assertTrue(allowed.allowed)
+
     def test_gate_close_rejects_stale_head_approval(self) -> None:
         """An approved gate for a different head must not satisfy the current head."""
         cl = _pending("implement")

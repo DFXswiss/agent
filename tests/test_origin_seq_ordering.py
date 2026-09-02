@@ -16,7 +16,17 @@ from agent_cli.main import (
     load_task_dict,
     main,
 )
-from agent_cli.store import Store
+from agent_cli.store import Store, dumps
+
+
+def _insert_legacy_row(store: Store, table: str, row_id: str, payload: dict) -> None:
+    """Write directly into row_data, bypassing _write_in_txn's origin_seq auto-stamp —
+    simulates a genuinely pre-origin_seq legacy row (no origin_seq key at all)."""
+    origin = store.device_id()
+    with store._lock, store.conn.transaction():
+        store._upsert_row(
+            table, row_id, origin, dumps(payload), str(payload.get("recorded_at") or "")
+        )
 
 
 def _run(home: Path, argv: list[str]) -> None:
@@ -199,9 +209,9 @@ def test_missing_origin_seq_sorts_before_stamped_rows(tmp_path: Path) -> None:
     store = Store(tmp_path)
     try:
         tid = "task-legacy"
-        store.write(
+        _insert_legacy_row(
+            store,
             "review_gate",
-            "insert",
             "g-legacy",
             {
                 "id": "g-legacy",
@@ -227,9 +237,12 @@ def test_missing_origin_seq_sorts_before_stamped_rows(tmp_path: Path) -> None:
                 "verdict": "rejected",
                 "head_sha": "new",
                 "recorded_at": "2026-01-01T00:00:00Z",
-                "origin_seq": 1,
             },
         )
+        legacy = next(
+            r for r in store.rows("review_gate") if r.get("id") == "g-legacy"
+        )
+        assert "origin_seq" not in legacy
         latest = _latest_gates(store, tid)
         assert latest[("grok-pr", "quality")]["id"] == "g-stamped"
     finally:

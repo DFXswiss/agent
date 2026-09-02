@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from agent_cli.fixer_act import (
     _runner_to_completed,
     drive_error_fix_tasks,
     template_pr_open_payload,
+    write_error_fix_spec,
 )
 from agent_cli.git_act import GitActError
 from agent_cli.lane import LaneResult, findings_header_present
@@ -155,6 +157,7 @@ def _bootstrap_error_fix_task(
     run(home, ["round", "start", "--task", tid])
     worktree = home / "error-fix-work" / tid
     worktree.mkdir(parents=True, exist_ok=True)
+    (worktree / ".git").mkdir(exist_ok=True)
     (worktree / ".spec.md").write_text("# Task\n\nfix it\n", encoding="utf-8")
     capsys.readouterr()
     return tid
@@ -184,6 +187,71 @@ def test_findings_header_present_distinguishes_absent() -> None:
     assert findings_header_present("STATUS: complete\n") is False
     assert findings_header_present("STATUS: complete\nFINDINGS: none\n") is True
     assert findings_header_present("FINDINGS:\n- a real finding\n") is True
+
+
+def test_write_error_fix_spec_omits_raw_log_fields(tmp_path: Path) -> None:
+    """write_error_fix_spec must never leak excerpt/message/stack into the spec body."""
+    secret_excerpt = "SECRET_EXCERPT_TOKEN_xyz raw stack trace line"
+    secret_message = "SECRET_MESSAGE_TOKEN_xyz"
+    secret_stack = "SECRET_STACK_TOKEN_xyz at foo.py:1"
+    store = _store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            ERROR_ID,
+            {
+                "id": ERROR_ID,
+                "session_id": "sess-1",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "repo": "org/app",
+                    "service": "api",
+                    "environment": "prod",
+                    "class": "TimeoutError",
+                    "excerpt": secret_excerpt,
+                    "message": secret_message,
+                    "stack": secret_stack,
+                },
+                "execution_status": "done",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "sess-1",
+                "type": "error.fix",
+                "payload": {
+                    "error_id": ERROR_ID,
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "brief": "Timeout in handler; add retry.",
+                },
+                "execution_status": "pending",
+            },
+        )
+        tid = str(uuid.uuid4())
+        path = write_error_fix_spec(
+            store,
+            tid,
+            error_id=ERROR_ID,
+            session_id="sess-1",
+            repo="org/app",
+        )
+        text = path.read_text(encoding="utf-8")
+        assert "# Context" in text
+        assert "# Task" in text
+        assert "# Constraints" in text
+        assert "# Verification" in text
+        assert "# Definition of Done" in text
+        assert secret_excerpt not in text
+        assert secret_message not in text
+        assert secret_stack not in text
+    finally:
+        store.close()
 
 
 def test_fixer_threads_pushed_head_into_pr_gate(
@@ -238,6 +306,44 @@ def test_fixer_threads_pushed_head_into_pr_gate(
         assert g.get("head_sha"), f"gate missing head_sha: {g}"
         assert str(g["head_sha"]).lower() == pushed_sha
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+
+def test_fixer_defers_when_worktree_not_ready(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task row without a materialized worktree .git must defer without running steps."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    worktree = tmp_path / "error-fix-work" / tid
+    git_dir = worktree / ".git"
+    assert git_dir.is_dir()
+    shutil.rmtree(git_dir)
+    assert not git_dir.exists()
+
+    before_state = _task_state(tmp_path, tid)
+    called = {"n": 0}
+
+    def spy_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        called["n"] += 1
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", spy_rtc)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+        )
+    finally:
+        store.close()
+
+    assert "worktree-not-ready" in result
+    assert called["n"] == 0
+    assert _task_state(tmp_path, tid) == before_state
 
 
 def test_fixer_local_check_exec_uses_worktree_cwd(

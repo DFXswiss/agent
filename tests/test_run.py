@@ -1053,6 +1053,215 @@ def test_execute_spine_step_unbounded_round_cap_without_kwarg(
         store.close()
 
 
+def test_check_record_rejects_invalid_head(tmp_path: Path) -> None:
+    """--head must be a lowercase hex git SHA; ref names are refused before store access."""
+    with pytest.raises(SystemExit, match="--head must be a git SHA"):
+        run(
+            tmp_path,
+            [
+                "check",
+                "record",
+                "--task",
+                "does-not-matter",
+                "--name",
+                "local",
+                "--command",
+                "pytest -q",
+                "--result",
+                "pass",
+                "--head",
+                "origin/develop",
+            ],
+        )
+
+
+def test_local_check_reruns_after_same_head_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prior fail for the current head must not suppress a re-run; later pass satisfies."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["local_check_pass"] != "ja"
+
+    same_sha = "cccccccccccccccccccccccccccccccccccccccc"
+    run(
+        tmp_path,
+        [
+            "check",
+            "record",
+            "--task",
+            tid,
+            "--name",
+            "local",
+            "--command",
+            "pytest -q",
+            "--result",
+            "fail",
+            "--output",
+            "boom",
+            "--head",
+            same_sha,
+        ],
+    )
+    capsys.readouterr()
+    assert any(
+        c.get("name") == "local"
+        and c.get("result") == "fail"
+        and str(c.get("head_sha") or "").lower() == same_sha
+        for c in _local_checks(tmp_path, tid)
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task = dict(task)
+        task["state"] = "local-check"
+        store.write(
+            "task",
+            "update",
+            tid,
+            {k: v for k, v in task.items() if not str(k).startswith("_")},
+        )
+
+        check_calls = {"n": 0}
+
+        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+            if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+                return Completed(0, same_sha + "\n", "")
+            if argv and argv[0] == "pytest":
+                check_calls["n"] += 1
+                return Completed(0, "ok\n", "")
+            return Completed(0, "", "")
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=same_sha,
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert check_calls["n"] == 1, "must re-run check after same-head fail"
+        assert outcome.kind in ("closed", "agent_closed") or outcome.key == "local_check_pass"
+        checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
+        assert any(
+            c.get("name") == "local"
+            and c.get("result") == "pass"
+            and str(c.get("head_sha") or "").lower() == same_sha
+            for c in checks
+        )
+    finally:
+        store.close()
+    assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+
+
+def test_local_check_reruns_after_same_head_pass_then_fail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Last-wins: a later same-head fail must re-run even when an earlier pass exists."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["local_check_pass"] != "ja"
+
+    same_sha = "dddddddddddddddddddddddddddddddddddddddd"
+    run(
+        tmp_path,
+        [
+            "check",
+            "record",
+            "--task",
+            tid,
+            "--name",
+            "local",
+            "--command",
+            "pytest -q",
+            "--result",
+            "pass",
+            "--output",
+            "ok",
+            "--head",
+            same_sha,
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "check",
+            "record",
+            "--task",
+            tid,
+            "--name",
+            "local",
+            "--command",
+            "pytest -q",
+            "--result",
+            "fail",
+            "--output",
+            "regression",
+            "--head",
+            same_sha,
+        ],
+    )
+    capsys.readouterr()
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task = dict(task)
+        task["state"] = "local-check"
+        store.write(
+            "task",
+            "update",
+            tid,
+            {k: v for k, v in task.items() if not str(k).startswith("_")},
+        )
+
+        check_calls = {"n": 0}
+
+        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+            if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+                return Completed(0, same_sha + "\n", "")
+            if argv and argv[0] == "pytest":
+                check_calls["n"] += 1
+                return Completed(0, "ok\n", "")
+            return Completed(0, "", "")
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=same_sha,
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert check_calls["n"] == 1, "must re-run check after same-head pass→fail"
+        assert outcome.kind in ("closed", "agent_closed") or outcome.key == "local_check_pass"
+        checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
+        assert any(
+            c.get("name") == "local"
+            and c.get("result") == "pass"
+            and str(c.get("head_sha") or "").lower() == same_sha
+            for c in checks
+        )
+    finally:
+        store.close()
+    assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+
+
 def test_local_check_reruns_after_pr_rejection_with_new_head(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

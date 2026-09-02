@@ -385,7 +385,7 @@ def build_review_spec_file(
     return str(spec_path)
 
 
-def _reset_keys(store: Any, tid: str, keys: tuple[str, ...], *, evidence: str) -> None:
+def _reset_keys(store: Store, tid: str, keys: tuple[str, ...], *, evidence: str) -> None:
     checklist = {
         str(r["key"]): str(r["status"])
         for r in store.rows("checklist_item")
@@ -397,12 +397,12 @@ def _reset_keys(store: Any, tid: str, keys: tuple[str, ...], *, evidence: str) -
 
 
 def _resolve_gate_head(
-    store: Any,
+    store: Store,
     tid: str,
     head: str | None,
     *,
     cwd: str | None = None,
-    exec_argv: Callable[..., Any] | None = None,
+    exec_argv: ExecArgv | None = None,
 ) -> str:
     """Resolve a git SHA for gate record: explicit head, pushed evidence, or HEAD."""
     if head and _SHA_RE.fullmatch(head.lower()):
@@ -472,7 +472,7 @@ def _apply_rejection_resets(
 
 
 def _finish_agent_pass(
-    store: Any,
+    store: Store,
     tid: str,
     *,
     role: str,
@@ -482,7 +482,7 @@ def _finish_agent_pass(
     result: LaneResult,
     step: Step,
     cwd: str | None = None,
-    exec_argv: Callable[..., Any] | None = None,
+    exec_argv: ExecArgv | None = None,
 ) -> RunOutcome:
     from . import main as main_mod
 
@@ -892,15 +892,21 @@ def execute_spine_step(
             )
         has_fresh = False
         if check_head:
+            latest_local: dict | None = None
             for c in snap.get("local_checks") or []:
                 if not isinstance(c, dict):
                     continue
                 if str(c.get("name") or "") != "local":
                     continue
                 row_head = str(c.get("head_sha") or "").strip().lower()
-                if row_head and row_head == check_head:
-                    has_fresh = True
-                    break
+                if row_head != check_head:
+                    continue
+                latest_local = c  # oldest→newest; last one wins
+            if latest_local is not None and str(latest_local.get("result") or "") in (
+                "pass",
+                "skip",
+            ):
+                has_fresh = True
         if not has_fresh:
             env_cmd = os.environ.get("AGENT_CHECK_COMMAND")
             if env_cmd is None:

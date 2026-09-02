@@ -70,10 +70,6 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
         if completed.returncode != 0:
             raise GitActError(_fail_detail(completed, "git push failed"))
     else:
-        upstream = completed.stdout.strip()
-        if not upstream:
-            raise GitActError("no upstream")
-
         completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
         if completed.returncode != 0 or not completed.stdout.strip():
             raise GitActError("no upstream remote")

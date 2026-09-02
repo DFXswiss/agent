@@ -396,10 +396,17 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
                 for c in checks
                 if str(c.get("head_sha") or "").strip().lower() == want
             ]
-            if any(c.get("result") == "fail" for c in for_head):
+            # Last row per name wins (list is oldest→newest), same as unbound.
+            latest: dict[str, Any] = {}
+            for c in for_head:
+                name = c.get("name")
+                if name is not None:
+                    latest[str(name)] = c
+            latest_list = list(latest.values())
+            if any(c.get("result") == "fail" for c in latest_list):
                 return "local_check fail"
             if not any(
-                str(c.get("result") or "") in ("pass", "skip") for c in for_head
+                str(c.get("result") or "") in ("pass", "skip") for c in latest_list
             ):
                 return "no local_check for current head"
             return ""
