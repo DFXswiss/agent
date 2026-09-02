@@ -26,6 +26,56 @@ _STATUS_RE = re.compile(
     r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
     re.IGNORECASE,
 )
+# FINDINGS section: header line, then entries until the next ALL-CAPS section header
+# (STATUS / REASON / SCOPE / DIMENSION / NOT-VERIFIABLE / GAPS / …) or end of text.
+_FINDINGS_HEADER_RE = re.compile(r"(?m)^FINDINGS:[ \t]*(.*)$", re.IGNORECASE)
+_SECTION_HEADER_RE = re.compile(r"(?m)^[A-Z][A-Z0-9_-]*:[ \t]")
+_ZERO_TOKENS = frozenset({"", "0", "none", "n/a", "-", "—", "–"})
+
+
+def findings_header_present(text: str) -> bool:
+    """True when a FINDINGS: section header is present (parseable report)."""
+    return _FINDINGS_HEADER_RE.search(text) is not None
+
+
+def count_findings(text: str) -> int:
+    """Count non-empty FINDINGS entries. Empty / 0 / none → 0.
+
+    Absent FINDINGS: header also returns 0; callers that must distinguish
+    "explicitly zero" from "unparseable" should use findings_header_present().
+
+    Calibrated to the grok-reviewer / codex-reviewer report contract:
+    STATUS / REASON / SCOPE / DIMENSION / FINDINGS / NOT-VERIFIABLE / GAPS.
+    """
+    match = _FINDINGS_HEADER_RE.search(text)
+    if match is None:
+        return 0
+    same_line = (match.group(1) or "").strip()
+    after = text[match.end() :]
+    body_lines: list[str] = []
+    if same_line:
+        body_lines.append(same_line)
+    for line in after.splitlines():
+        if _SECTION_HEADER_RE.match(line):
+            break
+        body_lines.append(line)
+    entries = 0
+    for raw in body_lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        # bullet / numbered prefixes
+        for prefix in ("- ", "* ", "• "):
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix) :].strip()
+                break
+        else:
+            if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)":
+                stripped = stripped[2:].strip()
+        if stripped.lower() in _ZERO_TOKENS:
+            continue
+        entries += 1
+    return entries
 
 
 @dataclass

@@ -665,9 +665,22 @@ The model never receives production credentials. Analysis that only reads the ex
 
 `agent watch error-fix` find-or-creates the implement task and clones `https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`; `agent github pending` still opens drafts, and a retry draft uses the existing head `error-fix-<id8>`.
 
+`spec_written` stays human-only for ordinary implement tasks (`HUMAN_KEYS`, step kind `human`). Exception: when the task payload carries `error_id` (error-fix-originated), `close-step --source script` may set `spec_written=ja` with evidence. Evidence is still mandatory.
+
 ### 21.6 Not in this revision
 
 - A second hub state machine, leases, or autonomous merge
+
+### 21.7 Automated fixer driver
+
+`agent watch error-fix-work` drains open error-fix `implement` tasks on this device (`payload.error_id` set, state not `done`/`failed`) from `spec_written` through a draft `pr.open`, using only script control flow and the `grok`/`codex` CLIs via `lane.launch()`. It is not wired into `agent daemon`.
+
+- Scripts the five-part spec under `$AGENT_HOME/error-fix-work/<task_id>/.spec.md` from the `error.fix` brief plus `error.seen` metadata (never raw log excerpts), closes `spec_written` via the script carve-out above, then `agent round start`.
+- Walks the spine with the same step executor as `agent run` (including auto pass/fail for reviewer and PR-reviewer lanes from `STATUS:` + `FINDINGS:`). Round retries reset the relevant checklist keys to `nein` and call `agent round start`. Cap is `task.current_round` against 5: exceeding it sets `task state failed` and stops touching that task.
+- If a vendor CLI binary is missing (`OSError` / `FileNotFoundError` before any `LaneResult`) or a lane returns `LaneResult(status="unavailable")` on both the initial attempt and the one retry, the driver mutates nothing for that task, notes the CLI looks unavailable, and moves on — the next scan retries after a human fixes PATH/auth.
+- Each scan re-checks from the ledger (not per-call local state) whether `pushed` is closed but no `pr.open` activity row exists yet for that task's branch head; if so it retries the insertion — so a failed insert is not silently skipped by the next scan.
+- After `pushed`, inserts a pending `pr.open` (title/body per CONTRIBUTING) and runs `agent github pending`.
+- Failing a task via lane retry-exhaustion also finishes the still-working agent row (`blocked` for implementer, `rejected` for reviewer/pr-reviewer roles) so the row does not block a later manual round-start recovery.
 
 ## 22. Static supervise loop (v1)
 

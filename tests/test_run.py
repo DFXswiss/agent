@@ -305,7 +305,7 @@ def test_run_prints_vendor_stdout(
             stderr="",
         )
 
-    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     run(
         tmp_path,
         [
@@ -343,7 +343,7 @@ def test_run_spec_file_implementer_complete(
             stderr="",
         )
 
-    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     run(
         tmp_path,
         [
@@ -387,9 +387,10 @@ def test_run_missing_spec_file_does_not_leave_working_agent(
     assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 
-def test_run_spec_file_reviewer_complete_no_auto_approve(
+def test_run_spec_file_reviewer_complete_auto_approves(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """STATUS: complete + FINDINGS: none → auto-approve reviewer_approved."""
     tid = _bootstrap_implement(tmp_path, capsys)
     _finish_implementer(tmp_path, tid, capsys)
     run(tmp_path, ["run", "--task", tid])  # implementer_done
@@ -404,11 +405,103 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
             status="complete",
             argv=["grok"],
             returncode=0,
+            # Explicit FINDINGS header with zero items (not header-absent).
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    run(
+        tmp_path,
+        [
+            "run",
+            "--task",
+            tid,
+            "--spec-file",
+            str(spec),
+            "--no-tmux",
+            "--cwd",
+            str(tmp_path),
+        ],
+    )
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["reviewer_approved"] == "ja"
+    assert any(
+        a.get("role") == "reviewer" and a.get("status") == "done"
+        for a in _agents(tmp_path, tid)
+    )
+
+
+def test_run_spec_file_reviewer_complete_without_findings_header_retries_then_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """STATUS: complete with no FINDINGS: header is unparseable → retry then fail."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # implementer_done
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return LaneResult(
+            role="reviewer",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
             stdout="STATUS: complete\n",
             stderr="",
         )
 
-    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert exc.value.code != 0
+    assert calls["n"] == 2  # initial + one retry
+    assert _checklist(tmp_path, tid)["reviewer_approved"] != "ja"
+    assert _task_state(tmp_path, tid) == "failed"
+
+
+def test_run_spec_file_vendor_unavailable_exits_nonzero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LaneResult(status=unavailable) on both attempts → exit 2, task left open."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # implementer_done
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return LaneResult(
+            role="reviewer",
+            vendor="grok",
+            status="unavailable",
+            argv=["grok"],
+            returncode=127,
+            stdout="",
+            stderr="command not found",
+        )
+
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     with pytest.raises(SystemExit) as exc:
         run(
             tmp_path,
@@ -424,11 +517,58 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
             ],
         )
     assert exc.value.code == 2
+    assert calls["n"] == 2  # initial + one retry
     assert _checklist(tmp_path, tid)["reviewer_approved"] != "ja"
-    for agent in _agents(tmp_path, tid):
-        if agent.get("role") != "reviewer":
-            continue
-        assert agent.get("status") == "working"
+    assert _task_state(tmp_path, tid) != "failed"
+
+
+def test_run_spec_file_reviewer_retry_exhaustion_finishes_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retry-exhaustion fails the task and finishes the still-working reviewer agent."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # implementer_done
+    capsys.readouterr()
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return LaneResult(
+            role="reviewer",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert exc.value.code != 0
+    assert calls["n"] == 2
+    assert _task_state(tmp_path, tid) == "failed"
+    agents = _agents(tmp_path, tid)
+    assert not any(a.get("status") == "working" for a in agents)
+    reviewer = next(a for a in agents if a.get("role") == "reviewer")
+    assert reviewer.get("status") == "done"
+    assert "retry" in str(reviewer.get("note") or "").lower()
 
 
 def _advance_to_pushed(

@@ -1,0 +1,554 @@
+"""Automated fixer driver for error-fix implement tasks.
+
+Drains open tasks with payload.error_id from spec_written through a draft
+pr.open using script control flow and lane.launch() only — no Claude session.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from .chain import close_allowed, is_error_fix_originated, next_steps
+from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
+from .runtime import Completed
+from .run_core import DEFAULT_ROUND_CAP, RunOutcome, execute_spine_step
+from .store import Store, StoreError
+
+Runner = Callable[[list[str]], Completed]
+
+# Bound the per-task step loop (rounds × spine length, with headroom).
+_MAX_STEPS_PER_TASK = 40
+
+
+def _error_fix_brief(store: Store, session_id: str, error_id: str) -> str | None:
+    """Return payload.brief from the session's error.fix row for this error_id."""
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("session_id") != session_id:
+            continue
+        if row.get("type") != "error.fix":
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or payload.get("error_id") != error_id:
+            continue
+        brief = payload.get("brief")
+        if isinstance(brief, str) and brief.strip():
+            return brief.strip()
+    return None
+
+
+def write_error_fix_spec(
+    store: Store,
+    tid: str,
+    *,
+    error_id: str,
+    session_id: str,
+    repo: str,
+) -> Path:
+    """Write a five-part spec under $AGENT_HOME/error-fix-work/<task_id>/.spec.md."""
+    seen = _error_seen(store, session_id, error_id)
+    seen_payload = seen.get("payload") if isinstance(seen.get("payload"), dict) else {}
+    brief = _error_fix_brief(store, session_id, error_id) or ""
+    fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
+    service = _nonempty_str(seen_payload.get("service")) or ""
+    environment = _nonempty_str(seen_payload.get("environment")) or ""
+    class_name = _nonempty_str(seen_payload.get("class")) or ""
+    # Never feed raw log excerpt fields into the spec (DESIGN.md §19.2).
+    parent = Path(store.home) / "error-fix-work" / tid
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = parent / ".spec.md"
+    body = (
+        f"# Context\n\n"
+        f"- repo: `{repo}`\n"
+        f"- error_id: `{error_id}`\n"
+        f"- fingerprint: `{fingerprint}`\n"
+        f"- service: `{service}`\n"
+        f"- environment: `{environment}`\n"
+        f"- class: `{class_name}`\n\n"
+        f"# Task\n\n"
+        f"{brief or '(no brief provided)'}\n\n"
+        f"# Constraints\n\n"
+        f"- Patch only what the brief requires.\n"
+        f"- Do not commit secrets, credentials, or raw production log lines.\n"
+        f"- Follow the target repository CONTRIBUTING.\n"
+        f"- Open a draft pull request only; a human merges.\n\n"
+        f"# Verification\n\n"
+        f"- Run the repository's usual local check (typically `pytest -q`).\n"
+        f"- Confirm the failure mode described by the brief is addressed.\n\n"
+        f"# Definition of Done\n\n"
+        f"- Spec implemented and inner reviewer approved.\n"
+        f"- Local checks pass; branch pushed; draft PR opened.\n"
+        f"- Four PR-review gates approved on this head (or allowed n_a).\n"
+    )
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def template_pr_open_payload(
+    *,
+    session_id: str,
+    repo: str,
+    error_id: str,
+    brief: str,
+    fingerprint: str,
+    title_suffix: str | None = None,
+) -> dict[str, Any]:
+    """Build pr.open payload (repo/title/head/body) per CONTRIBUTING.md."""
+    short = error_id[:8]
+    head = f"error-fix-{short}"
+    suffix = (title_suffix or brief or f"error-fix {short}").strip()
+    # One-line title body after the session prefix.
+    if "\n" in suffix:
+        suffix = suffix.splitlines()[0].strip()
+    if len(suffix) > 72:
+        suffix = suffix[:69] + "..."
+    title = f"{session_id[:8]} - {suffix}"
+    en = (
+        f"Automated error-fix for `{fingerprint or short}` in `{repo}`. "
+        f"Draft only; a human merges. "
+        f"Brief: {brief[:200] if brief else 'see task spec'}."
+    )
+    de = (
+        f"Automatischer error-fix für `{fingerprint or short}` in `{repo}`. "
+        f"Nur Entwurf; ein Mensch merged. "
+        f"Brief: {brief[:200] if brief else 'siehe Task-Spec'}."
+    )
+    details = (
+        f"<details>\n"
+        f"<summary>Details</summary>\n\n"
+        f"- error_id: `{error_id}`\n"
+        f"- fingerprint: `{fingerprint}`\n"
+        f"- head: `{head}`\n"
+        f"- brief:\n\n```\n{brief or '(none)'}\n```\n\n"
+        f"</details>\n"
+    )
+    body = f"EN:\n{en}\n\nDE:\n{de}\n\n{details}"
+    return {
+        "repo": repo,
+        "title": title,
+        "head": head,
+        "body": body,
+    }
+
+
+def _pr_open_row_exists(store: Store, *, head: str) -> bool:
+    """True when a pr.open activity row already exists for this branch head."""
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "pr.open":
+            continue
+        payload = row.get("payload")
+        if isinstance(payload, dict) and payload.get("head") == head:
+            return True
+    return False
+
+
+def insert_pr_open_and_scan(
+    store: Store,
+    *,
+    session_id: str,
+    payload: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Insert pending pr.open (cmd_activity-equivalent) and run scan_github.
+
+    Direct store.write mirrors cmd_activity's non-error-fix branch for
+    ACTIVITY_TYPES members (same pattern as error_fix_act owning its rows).
+    """
+    from .github_act import scan_github
+
+    activity_id = str(uuid.uuid4())
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": session_id,
+            "type": "pr.open",
+            "payload": payload,
+            "execution_status": "pending",
+        },
+    )
+    return scan_github(store, runner)
+
+
+def _close_spec_written(store: Store, tid: str, *, error_id: str, evidence: str) -> None:
+    from . import main as main_mod
+
+    snap = main_mod._chain_snapshot(store, tid)
+    wf = str(snap["workflow"])
+    verdict = close_allowed(
+        wf,
+        "spec_written",
+        checklist=snap["checklist"],
+        source="script",
+        evidence=evidence,
+        snapshot=snap,
+    )
+    if not verdict.allowed:
+        raise StoreError(verdict.reason)
+    main_mod.cmd_close_step(
+        [
+            "--task",
+            tid,
+            "--key",
+            "spec_written",
+            "--source",
+            "script",
+            "--evidence",
+            evidence,
+        ]
+    )
+
+
+def _contributing_ok_evidence(snap: dict[str, Any]) -> str:
+    """Cite approved PR-gate records already in the ledger (vendor/dim/verdict@head)."""
+    want = (
+        ("grok", "quality"),
+        ("grok", "logic"),
+        ("codex", "quality"),
+        ("codex", "logic"),
+    )
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for g in snap.get("gates") or []:
+        if not isinstance(g, dict):
+            continue
+        vendor = str(g.get("vendor") or "")
+        dim = str(g.get("dimension") or "")
+        by_key[(vendor, dim)] = g
+    parts: list[str] = []
+    head = ""
+    for vendor, dim in want:
+        g = by_key.get((vendor, dim)) or {}
+        verd = str(g.get("verdict") or "missing")
+        sha = str(g.get("head_sha") or "")
+        if sha and not head:
+            head = sha
+        parts.append(f"{vendor}/{dim}={verd}@{sha or '-'}")
+    head_bit = f" head={head}" if head else ""
+    return f"PR gates approved: {', '.join(parts)}{head_bit}"
+
+
+def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
+    """Set n_a deviation keys + summaries so task-done can pass."""
+    from . import main as main_mod
+
+    checklist = {
+        str(r["key"]): str(r["status"])
+        for r in store.rows("checklist_item")
+        if r.get("task_id") == tid
+    }
+    for key in ("deviation_declared", "deviation_granted"):
+        if checklist.get(key) in (None, "pending", "nein"):
+            main_mod.cmd_checklist(
+                [
+                    "set",
+                    "--task",
+                    tid,
+                    "--key",
+                    key,
+                    "--status",
+                    "n_a",
+                    "--source",
+                    "script",
+                    "--evidence",
+                    "error-fix auto: no deviation",
+                ]
+            )
+    if checklist.get("contributing_ok") in (None, "pending", "nein"):
+        snap = main_mod._chain_snapshot(store, tid)
+        ready = next_steps(str(snap["workflow"]), snap["checklist"], spine_only=True)
+        if ready and ready[0].key == "contributing_ok":
+            main_mod.cmd_close_step(
+                [
+                    "--task",
+                    tid,
+                    "--key",
+                    "contributing_ok",
+                    "--source",
+                    "script",
+                    "--evidence",
+                    _contributing_ok_evidence(snap),
+                ]
+            )
+    task = store.row("task", tid)
+    if task is None:
+        return
+    en = (task.get("change_summary_en") or "").strip()
+    de = (task.get("change_summary_de") or "").strip()
+    if not en or not de:
+        one = (brief or task.get("title") or "error-fix").splitlines()[0].strip()
+        if len(one) > 120:
+            one = one[:117] + "..."
+        main_mod.cmd_task(
+            [
+                "summary",
+                "--id",
+                tid,
+                "--en",
+                one or "error-fix patch.",
+                "--de",
+                one or "error-fix Patch.",
+            ]
+        )
+
+
+def _open_error_fix_tasks(store: Store) -> list[dict[str, Any]]:
+    origin = store.device_id()
+    out: list[dict[str, Any]] = []
+    for row in store.rows("task"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("workflow") != "implement":
+            continue
+        state = str(row.get("state") or "")
+        if state in ("done", "failed"):
+            continue
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or not payload.get("error_id"):
+            continue
+        out.append(row)
+    out.sort(key=lambda r: str(r.get("id") or ""))
+    return out
+
+
+def _drive_one(
+    store: Store,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    round_cap: int,
+    lane_runner: Any = None,
+) -> str:
+    from . import main as main_mod
+
+    tid = str(task["id"])
+    session_id = str(task.get("session_id") or "")
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    error_id = str(payload.get("error_id") or "")
+    repo = _repo_ok(payload.get("repo") or task.get("repo")) or ""
+    brief = _error_fix_brief(store, session_id, error_id) or ""
+    worktree = Path(store.home) / "error-fix-work" / tid
+    cwd = str(worktree) if worktree.is_dir() else str(store.home)
+    # Thread pushed SHA across steps (mirrors cmd_run's extra_head=head).
+    head: str | None = None
+    steps = 0
+
+    while steps < _MAX_STEPS_PER_TASK:
+        steps += 1
+        task = store.row("task", tid) or task
+        if str(task.get("state") or "") in ("done", "failed"):
+            return f"error-fix-work {tid} state={task.get('state')}"
+
+        snap = main_mod._chain_snapshot(store, tid, extra_head=head)
+        if not is_error_fix_originated(snap):
+            return f"error-fix-work {tid} skip (not error-fix)"
+        snap_head = str(snap.get("head_sha") or "").strip()
+        if snap_head and not head:
+            head = snap_head
+
+        checklist = snap["checklist"]
+        if (
+            error_id
+            and repo
+            and checklist.get("pushed") == "ja"
+            and not _pr_open_row_exists(store, head=f"error-fix-{error_id[:8]}")
+        ):
+            try:
+                seen = _error_seen(store, session_id, error_id)
+                seen_payload = (
+                    seen.get("payload") if isinstance(seen.get("payload"), dict) else {}
+                )
+                fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
+                pr_payload = template_pr_open_payload(
+                    session_id=session_id,
+                    repo=repo,
+                    error_id=error_id,
+                    brief=brief,
+                    fingerprint=fingerprint,
+                    title_suffix=str(task.get("title") or ""),
+                )
+                insert_pr_open_and_scan(
+                    store, session_id=session_id, payload=pr_payload, runner=runner
+                )
+            except (StoreError, OSError, SystemExit) as exc:
+                return f"error-fix-work {tid} pr.open-error ({exc})"
+            # Fall through so this scan can continue the spine; next scan
+            # skips once the pr.open row exists.
+
+        ready = next_steps(str(snap["workflow"]), snap["checklist"], spine_only=True)
+        if not ready:
+            _ensure_done_readiness(store, tid, brief=brief)
+            try:
+                main_mod.cmd_task(["state", tid, "done"])
+            except SystemExit as exc:
+                return f"error-fix-work {tid} done-blocked ({exc})"
+            return f"error-fix-work {tid} done"
+
+        step = ready[0]
+
+        if step.key == "spec_written":
+            if not error_id or not repo:
+                return f"error-fix-work {tid} failed (missing error_id/repo)"
+            write_error_fix_spec(
+                store,
+                tid,
+                error_id=error_id,
+                session_id=session_id,
+                repo=repo,
+            )
+            evidence = f"auto spec from error.fix brief (error_id={error_id[:8]})"
+            try:
+                _close_spec_written(store, tid, error_id=error_id, evidence=evidence)
+            except (StoreError, SystemExit) as exc:
+                return f"error-fix-work {tid} spec_written-blocked ({exc})"
+            # First round (current_round 0 → 1), same as test_run bootstrap.
+            main_mod.cmd_round(["start", "--task", tid])
+            continue
+
+        if step.key == "contributing_ok":
+            try:
+                main_mod.cmd_close_step(
+                    [
+                        "--task",
+                        tid,
+                        "--key",
+                        "contributing_ok",
+                        "--source",
+                        "script",
+                        "--evidence",
+                        _contributing_ok_evidence(snap),
+                    ]
+                )
+            except SystemExit as exc:
+                return f"error-fix-work {tid} contributing_ok-blocked ({exc})"
+            continue
+
+        spec_path = worktree / ".spec.md"
+        if not spec_path.is_file() and error_id and repo:
+            write_error_fix_spec(
+                store,
+                tid,
+                error_id=error_id,
+                session_id=session_id,
+                repo=repo,
+            )
+
+        try:
+            outcome: RunOutcome = execute_spine_step(
+                store,
+                tid,
+                head=head,
+                spec_file=str(spec_path) if spec_path.is_file() else None,
+                cwd=cwd,
+                tmux=False,
+                runner=lane_runner,
+                round_cap=round_cap,
+                # cwd-aware like main._exec_argv so local_check_pass runs in worktree.
+                exec_argv=lambda argv, cwd=None: _runner_to_completed(
+                    runner, argv, cwd=cwd
+                ),
+            )
+        except OSError as exc:
+            # Missing vendor CLI binary: mutate nothing, leave task for next scan.
+            return (
+                f"error-fix-work {tid} vendor-cli-unavailable "
+                f"({type(exc).__name__}: {exc})"
+            )
+
+        if outcome.head_sha:
+            head = outcome.head_sha
+
+        if outcome.kind == "idle":
+            _ensure_done_readiness(store, tid, brief=brief)
+            try:
+                main_mod.cmd_task(["state", tid, "done"])
+            except SystemExit as exc:
+                return f"error-fix-work {tid} done-blocked ({exc})"
+            return f"error-fix-work {tid} done"
+
+        if outcome.kind == "human_required":
+            return f"error-fix-work {tid} human-required key={outcome.key}"
+
+        if outcome.kind == "failed":
+            return (
+                f"error-fix-work {tid} failed "
+                f"({outcome.message or outcome.reason or 'failed'})"
+            )
+
+        if outcome.kind == "local_check_failed":
+            return f"error-fix-work {tid} failed (local_check)"
+
+        if outcome.kind == "agent_handoff":
+            return f"error-fix-work {tid} blocked (agent handoff key={outcome.key})"
+
+        if outcome.kind == "not_closable":
+            return (
+                f"error-fix-work {tid} not-closable "
+                f"key={outcome.key} ({outcome.reason})"
+            )
+
+        if outcome.kind == "vendor_unavailable":
+            return (
+                f"error-fix-work {tid} vendor-cli-unavailable "
+                f"({outcome.reason or outcome.message or 'lane unavailable'})"
+            )
+
+        if outcome.kind == "rejected_new_round":
+            # Continue loop — implementer_done is open again on the new round.
+            continue
+
+        if outcome.kind in ("closed", "agent_closed", "rejected_new_round"):
+            continue
+
+        return f"error-fix-work {tid} stop kind={outcome.kind}"
+
+    return f"error-fix-work {tid} step-cap"
+
+
+def _runner_to_completed(
+    runner: Runner, argv: list[str], *, cwd: str | None = None
+) -> Completed:
+    """Run argv; honor cwd like main._exec_argv so checks use the worktree."""
+    import subprocess
+
+    try:
+        if cwd is not None:
+            proc = subprocess.run(  # noqa: S603
+                argv, cwd=cwd, capture_output=True, text=True, check=False
+            )
+            return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+        return runner(argv)
+    except OSError as exc:
+        return Completed(127, "", str(exc))
+
+
+def drive_error_fix_tasks(
+    store: Store,
+    runner: Runner,
+    *,
+    round_cap: int = DEFAULT_ROUND_CAP,
+    lane_runner: Any = None,
+) -> list[str]:
+    """Drive every open error-fix implement task one scan. Return summary lines."""
+    with store.exclusive("error-fix-work:" + store.device_id()):
+        lines: list[str] = []
+        for task in _open_error_fix_tasks(store):
+            lines.append(
+                _drive_one(
+                    store,
+                    task,
+                    runner,
+                    round_cap=round_cap,
+                    lane_runner=lane_runner,
+                )
+            )
+        return lines

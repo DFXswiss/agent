@@ -2133,6 +2133,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         },
         "gates": gates,
         "local_checks": local_checks,
+        "payload": task.get("payload") or {},
     }
 
 
@@ -2178,6 +2179,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
         "workflow": task.get("workflow"),
         "checklist": task.get("checklist") or {},
         "session_id": sid,
+        "payload": task.get("payload") or {},
     }
 
 
@@ -2499,6 +2501,8 @@ def _agent_handoff_exit(step, tid: str, session_id: str | None) -> None:
 
 
 def cmd_run(args: list[str]) -> None:
+    from .run_core import execute_spine_step
+
     tid = flag(args, "--task")
     head = flag(args, "--head")
     dry = "--dry-run" in args
@@ -2509,12 +2513,9 @@ def cmd_run(args: list[str]) -> None:
             "Usage: agent run --task ID [--dry-run] [--head SHA] "
             "[--cwd PATH] [--spec-file PATH] [--no-tmux]"
         )
-    close_key: str | None = None
-    close_evidence: str | None = None
-    evidence: str | None = None
     store = open_store()
     try:
-        task = _require_task_session_active(store, tid)
+        _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid, extra_head=head)
         wf = str(snap["workflow"])
         ready = next_steps(wf, snap["checklist"], spine_only=True)
@@ -2533,201 +2534,73 @@ def cmd_run(args: list[str]) -> None:
                     )
                 )
             return
-        if step.kind == "human":
+        cwd: str | None = None
+        if step.key in ("pushed", "mergeable", "local_check_pass") or (
+            step.kind == "agent" and spec_file is not None
+        ):
+            cwd = _resolve_run_cwd(args)
+        tmux = "--no-tmux" not in args
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=head,
+            dry_run=False,
+            spec_file=spec_file,
+            cwd=cwd,
+            tmux=tmux,
+            exec_argv=_exec_argv,
+        )
+        printed: set[int] = set()
+        for lr in outcome.lane_results:
+            _print_lane_result(lr)
+            printed.add(id(lr))
+        if outcome.lane_result is not None and id(outcome.lane_result) not in printed:
+            _print_lane_result(outcome.lane_result)
+
+        if outcome.kind == "human_required":
             print(
-                f"agent: human must close {step.key} (close-step --source human)",
+                f"agent: human must close {outcome.key} (close-step --source human)",
                 file=sys.stderr,
             )
             raise SystemExit(2)
-        if step.key == "pushed":
-            cwd = _resolve_run_cwd(args)
-            from .git_act import GitActError, push_branch
-
-            try:
-                sha = push_branch(
-                    cwd=cwd, runner=lambda argv: _exec_argv(argv, cwd=cwd)
-                )
-            except GitActError as exc:
-                die(str(exc))
-            if head is not None:
-                want = head.lower()
-                if want != sha and not (
-                    7 <= len(want) < len(sha) and sha.startswith(want)
-                ):
-                    die(f"--head {head} does not match pushed sha {sha}")
-            head = sha
-            snap = _chain_snapshot(store, tid, extra_head=head)
-
-        if step.key == "mergeable":
-            cwd = _resolve_run_cwd(args)
-            from .git_act import GitActError, measure_mergeable
-
-            try:
-                expected = str(snap.get("head_sha") or head or "").strip() or None
-                evidence = measure_mergeable(
-                    cwd=cwd,
-                    runner=lambda argv: _exec_argv(argv, cwd=cwd),
-                    expected_head=expected,
-                )
-            except GitActError as exc:
-                die(str(exc))
-        if step.key in NO_AUTO_CLOSE:
-            print(
-                f"agent: {step.key} is not auto-closable — "
-                "close-step --source script --evidence …",
-                file=sys.stderr,
+        if outcome.kind == "agent_handoff":
+            handoff_step = outcome.step or step
+            _agent_handoff_exit(
+                handoff_step, tid, str(snap.get("session_id"))
             )
-            raise SystemExit(2)
-        if step.key == "local_check_pass" and not snap["local_checks"]:
-            cwd = _resolve_run_cwd(args)
-            env_cmd = os.environ.get("AGENT_CHECK_COMMAND")
-            if env_cmd is None:
-                command = "pytest -q"
-            elif env_cmd == "":
-                die("AGENT_CHECK_COMMAND is set but empty")
-            else:
-                command = env_cmd
-            argv = shlex.split(command)
-            if not argv:
-                die("check command is empty")
-            completed = _exec_argv(argv, cwd=cwd)
-            result = "pass" if completed.returncode == 0 else "fail"
-            output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
-            cmd_check(
-                [
-                    "record",
-                    "--task",
-                    tid,
-                    "--name",
-                    "local",
-                    "--command",
-                    command,
-                    "--result",
-                    result,
-                    "--output",
-                    output or "(no output)",
-                ]
-            )
-            if result == "fail":
-                raise SystemExit(2)
-            snap = _chain_snapshot(store, tid, extra_head=head)
-        if step.kind == "agent":
-            already = close_allowed(
-                wf,
-                step.key,
-                checklist=snap["checklist"],
-                source="script",
-                evidence="run auto",
-                snapshot=snap,
-            )
-            if already.allowed:
-                close_key = step.key
-                close_evidence = f"run auto:{already.reason}"
-            elif spec_file is not None:
-                spec_path = Path(spec_file)
-                if not spec_path.is_file():
-                    die(f"spec-file not found: {spec_file}")
-                if not spec_path.read_text(encoding="utf-8").strip():
-                    die(f"spec-file is empty: {spec_file}")
-                cwd = _resolve_run_cwd(args)
-                tmux = "--no-tmux" not in args
-                role = str(step.role or "")
-                vendor = str(step.vendor or "")
-                session_id = str(snap.get("session_id") or "")
-                current_round = int(task.get("current_round") or 0)
-                round_num: int | None = None
-                if role in ("implementer", "reviewer"):
-                    round_num = current_round
-                working = _find_working_agent(
-                    store, tid, role=role, vendor=vendor, round_num=round_num
-                )
-                if working is None:
-                    start_args = [
-                        "start",
-                        "--session",
-                        session_id,
-                        "--task",
-                        tid,
-                        "--role",
-                        role,
-                        "--vendor",
-                        vendor,
-                    ]
-                    if round_num is not None:
-                        start_args.extend(["--round", str(round_num)])
-                    cmd_agent(start_args)
-                result = launch(
-                    role=role,
-                    vendor=vendor,
-                    spec_file=spec_file,
-                    cwd=cwd,
-                    tmux=tmux,
-                )
-                _print_lane_result(result)
-                if role == "implementer" and result.status == "complete":
-                    working = _find_working_agent(
-                        store, tid, role=role, vendor=vendor, round_num=round_num
-                    )
-                    if working is None:
-                        die("implementer working agent not found after lane")
-                    cmd_agent(
-                        [
-                            "finish",
-                            "--id",
-                            str(working["id"]),
-                            "--verdict",
-                            "done",
-                            "--note",
-                            "lane STATUS=complete",
-                        ]
-                    )
-                    snap = _chain_snapshot(store, tid, extra_head=head)
-                    task = _need(store, "task", tid)
-                else:
-                    _agent_handoff_exit(step, tid, str(snap.get("session_id")))
-            else:
-                _agent_handoff_exit(step, tid, str(snap.get("session_id")))
-        if close_key is None:
-            close_ev = (
-                evidence
-                if step.key == "mergeable"
-                else "run auto"
-            )
-            verdict = close_allowed(
-                wf,
-                step.key,
-                checklist=snap["checklist"],
-                source="script",
-                evidence=close_ev,
-                snapshot=snap,
-            )
-            if not verdict.allowed:
+        if outcome.kind == "not_closable":
+            if outcome.key in NO_AUTO_CLOSE:
                 print(
-                    f"agent: script step {step.key} not closable: {verdict.reason}",
+                    f"agent: {outcome.key} is not auto-closable — "
+                    "close-step --source script --evidence …",
                     file=sys.stderr,
                 )
-                raise SystemExit(2)
-            close_key = step.key
-            close_evidence = (
-                evidence
-                if step.key == "mergeable"
-                else f"run auto:{verdict.reason}"
+            else:
+                print(
+                    f"agent: script step {outcome.key} not closable: {outcome.reason}",
+                    file=sys.stderr,
+                )
+            raise SystemExit(2)
+        if outcome.kind == "vendor_unavailable":
+            print(
+                f"agent: vendor unavailable for {outcome.key}: "
+                f"{outcome.reason or outcome.message}",
+                file=sys.stderr,
             )
+            raise SystemExit(2)
+        if outcome.kind == "local_check_failed":
+            raise SystemExit(2)
+        if outcome.kind == "failed":
+            die(outcome.message or outcome.reason or "run failed")
+        if outcome.kind == "rejected_new_round":
+            print(
+                f"run task={tid} {outcome.message or 'rejected; new round started'}"
+            )
+            return
+        # closed | agent_closed — ledger already updated by execute_spine_step
+        return
     finally:
         store.close()
-    close_args = [
-        "--task",
-        tid,
-        "--key",
-        str(close_key),
-        "--source",
-        "script",
-        "--evidence",
-        str(close_evidence),
-    ]
-    if head:
-        close_args.extend(["--head", head])
-    cmd_close_step(close_args)
 
 
 def cmd_github(args: list[str]) -> None:
@@ -3078,10 +2951,12 @@ def cmd_watch(args: list[str]) -> None:
         "grok-usage",
         "errors",
         "error-fix",
+        "error-fix-work",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|grok-usage|errors|"
+            "error-fix|error-fix-work"
         )
     store = open_store()
     try:
@@ -3115,7 +2990,8 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|"
+                    "error-fix|error-fix-work"
                 )
             follow = extra == ["--follow"]
             while True:
@@ -3171,6 +3047,17 @@ def cmd_watch(args: list[str]) -> None:
             from .runtime import run_argv
 
             lines = scan_error_fix(store, run_argv)
+            for line in lines:
+                print(line)
+            return
+        if args[0] == "error-fix-work":
+            from .fixer_act import drive_error_fix_tasks
+            from .runtime import run_argv
+
+            lines = drive_error_fix_tasks(store, run_argv)
+            if not lines:
+                print("error-fix-work none")
+                return
             for line in lines:
                 print(line)
             return

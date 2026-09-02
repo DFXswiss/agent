@@ -246,6 +246,14 @@ def required_source(step: Step) -> str:
     return "script"
 
 
+def is_error_fix_originated(snapshot: dict[str, Any] | None) -> bool:
+    """True when the task payload carries an error_id (error-fix skill)."""
+    if not isinstance(snapshot, dict):
+        return False
+    payload = snapshot.get("payload")
+    return isinstance(payload, dict) and bool(payload.get("error_id"))
+
+
 @dataclass(frozen=True)
 class CloseVerdict:
     allowed: bool
@@ -270,7 +278,16 @@ def close_allowed(
         return CloseVerdict(False, f"{key} requires evidence", step)
     want = required_source(step)
     if source != want:
-        return CloseVerdict(False, f"{key} requires --source {want} (got {source})", step)
+        # error-fix implement tasks may script-author spec_written; HUMAN_KEYS
+        # and Step.kind stay human so every other implement task is unchanged.
+        if not (
+            key == "spec_written"
+            and source == "script"
+            and is_error_fix_originated(snapshot)
+        ):
+            return CloseVerdict(
+                False, f"{key} requires --source {want} (got {source})", step
+            )
     ready = next_steps(workflow, checklist, spine_only=False)
     if step not in ready:
         pending = ",".join(s.key for s in next_steps(workflow, checklist, spine_only=True)) or "-"
