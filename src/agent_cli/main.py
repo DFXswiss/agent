@@ -1491,6 +1491,8 @@ def cmd_restore(_: list[str]) -> None:
             body = hub.restore()
         finally:
             hub.close()
+        if not isinstance(body, dict):
+            die("restore response is not an object")
         if body.get("device_id") != store.device_id():
             die("restore device_id does not match this device")
         if "own_events" in body:
@@ -1500,13 +1502,32 @@ def cmd_restore(_: list[str]) -> None:
         if not isinstance(events, list):
             die("restore response missing own_events")
         for event in events:
-            store.apply_remote(event, wake=False)
-            store.mark_origin(event["origin_device_id"], int(event["origin_seq"]))
-        snapshots = list(body.get("inbox") or []) + list(body.get("pings") or [])
+            try:
+                event = _coerce_pull_event(event)
+            except _PullShapeError as exc:
+                die(f"restore {exc}")
+            try:
+                store.apply_remote(event, wake=False)
+                store.mark_origin(event["origin_device_id"], event["origin_seq"])
+            except Exception as exc:
+                die(f"restore event could not be applied: {exc}")
+        snapshots: list[dict[str, Any]] = []
+        for key in ("inbox", "pings"):
+            value = body.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, list):
+                die(f"restore response {key} is not a list")
+            snapshots.extend(value)
         for row in snapshots:
-            if not isinstance(row, dict):
-                die("restore snapshot is not an object")
-            store.apply_replica_row(row, wake=False)
+            try:
+                _check_pull_row(row)
+            except _PullShapeError as exc:
+                die(f"restore {exc}")
+            try:
+                store.apply_replica_row(row, wake=False)
+            except Exception as exc:
+                die(f"restore snapshot could not be applied: {exc}")
         print(f"restored events={len(events)} snapshots={len(snapshots)}")
     finally:
         store.close()
@@ -1731,6 +1752,42 @@ _PULL_EVENT_FIELDS = ("origin_device_id", "origin_seq", "table", "op", "row_id",
 _PULL_ROW_FIELDS = ("table", "origin_device_id", "row_id", "payload", "updated_at")
 
 
+class _PullShapeError(ValueError):
+    """A hub-supplied event/row/response doesn't have the shape callers need.
+    Internal only: every caller catches this and converts it to whatever error
+    convention fits that call site (HubError for _sync_once, die() for the
+    one-shot cmd_restore CLI) - it must never itself propagate out of this
+    module."""
+
+
+def _coerce_pull_event(event: object) -> dict[str, Any]:
+    """Validate a pulled/restored event has every field _insert_event_idempotent
+    indexes, and normalize origin_seq to an int (rejecting bool, a fractional
+    float, and anything int() can't convert, including an out-of-range float
+    that would otherwise raise OverflowError). Returns a new dict; the caller's
+    own copy of the raw event is left untouched."""
+    if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
+        raise _PullShapeError("event is missing required fields")
+    raw_seq = event["origin_seq"]
+    try:
+        if isinstance(raw_seq, bool):
+            raise ValueError("origin_seq must not be a boolean")
+        if isinstance(raw_seq, float) and not raw_seq.is_integer():
+            raise ValueError("origin_seq must be a whole number")
+        origin_seq = int(raw_seq)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _PullShapeError("event has a non-numeric origin_seq") from exc
+    return {**event, "origin_seq": origin_seq}
+
+
+def _check_pull_row(row: object) -> dict[str, Any]:
+    """Validate a pulled/restored snapshot row has every field
+    apply_replica_row indexes directly."""
+    if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
+        raise _PullShapeError("snapshot is missing required fields")
+    return row
+
+
 def _sync_once(store: Store) -> None:
     # Every malformed-hub-response check below raises HubError (not die()'s bare
     # SystemExit): both cmd_knock's _knock_scan_cycle and cmd_sync --follow's
@@ -1749,27 +1806,20 @@ def _sync_once(store: Store) -> None:
         if not isinstance(events, list):
             raise HubError("pull response missing events")
         for event in events:
-            if not isinstance(event, dict) or any(field not in event for field in _PULL_EVENT_FIELDS):
-                raise HubError("pull event is missing required fields")
             try:
-                raw_seq = event["origin_seq"]
-                if isinstance(raw_seq, bool):
-                    raise ValueError("origin_seq must not be a boolean")
-                if isinstance(raw_seq, float) and not raw_seq.is_integer():
-                    raise ValueError("origin_seq must be a whole number")
-                origin_seq = int(raw_seq)
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise HubError("pull event has a non-numeric origin_seq") from exc
-            event = {**event, "origin_seq": origin_seq}
-            # Field presence is checked above, but not the shape of nested values
-            # (e.g. payload["type"]) - apply_remote/mark_origin can still hit a
-            # genuinely unanticipated shape deep inside store.py. Convert any such
-            # failure to a HubError rather than let it crash whichever loop called
-            # _sync_once; HubError/StoreError themselves pass through unchanged
-            # (SystemExit is not an Exception subclass).
+                event = _coerce_pull_event(event)
+            except _PullShapeError as exc:
+                raise HubError(f"pull {exc}") from exc
+            # Field presence and origin_seq are validated above, but not the
+            # shape of nested values (e.g. payload["type"]) - apply_remote/
+            # mark_origin can still hit a genuinely unanticipated shape deep
+            # inside store.py. Convert any such failure to a HubError rather
+            # than let it crash whichever loop called _sync_once; HubError/
+            # StoreError themselves pass through unchanged (SystemExit is not
+            # an Exception subclass).
             try:
                 store.apply_remote(event)
-                store.mark_origin(event["origin_device_id"], origin_seq)
+                store.mark_origin(event["origin_device_id"], event["origin_seq"])
             except Exception as exc:
                 raise HubError(f"pull event could not be applied: {exc}") from exc
         snapshots: list[dict[str, Any]] = []
@@ -1781,8 +1831,10 @@ def _sync_once(store: Store) -> None:
                 raise HubError(f"pull response {key} is not a list")
             snapshots.extend(value)
         for row in snapshots:
-            if not isinstance(row, dict) or any(field not in row for field in _PULL_ROW_FIELDS):
-                raise HubError("pull snapshot is missing required fields")
+            try:
+                _check_pull_row(row)
+            except _PullShapeError as exc:
+                raise HubError(f"pull {exc}") from exc
         sessions = [r for r in snapshots if r.get("table") == "session"]
         rest = [r for r in snapshots if r.get("table") != "session"]
         for row in sessions + rest:
