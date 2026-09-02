@@ -102,6 +102,30 @@ def test_cmd_restore_dies_on_snapshot_missing_one_required_field(
         _run_restore(tmp_path, monkeypatch, body)
 
 
+@pytest.mark.parametrize(
+    "bad_seq",
+    [
+        "not-a-number",
+        1e309,  # float('inf') once parsed - int() raises OverflowError, not ValueError
+        True,  # bool is an int subclass in Python - int(True) == 1 would pass silently
+        1.5,  # non-integral float - int(1.5) == 1 would silently truncate
+    ],
+)
+def test_cmd_restore_dies_on_non_numeric_origin_seq(
+    bad_seq: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the restore-side sibling of
+    test_sync_once_raises_hub_error_on_non_numeric_origin_seq. cmd_restore
+    shares _sync_once's origin_seq coercion (_coerce_pull_event), but had no
+    test proving the restore side actually rejects a bad origin_seq rather
+    than just accepting a good one."""
+    event = _valid_restore_event()
+    event["origin_seq"] = bad_seq
+    body = {"own_events": [event]}
+    with pytest.raises(SystemExit, match="restore event has a non-numeric origin_seq"):
+        _run_restore(tmp_path, monkeypatch, body)
+
+
 def test_cmd_restore_accepts_a_numeric_string_origin_seq(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
