@@ -137,7 +137,7 @@ def scan_error_decide(
             now = utcnow()
             try:
                 _ensure_decide_session(store, sid, now)
-            except (StoreError, SystemExit) as exc:
+            except (StoreError, SystemExit, OSError) as exc:
                 lines.append(f"error.seen {error_id} error session={sid}: {exc}")
                 continue
             failure: StoreError | SystemExit | OSError | None = None

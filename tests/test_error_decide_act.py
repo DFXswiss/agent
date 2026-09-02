@@ -355,6 +355,50 @@ def test_scan_error_decide_isolates_store_error_and_continues_backlog(
     assert lines[1] == f"error.seen {newer} decided session={newer_sid}"
 
 
+def test_scan_error_decide_isolates_os_error_from_session_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = Store(tmp_path)
+    older = "aaa11111-seen-gggggggg"
+    newer = "bbb22222-seen-hhhhhhhh"
+    _insert_seen(store, rid=newer, first_seen="2026-08-23T17:00:00Z")
+    _insert_seen(store, rid=older, first_seen="2026-08-23T15:00:00Z")
+    started: list[str] = []
+    older_sid = decide_session_id(older)
+    newer_sid = decide_session_id(newer)
+
+    real_gethostname = socket.gethostname
+    calls = {"n": 0}
+
+    def flaky_gethostname() -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("gethostname failed")
+        return real_gethostname()
+
+    monkeypatch.setattr(socket, "gethostname", flaky_gethostname)
+
+    def knock(sid: str, eid: str) -> None:
+        started.append(sid)
+        _insert_conclusion(store, rid=f"fix-{eid}", error_id=eid, session_id=sid)
+
+    lines = scan_error_decide(
+        store,
+        start=lambda _sid: None,
+        stop=lambda _sid: None,
+        knock=knock,
+        sleep=lambda _s: None,
+        timeout_s=1.0,
+        poll_interval_s=0.01,
+    )
+    assert len(lines) == 2
+    assert lines[0].startswith(f"error.seen {older} error session={older_sid}:")
+    assert "gethostname failed" in lines[0]
+    assert lines[1] == f"error.seen {newer} decided session={newer_sid}"
+    assert started == [newer_sid]
+
+
 def test_scan_error_decide_isolates_os_error_and_continues_backlog(
     tmp_path: Path,
 ) -> None:
