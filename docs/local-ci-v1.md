@@ -36,7 +36,7 @@ Each run object:
 | `name` | Human job name |
 | `command` | Exact local command that was executed |
 | `result` | `pass` \| `fail` \| `error` \| `timeout` |
-| `exit_code` | Integer. `pass` requires `0` |
+| `exit_code` | Integer |
 | `duration_s` | Number ≥ 0 |
 | `timeout_s` | Number > 0. The job timeout |
 

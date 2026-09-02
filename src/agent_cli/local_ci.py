@@ -169,6 +169,8 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
         ident = _as_str(item["id"], f"runs[{index}].id")
         if ID_RE.match(ident) is None:
             raise LocalCiError(f"runs[{index}].id {ident!r} is not kebab-case")
+        if ident not in seen:
+            raise LocalCiError(f"runs[{index}].id {ident!r} is not in required")
         if ident in run_ids:
             raise LocalCiError(f"runs id {ident!r} is duplicated")
         run_ids.add(ident)
@@ -192,6 +194,9 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
                 timeout_s=timeout_s,
             )
         )
+    missing_runs = sorted(seen - run_ids)
+    if missing_runs:
+        raise LocalCiError("runs missing required ids: " + ",".join(missing_runs))
     return LocalCiReport(
         schema=schema,
         repo=repo,

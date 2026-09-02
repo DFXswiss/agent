@@ -110,9 +110,8 @@ class LocalCiTests(unittest.TestCase):
 
     def test_missing_required_run(self) -> None:
         payload = _payload(runs=[_run()])
-        verdict = verify_comment(_comment(payload))
-        self.assertFalse(verdict.ok)
-        self.assertTrue(any("test: missing run" in r for r in verdict.reasons))
+        with self.assertRaisesRegex(LocalCiError, "missing required ids"):
+            parse_comment(_comment(payload))
 
     def test_require_ids_mismatch(self) -> None:
         verdict = verify_comment(_comment(_payload()), require_ids=frozenset({"format", "build"}))
@@ -124,6 +123,11 @@ class LocalCiTests(unittest.TestCase):
         verdict = verify_comment(_comment(payload))
         self.assertTrue(verdict.ok)
         self.assertEqual(verdict.status, "not_applicable")
+
+    def test_orphan_run_rejected(self) -> None:
+        payload = _payload(runs=[_run(), _run(id="extra", name="Extra", command="true")])
+        with self.assertRaisesRegex(LocalCiError, "not in required"):
+            parse_comment(_comment(payload))
 
     def test_unknown_payload_key(self) -> None:
         payload = _payload()
