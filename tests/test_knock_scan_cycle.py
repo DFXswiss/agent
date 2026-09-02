@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli import main as main_mod
+from agent_cli.hub import HubError
 from agent_cli.main import open_store
 
 
@@ -68,14 +69,15 @@ def test_knock_scan_cycle_skips_sync_when_unpaired(
 def test_knock_scan_cycle_logs_and_continues_on_malformed_pull_response(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression test: _sync_once() calls die() (bare SystemExit, not a HubError/
-    StoreError) when the hub returns a malformed pull payload. A narrow except that
-    only caught (HubError, StoreError) would let that SystemExit propagate and kill
-    the whole cmd_knock daemon loop instead of logging and moving on like every
-    other scan in this function."""
+    """Regression test: _sync_once() raises HubError when the hub returns a
+    malformed pull payload. A narrow except that only caught (HubError, StoreError)
+    still covers this - HubError is exactly what the malformed-response checks
+    raise - so the daemon logs and moves on instead of dying, without needing to
+    also catch bare SystemExit (nothing else _sync_once can raise from this call
+    site is a plain SystemExit)."""
 
     def _raise(_store: object) -> None:
-        raise SystemExit("agent: pull response missing events")
+        raise HubError("pull response missing events")
 
     monkeypatch.setattr(main_mod, "_sync_once", _raise)
     _stub_scans(monkeypatch)
@@ -89,4 +91,4 @@ def test_knock_scan_cycle_logs_and_continues_on_malformed_pull_response(
         store.close()
 
     captured = capsys.readouterr()
-    assert "sync error: agent: pull response missing events" in captured.err
+    assert "sync error: pull response missing events" in captured.err

@@ -1755,6 +1755,7 @@ def _sync_once(store: Store) -> None:
                 origin_seq = int(event["origin_seq"])
             except (TypeError, ValueError) as exc:
                 raise HubError("pull event has a non-numeric origin_seq") from exc
+            event = {**event, "origin_seq": origin_seq}
             store.apply_remote(event)
             store.mark_origin(event["origin_device_id"], origin_seq)
         snapshots: list[dict[str, Any]] = []
@@ -2990,7 +2991,7 @@ def _knock_scan_cycle(store: Store, run_argv: Callable[[list[str]], Completed]) 
     if hub_url and hub_token:
         try:
             _sync_once(store)
-        except (HubError, StoreError, SystemExit) as exc:
+        except (HubError, StoreError) as exc:
             print(f"sync error: {exc}", file=sys.stderr)
 
 

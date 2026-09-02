@@ -254,7 +254,7 @@ def _paired_store(tmp_path: Path) -> Store:
     return store
 
 
-def test_sync_once_dies_on_non_dict_pull_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_once_raises_hub_error_on_non_dict_pull_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test: Hub.request returns None for a 2xx response with an empty
     body. _sync_once used to call pulled.get("events") straight on that, raising a
     raw AttributeError instead of a catchable HubError - which would have escaped
@@ -267,7 +267,7 @@ def test_sync_once_dies_on_non_dict_pull_response(tmp_path: Path, monkeypatch: p
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_dies_on_event_missing_required_fields(
+def test_sync_once_raises_hub_error_on_event_missing_required_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression test: a pull event missing any of the fields
@@ -282,7 +282,7 @@ def test_sync_once_dies_on_event_missing_required_fields(
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_dies_on_non_numeric_origin_seq(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_once_raises_hub_error_on_non_numeric_origin_seq(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test: int(event["origin_seq"]) used to run unguarded; a
     non-numeric origin_seq raised a raw ValueError instead of a catchable
     HubError."""
@@ -305,7 +305,38 @@ def test_sync_once_dies_on_non_numeric_origin_seq(tmp_path: Path, monkeypatch: p
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_dies_on_non_list_snapshot_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sync_once_accepts_a_numeric_string_origin_seq(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: int(event["origin_seq"]) validated the value but the
+    original (still-string) event dict was what reached store.apply_remote(). A
+    numeric string like "1" passes int() cleanly, but _insert_event_idempotent's
+    `event["origin_seq"] != last_seq + 1` is a plain Python != - "1" != 1 is
+    always True - so a genuinely valid next sequence number raised a false
+    "origin_seq gap" StoreError."""
+    hub = FakeHub()
+    hub.pull_body = {
+        "events": [
+            {
+                "origin_device_id": "other",
+                "origin_seq": "1",
+                "table": "task",
+                "op": "insert",
+                "row_id": "t1",
+                "payload": {"id": "t1"},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _s: hub)
+    store = _paired_store(tmp_path)
+    _sync_once(store)
+    assert store.origin_cursor("other") == 1
+    row = store.row("task", "t1")
+    assert row is not None
+
+
+def test_sync_once_raises_hub_error_on_non_list_snapshot_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test: list(pulled.get("inbox") or []) used to run unguarded; a
     truthy non-iterable value (e.g. a malformed hub response sending an object
     instead of a list) raised a raw TypeError instead of a catchable HubError."""
@@ -316,7 +347,7 @@ def test_sync_once_dies_on_non_list_snapshot_field(tmp_path: Path, monkeypatch: 
         _sync_once(_paired_store(tmp_path))
 
 
-def test_sync_once_dies_on_snapshot_missing_required_fields(
+def test_sync_once_raises_hub_error_on_snapshot_missing_required_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression test: apply_replica_row indexes row["origin_device_id"],
