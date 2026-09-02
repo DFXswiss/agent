@@ -111,11 +111,18 @@ def test_cmd_restore_accepts_a_numeric_string_origin_seq(
     _insert_event_idempotent's plain Python `event["origin_seq"] != last_seq +
     1` as a string, deterministically raising a false "origin_seq gap" for the
     very first restored event. cmd_restore now shares _sync_once's coercion,
-    applied before apply_remote sees the event."""
+    applied before apply_remote sees the event. own_events replays this
+    device's own history, so origin_device_id must genuinely be this
+    device's own id, not a foreign one - same reasoning as
+    test_cmd_restore_applies_events_and_snapshots below."""
+    _init_store(tmp_path)
+    store = open_store()
+    device_id = store.device_id()
+    store.close()
     body = {
         "own_events": [
             {
-                "origin_device_id": "other",
+                "origin_device_id": device_id,
                 "origin_seq": "1",
                 "table": "task",
                 "op": "insert",
@@ -128,7 +135,7 @@ def test_cmd_restore_accepts_a_numeric_string_origin_seq(
     _run_restore(tmp_path, monkeypatch, body)
     store = open_store()
     try:
-        assert store.origin_cursor("other") == 1
+        assert store.origin_cursor(device_id) == 1
         assert store.row("task", "t1") is not None
     finally:
         store.close()
@@ -180,6 +187,58 @@ def test_cmd_restore_dies_when_apply_replica_row_hits_an_unanticipated_shape(
     body = {"own_events": [], "inbox": [row]}
     with pytest.raises(SystemExit, match="restore snapshot could not be applied"):
         _run_restore(tmp_path, monkeypatch, body)
+
+
+def test_cmd_restore_accepts_an_event_whose_type_is_not_a_wake_type_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: apply_remote's wake=False branch (the only one
+    cmd_restore ever uses) has its own inline isinstance(typ, str) guard
+    before the WAKE_ACTIVITY_TYPES membership check (store.py's
+    apply_remote, elif inserted: branch). Unlike the wake=True path
+    (_maybe_wake, covered by tests/test_pending.py), nothing exercised this
+    wake=False guard specifically - a regression that reintroduced the
+    unguarded check only there would stay green on the sync side while
+    breaking every restore whose event has a non-string type."""
+    _init_store(tmp_path)
+    store = open_store()
+    device_id = store.device_id()
+    store.close()
+    body = {
+        "own_events": [
+            {
+                "origin_device_id": device_id,
+                "origin_seq": 1,
+                "table": "activity",
+                "op": "insert",
+                "row_id": "x",
+                "payload": {"type": ["not", "hashable"]},
+                "occurred_at": "2026-08-13T12:00:00Z",
+            }
+        ]
+    }
+    _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.row("activity", "x") is not None
+    finally:
+        store.close()
+
+
+def test_cmd_restore_accepts_a_snapshot_whose_type_is_not_a_wake_type_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test: the row-side sibling of
+    test_cmd_restore_accepts_an_event_whose_type_is_not_a_wake_type_shape.
+    apply_replica_row's wake=False branch has the same inline guard."""
+    row = {**_valid_restore_row(), "payload": {"type": ["not", "hashable"]}}
+    body = {"own_events": [], "inbox": [row]}
+    _run_restore(tmp_path, monkeypatch, body)
+    store = open_store()
+    try:
+        assert store.row("activity", "x") is not None
+    finally:
+        store.close()
 
 
 def test_cmd_restore_applies_events_and_snapshots(
