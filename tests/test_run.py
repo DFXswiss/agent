@@ -597,12 +597,36 @@ def test_collect_review_diff_explicit_base_wins_over_candidates(
     )
 
 
+def test_collect_review_diff_explicit_base_unresolved_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """An explicit base_ref that does not resolve must fail closed — no candidate fallback."""
+    calls: list[list[str]] = []
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "error-fix-deadbeef":
+                return Completed(1, "", "unknown revision")
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        # Supplemental HEAD probe succeeds but empty.
+        return Completed(0, "", "")
+
+    _diff, _paths, probes_ok = _collect_review_diff(
+        str(tmp_path), fake_exec, base_ref="error-fix-deadbeef"
+    )
+    assert probes_ok is False
+    assert ["git", "rev-parse", "--verify", "origin/develop"] not in calls
+
+
 def test_collect_review_diff_empty_merge_base_stdout_marks_probes_not_ok(
     tmp_path: Path,
 ) -> None:
     """merge-base exit 0 with empty/whitespace stdout must set probes_ok False."""
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             if argv[3] == "origin/develop":
                 return Completed(0, "abc123\n", "")

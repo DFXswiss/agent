@@ -321,16 +321,21 @@ def _collect_review_diff(
     a missing candidate ref is expected control flow, not a probe failure.
     When *no* candidate resolves at all, that counts as a probe failure
     (not expected control flow), so probes_ok becomes False.
+    An explicit base_ref that fails to resolve is itself a probe failure
+    (fail-closed), distinct from the "no candidate resolves at all" case —
+    candidates are not tried as a silent fallback when an explicit base
+    was supplied.
     """
     explicit = base_ref
+    has_explicit = explicit is not None and str(explicit).strip() != ""
     resolved: str | None = None
-    if explicit is not None and str(explicit).strip():
+    if has_explicit:
         completed = exec_argv(
             ["git", "rev-parse", "--verify", explicit], cwd=cwd
         )
         if int(getattr(completed, "returncode", 1)) == 0:
             resolved = explicit
-    if resolved is None:
+    if resolved is None and not has_explicit:
         for candidate in _BASE_CANDIDATES:
             completed = exec_argv(
                 ["git", "rev-parse", "--verify", candidate], cwd=cwd
