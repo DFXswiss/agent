@@ -3299,6 +3299,7 @@ def test_fixer_error_row_with_number_repends_and_resumes_without_duplicate_creat
                         "state": "OPEN",
                         "isDraft": True,
                         "baseRefName": "develop",
+                        "headRefName": head,
                     }
                 ),
                 "",
@@ -3427,6 +3428,7 @@ def test_fixer_bare_pending_row_does_not_shadow_error_with_number_repend(
                         "state": "OPEN",
                         "isDraft": True,
                         "baseRefName": "develop",
+                        "headRefName": head,
                     }
                 ),
                 "",

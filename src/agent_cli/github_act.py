@@ -141,42 +141,42 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
 
 def _resolve_actual_base(
     head: str, repo: str, runner: Runner, fallback: str | None
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, Literal["transient", "not_found", "permanent"] | None]:
     """Best-effort: re-resolve the ACTUAL applied base via a live `gh pr view`
     call, mirroring the resume path's existing baseRefName resolution.
 
-    Returns (base, transient_failure). transient_failure=True means the call
-    itself failed (gh unavailable, non-zero exit, empty/invalid JSON, or a
-    non-object JSON body) -- an indeterminate result that should be retried
+    Returns (base, classification). classification is None when gh genuinely
+    answered: base is the real baseRefName when present and non-empty, else
+    `fallback` (the PR genuinely has no better-known base yet -- a definitive
+    terminal answer). A non-None classification means the call itself failed
+    with that category (gh unavailable, non-zero exit, empty/invalid JSON, or
+    a non-object JSON body) -- an indeterminate result that should be retried
     on a later scan, not treated as final; base is then `fallback` only as a
-    placeholder. transient_failure=False means gh genuinely answered: base is
-    the real baseRefName when present and non-empty, else `fallback` (the PR
-    genuinely has no better-known base yet -- a definitive terminal answer)."""
+    placeholder."""
     try:
         completed = runner(
             ["gh", "pr", "view", head, "--repo", repo, "--json", "baseRefName"]
         )
     except OSError:
         # Same transient outcome as the resume-path view step for OSError.
-        return fallback, True
+        return fallback, "transient"
     if completed.returncode != 0:
         # Shared classifier; every category is indeterminate here — retry later.
-        _classify_gh_failure(completed)
-        return fallback, True
+        return fallback, _classify_gh_failure(completed)
     raw = (completed.stdout or "").strip()
     if raw == "":
         # Same transient outcome as the resume-path view step for empty stdout.
-        return fallback, True
+        return fallback, "transient"
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
         # Same transient outcome as the resume-path view step for invalid JSON.
-        return fallback, True
+        return fallback, "transient"
     if not isinstance(data, dict):
         # Same transient outcome as the resume-path view step for non-dict JSON.
-        return fallback, True
+        return fallback, "transient"
     real_base = data.get("baseRefName")
-    return (real_base if isinstance(real_base, str) and real_base else fallback), False
+    return (real_base if isinstance(real_base, str) and real_base else fallback), None
 
 
 def _gh_not_found(completed: Completed) -> bool:
@@ -198,6 +198,14 @@ def _classify_gh_failure(
     if _gh_not_found(completed):
         return "not_found"
     text = f"{completed.stderr or ''}{completed.stdout or ''}".casefold()
+    if (
+        "rate limit" in text
+        or "secondary rate limit" in text
+        or "abuse detection" in text
+    ):
+        return "transient"
+    if completed.returncode == 4:
+        return "permanent"
     if (
         "http 401" in text
         or "http 403" in text
@@ -251,20 +259,21 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         _mark(store, row, status="error", error=str(exc))
         return f"pr.open {rid} error"
     try:
+        prior = row.get("result")
+        prior_number = (
+            _as_int(prior.get("number")) if isinstance(prior, dict) else None
+        )
+        has_prior_number = prior_number is not None
         view_argv = [
             "gh",
             "pr",
             "view",
-            head,
+            str(prior_number) if has_prior_number else head,
             "--repo",
             repo,
             "--json",
-            "number,url,state,isDraft,baseRefName",
+            "number,url,state,isDraft,baseRefName,headRefName",
         ]
-        prior = row.get("result")
-        has_prior_number = (
-            isinstance(prior, dict) and _as_int(prior.get("number")) is not None
-        )
         viewed: dict[str, Any] | None = None
         classification: Literal["transient", "not_found", "permanent"] | None = None
         detail = ""
@@ -316,6 +325,13 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             else:
                 raise _GhError(detail)
         if isinstance(viewed, dict):
+            if has_prior_number:
+                viewed_head = viewed.get("headRefName")
+                if not isinstance(viewed_head, str) or viewed_head != head:
+                    raise _GhError(
+                        f"PR #{prior_number} headRefName {viewed_head!r} does "
+                        f"not match expected head {head!r} -- refusing to rebind"
+                    )
             state = str(viewed.get("state") or "").upper()
             number = _as_int(viewed.get("number"))
             url = viewed.get("url")
@@ -357,7 +373,9 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             argv.extend(["--base", base])
         stdout = _gh_text(argv, runner)
         url, number = _parse_url_number(stdout)
-        resolved_base, transient = _resolve_actual_base(head, repo, runner, base)
+        resolved_base, classification = _resolve_actual_base(
+            str(number), repo, runner, base
+        )
         result = {
             "repo": repo,
             "number": number,
@@ -365,7 +383,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             "draft": True,
             "base": resolved_base,
         }
-        if transient:
+        if classification is not None:
             # Never freeze an unverified fallback base as permanently done --
             # leave pending so the next scan_github retries the live
             # resolution (it resumes via the gh-pr-view-succeeds branch
