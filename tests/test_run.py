@@ -891,6 +891,7 @@ def test_build_review_spec_file_codex_vendor_uses_readonly_shell_wording(
         body = Path(path).read_text(encoding="utf-8")
         assert "Read tool" not in body
         assert "Read/Grep/Glob only" not in body
+        assert "Read path" not in body
         assert "git diff" in body or "cat" in body
         assert "CONTRIBUTING.md" in body
     finally:

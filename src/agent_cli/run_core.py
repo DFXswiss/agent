@@ -504,7 +504,7 @@ def build_review_spec_file(
         f"{scope_intro}"
         f"`{abs_diff}`\n\n"
         f"Changed paths: {paths_line}\n\n"
-        f"Unified diff (also embedded for convenience; the Read path is required):\n\n"
+        f"Unified diff (also embedded for convenience; the file path above must also be inspected):\n\n"
         f"{fence}diff\n{diff_text}\n{fence}\n\n"
         f"# Dimension\n\n"
         f"{dimension}\n\n"
