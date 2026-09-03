@@ -9,6 +9,11 @@ This module answers "what is orphaned" so the caller can act; it deletes nothing
 from __future__ import annotations
 
 import posixpath
+from collections.abc import Callable
+
+from .runtime import Completed
+from .store import Store
+from . import workspace
 
 
 PREPARING_MAX_AGE = 300
@@ -91,3 +96,92 @@ def orphan_sessions(
             continue
         result.append(name)
     return result
+
+
+def reap_orphans(
+    store: Store,
+    runner: Callable[[list[str]], Completed],
+    *,
+    socket: str,
+    repos_root: str,
+    work_root: str,
+    work_dirs: list[str],
+    marker_of: Callable[[str], tuple[bool, int | None]],
+    now_epoch: int,
+    session_prefix: str,
+) -> tuple[list[str], list[str], int]:
+    """Reap orphaned worktrees and tmux sessions after workers are killed."""
+    removed_worktrees: list[str] = []
+    killed_sessions: list[str] = []
+    skipped = 0
+
+    # Step 1: collect running job ids and session names
+    running_ids: set[str] = set()
+    running_sessions: set[str] = set()
+    for row in store.rows("job"):
+        if row.get("state") != "running":
+            continue
+        job_id = row.get("id")
+        if not isinstance(job_id, str) or not job_id.strip():
+            continue
+        running_ids.add(job_id)
+        session = row.get("session")
+        if isinstance(session, str) and session.strip():
+            running_sessions.add(session)
+
+    # Step 2: list sessions first (needed for candidate ids and to decide whether to sweep)
+    list_result = runner(list_sessions_argv(socket))
+    # "Cannot list" is not "nothing is running": a failed listing must kill nothing,
+    # and this flag is the single guard that enforces it. The names are parsed either
+    # way so that guard stands alone and can be exercised, rather than being masked by
+    # an empty list that would hide its removal.
+    session_listing_failed = list_result.returncode != 0
+    candidate_session_names: list[str] = (
+        list_result.stdout.splitlines() if list_result.stdout else []
+    )
+
+    # Step 3: build preparing_ids from work_dirs AND session-derived job ids
+    # A job can hold a preparing marker before or without its work directory existing;
+    # killing its session would abandon a dispatch mid-flight.
+    preparing_ids: set[str] = set()
+    candidate_job_ids: set[str] = set(work_dirs)
+    for name in candidate_session_names:
+        if name.startswith(session_prefix):
+            candidate_job_ids.add(name[len(session_prefix) :])
+    for job_id in candidate_job_ids:
+        present, mtime = marker_of(job_id)
+        if preparing_active(present, mtime, now_epoch):
+            preparing_ids.add(job_id)
+
+    # Step 4: worktrees
+    for job_id in orphan_worktrees(work_dirs, running_ids, preparing_ids):
+        row = store.row("job", job_id)
+        if row is None:
+            # no row knows about this directory — needs a raw delete, not part of this change
+            skipped += 1
+            continue
+        repo = row.get("repo")
+        if not isinstance(repo, str) or not repo.strip():
+            skipped += 1
+            continue
+        path = f"{work_root}/{job_id}"
+        try:
+            bare = workspace.bare_path(repos_root, repo)
+        except ValueError:
+            skipped += 1
+            continue
+        if not within_root(work_root, path):
+            # guard against traversal: a job id containing .. would let the path escape the work root
+            skipped += 1
+            continue
+        runner(workspace.worktree_remove_argv(bare, path))
+        runner(workspace.worktree_prune_argv(bare))
+        removed_worktrees.append(job_id)
+
+    # Step 5: sessions (skip entirely if listing failed)
+    if not session_listing_failed:
+        for name in orphan_sessions(candidate_session_names, running_sessions, preparing_ids, prefix=session_prefix):
+            runner(workspace.kill_session_argv(socket, name))
+            killed_sessions.append(name)
+
+    return removed_worktrees, killed_sessions, skipped
