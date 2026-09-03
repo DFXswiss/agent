@@ -3371,6 +3371,140 @@ def test_fixer_error_row_with_number_repends_and_resumes_without_duplicate_creat
     assert "pr.open-error" not in result
 
 
+def test_fixer_bare_pending_row_does_not_shadow_error_with_number_repend(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding-1 regression: bare-pending must not short-circuit past error-with-number.
+
+    When a bare pending pr.open (no result.number) and a separate orphaned
+    error-status pr.open carrying result.number both exist for the same
+    (head, repo), the error-with-number row must be re-pended and resumed
+    rather than skipped because the bare-pending check matched first.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+    head = f"error-fix-{ERROR_ID[:8]}"
+    pending_activity_id = str(uuid.uuid4())
+    error_activity_id = str(uuid.uuid4())
+    create_calls = {"n": 0}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+        return pushed_sha
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "pr-reviewer-quality")
+        vendor = str(kwargs.get("vendor") or "grok")
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def unexpected_insert(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
+        raise AssertionError(
+            "insert_pr_open_and_scan must not be called when a recorded error row exists"
+        )
+
+    def resuming_gh(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "number": 100,
+                        "url": "https://github.com/org/app/pull/100",
+                        "state": "OPEN",
+                        "isDraft": True,
+                        "baseRefName": "develop",
+                    }
+                ),
+                "",
+            )
+        if argv[:3] == ["gh", "pr", "create"]:
+            create_calls["n"] += 1
+            raise AssertionError("gh pr create must not be called")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", unexpected_insert)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed",
+        _rtc_via_runner_with_sha(resuming_gh),
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        store.write(
+            "activity",
+            "insert",
+            pending_activity_id,
+            {
+                "id": pending_activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": "org/app",
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "pending",
+            },
+        )
+        store.write(
+            "activity",
+            "insert",
+            error_activity_id,
+            {
+                "id": error_activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": "org/app",
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "error",
+                "result": {
+                    "repo": "org/app",
+                    "number": 100,
+                    "url": "https://github.com/org/app/pull/100",
+                    "draft": True,
+                    "base": "develop",
+                },
+            },
+        )
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_until_stable(
+            store,
+            task,
+            runner=resuming_gh,
+            round_cap=5,
+            lane_runner=None,
+        )
+
+        error_after = store.row("activity", error_activity_id)
+        assert error_after is not None
+        assert error_after["execution_status"] == "done"
+        assert error_after["result"]["number"] == 100
+    finally:
+        store.close()
+
+    assert create_calls["n"] == 0
+    assert "pr.open-error" not in result
+
+
 def test_drive_error_fix_tasks_isolates_per_task_crash(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1134,62 +1134,61 @@ def _drive_one(
             and not _pr_open_row_exists(store, head=pr_head, repo=repo)
         ):
             try:
-                if _pr_open_pending_row_exists(store, head=pr_head, repo=repo):
+                error_row = _pr_open_error_row_with_number(
+                    store, head=pr_head, repo=repo
+                )
+                if error_row is not None:
+                    # A gh pr create succeeded earlier (result.number recorded) but
+                    # a LATER step left the row in error status (e.g. a permanent
+                    # gh pr view auth failure). scan_github only drains
+                    # store.pending_work(), so this row is invisible to it until
+                    # re-pended -- re-pending (instead of inserting a fresh row)
+                    # keeps has_prior_number=True on resume, avoiding a duplicate
+                    # gh pr create.
+                    from .github_act import _mark, scan_github
+
+                    _mark(
+                        store,
+                        error_row,
+                        status="pending",
+                        result=error_row.get("result"),
+                    )
+                    scan_github(store, runner)
+                elif _pr_open_pending_row_exists(store, head=pr_head, repo=repo):
                     # Crash between insert and scan left a pending row — resume
                     # it rather than inserting a duplicate.
                     from .github_act import scan_github
 
                     scan_github(store, runner)
                 else:
-                    error_row = _pr_open_error_row_with_number(
-                        store, head=pr_head, repo=repo
+                    seen = _error_seen(store, session_id, error_id)
+                    seen_payload = (
+                        seen.get("payload")
+                        if isinstance(seen.get("payload"), dict)
+                        else {}
                     )
-                    if error_row is not None:
-                        # A gh pr create succeeded earlier (result.number recorded) but
-                        # a LATER step left the row in error status (e.g. a permanent
-                        # gh pr view auth failure). scan_github only drains
-                        # store.pending_work(), so this row is invisible to it until
-                        # re-pended -- re-pending (instead of inserting a fresh row)
-                        # keeps has_prior_number=True on resume, avoiding a duplicate
-                        # gh pr create.
-                        from .github_act import _mark, scan_github
-
-                        _mark(
-                            store,
-                            error_row,
-                            status="pending",
-                            result=error_row.get("result"),
-                        )
-                        scan_github(store, runner)
-                    else:
-                        seen = _error_seen(store, session_id, error_id)
-                        seen_payload = (
-                            seen.get("payload")
-                            if isinstance(seen.get("payload"), dict)
-                            else {}
-                        )
-                        fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
-                        resolved_ref = _nonempty_str(task.get("ref"))
-                        pr_base = (
-                            (resolved_ref.removeprefix("origin/") or None)
-                            if resolved_ref is not None
-                            else None
-                        )
-                        pr_payload = template_pr_open_payload(
-                            session_id=session_id,
-                            repo=repo,
-                            error_id=error_id,
-                            brief=brief,
-                            fingerprint=fingerprint,
-                            title_suffix=str(task.get("title") or ""),
-                            base=pr_base,
-                        )
-                        insert_pr_open_and_scan(
-                            store,
-                            session_id=session_id,
-                            payload=pr_payload,
-                            runner=runner,
-                        )
+                    fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
+                    resolved_ref = _nonempty_str(task.get("ref"))
+                    pr_base = (
+                        (resolved_ref.removeprefix("origin/") or None)
+                        if resolved_ref is not None
+                        else None
+                    )
+                    pr_payload = template_pr_open_payload(
+                        session_id=session_id,
+                        repo=repo,
+                        error_id=error_id,
+                        brief=brief,
+                        fingerprint=fingerprint,
+                        title_suffix=str(task.get("title") or ""),
+                        base=pr_base,
+                    )
+                    insert_pr_open_and_scan(
+                        store,
+                        session_id=session_id,
+                        payload=pr_payload,
+                        runner=runner,
+                    )
                 # Persistent gh pr create failures are almost always external
                 # (auth/rate-limit/permissions). Leave the task untouched for the
                 # next scan rather than failing it; each cron/knock scan retries.
