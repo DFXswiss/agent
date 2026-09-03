@@ -218,10 +218,14 @@ def template_pr_open_payload(
 def _pr_open_row_exists(store: Store, *, head: str, repo: str) -> bool:
     """True when a successful pr.open already exists for this branch head.
 
-    Only `done` skips the insert/resume path entirely. A `pending` row is
-    resumed via scan_github (no re-insert); an `error` row triggers a fresh
-    insert_pr_open_and_scan. A real insert_pr_open_and_scan leaves `done` or
-    `error` synchronously via scan_github.
+    Only `done` skips the insert/resume path this predicate gates. A
+    `pending` row is resumed via scan_github (no re-insert). An `error`
+    row that carries a recorded `result.number` is re-pended (that
+    specific row) then resumed via scan_github, preserving the number so
+    resume does not recreate a duplicate PR. An `error` row with no
+    recorded number, or no row at all, triggers a fresh
+    insert_pr_open_and_scan. A real insert_pr_open_and_scan leaves `done`
+    or `error` synchronously via scan_github.
     """
     origin = store.device_id()
     for row in store.rows("activity"):
