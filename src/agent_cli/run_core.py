@@ -1294,53 +1294,59 @@ def execute_spine_step(
             or not _SHA_RE.fullmatch(current_head_sha)
         ):
             current_head_sha = ""
-        if current_head_sha:
-            latest_local_check: dict[str, Any] | None = None
-            for c in snap.get("local_checks") or []:
-                if not isinstance(c, dict):
-                    continue
-                if str(c.get("name") or "") != "local":
-                    continue
-                latest_local_check = c  # oldest -> newest; last one wins
-            checked_sha = ""
-            checked_result = ""
-            if latest_local_check is not None:
-                checked_sha = str(
-                    latest_local_check.get("head_sha") or ""
-                ).strip().lower()
-                checked_result = str(latest_local_check.get("result") or "")
-            # An UNBOUND latest check (head_sha empty -- environment could not
-            # resolve a SHA at check time) carries no freshness signal to
-            # compare against; only enforce the gate when the latest check IS
-            # bound to a concrete sha that turns out to differ (or fail).
-            if checked_sha and (
-                checked_sha != current_head_sha
-                or checked_result not in ("pass", "skip")
-            ):
-                _reset_keys(
-                    store,
-                    tid,
-                    ("local_check_pass",),
-                    evidence=(
-                        f"stale: HEAD {current_head_sha} last check was for "
-                        f"{checked_sha} (re-checked before push)"
-                    ),
-                )
-                return RunOutcome(
-                    kind="not_closable",
-                    key=step.key,
-                    step=step,
-                    reason=(
-                        f"no fresh local check for current HEAD {current_head_sha} "
-                        f"(last check was for {checked_sha}); local_check_pass "
-                        "reopened for a fresh check"
-                    ),
-                    message=(
-                        f"no fresh local check for current HEAD {current_head_sha} "
-                        f"(last check was for {checked_sha}); local_check_pass "
-                        "reopened for a fresh check"
-                    ),
-                )
+        if not current_head_sha:
+            return RunOutcome(
+                kind="failed",
+                key=step.key,
+                step=step,
+                reason="could not resolve current HEAD sha before push",
+                message="could not resolve current HEAD sha before push",
+            )
+        latest_local_check: dict[str, Any] | None = None
+        for c in snap.get("local_checks") or []:
+            if not isinstance(c, dict):
+                continue
+            if str(c.get("name") or "") != "local":
+                continue
+            latest_local_check = c  # oldest -> newest; last one wins
+        checked_sha = ""
+        checked_result = ""
+        if latest_local_check is not None:
+            checked_sha = str(
+                latest_local_check.get("head_sha") or ""
+            ).strip().lower()
+            checked_result = str(latest_local_check.get("result") or "")
+        # Unbound latest check (empty head_sha) counts as stale too -- require
+        # a concrete checked_sha that matches current HEAD with pass/skip.
+        if (
+            not checked_sha
+            or checked_sha != current_head_sha
+            or checked_result not in ("pass", "skip")
+        ):
+            _reset_keys(
+                store,
+                tid,
+                ("local_check_pass",),
+                evidence=(
+                    f"stale: HEAD {current_head_sha} last check was for "
+                    f"{checked_sha} (re-checked before push)"
+                ),
+            )
+            return RunOutcome(
+                kind="not_closable",
+                key=step.key,
+                step=step,
+                reason=(
+                    f"no fresh local check for current HEAD {current_head_sha} "
+                    f"(last check was for {checked_sha}); local_check_pass "
+                    "reopened for a fresh check"
+                ),
+                message=(
+                    f"no fresh local check for current HEAD {current_head_sha} "
+                    f"(last check was for {checked_sha}); local_check_pass "
+                    "reopened for a fresh check"
+                ),
+            )
 
         try:
             sha = push_branch(
