@@ -29,7 +29,11 @@ from agent_cli.fixer_act import (
 )
 from agent_cli.git_act import GitActError, push_branch
 from agent_cli.lane import LaneResult, findings_header_present
-from agent_cli.run_core import ReviewDiffUnavailableError, build_review_spec_file
+from agent_cli.run_core import (
+    DEFAULT_ROUND_CAP,
+    ReviewDiffUnavailableError,
+    build_review_spec_file,
+)
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, dumps
 from test_cli import _last_task_id, run
@@ -4769,3 +4773,51 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
     assert len(rejected_quality) == 1, (
         f"rejection gate must be recorded exactly once: {gates}"
     )
+
+
+def test_drive_one_preflight_fails_when_current_round_at_cap(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fresh pickup must fail-closed when current_round is already at the cap."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert int(task.get("current_round") or 0) == 1
+        from agent_cli import main as main_mod
+
+        task["current_round"] = DEFAULT_ROUND_CAP
+        store.write("task", "update", tid, main_mod._strip(task))
+        task = store.row("task", tid)
+        assert task is not None
+        assert int(task.get("current_round") or 0) == DEFAULT_ROUND_CAP
+
+        def boom_runner(argv: list[str]) -> Completed:
+            raise AssertionError(f"runner must not be called: {argv}")
+
+        def boom_launch(**kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError(f"launch must not be called: {kwargs}")
+
+        def boom_push(*, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
+            raise AssertionError("push_branch must not be called")
+
+        monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
+        monkeypatch.setattr("agent_cli.git_act.push_branch", boom_push)
+
+        result = _drive_one(
+            store,
+            task,
+            boom_runner,
+            round_cap=DEFAULT_ROUND_CAP,
+            lane_runner=None,
+        )
+        assert "failed" in result
+        assert "round cap" in result
+        task_after = store.row("task", tid)
+        assert task_after is not None
+        assert task_after.get("state") == "failed"
+        assert int(task_after.get("current_round") or 0) == DEFAULT_ROUND_CAP
+    finally:
+        store.close()

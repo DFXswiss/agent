@@ -23,6 +23,7 @@ from .run_core import (
     AgentLaunchPlan,
     RunOutcome,
     _agent_finish,
+    _check_record,
     _fence_marker,
     _round_start,
     complete_spine_agent_step,
@@ -1092,6 +1093,17 @@ def _drive_one(
     from . import main as main_mod
 
     tid = str(task["id"])
+    current_round = int(task.get("current_round") or 0)
+    if current_round >= round_cap:
+        cap_msg = f"round cap {round_cap} reached (current_round={current_round})"
+        _check_record(
+            tid=tid,
+            name="round-cap",
+            command=f"round_cap={round_cap}",
+            result="fail",
+            output=cap_msg,
+        )
+        return f"error-fix-work {tid} failed ({cap_msg})"
     session_id = str(task.get("session_id") or "")
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
     raw_error_id = payload.get("error_id")
