@@ -2018,6 +2018,91 @@ def test_fixer_backfills_task_ref_from_pr_open_real_base(
         store.close()
 
 
+def test_fixer_backfills_task_ref_from_slash_containing_bare_base(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bare GitFlow-style base (slash in name) must still get a single origin/ prefix."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pr_head = f"error-fix-{ERROR_ID[:8]}"
+    activity_id = str(uuid.uuid4())
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ),
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        # Stale local resolution — GitHub's real base will disagree.
+        task["ref"] = "origin/develop"
+        from agent_cli import main as main_mod
+
+        store.write("task", "update", tid, main_mod._strip(task))
+
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": "sess-1",
+                "type": "pr.open",
+                "payload": {
+                    "repo": "org/app",
+                    "title": "sess-1 - Fix timeout",
+                    "head": pr_head,
+                    "body": "EN:\nDraft\n",
+                    "base": "origin/develop",
+                },
+                "execution_status": "done",
+                "result": {
+                    "repo": "org/app",
+                    "number": 42,
+                    "url": "https://github.com/org/app/pull/42",
+                    "draft": True,
+                    "base": "release/1.0",
+                },
+            },
+        )
+        assert _pr_open_row_exists(store, head=pr_head, repo="org/app")
+
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        updated = store.row("task", tid)
+        assert updated is not None
+        assert updated.get("ref") == "origin/release/1.0"
+        assert updated.get("ref") != "release/1.0"
+        assert updated.get("ref") != "origin/origin/release/1.0"
+    finally:
+        store.close()
+
+
 def test_fixer_persists_pr_number_and_queues_gate_findings(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
