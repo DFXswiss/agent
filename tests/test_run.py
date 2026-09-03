@@ -303,6 +303,35 @@ def test_run_local_check_pass_uses_distinct_longer_timeout(
     assert all(t is None for _, t in probe_calls), "fast probes must keep the 120s default"
 
 
+def test_run_local_check_strips_credential_env_from_persisted_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local-check subprocess must not persist credential-shaped env values.
+
+    Uses the real _exec_argv (not a fake) so the env-pop / restore / redact
+    path around the check command is actually exercised. AGENT_CHECK_COMMAND
+    is `env`, which would echo the full inherited environment if secrets
+    were left in place.
+    """
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    sentinel = "sentinel-value-should-not-leak"
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
+    monkeypatch.setenv("AGENT_CHECK_COMMAND", "env")
+    run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
+    capsys.readouterr()
+
+    local_rows = [c for c in _local_checks(tmp_path, tid) if c.get("name") == "local"]
+    assert local_rows, "expected a local check record"
+    output = str(local_rows[-1].get("output") or "")
+    assert sentinel not in output
+
+
 def test_run_dry_run_skips_local_check(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1468,9 +1468,25 @@ def execute_spine_step(
                     reason="check command is empty",
                     message="check command is empty",
                 )
-            completed = exec_argv(argv, cwd=run_cwd, timeout=local_check_timeout_sec())
+            # Defense-in-depth: strip credential-shaped env vars before the
+            # local-check subprocess inherits os.environ (ExecArgv has no env=).
+            secret_keys = [
+                k
+                for k in list(os.environ)
+                if k.startswith("AGENT_ERROR_FIX_") or k == "AGENT_PG_DSN"
+            ]
+            saved_secrets = {k: os.environ.pop(k) for k in secret_keys}
+            try:
+                completed = exec_argv(
+                    argv, cwd=run_cwd, timeout=local_check_timeout_sec()
+                )
+            finally:
+                os.environ.update(saved_secrets)
             result = "pass" if completed.returncode == 0 else "fail"
             output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
+            for secret in saved_secrets.values():
+                if secret:
+                    output = output.replace(secret, "[REDACTED]")
             _check_record(
                 tid=tid,
                 name="local",
