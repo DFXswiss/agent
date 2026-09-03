@@ -28,7 +28,6 @@ from .run_core import (
     complete_spine_agent_step,
     execute_spine_step,
     launch_agent_plan,
-    local_check_timeout_sec,
     prepare_spine_agent_step,
 )
 from .store import Store, StoreError
