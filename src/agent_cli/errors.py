@@ -185,9 +185,9 @@ def redact(text: str) -> str:
 
 
 def fingerprint(*, service: str, error_class: str, stack_sig: str, environment: str) -> str:
-    # Strip service/environment so stored fingerprints match consumers that
+    # Strip all four fields so stored fingerprints match consumers that
     # normalize via _nonempty_str (whole-string .strip()) before compare.
-    return f"{service.strip()}|{error_class}|{stack_sig}|{environment.strip()}"
+    return f"{service.strip()}|{error_class.strip()}|{stack_sig.strip()}|{environment.strip()}"
 
 
 def line_fingerprint(*, server: str, container: str, line: str) -> str:

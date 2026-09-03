@@ -197,6 +197,23 @@ def test_fingerprint_strips_service_and_environment_whitespace() -> None:
     assert " api ".strip() + "|TimeoutError|abc123def4567890|" + " prod ".strip() == padded
 
 
+def test_fingerprint_strips_error_class_and_stack_sig_whitespace() -> None:
+    padded = fingerprint(
+        service="api",
+        error_class=" TimeoutError ",
+        stack_sig=" abc123def4567890 ",
+        environment="prod",
+    )
+    clean = fingerprint(
+        service="api",
+        error_class="TimeoutError",
+        stack_sig="abc123def4567890",
+        environment="prod",
+    )
+    assert padded == clean
+    assert padded == "api|TimeoutError|abc123def4567890|prod"
+
+
 def test_latest_seen_matches_whitespace_padded_stored_fingerprint(tmp_path: Path) -> None:
     """Legacy error.seen rows may retain a whitespace-padded fingerprint; the
     stored side must be stripped before compare (site 5 / _latest_seen)."""
