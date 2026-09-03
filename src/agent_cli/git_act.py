@@ -107,10 +107,14 @@ def push_branch(
     *,
     cwd: str,
     runner: Runner,
+    expected_sha: str,
     expected_branch: str | None = None,
     expected_repo: str | None = None,
 ) -> str:
     """Push the current branch if needed. Return HEAD sha (lowercase hex)."""
+    if not _SHA_RE.fullmatch(expected_sha):
+        raise GitActError(f"invalid expected_sha: {expected_sha!r}")
+    expected_sha = expected_sha.lower()
     if expected_branch is not None and expected_repo is None:
         raise GitActError(
             "expected_branch set without expected_repo — refusing to push "
@@ -150,8 +154,17 @@ def push_branch(
         merge_short = branch
         if merge_short in PROTECTED:
             raise GitActError(f"upstream tracks protected branch {merge_short}")
+        recheck = runner(_git(cwd, "rev-parse", "HEAD"))
+        if recheck.returncode != 0:
+            raise GitActError(_fail_detail(recheck, "git failed"))
+        recheck_sha = recheck.stdout.strip().lower()
+        if recheck_sha != expected_sha:
+            raise GitActError(
+                f"HEAD moved to {recheck_sha} since expected_sha "
+                f"{expected_sha} was verified -- refusing to push"
+            )
         completed = runner(
-            _git(cwd, "push", "--set-upstream", "--", remote, f"HEAD:{merge_ref}")
+            _git(cwd, "push", "--set-upstream", "--", remote, f"{expected_sha}:{merge_ref}")
         )
         if completed.returncode != 0:
             raise GitActError(_fail_detail(completed, "git push failed"))
@@ -206,8 +219,17 @@ def push_branch(
         if behind > 0:
             raise GitActError("branch is behind upstream")
         if ahead > 0:
+            recheck = runner(_git(cwd, "rev-parse", "HEAD"))
+            if recheck.returncode != 0:
+                raise GitActError(_fail_detail(recheck, "git failed"))
+            recheck_sha = recheck.stdout.strip().lower()
+            if recheck_sha != expected_sha:
+                raise GitActError(
+                    f"HEAD moved to {recheck_sha} since expected_sha "
+                    f"{expected_sha} was verified -- refusing to push"
+                )
             completed = runner(
-                _git(cwd, "push", "--", remote, f"HEAD:{merge_ref}")
+                _git(cwd, "push", "--", remote, f"{expected_sha}:{merge_ref}")
             )
             if completed.returncode != 0:
                 raise GitActError(_fail_detail(completed, "git push failed"))

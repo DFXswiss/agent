@@ -1352,6 +1352,7 @@ def execute_spine_step(
             sha = push_branch(
                 cwd=run_cwd,
                 runner=lambda argv: exec_argv(argv, cwd=run_cwd),
+                expected_sha=current_head_sha,
                 expected_branch=expected_branch,
                 expected_repo=resolved_repo,
             )

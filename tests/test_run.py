@@ -1292,7 +1292,7 @@ def test_pushed_fails_closed_when_head_advances_without_fresh_check(
 
     push_calls = {"n": 0}
 
-    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None):
+    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None):
         push_calls["n"] += 1
         return current["sha"]
 
@@ -1366,7 +1366,7 @@ def test_pushed_fails_closed_when_latest_check_is_unbound(
 
     push_calls = {"n": 0}
 
-    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None):
+    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None):
         push_calls["n"] += 1
         return current["sha"]
 
@@ -1453,7 +1453,7 @@ def test_pushed_fails_closed_when_current_head_unresolvable(
 
     push_calls = {"n": 0}
 
-    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None):
+    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None):
         push_calls["n"] += 1
         return sha_a
 
@@ -1504,7 +1504,7 @@ def test_run_pushed_calls_push_branch(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abcdef1234567890abcdef1234567890abcdef12"
 
@@ -1529,7 +1529,7 @@ def test_pushed_passes_expected_branch_none_for_ordinary_task(
 
     captured: dict[str, object] = {}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         captured["expected_branch"] = expected_branch
         return "abcdef1234567890abcdef1234567890abcdef12"
 
@@ -1565,7 +1565,7 @@ def test_pushed_fails_loudly_on_stale_whitespace_only_error_id(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abc1234"
 
@@ -1599,7 +1599,7 @@ def test_pushed_fails_loudly_on_error_id_without_error_fix_confirmed(
 
     called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return "abc1234"
 
@@ -1725,7 +1725,7 @@ def test_run_mergeable_after_gates(
 
     push_called = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         push_called["n"] += 1
         return "abcdef1234567890abcdef1234567890abcdef12"
 
@@ -2289,7 +2289,7 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
     shas = [old_sha, new_sha]
     push_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -2482,7 +2482,7 @@ def test_pr_gate_rejection_evidence_omits_status_preamble(
     _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:

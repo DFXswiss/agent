@@ -14,7 +14,8 @@ pytestmark = pytest.mark.no_pg
 CWD = "/tmp/repo"
 SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 FORCE_FLAGS = ("--force", "--force-with-lease", "-f")
-PUSH_ARGV = ["git", "-C", CWD, "push", "--", "origin", "HEAD:refs/heads/feat-x"]
+# Refspec pins expected_sha (not mutable HEAD) — SHA must appear in asserted push argv.
+PUSH_ARGV = ["git", "-C", CWD, "push", "--", "origin", f"{SHA}:refs/heads/feat-x"]
 
 
 def _config(argv: list[str]) -> Completed | None:
@@ -144,7 +145,7 @@ def test_push_ahead_one_pushes_without_force() -> None:
             return Completed(0, SHA + "\n", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    got = push_branch(cwd=CWD, runner=runner)
+    got = push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
     assert got == SHA
     assert ["git", "-C", CWD, "fetch", "--", "origin"] in calls
     assert PUSH_ARGV in calls
@@ -187,7 +188,9 @@ def test_push_expected_repo_refused(url: str, expected_repo: str) -> None:
     """Push URL must match expected_repo allowlist — mismatch refuses before fetch/push."""
     calls, runner = _expected_repo_refuse_runner(url)
     with pytest.raises(GitActError, match="does not match expected repo"):
-        push_branch(cwd=CWD, runner=runner, expected_repo=expected_repo)
+        push_branch(
+            cwd=CWD, runner=runner, expected_sha=SHA, expected_repo=expected_repo
+        )
     assert not any("push" in a for a in calls)
     assert not any("fetch" in a for a in calls)
 
@@ -212,7 +215,9 @@ def test_push_expected_repo_refused(url: str, expected_repo: str) -> None:
 def test_push_expected_repo_succeeds(url: str) -> None:
     """Allowlisted push URL forms permit the normal ahead-one push path."""
     calls, runner = _expected_repo_succeed_runner(url)
-    got = push_branch(cwd=CWD, runner=runner, expected_repo="org/app")
+    got = push_branch(
+        cwd=CWD, runner=runner, expected_sha=SHA, expected_repo="org/app"
+    )
     assert got == SHA
     assert PUSH_ARGV in calls
 
@@ -245,7 +250,7 @@ def test_push_ahead_zero_skips_push() -> None:
             return Completed(0, "abc1234\n", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    assert push_branch(cwd=CWD, runner=runner) == "abc1234"
+    assert push_branch(cwd=CWD, runner=runner, expected_sha=SHA) == "abc1234"
     assert not any("push" in a for a in calls)
 
 
@@ -259,7 +264,7 @@ def test_push_protected_branch_develop() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError):
-        push_branch(cwd=CWD, runner=runner)
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
     assert not any("push" in a for a in calls)
 
 
@@ -275,7 +280,9 @@ def test_push_expected_branch_without_expected_repo_refused() -> None:
         GitActError,
         match="expected_branch set without expected_repo",
     ):
-        push_branch(cwd=CWD, runner=boom, expected_branch="feat-x")
+        push_branch(
+            cwd=CWD, runner=boom, expected_sha=SHA, expected_branch="feat-x"
+        )
     assert calls == []
 
 
@@ -292,6 +299,7 @@ def test_push_expected_branch_mismatch() -> None:
         push_branch(
             cwd=CWD,
             runner=runner,
+            expected_sha=SHA,
             expected_branch="error-fix-aaaaaaaa",
             expected_repo="org/app",
         )
@@ -307,7 +315,7 @@ def test_push_dirty_porcelain() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="uncommitted changes"):
-        push_branch(cwd=CWD, runner=runner)
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
 
 
 SET_UPSTREAM_PUSH = [
@@ -318,7 +326,7 @@ SET_UPSTREAM_PUSH = [
     "--set-upstream",
     "--",
     "origin",
-    "HEAD:refs/heads/feat-x",
+    f"{SHA}:refs/heads/feat-x",
 ]
 
 
@@ -347,7 +355,11 @@ def test_push_no_upstream_sets_upstream_with_origin() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     got = push_branch(
-        cwd=CWD, runner=runner, expected_branch="feat-x", expected_repo="org/app"
+        cwd=CWD,
+        runner=runner,
+        expected_sha=SHA,
+        expected_branch="feat-x",
+        expected_repo="org/app",
     )
     assert got == SHA
     assert SET_UPSTREAM_PUSH in calls
@@ -370,7 +382,11 @@ def test_push_no_upstream_ambiguous_remotes_errors() -> None:
 
     with pytest.raises(GitActError, match="ambiguous remotes"):
         push_branch(
-            cwd=CWD, runner=runner, expected_branch="feat-x", expected_repo="org/app"
+            cwd=CWD,
+            runner=runner,
+            expected_sha=SHA,
+            expected_branch="feat-x",
+            expected_repo="org/app",
         )
 
 
@@ -389,7 +405,7 @@ def test_push_no_upstream_without_expected_branch_fails_closed() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="no upstream"):
-        push_branch(cwd=CWD, runner=runner)
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
 
 
 def test_push_behind_errors_no_push() -> None:
@@ -418,7 +434,7 @@ def test_push_behind_errors_no_push() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="branch is behind upstream"):
-        push_branch(cwd=CWD, runner=runner)
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
     assert not any("push" in a for a in calls)
 
 
@@ -440,7 +456,7 @@ def test_push_upstream_origin_develop_refused() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="protected branch"):
-        push_branch(cwd=CWD, runner=runner)
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
 
 
 def test_push_upstream_tracks_wrong_expected_branch_refused() -> None:
@@ -467,7 +483,11 @@ def test_push_upstream_tracks_wrong_expected_branch_refused() -> None:
 
     with pytest.raises(GitActError, match="refusing to push"):
         push_branch(
-            cwd=CWD, runner=runner, expected_branch=branch, expected_repo="org/app"
+            cwd=CWD,
+            runner=runner,
+            expected_sha=SHA,
+            expected_branch=branch,
+            expected_repo="org/app",
         )
     assert not any("push" in a for a in calls)
     assert not any("fetch" in a for a in calls)
@@ -499,7 +519,7 @@ def test_push_upstream_remote_mismatch_refused() -> None:
         raise AssertionError(f"unexpected argv: {argv}")
 
     with pytest.raises(GitActError, match="refusing to push"):
-        push_branch(cwd=CWD, runner=runner)
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
     assert not any("push" in a for a in calls)
     assert not any("fetch" in a for a in calls)
 
@@ -533,8 +553,44 @@ def test_push_upstream_feat_main_not_protected() -> None:
             return Completed(0, SHA + "\n", "")
         raise AssertionError(f"unexpected argv: {argv}")
 
-    assert push_branch(cwd=CWD, runner=runner) == SHA
+    assert push_branch(cwd=CWD, runner=runner, expected_sha=SHA) == SHA
     assert not any(len(a) > 3 and a[3] == "push" for a in calls)
+
+
+def test_push_refuses_when_head_moved_before_push() -> None:
+    """Pre-push rev-parse must match expected_sha; otherwise refuse without pushing."""
+    moved = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        _assert_git_c(argv)
+        if "rev-parse" in argv and "--abbrev-ref" in argv and "HEAD" in argv:
+            return Completed(0, "feat-x\n", "")
+        if "--porcelain" in argv:
+            return Completed(0, "", "")
+        if "@{upstream}" in argv and "rev-list" not in argv:
+            return Completed(0, "origin/feat-x\n", "")
+        cfg = _config(argv)
+        if cfg is not None:
+            return cfg
+        rem = _remote(argv)
+        if rem is not None:
+            return rem
+        url = _remote_push_url(argv, url="git@github.com:org/app.git")
+        if url is not None:
+            return url
+        if "fetch" in argv:
+            return Completed(0, "", "")
+        if "rev-list" in argv:
+            return Completed(0, "0\t1\n", "")
+        if argv == ["git", "-C", CWD, "rev-parse", "HEAD"]:
+            return Completed(0, moved + "\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    with pytest.raises(GitActError, match="HEAD moved"):
+        push_branch(cwd=CWD, runner=runner, expected_sha=SHA)
+    assert not any("push" in a for a in calls)
 
 
 def test_mergeable_open_empty_checks() -> None:

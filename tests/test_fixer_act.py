@@ -618,9 +618,17 @@ def test_write_error_fix_spec_outside_git_worktree(tmp_path: Path) -> None:
         assert ".spec.md" not in status.stdout
 
         # Real push_branch against the bare remote must succeed (dirty-check clean).
+        head_proc = subprocess.run(
+            ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        expected_sha = head_proc.stdout.strip()
         sha = push_branch(
             cwd=str(worktree),
             runner=real_runner,
+            expected_sha=expected_sha,
             expected_branch="feat-spec-leak",
             expected_repo="org/app",
         )
@@ -682,7 +690,7 @@ def test_pushed_passes_expected_branch_from_error_id(
 
     captured: dict[str, object] = {}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         captured["expected_branch"] = expected_branch
         captured["expected_repo"] = expected_repo
         return "abcdef1234567890abcdef1234567890abcdef12"
@@ -755,7 +763,7 @@ def test_pushed_expected_repo_prefers_payload_over_task_repo(
 
     captured: dict[str, object] = {}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         captured["expected_repo"] = expected_repo
         return "abcdef1234567890abcdef1234567890abcdef12"
 
@@ -778,7 +786,7 @@ def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: "abcdef1234567890abcdef1234567890abcdef12",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: "abcdef1234567890abcdef1234567890abcdef12",
     )
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
@@ -832,7 +840,7 @@ def test_drive_one_skips_github_when_session_inactive(
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: (
             "abcdef1234567890abcdef1234567890abcdef12"
         ),
     )
@@ -902,7 +910,7 @@ def test_fixer_threads_pushed_head_into_pr_gate(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -966,7 +974,7 @@ def test_fixer_strips_origin_prefix_from_pr_open_base(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -1183,7 +1191,7 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
     insert_calls = {"n": 0}
     head = f"error-fix-{ERROR_ID[:8]}"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -1287,7 +1295,7 @@ def test_fixer_stops_on_persistent_gh_pr_create_failure(
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
     create_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -1709,7 +1717,7 @@ def test_fixer_drives_error_fix_task_to_done(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -1760,7 +1768,7 @@ def test_ensure_done_readiness_summary_fallback_uses_distinct_german(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -1825,7 +1833,7 @@ def test_drive_one_reports_contributing_ok_blocked_instead_of_raising(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -1867,7 +1875,7 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -1974,7 +1982,7 @@ def test_fixer_backfills_pr_number_when_pr_open_already_done(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: (
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
     )
@@ -2056,7 +2064,7 @@ def test_fixer_backfills_task_ref_from_pr_open_real_base(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: (
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
     )
@@ -2159,7 +2167,7 @@ def test_fixer_backfills_task_ref_from_slash_containing_bare_base(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: (
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
     )
@@ -2248,7 +2256,7 @@ def test_fixer_heal_unconditionally_prepends_origin_even_for_origin_prefixed_bas
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: (
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
     )
@@ -2321,7 +2329,7 @@ def test_fixer_persists_pr_number_and_queues_gate_findings(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -2422,7 +2430,7 @@ def test_rejection_feedback_rewritten_into_spec(
     rejects = {"n": 0}
     findings_marker = "fix the retry loop specifically"
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -2516,7 +2524,7 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     push_calls = {"n": 0}
     rejects = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         i = push_calls["n"]
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
@@ -2640,7 +2648,7 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr(
@@ -2965,7 +2973,7 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
     scan_calls: list[tuple] = []
     insert_calls: list[tuple] = []
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -3054,7 +3062,7 @@ def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
     scan_calls: list[tuple] = []
     insert_calls: list[tuple] = []
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -3161,7 +3169,7 @@ def test_fixer_error_pr_open_with_number_reports_view_auth_retry_needed(
     view_calls = {"n": 0}
     create_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -3264,7 +3272,7 @@ def test_fixer_error_row_with_number_repends_and_resumes_without_duplicate_creat
     activity_id = str(uuid.uuid4())
     create_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -3387,7 +3395,7 @@ def test_fixer_bare_pending_row_does_not_shadow_error_with_number_repend(
     error_activity_id = str(uuid.uuid4())
     create_calls = {"n": 0}
 
-    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
@@ -3737,7 +3745,7 @@ def test_drive_error_fix_tasks_runs_pr_dimensions_concurrently(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -3893,7 +3901,7 @@ def test_parallel_pr_pair_rejection_feedback_survives_sibling_unavailable(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr("agent_cli.run_core.build_review_spec_file", fake_build)
@@ -3991,7 +3999,7 @@ def test_parallel_pr_pair_both_reject_combines_findings(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr(
@@ -4128,7 +4136,7 @@ def test_parallel_pr_pair_reject_plus_pass_records_both(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr(
@@ -4235,7 +4243,7 @@ def test_parallel_pr_pair_launch_oserror_releases_sibling_agent(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -4378,7 +4386,7 @@ def test_parallel_pr_pair_retry_oserror_preserves_sibling_result(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr(
@@ -4473,7 +4481,7 @@ def test_parallel_pr_pair_prepare_exception_releases_first_agent(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
@@ -4589,7 +4597,7 @@ def test_parallel_pr_pair_failed_plus_reject_keeps_failed_and_skips_round_start(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr(
@@ -4702,7 +4710,7 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
 
     monkeypatch.setattr(
         "agent_cli.git_act.push_branch",
-        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None: pushed_sha,
     )
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr(
