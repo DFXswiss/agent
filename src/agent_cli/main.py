@@ -34,6 +34,7 @@ from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
+from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .runtime import (
     Runtime,
@@ -1048,6 +1049,84 @@ def cmd_check(args: list[str]) -> None:
         print(f"check {name}={result}")
     finally:
         store.close()
+
+
+def _read_text_arg(args: list[str]) -> str:
+    path = flag(args, "--file")
+    if path is not None:
+        return Path(path).read_text(encoding="utf-8")
+    return sys.stdin.read()
+
+
+def cmd_local_ci(args: list[str]) -> None:
+    if not args or args[0] not in ("verify", "parse", "render"):
+        die(
+            "Usage: agent local-ci verify|parse|render [--file PATH] "
+            "[--require-ids id,id] [--expect-head SHA] [--expect-private] [--json]"
+        )
+    action = args[0]
+    rest = args[1:]
+    as_json = "--json" in rest
+    expect_private = "--expect-private" in rest
+    expect_head = flag(rest, "--expect-head")
+    require_raw = flag(rest, "--require-ids")
+    require_ids = None
+    if require_raw:
+        require_ids = frozenset(part.strip() for part in require_raw.split(",") if part.strip())
+        if not require_ids:
+            die("--require-ids must list at least one id")
+    raw = _read_text_arg(rest)
+    if action == "render":
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            die(f"JSON is invalid: {exc.msg}")
+        if not isinstance(payload, dict):
+            die("render input must be a JSON object")
+        try:
+            report = parse_payload(payload)
+        except LocalCiError as exc:
+            die(str(exc))
+        sys.stdout.write(render_block(report))
+        return
+    try:
+        if action == "parse":
+            report = parse_comment(raw)
+            if as_json:
+                print(
+                    json.dumps(
+                        {
+                            "schema": report.schema,
+                            "repo": report.repo,
+                            "head": report.head,
+                            "private": report.private,
+                            "recorded_at": report.recorded_at,
+                            "required": list(report.required),
+                            "runs": [run.id for run in report.runs],
+                        },
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(f"local-ci repo={report.repo} head={report.head} required={len(report.required)}")
+            return
+        verdict = verify_comment(
+            raw,
+            require_ids=require_ids,
+            expect_head=expect_head,
+            expect_private=True if expect_private else None,
+        )
+    except LocalCiError as exc:
+        die(str(exc))
+    if as_json:
+        print(json.dumps(verdict.to_json(), sort_keys=True))
+    else:
+        extra = ""
+        if verdict.reasons:
+            extra = " " + "; ".join(verdict.reasons)
+        print(f"local-ci {verdict.status}{extra}")
+    if not verdict.ok:
+        raise SystemExit(1)
 
 
 def _task_pull_request(task: dict) -> tuple[str, int] | None:
@@ -3294,6 +3373,7 @@ COMMANDS = {
     "round": cmd_round,
     "agent": cmd_agent,
     "check": cmd_check,
+    "local-ci": cmd_local_ci,
     "gate": cmd_gate,
     "work": cmd_work,
     "allow": cmd_allow,
@@ -3323,7 +3403,7 @@ def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         die(
-            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|gate|work|"
+            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|pg|knock|lane|watch|"
             "github|query|subscribe|mail|supervise> …"
         )

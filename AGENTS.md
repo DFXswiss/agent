@@ -8,3 +8,5 @@ A draft plus local tests is not done. Pull-request done is signed commits
 on a branch in this repository, grok quality and logic then Codex quality
 and logic on this head with zero findings, CI green on this head, then
 ready. The authoring session does not sit those PR reviews. A human merges.
+The local-CI comment schema for private product repositories is
+`docs/local-ci-v1.md`.
