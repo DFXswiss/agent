@@ -28,6 +28,7 @@ from agent_cli.fixer_act import (
 )
 from agent_cli.git_act import GitActError, push_branch
 from agent_cli.lane import LaneResult, findings_header_present
+from agent_cli.run_core import ReviewDiffUnavailableError, build_review_spec_file
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError
 from test_cli import _last_task_id, run
@@ -2027,10 +2028,22 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
         i for i, (_, kind, key) in enumerate(calls)
         if kind == "rejected_new_round" and key != "reviewer_approved"
     )
-    assert reject_idx + 1 < len(calls), (
+    # Round 46: the sibling PR-gate dimension is always fully recorded too
+    # (no more abandon/discard), so it shows up immediately after the
+    # rejection in the SAME batch, with the SAME pre-attempt (stale) head
+    # both dimensions were prepared with -- that's expected, not a bug.
+    # Skip past any adjacent same-batch PR-gate entries to find the first
+    # call that belongs to a genuinely new round.
+    pr_gate_keys = {
+        "grok_pr_quality", "grok_pr_logic", "codex_pr_quality", "codex_pr_logic",
+    }
+    next_idx = reject_idx + 1
+    while next_idx < len(calls) and calls[next_idx][2] in pr_gate_keys:
+        next_idx += 1
+    assert next_idx < len(calls), (
         "expected a further execute_spine_step call after the PR-gate rejection"
     )
-    next_head, _next_kind, _next_key = calls[reject_idx + 1]
+    next_head, _next_kind, _next_key = calls[next_idx]
     assert next_head is None, (
         "head must be None on the first execute_spine_step call after a "
         f"PR-gate rejection; got {next_head!r} (stale rehydration bug)"
@@ -2725,3 +2738,808 @@ def test_drive_error_fix_tasks_runs_pr_dimensions_concurrently(
         assert max(e[3] for e in enters) < min(e[3] for e in exits), (
             f"{vendor}: launches did not overlap: {vendor_events}"
         )
+
+
+def _patch_pr_pair_order(
+    monkeypatch: pytest.MonkeyPatch, *, reverse: bool
+) -> None:
+    """Optionally reverse ready pair order (quality↔logic) for order-independence."""
+    if not reverse:
+        return
+    import agent_cli.fixer_act as fixer_mod
+
+    real = fixer_mod._ready_pr_dimension_pair
+
+    def reversed_pair(ready):  # type: ignore[no-untyped-def]
+        pair = real(ready)
+        return None if pair is None else list(reversed(pair))
+
+    monkeypatch.setattr("agent_cli.fixer_act._ready_pr_dimension_pair", reversed_pair)
+
+
+def _pr_pair_rtc(pushed_sha: str):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, pushed_sha + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    return fake_rtc
+
+
+@pytest.mark.parametrize(
+    "reverse_pair,reject_role,unavailable_role",
+    [
+        (False, "pr-reviewer-quality", "pr-reviewer-logic"),
+        (True, "pr-reviewer-quality", "pr-reviewer-logic"),
+        (False, "pr-reviewer-logic", "pr-reviewer-quality"),
+        (True, "pr-reviewer-logic", "pr-reviewer-quality"),
+    ],
+    ids=[
+        "quality-first-quality-rejects",
+        "logic-first-quality-rejects",
+        "quality-first-logic-rejects",
+        "logic-first-logic-rejects",
+    ],
+)
+def test_parallel_pr_pair_rejection_feedback_survives_sibling_unavailable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    reverse_pair: bool,
+    reject_role: str,
+    unavailable_role: str,
+) -> None:
+    """Reject + vendor_unavailable must keep rejection findings in .spec.md
+    regardless of pair order and which dimension rejected.
+
+    cont=True from the rejection wins over the sibling's message-bearing
+    unavailable outcome, so the driver continues rather than returning the
+    unavailable message; findings are written once from the aggregated batch.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    _patch_pr_pair_order(monkeypatch, reverse=reverse_pair)
+
+    pushed_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    findings_marker = "fix the retry loop specifically"
+    # First PR-pair attempt only: reject once / unavailable once, then pass.
+    reject_done = {"n": 0}
+    unavailable_done = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if (
+            role == reject_role
+            and vendor == "grok"
+            and reject_done["n"] == 0
+        ):
+            reject_done["n"] += 1
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout=f"STATUS: complete\nFINDINGS:\n- {findings_marker}\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_build(store, tid_, *, role, round_num, implement_spec_file, cwd, exec_argv):  # type: ignore[no-untyped-def]
+        if role == unavailable_role and unavailable_done["n"] == 0:
+            unavailable_done["n"] += 1
+            raise ReviewDiffUnavailableError(
+                f"simulated {unavailable_role} unavailable"
+            )
+        return build_review_spec_file(
+            store,
+            tid_,
+            role=role,
+            round_num=round_num,
+            implement_spec_file=implement_spec_file,
+            cwd=cwd,
+            exec_argv=exec_argv,
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.run_core.build_review_spec_file", fake_build)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _pr_pair_rtc(pushed_sha)
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert reject_done["n"] == 1
+    assert unavailable_done["n"] == 1
+    spec_text = (tmp_path / "error-fix-specs" / tid / ".spec.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Prior Rejection Feedback" in spec_text
+    assert findings_marker in spec_text
+    reject_key = (
+        "grok_pr_quality"
+        if reject_role == "pr-reviewer-quality"
+        else "grok_pr_logic"
+    )
+    assert f"## {reject_key}" in spec_text
+
+
+@pytest.mark.parametrize(
+    "reverse_pair",
+    [False, True],
+    ids=["quality-first", "logic-first"],
+)
+def test_parallel_pr_pair_both_reject_combines_findings(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    reverse_pair: bool,
+) -> None:
+    """Both dimensions rejecting must write both findings into one .spec.md."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    _patch_pr_pair_order(monkeypatch, reverse=reverse_pair)
+
+    pushed_sha = "dddddddddddddddddddddddddddddddddddddddd"
+    quality_marker = "QUALITY_FINDING_marker_alpha"
+    logic_marker = "LOGIC_FINDING_marker_beta"
+    pair_attempts = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if vendor == "grok" and role in (
+            "pr-reviewer-quality",
+            "pr-reviewer-logic",
+        ):
+            # Reject only on the first grok PR-pair wave; later waves pass.
+            if pair_attempts["n"] < 2:
+                pair_attempts["n"] += 1
+                marker = (
+                    quality_marker
+                    if role == "pr-reviewer-quality"
+                    else logic_marker
+                )
+                return LaneResult(
+                    role=role,
+                    vendor=vendor,
+                    status="complete",
+                    argv=[vendor],
+                    returncode=0,
+                    stdout=f"STATUS: complete\nFINDINGS:\n- {marker}\n",
+                    stderr="",
+                )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _pr_pair_rtc(pushed_sha)
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    spec_text = (tmp_path / "error-fix-specs" / tid / ".spec.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Prior Rejection Feedback" in spec_text
+    assert quality_marker in spec_text
+    assert logic_marker in spec_text
+    assert "## grok_pr_quality" in spec_text
+    assert "## grok_pr_logic" in spec_text
+
+
+@pytest.mark.parametrize(
+    "reverse_pair,reject_role",
+    [
+        (False, "pr-reviewer-quality"),
+        (True, "pr-reviewer-quality"),
+        (False, "pr-reviewer-logic"),
+        (True, "pr-reviewer-logic"),
+    ],
+    ids=[
+        "quality-first-quality-rejects",
+        "logic-first-quality-rejects",
+        "quality-first-logic-rejects",
+        "logic-first-logic-rejects",
+    ],
+)
+def test_parallel_pr_pair_reject_plus_pass_records_both(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    reverse_pair: bool,
+    reject_role: str,
+) -> None:
+    """Reject + clean pass: findings reach .spec.md and the pass gate row exists.
+
+    Also asserts the rejection forces head invalidation (pushed reset) even
+    when the pass is processed after the reject in pair order.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    _patch_pr_pair_order(monkeypatch, reverse=reverse_pair)
+
+    pushed_sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    findings_marker = "REJECT_PLUS_PASS_marker"
+    pass_role = (
+        "pr-reviewer-logic"
+        if reject_role == "pr-reviewer-quality"
+        else "pr-reviewer-quality"
+    )
+    pass_dim = "logic" if pass_role.endswith("logic") else "quality"
+    reject_once = {"done": False}
+    saw_reject_batch = {"done": False}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if (
+            role == reject_role
+            and vendor == "grok"
+            and not reject_once["done"]
+        ):
+            reject_once["done"] = True
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout=f"STATUS: complete\nFINDINGS:\n- {findings_marker}\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    import agent_cli.fixer_act as fixer_mod
+
+    real_aggregate = fixer_mod._aggregate_drive_outcomes
+
+    def wrapping_aggregate(store, tid_, outcomes, **kwargs):  # type: ignore[no-untyped-def]
+        msg, head, cont = real_aggregate(store, tid_, outcomes, **kwargs)
+        kinds = {o.kind for o in outcomes}
+        # The passing sibling is processed sequentially after the rejecting
+        # one within the same batch, so by the time its own close_allowed
+        # check runs, the reject has already reset the checklist -- its
+        # close is correctly refused (not_closable), not agent_closed. The
+        # gate row is still recorded regardless (checked separately below).
+        if "rejected_new_round" in kinds and (
+            "agent_closed" in kinds or "not_closable" in kinds
+        ):
+            saw_reject_batch["done"] = True
+            # Rejection must win on head regardless of pass order.
+            assert head is None
+            assert cont is True
+            pushed = next(
+                (
+                    str(r.get("status") or "")
+                    for r in store.rows("checklist_item")
+                    if r.get("task_id") == tid_ and r.get("key") == "pushed"
+                ),
+                "",
+            )
+            assert pushed != "ja"
+        return msg, head, cont
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _pr_pair_rtc(pushed_sha)
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._aggregate_drive_outcomes", wrapping_aggregate
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert saw_reject_batch["done"]
+    spec_text = (tmp_path / "error-fix-specs" / tid / ".spec.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Prior Rejection Feedback" in spec_text
+    assert findings_marker in spec_text
+    # Exactly one rejection section heading for the rejecting dimension.
+    reject_key = (
+        "grok_pr_quality"
+        if reject_role == "pr-reviewer-quality"
+        else "grok_pr_logic"
+    )
+    assert spec_text.count(f"## {reject_key}") == 1
+    pass_key = (
+        "grok_pr_logic" if pass_role == "pr-reviewer-logic" else "grok_pr_quality"
+    )
+    # Pass dimension contributes no rejection section.
+    assert f"## {pass_key}" not in spec_text.split("# Prior Rejection Feedback", 1)[
+        1
+    ].split("\n# Constraints\n", 1)[0]
+
+    gates = _gates(tmp_path, tid)
+    approved_pass = [
+        g
+        for g in gates
+        if g.get("stage") == "grok-pr"
+        and g.get("dimension") == pass_dim
+        and g.get("verdict") == "approved"
+    ]
+    assert approved_pass, f"expected approved gate for {pass_dim}, got {gates}"
+
+
+def test_parallel_pr_pair_launch_oserror_releases_sibling_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError on one dimension's launch must not leave the sibling agent working.
+
+    Quality (earlier in pair order) raises OSError from launch while logic's
+    launch already completed successfully. Without the pair-wide cleanup sweep,
+    finish would release only the OSError dimension and orphan logic's working
+    row; the sweep must terminalize both.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    launched: list[str] = []
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        launched.append(f"{vendor}:{role}")
+        if role == "pr-reviewer-quality" and vendor == "grok":
+            raise OSError("No such file or directory: 'grok'")
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, pushed_sha + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert "vendor-cli-unavailable" in result
+    assert "grok:pr-reviewer-quality" in launched
+    assert "grok:pr-reviewer-logic" in launched
+    agents = _agents(tmp_path, tid)
+    pr_agents = [
+        a
+        for a in agents
+        if a.get("role") in ("pr-reviewer-quality", "pr-reviewer-logic")
+        and a.get("vendor") == "grok"
+    ]
+    assert len(pr_agents) >= 2, f"expected both grok PR agent rows, got {pr_agents}"
+    assert not any(a.get("status") == "working" for a in pr_agents), pr_agents
+
+
+def test_parallel_pr_pair_prepare_exception_releases_first_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exception on the second prepare must not leave the first dimension working."""
+    import agent_cli.fixer_act as fixer_mod
+
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "cccccccccccccccccccccccccccccccccccccccc"
+    real_prepare = fixer_mod.prepare_spine_agent_step
+    prepare_calls = {"n": 0}
+
+    def fake_prepare(store, tid_, step, **kwargs):  # type: ignore[no-untyped-def]
+        prepare_calls["n"] += 1
+        # Only the parallel-pair path binds prepare via fixer_act; raise on
+        # the second dimension of that pair (quality then logic).
+        if prepare_calls["n"] >= 2:
+            raise RuntimeError("boom during second prepare")
+        return real_prepare(store, tid_, step, **kwargs)
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, pushed_sha + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", _pass_lane)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+    monkeypatch.setattr("agent_cli.fixer_act.prepare_spine_agent_step", fake_prepare)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        with pytest.raises(RuntimeError, match="boom during second prepare"):
+            _drive_one(
+                store,
+                task,
+                runner=lambda argv: Completed(0, "", ""),
+                round_cap=5,
+                lane_runner=None,
+            )
+    finally:
+        store.close()
+
+    assert prepare_calls["n"] >= 2
+    agents = _agents(tmp_path, tid)
+    assert not any(a.get("status") == "working" for a in agents), agents
+
+
+@pytest.mark.parametrize(
+    "reverse_pair,fail_role,reject_role",
+    [
+        (False, "pr-reviewer-quality", "pr-reviewer-logic"),
+        (True, "pr-reviewer-quality", "pr-reviewer-logic"),
+        (False, "pr-reviewer-logic", "pr-reviewer-quality"),
+        (True, "pr-reviewer-logic", "pr-reviewer-quality"),
+    ],
+    ids=[
+        "quality-first-quality-fails",
+        "logic-first-quality-fails",
+        "quality-first-logic-fails",
+        "logic-first-logic-fails",
+    ],
+)
+def test_parallel_pr_pair_failed_plus_reject_keeps_failed_and_skips_round_start(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    reverse_pair: bool,
+    fail_role: str,
+    reject_role: str,
+) -> None:
+    """Lane-retry fail + sibling reject must keep state=failed and not round-start.
+
+    A failed dimension (two unparseable STATUS: complete bodies, no FINDINGS:)
+    paired with a parseable rejection must not be resurrected by the sibling's
+    deferred ``_round_start``, and the aggregator's cont=True from the reject
+    must not hide the failed message. A second scan must not re-select the task.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    _patch_pr_pair_order(monkeypatch, reverse=reverse_pair)
+
+    pushed_sha = "ffffffffffffffffffffffffffffffffffffffff"
+    findings_marker = "FAILED_PLUS_REJECT_marker"
+    fail_launches = {"n": 0}
+
+    store = _store(tmp_path)
+    try:
+        task_before = store.row("task", tid)
+        assert task_before is not None
+        round_before = int(task_before.get("current_round") or 0)
+        rounds_before = [
+            r for r in store.rows("task_round") if r.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if role == fail_role and vendor == "grok":
+            fail_launches["n"] += 1
+            # No FINDINGS: header → unparseable → retry; second attempt fails task.
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout="STATUS: complete\n",
+                stderr="",
+            )
+        if role == reject_role and vendor == "grok":
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout=f"STATUS: complete\nFINDINGS:\n- {findings_marker}\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _pr_pair_rtc(pushed_sha)
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        task_after = store.row("task", tid)
+        assert task_after is not None
+        rounds_after = [
+            r for r in store.rows("task_round") if r.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+
+    assert fail_launches["n"] == 2  # initial + one retry
+    assert _task_state(tmp_path, tid) == "failed"
+    assert int(task_after.get("current_round") or 0) == round_before
+    assert len(rounds_after) == len(rounds_before)
+    assert "failed" in result
+    assert "lane retry exhausted" in result
+    assert "scan-error" not in result
+    assert "SystemExit" not in result
+
+    agents_after_first = len(_agents(tmp_path, tid))
+    store = _store(tmp_path)
+    try:
+        lines2 = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert _task_state(tmp_path, tid) == "failed"
+    assert all(tid not in line for line in lines2)
+    assert len(_agents(tmp_path, tid)) == agents_after_first
+
+
+def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject that commits a checklist reset must still round-start if the
+    sibling dimension then raises OSError mid-batch.
+
+    Quality (earlier in pair order) rejects with real findings so
+    ``_apply_rejection_resets`` writes the checklist reset with
+    ``defer_round_start=True``. Logic's launch raises OSError afterward.
+    The except path must release working agents, then best-effort call
+    ``_round_start`` so the reset is paired with a new ``task_round`` row,
+    while still letting the original OSError surface as vendor-cli-unavailable.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "1212121212121212121212121212121212121212"
+    findings_marker = "REJECT_THEN_OSERROR_marker"
+
+    store = _store(tmp_path)
+    try:
+        task_before = store.row("task", tid)
+        assert task_before is not None
+        round_before = int(task_before.get("current_round") or 0)
+        rounds_before = [
+            r for r in store.rows("task_round") if r.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if role == "pr-reviewer-logic" and vendor == "grok":
+            raise OSError("No such file or directory: 'grok'")
+        if role == "pr-reviewer-quality" and vendor == "grok":
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout=f"STATUS: complete\nFINDINGS:\n- {findings_marker}\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _pr_pair_rtc(pushed_sha)
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+        task_after = store.row("task", tid)
+        assert task_after is not None
+        rounds_after = [
+            r for r in store.rows("task_round") if r.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+
+    assert "vendor-cli-unavailable" in result
+    assert "OSError" in result
+    # Original OSError must win; round_start recovery must not mask it.
+    assert "scan-error" not in result
+    assert int(task_after.get("current_round") or 0) == round_before + 1
+    assert len(rounds_after) == len(rounds_before) + 1
+    assert _task_state(tmp_path, tid) == "implementing"
+    agents = _agents(tmp_path, tid)
+    assert not any(a.get("status") == "working" for a in agents), agents

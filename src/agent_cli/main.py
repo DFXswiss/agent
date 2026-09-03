@@ -814,6 +814,8 @@ def cmd_round(args: list[str]) -> None:
             die("round start requires workflow implement|resolve-conflicts")
         if task.get("state") == "done":
             die("cannot start a round on a done task")
+        if task.get("state") == "failed":
+            die("cannot start a round on a failed task")
         current = int(task.get("current_round") or 0)
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
@@ -1269,7 +1271,11 @@ def cmd_gate(args: list[str]) -> None:
             },
         )
         if verdict == "rejected" and task.get("workflow") in ("implement", "resolve-conflicts"):
-            if task.get("state") != "implementing":
+            # A sibling PR-review dimension's own gate rejection must never
+            # resurrect a task another dimension in the same batch already
+            # failed permanently (round-cap/lane-retry exhaustion) -- the
+            # gate row itself is still recorded above either way.
+            if task.get("state") not in ("implementing", "failed"):
                 task["state"] = "implementing"
                 task["updated_at"] = utcnow()
                 store.write("task", "update", tid, _strip(task))

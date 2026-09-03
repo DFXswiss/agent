@@ -1085,39 +1085,6 @@ def complete_spine_agent_step(
     )
 
 
-def abandon_prepared_agent(
-    store: Store,
-    tid: str,
-    plan: AgentLaunchPlan,
-    *,
-    note: str,
-) -> RunOutcome:
-    """Release a working agent without gate/checklist mutation.
-
-    Used when a sibling PR-dimension already rejected/failed and further
-    pass/fail finishing would double-reset or start a second round.
-    """
-    from . import main as main_mod
-
-    working = main_mod._find_working_agent(
-        store, tid, role=plan.role, vendor=plan.vendor, round_num=plan.round_num
-    )
-    if working is not None:
-        _agent_finish(str(working["id"]), "rejected", note=note)
-    return RunOutcome(
-        kind="closed",
-        key=plan.step.key,
-        step=plan.step,
-        reason=note,
-        # No head_sha: this outcome asserts nothing about head. Setting it
-        # to plan.head (the pre-attempt head this abandoned sibling was
-        # prepared with) would re-clobber a head=None reset the sibling's
-        # own rejected_new_round outcome already applied earlier in the
-        # same batch -- let whatever the caller already has stand.
-        head_sha=None,
-    )
-
-
 def execute_spine_step(
     store: Store,
     tid: str,

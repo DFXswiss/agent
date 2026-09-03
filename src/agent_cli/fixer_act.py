@@ -16,7 +16,7 @@ from typing import Any
 
 from .chain import Step, close_allowed, is_error_fix_originated, next_steps
 from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
-from .lane import Runner as LaneRunner, extract_findings_text
+from .lane import LaneResult, Runner as LaneRunner, extract_findings_text
 from .runtime import Completed
 from .run_core import (
     DEFAULT_ROUND_CAP,
@@ -25,7 +25,6 @@ from .run_core import (
     _agent_finish,
     _fence_marker,
     _round_start,
-    abandon_prepared_agent,
     complete_spine_agent_step,
     execute_spine_step,
     launch_agent_plan,
@@ -550,13 +549,12 @@ def _apply_drive_outcome(
     session_id: str,
     brief: str,
 ) -> tuple[str | None, str | None, bool]:
-    """Apply one RunOutcome the way the sequential _drive_one loop does.
+    """Map one RunOutcome to (return_message | None, updated_head, should_continue).
 
-    Returns (return_message | None, updated_head, should_continue).
-    When return_message is set, the caller must return it immediately.
-    should_continue True means continue the outer step loop (e.g. closed /
-    rejected_new_round); False with no return_message means keep processing
-    further outcomes in the same iteration.
+    Per-outcome only: does not write rejection feedback (the batch aggregator
+    combines findings and writes once). Callers must not early-return on the
+    first message when processing a multi-outcome batch — use
+    ``_aggregate_drive_outcomes`` instead.
     """
     updated_head = outcome.head_sha or head
 
@@ -611,15 +609,6 @@ def _apply_drive_outcome(
         # rejection keeps key="reviewer_approved" and does not reset pushed.
         if outcome.key != "reviewer_approved":
             updated_head = None
-        if error_id and repo and outcome.rejection_findings:
-            write_error_fix_spec(
-                store,
-                tid,
-                error_id=error_id,
-                session_id=session_id,
-                repo=repo,
-                rejection_feedback=outcome.rejection_findings,
-            )
         return None, updated_head, True
 
     if outcome.kind in ("closed", "agent_closed"):
@@ -630,6 +619,143 @@ def _apply_drive_outcome(
         updated_head,
         False,
     )
+
+
+# When every outcome in a batch is terminal (no cont), pick one message.
+# More actionable kinds win; ties keep pair / encounter order.
+_TERMINAL_MESSAGE_PRIORITY = {
+    "failed": 0,
+    "not_closable": 1,
+    "agent_handoff": 2,
+    "vendor_unavailable": 3,
+}
+
+
+def _combine_rejection_feedback(sections: list[tuple[str, str]]) -> str:
+    """Attribute each dimension's findings under a ``## <key>`` heading."""
+    parts: list[str] = []
+    for key, findings in sections:
+        body = findings.strip()
+        parts.append(f"## {key}\n\n{body}" if body else f"## {key}")
+    return "\n\n".join(parts)
+
+
+def _batch_should_round_start(outcomes: list[RunOutcome]) -> bool:
+    """True when a deferred round-start is owed and no outcome failed the task.
+
+    A ``failed`` outcome in the same batch must never be followed by
+    ``_round_start``: that would reopen ``task.state`` back to ``implementing``.
+    """
+    return not any(o.kind == "failed" for o in outcomes) and any(
+        o.needs_round_start for o in outcomes
+    )
+
+
+def _aggregate_drive_outcomes(
+    store: Store,
+    tid: str,
+    outcomes: list[RunOutcome],
+    *,
+    head: str | None,
+    error_id: str,
+    repo: str,
+    session_id: str,
+    brief: str,
+) -> tuple[str | None, str | None, bool]:
+    """Decide continue vs. message once for a batch of RunOutcomes.
+
+    Writes combined rejection feedback at most once, applies every outcome
+    unconditionally, then: a ``failed`` outcome's message wins over any
+    sibling ``cont=True``; otherwise any ``cont=True`` wins over any message;
+    otherwise the most actionable terminal message is returned. A PR-gate
+    rejection in the batch forces ``head=None`` regardless of processing order.
+    """
+    rejection_sections: list[tuple[str, str]] = []
+    for outcome in outcomes:
+        if outcome.kind != "rejected_new_round":
+            continue
+        findings = outcome.rejection_findings
+        if not findings:
+            continue
+        rejection_sections.append((outcome.key or "rejection", findings))
+    if rejection_sections and error_id and repo:
+        write_error_fix_spec(
+            store,
+            tid,
+            error_id=error_id,
+            session_id=session_id,
+            repo=repo,
+            rejection_feedback=_combine_rejection_feedback(rejection_sections),
+        )
+
+    any_cont = False
+    force_head_none = False
+    messages: list[tuple[str, str]] = []
+    current_head = head
+    for outcome in outcomes:
+        msg, current_head, cont = _apply_drive_outcome(
+            store,
+            tid,
+            outcome,
+            head=current_head,
+            error_id=error_id,
+            repo=repo,
+            session_id=session_id,
+            brief=brief,
+        )
+        if (
+            outcome.kind == "rejected_new_round"
+            and outcome.key != "reviewer_approved"
+        ):
+            force_head_none = True
+        if cont:
+            any_cont = True
+        if msg is not None:
+            messages.append((outcome.kind, msg))
+
+    final_head: str | None = None if force_head_none else current_head
+
+    # A failed outcome must surface even when a sibling wants to continue;
+    # otherwise the unattended loop would keep retrying a terminal failure.
+    if any_cont and not any(o.kind == "failed" for o in outcomes):
+        return None, final_head, True
+
+    if not messages:
+        kind = outcomes[-1].kind if outcomes else "empty"
+        return f"error-fix-work {tid} stop kind={kind}", final_head, False
+
+    # failed > not_closable > agent_handoff > vendor_unavailable > other;
+    # equal priority keeps first-encountered (pair order).
+    best_msg = min(
+        enumerate(messages),
+        key=lambda ikm: (
+            _TERMINAL_MESSAGE_PRIORITY.get(ikm[1][0], 50),
+            ikm[0],
+        ),
+    )[1][1]
+    return best_msg, final_head, False
+
+
+def _release_pair_working_agents(
+    store: Store,
+    tid: str,
+    pair: list[Step],
+    *,
+    note: str,
+) -> None:
+    """Best-effort: finish any still-working agent row for either pair dimension."""
+    from . import main as main_mod
+
+    for step in pair:
+        role = str(step.role or "")
+        vendor = str(step.vendor or "")
+        # PR-reviewer rows are started with round_num=None; a None lookup
+        # matches any round for that role/vendor (see _find_working_agent).
+        working = main_mod._find_working_agent(
+            store, tid, role=role, vendor=vendor, round_num=None
+        )
+        if working is not None:
+            _agent_finish(str(working["id"]), "unavailable", note=note)
 
 
 def _drive_parallel_pr_pair(
@@ -651,6 +777,16 @@ def _drive_parallel_pr_pair(
     Store I/O stays on the calling thread. Workers only call launch_agent_plan
     (lane.launch) — never Store methods — so this is safe under store.exclusive's
     threading.RLock.
+
+    Outcomes are always returned in ``pair`` order. Every dimension that
+    launched is always fully finished (gate / checklist / agent row) via
+    ``complete_spine_agent_step``; there is no abandon/discard path. Task-level
+    continue-vs-message and the combined rejection-feedback write are decided
+    later by the caller across the whole batch. On any unhandled exception,
+    still-working agent rows for either dimension are released before re-raising;
+    if an earlier dimension already committed a rejection reset that still
+    needs a round-start (and no outcome failed the task), that round-start
+    runs best-effort before the original exception propagates.
     """
     from . import main as main_mod
 
@@ -658,94 +794,105 @@ def _drive_parallel_pr_pair(
         runner, argv, cwd=cwd
     )
 
-    early: list[RunOutcome] = []
-    plans: list[AgentLaunchPlan] = []
-    for step in pair:
-        # Re-snapshot so the second prepare sees agents started by the first.
-        snap = main_mod._chain_snapshot(store, tid, extra_head=head)
-        task = store.row("task", tid) or task
-        prepared = prepare_spine_agent_step(
-            store,
-            tid,
-            step,
-            head=head,
-            spec_file=spec_file,
-            cwd=cwd,
-            snap=snap,
-            task=task,
-            exec_argv=exec_argv,
-        )
-        if isinstance(prepared, RunOutcome):
-            early.append(prepared)
-        else:
-            plans.append(prepared)
-
-    launch_results: dict[str, LaneResult | BaseException] = {}
-    if plans:
-        with ThreadPoolExecutor(max_workers=len(plans)) as pool:
-            futures = {
-                pool.submit(
-                    launch_agent_plan, plan, runner=lane_runner, tmux=False
-                ): plan
-                for plan in plans
-            }
-            for fut in as_completed(futures):
-                plan = futures[fut]
-                try:
-                    launch_results[plan.step.key] = fut.result()
-                except BaseException as exc:  # noqa: BLE001 — surface to caller
-                    launch_results[plan.step.key] = exc
-
-    outcomes: list[RunOutcome] = list(early)
-    stop_sibling_finish = False
-    for plan in plans:
-        payload = launch_results[plan.step.key]
-        if isinstance(payload, OSError):
-            # Mirror execute_spine_step: release agent, re-raise for vendor-cli path.
-            working = main_mod._find_working_agent(
-                store,
-                tid,
-                role=plan.role,
-                vendor=plan.vendor,
-                round_num=plan.round_num,
-            )
-            if working is not None:
-                _agent_finish(
-                    str(working["id"]),
-                    "unavailable",
-                    note=f"launch failed ({plan.role} {plan.vendor})",
-                )
-            raise payload
-        if isinstance(payload, BaseException):
-            raise payload
-        if stop_sibling_finish:
-            outcomes.append(
-                abandon_prepared_agent(
+    # Visible to the except handler so a committed rejection reset can still
+    # receive its deferred round-start when a later dimension raises.
+    outcomes: list[RunOutcome] = []
+    try:
+        # One entry per pair step, in pair order — early outcomes and plans
+        # stay interleaved so returned outcomes follow pair order.
+        prepared: list[RunOutcome | AgentLaunchPlan] = []
+        for step in pair:
+            # Re-snapshot so the second prepare sees agents started by the first.
+            snap = main_mod._chain_snapshot(store, tid, extra_head=head)
+            task = store.row("task", tid) or task
+            prepared.append(
+                prepare_spine_agent_step(
                     store,
                     tid,
-                    plan,
-                    note="sibling PR dimension already rejected or failed",
+                    step,
+                    head=head,
+                    spec_file=spec_file,
+                    cwd=cwd,
+                    snap=snap,
+                    task=task,
+                    exec_argv=exec_argv,
                 )
             )
-            continue
-        outcome = complete_spine_agent_step(
+
+        plans = [p for p in prepared if isinstance(p, AgentLaunchPlan)]
+        launch_results: dict[str, LaneResult | BaseException] = {}
+        if plans:
+            with ThreadPoolExecutor(max_workers=len(plans)) as pool:
+                futures = {
+                    pool.submit(
+                        launch_agent_plan, plan, runner=lane_runner, tmux=False
+                    ): plan
+                    for plan in plans
+                }
+                for fut in as_completed(futures):
+                    plan = futures[fut]
+                    try:
+                        launch_results[plan.step.key] = fut.result()
+                    except BaseException as exc:  # noqa: BLE001 — surface to caller
+                        launch_results[plan.step.key] = exc
+
+        for item in prepared:
+            if isinstance(item, RunOutcome):
+                outcomes.append(item)
+                continue
+
+            plan = item
+            payload = launch_results[plan.step.key]
+            if isinstance(payload, OSError):
+                # Mirror execute_spine_step: release this agent; the except
+                # sweep below releases any sibling still working.
+                working = main_mod._find_working_agent(
+                    store,
+                    tid,
+                    role=plan.role,
+                    vendor=plan.vendor,
+                    round_num=plan.round_num,
+                )
+                if working is not None:
+                    _agent_finish(
+                        str(working["id"]),
+                        "unavailable",
+                        note=f"launch failed ({plan.role} {plan.vendor})",
+                    )
+                raise payload
+            if isinstance(payload, BaseException):
+                raise payload
+            outcome = complete_spine_agent_step(
+                store,
+                tid,
+                plan,
+                payload,
+                round_cap=round_cap,
+                tmux=False,
+                runner=lane_runner,
+                exec_argv=exec_argv,
+                defer_round_start=True,
+            )
+            outcomes.append(outcome)
+        if _batch_should_round_start(outcomes):
+            _round_start(tid)
+        return outcomes
+    except BaseException:
+        _release_pair_working_agents(
             store,
             tid,
-            plan,
-            payload,
-            round_cap=round_cap,
-            tmux=False,
-            runner=lane_runner,
-            exec_argv=exec_argv,
-            defer_round_start=True,
+            pair,
+            note="parallel PR-dimension pair aborted",
         )
-        outcomes.append(outcome)
-        if outcome.kind in ("rejected_new_round", "failed"):
-            # Match sequential semantics: one rejection owns the reset/round-start.
-            stop_sibling_finish = True
-    if any(o.needs_round_start for o in outcomes):
-        _round_start(tid)
-    return outcomes
+        # Best-effort: keep a committed rejection reset consistent with a new
+        # task_round. Never let round_start's failure mask the original
+        # exception (e.g. OSError → vendor-cli-unavailable in _drive_one).
+        if _batch_should_round_start(outcomes):
+            try:
+                _round_start(tid)
+            except (Exception, SystemExit):
+                pass
+        raise
 
 
 def _drive_one(
@@ -942,25 +1089,21 @@ def _drive_one(
                     f"error-fix-work {tid} vendor-cli-unavailable "
                     f"({type(exc).__name__}: {exc})"
                 )
-            # Process in ready order (quality then logic). Finish writes already
-            # happened; a terminal kind returns after that full finish pass.
-            continue_outer = False
-            for outcome in outcomes:
-                msg, head, cont = _apply_drive_outcome(
-                    store,
-                    tid,
-                    outcome,
-                    head=head,
-                    error_id=error_id,
-                    repo=repo,
-                    session_id=session_id,
-                    brief=brief,
-                )
-                if msg is not None:
-                    return msg
-                if cont:
-                    continue_outer = True
-            if continue_outer:
+            # Finish writes already happened per dimension; decide continue vs.
+            # message once across the whole batch (order-independent).
+            msg, head, cont = _aggregate_drive_outcomes(
+                store,
+                tid,
+                outcomes,
+                head=head,
+                error_id=error_id,
+                repo=repo,
+                session_id=session_id,
+                brief=brief,
+            )
+            if msg is not None:
+                return msg
+            if cont:
                 continue
             kind = outcomes[-1].kind if outcomes else "empty"
             return f"error-fix-work {tid} stop kind={kind}"
@@ -987,10 +1130,10 @@ def _drive_one(
                 f"({type(exc).__name__}: {exc})"
             )
 
-        msg, head, cont = _apply_drive_outcome(
+        msg, head, cont = _aggregate_drive_outcomes(
             store,
             tid,
-            outcome,
+            [outcome],
             head=head,
             error_id=error_id,
             repo=repo,
