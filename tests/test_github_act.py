@@ -218,16 +218,22 @@ def test_scan_github_serializes_via_exclusive_and_skips_done(
 
 
 def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) -> None:
-    """A second thread blocked on github-scan exclusive must wait until the first exits."""
-    store = Store(tmp_path)
-    _owned_session(store)
-    lock_key = "github-scan:" + store.device_id()
+    """Postgres advisory lock must block a second Store connection on the same key.
+
+    Uses two independent Store instances (separate RLocks, separate psycopg
+    connections) so only pg_advisory_lock — not the in-process threading.RLock —
+    can explain the observed blocking.
+    """
+    store_a = Store(tmp_path)
+    store_b = Store(tmp_path)
+    _owned_session(store_a)
+    lock_key = "github-scan:" + store_a.device_id()
     entered = threading.Event()
     release = threading.Event()
     second_entered = threading.Event()
 
     def holder() -> None:
-        with store.exclusive(lock_key):
+        with store_a.exclusive(lock_key):
             entered.set()
             assert release.wait(timeout=5)
 
@@ -236,7 +242,7 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
     assert entered.wait(timeout=5)
 
     def waiter() -> None:
-        with store.exclusive(lock_key):
+        with store_b.exclusive(lock_key):
             second_entered.set()
 
     t2 = threading.Thread(target=waiter)
