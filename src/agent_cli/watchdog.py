@@ -11,7 +11,6 @@ that a later change will wire in.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 
 
 def pane_pids_argv(socket: str, session: str) -> list[str]:
