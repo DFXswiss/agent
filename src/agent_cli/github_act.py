@@ -141,31 +141,36 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
 
 def _resolve_actual_base(
     head: str, repo: str, runner: Runner, fallback: str | None
-) -> str | None:
+) -> tuple[str | None, bool]:
     """Best-effort: re-resolve the ACTUAL applied base via a live `gh pr view`
-    call, mirroring the resume path's existing baseRefName resolution. Never
-    raises — any failure (gh unavailable, non-zero exit, bad JSON, missing
-    field) returns `fallback` unchanged so a successful `gh pr create` is never
-    turned into an error just because this best-effort re-resolution failed."""
+    call, mirroring the resume path's existing baseRefName resolution.
+
+    Returns (base, transient_failure). transient_failure=True means the call
+    itself failed (gh unavailable, non-zero exit, empty/invalid JSON, or a
+    non-object JSON body) -- an indeterminate result that should be retried
+    on a later scan, not treated as final; base is then `fallback` only as a
+    placeholder. transient_failure=False means gh genuinely answered: base is
+    the real baseRefName when present and non-empty, else `fallback` (the PR
+    genuinely has no better-known base yet -- a definitive terminal answer)."""
     try:
         completed = runner(
             ["gh", "pr", "view", head, "--repo", repo, "--json", "baseRefName"]
         )
     except OSError:
-        return fallback
+        return fallback, True
     if completed.returncode != 0:
-        return fallback
+        return fallback, True
     raw = (completed.stdout or "").strip()
     if raw == "":
-        return fallback
+        return fallback, True
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return fallback
+        return fallback, True
     if not isinstance(data, dict):
-        return fallback
+        return fallback, True
     real_base = data.get("baseRefName")
-    return real_base if isinstance(real_base, str) and real_base else fallback
+    return (real_base if isinstance(real_base, str) and real_base else fallback), False
 
 
 def _gh_not_found(completed: Completed) -> bool:
@@ -299,7 +304,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             argv.extend(["--base", base])
         stdout = _gh_text(argv, runner)
         url, number = _parse_url_number(stdout)
-        resolved_base = _resolve_actual_base(head, repo, runner, base)
+        resolved_base, transient = _resolve_actual_base(head, repo, runner, base)
         result = {
             "repo": repo,
             "number": number,
@@ -307,6 +312,13 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             "draft": True,
             "base": resolved_base,
         }
+        if transient:
+            # Never freeze an unverified fallback base as permanently done --
+            # leave pending so the next scan_github retries the live
+            # resolution (it resumes via the gh-pr-view-succeeds branch
+            # above, since the PR now exists).
+            _mark(store, row, status="pending", result=result)
+            return f"pr.open {rid} pending (base resolution retry needed)"
         _mark(store, row, status="done", result=result)
         return f"pr.open {rid} done number={number}"
     except _GhError as exc:

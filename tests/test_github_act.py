@@ -62,10 +62,16 @@ def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
     )
     calls: list[list[str]] = []
 
+    view_calls = 0
+
     def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
         calls.append(list(argv))
         if argv[:3] == ["gh", "pr", "view"]:
-            return Completed(1, "", "no pull requests found")
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(0, "{}", "")
         if "create" in argv:
             assert "--draft" in argv
             assert "--repo" in argv
@@ -177,7 +183,12 @@ def test_pr_open_resume_prefers_github_base_ref_name(tmp_path: Path) -> None:
 
 
 def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
-    """Create path must pass a bare --base to gh and persist result.base bare."""
+    """Create path must pass a bare --base to gh and persist result.base bare.
+
+    The post-create base-resolution gh pr view call is mocked as a genuinely
+    successful response missing baseRefName (a definitive "no better base
+    known yet" answer) so this stays a test of the terminal/definitive case,
+    not the transient-failure retry path (covered separately)."""
     store = Store(tmp_path)
     _owned_session(store)
     act_id = "pr-base-create"
@@ -194,10 +205,15 @@ def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
         },
     )
     create_argv: list[str] = []
+    view_calls = 0
 
     def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
         if argv[:3] == ["gh", "pr", "view"]:
-            return Completed(1, "", "no pull requests found")
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(0, json.dumps({"number": 99}), "")
         if "create" in argv:
             create_argv.extend(argv)
             return Completed(0, "https://github.com/dfxswiss/agent/pull/99\n", "")
@@ -213,6 +229,68 @@ def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "done"
     assert row["result"]["base"] == "develop"
+
+
+def test_pr_open_create_base_resolve_transient_failure_stays_pending(
+    tmp_path: Path,
+) -> None:
+    """A transient failure re-resolving the base right after create must not
+    freeze an unverified base -- the row stays pending for the next scan to
+    retry (which resumes via the existing gh-pr-view-succeeds branch)."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-transient"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Transient resolve failure",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/100\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "pending", (
+        "must not freeze the unverified fallback base as done"
+    )
+
+    def runner2(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            body = {
+                "number": 100,
+                "url": "https://github.com/dfxswiss/agent/pull/100",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "main",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} done number=100"]
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "done"
+    assert row2["result"]["base"] == "main"
 
 
 def test_pr_open_create_resolves_actual_base_from_github(tmp_path: Path) -> None:
