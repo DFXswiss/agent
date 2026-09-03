@@ -250,6 +250,13 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 viewed = None
             else:
                 detail = (completed.stderr or completed.stdout or "gh failed").strip()
+                # Resume of an already-created PR: a transient gh view failure
+                # must not terminalize the row -- leave pending so the next
+                # scan retries the view (the PR already exists on GitHub).
+                prior = row.get("result")
+                if isinstance(prior, dict) and _as_int(prior.get("number")) is not None:
+                    _mark(store, row, status="pending", result=prior)
+                    return f"pr.open {rid} pending (view retry needed)"
                 raise _GhError(detail or "gh failed")
         else:
             raw = completed.stdout.strip()
