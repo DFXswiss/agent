@@ -2656,7 +2656,7 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
     try:
         task = store.row("task", tid)
         assert task is not None
-        first = _drive_until_stable(
+        _drive_until_stable(
             store,
             task,
             runner=_neutral_runner,
