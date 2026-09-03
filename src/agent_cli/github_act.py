@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from .runtime import Completed
 from .store import Store
@@ -157,17 +157,23 @@ def _resolve_actual_base(
             ["gh", "pr", "view", head, "--repo", repo, "--json", "baseRefName"]
         )
     except OSError:
+        # Same transient outcome as the resume-path view step for OSError.
         return fallback, True
     if completed.returncode != 0:
+        # Shared classifier; every category is indeterminate here — retry later.
+        _classify_gh_failure(completed)
         return fallback, True
     raw = (completed.stdout or "").strip()
     if raw == "":
+        # Same transient outcome as the resume-path view step for empty stdout.
         return fallback, True
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        # Same transient outcome as the resume-path view step for invalid JSON.
         return fallback, True
     if not isinstance(data, dict):
+        # Same transient outcome as the resume-path view step for non-dict JSON.
         return fallback, True
     real_base = data.get("baseRefName")
     return (real_base if isinstance(real_base, str) and real_base else fallback), False
@@ -183,6 +189,22 @@ def _gh_not_found(completed: Completed) -> bool:
     if "pull request" in text and ("not found" in text or "could not find" in text):
         return True
     return False
+
+
+def _classify_gh_failure(
+    completed: Completed,
+) -> Literal["transient", "not_found", "permanent"]:
+    """Classify a non-zero gh CLI failure for retry / create / terminalize decisions."""
+    if _gh_not_found(completed):
+        return "not_found"
+    text = f"{completed.stderr or ''}{completed.stdout or ''}".casefold()
+    if (
+        "http 401" in text
+        or "http 403" in text
+        or "authentication token not found" in text
+    ):
+        return "permanent"
+    return "transient"
 
 
 def _is_draft(raw: Any) -> bool:
@@ -239,36 +261,58 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             "--json",
             "number,url,state,isDraft,baseRefName",
         ]
+        prior = row.get("result")
+        has_prior_number = (
+            isinstance(prior, dict) and _as_int(prior.get("number")) is not None
+        )
+        viewed: dict[str, Any] | None = None
+        classification: Literal["transient", "not_found", "permanent"] | None = None
+        detail = ""
+        completed: Completed | None
         try:
             completed = runner(view_argv)
         except OSError as exc:
-            raise _GhError(f"gh is not available: {exc}") from exc
-        viewed: dict[str, Any] | None
-        if completed.returncode != 0:
-            # Not-found → create; any other view failure must not create.
-            if _gh_not_found(completed):
-                viewed = None
-            else:
+            # Same transient classification as _resolve_actual_base for OSError.
+            classification = "transient"
+            detail = f"gh is not available: {exc}"
+            completed = None
+        if classification is None:
+            assert completed is not None
+            if completed.returncode != 0:
+                classification = _classify_gh_failure(completed)
                 detail = (completed.stderr or completed.stdout or "gh failed").strip()
-                # Resume of an already-created PR: a transient gh view failure
-                # must not terminalize the row -- leave pending so the next
-                # scan retries the view (the PR already exists on GitHub).
-                prior = row.get("result")
-                if isinstance(prior, dict) and _as_int(prior.get("number")) is not None:
-                    _mark(store, row, status="pending", result=prior)
-                    return f"pr.open {rid} pending (view retry needed)"
-                raise _GhError(detail or "gh failed")
-        else:
-            raw = completed.stdout.strip()
-            if raw == "":
-                raise _GhError("gh returned empty output")
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise _GhError("gh returned invalid JSON") from exc
-            if not isinstance(data, dict):
-                raise _GhError("gh output is not a JSON object or array")
-            viewed = data
+                detail = detail or "gh failed"
+            else:
+                raw = completed.stdout.strip()
+                if raw == "":
+                    # Same transient classification as _resolve_actual_base.
+                    classification = "transient"
+                    detail = "gh returned empty output"
+                else:
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        classification = "transient"
+                        detail = "gh returned invalid JSON"
+                    else:
+                        if not isinstance(data, dict):
+                            classification = "transient"
+                            detail = "gh output is not a JSON object or array"
+                        else:
+                            viewed = data
+        if classification is not None:
+            # Decision table: not_found without a prior number → create;
+            # not_found/transient with a prior number → pending retry (never
+            # re-create); permanent always errors; transient without a prior
+            # number also errors.
+            if classification == "not_found" and not has_prior_number:
+                viewed = None
+            elif has_prior_number and classification in ("not_found", "transient"):
+                assert isinstance(prior, dict)
+                _mark(store, row, status="pending", result=prior)
+                return f"pr.open {rid} pending (view retry needed)"
+            else:
+                raise _GhError(detail)
         if isinstance(viewed, dict):
             state = str(viewed.get("state") or "").upper()
             number = _as_int(viewed.get("number"))
