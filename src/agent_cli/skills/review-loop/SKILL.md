@@ -27,6 +27,9 @@ agent agent finish --id <reviewer-uuid> --verdict approved|rejected
 - Implementer `blocked` → task `failed`. Stop.
 - Reviewer `rejected` → new round (`agent round start`).
 - Reviewer `approved` → close `reviewer_approved` and continue the spine.
+- Either role `--verdict unavailable` → vendor CLI unreachable: neutral release
+  that clears the `working` agent row with no task/round state change, so a
+  later retry is unblocked.
 
 The reviewer is read-only: no tests, builds, or servers.
 

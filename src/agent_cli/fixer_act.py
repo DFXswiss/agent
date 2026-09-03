@@ -544,9 +544,6 @@ def _apply_drive_outcome(
     outcome: RunOutcome,
     *,
     head: str | None,
-    error_id: str,
-    repo: str,
-    session_id: str,
     brief: str,
 ) -> tuple[str | None, str | None, bool]:
     """Map one RunOutcome to (return_message | None, updated_head, should_continue).
@@ -640,6 +637,40 @@ def _combine_rejection_feedback(sections: list[tuple[str, str]]) -> str:
     return "\n\n".join(parts)
 
 
+def _write_rejection_feedback(
+    store: Store,
+    tid: str,
+    outcomes: list[RunOutcome],
+    *,
+    error_id: str,
+    repo: str,
+    session_id: str,
+) -> None:
+    """Combine every rejected_new_round outcome's findings and persist once, if any.
+
+    Shared by ``_aggregate_drive_outcomes`` (normal-return batch aggregation) and
+    ``_drive_parallel_pr_pair``'s exception path (so rejection feedback already
+    recorded before a launch-phase exception still reaches ``.spec.md``).
+    """
+    rejection_sections: list[tuple[str, str]] = []
+    for outcome in outcomes:
+        if outcome.kind != "rejected_new_round":
+            continue
+        findings = outcome.rejection_findings
+        if not findings:
+            continue
+        rejection_sections.append((outcome.key or "rejection", findings))
+    if rejection_sections and error_id and repo:
+        write_error_fix_spec(
+            store,
+            tid,
+            error_id=error_id,
+            session_id=session_id,
+            repo=repo,
+            rejection_feedback=_combine_rejection_feedback(rejection_sections),
+        )
+
+
 def _batch_should_round_start(outcomes: list[RunOutcome]) -> bool:
     """True when a deferred round-start is owed and no outcome failed the task.
 
@@ -670,23 +701,14 @@ def _aggregate_drive_outcomes(
     otherwise the most actionable terminal message is returned. A PR-gate
     rejection in the batch forces ``head=None`` regardless of processing order.
     """
-    rejection_sections: list[tuple[str, str]] = []
-    for outcome in outcomes:
-        if outcome.kind != "rejected_new_round":
-            continue
-        findings = outcome.rejection_findings
-        if not findings:
-            continue
-        rejection_sections.append((outcome.key or "rejection", findings))
-    if rejection_sections and error_id and repo:
-        write_error_fix_spec(
-            store,
-            tid,
-            error_id=error_id,
-            session_id=session_id,
-            repo=repo,
-            rejection_feedback=_combine_rejection_feedback(rejection_sections),
-        )
+    _write_rejection_feedback(
+        store,
+        tid,
+        outcomes,
+        error_id=error_id,
+        repo=repo,
+        session_id=session_id,
+    )
 
     any_cont = False
     force_head_none = False
@@ -698,9 +720,6 @@ def _aggregate_drive_outcomes(
             tid,
             outcome,
             head=current_head,
-            error_id=error_id,
-            repo=repo,
-            session_id=session_id,
             brief=brief,
         )
         if (
@@ -771,6 +790,9 @@ def _drive_parallel_pr_pair(
     runner: Runner,
     lane_runner: LaneRunner | None,
     round_cap: int,
+    error_id: str,
+    repo: str,
+    session_id: str,
 ) -> list[RunOutcome]:
     """Prepare both dimensions on this thread, launch concurrently, finish here.
 
@@ -779,14 +801,17 @@ def _drive_parallel_pr_pair(
     threading.RLock.
 
     Outcomes are always returned in ``pair`` order. Every dimension that
-    launched is always fully finished (gate / checklist / agent row) via
-    ``complete_spine_agent_step``; there is no abandon/discard path. Task-level
-    continue-vs-message and the combined rejection-feedback write are decided
-    later by the caller across the whole batch. On any unhandled exception,
-    still-working agent rows for either dimension are released before re-raising;
-    if an earlier dimension already committed a rejection reset that still
-    needs a round-start (and no outcome failed the task), that round-start
-    runs best-effort before the original exception propagates.
+    yields a genuine ``LaneResult`` is finished (gate / checklist / agent row)
+    via ``complete_spine_agent_step`` before any deferred launch exception is
+    raised; there is no abandon/discard path for successful siblings. Task-level
+    continue-vs-message is decided later by the caller across the whole batch;
+    the combined rejection-feedback write is done by the caller on the normal
+    path, and best-effort here on the exception path so findings already
+    collected are not lost. On any unhandled exception, still-working agent
+    rows for either dimension are released before re-raising; if an earlier
+    dimension already committed a rejection reset that still needs a
+    round-start (and no outcome failed the task), that round-start runs
+    best-effort before the original exception propagates.
     """
     from . import main as main_mod
 
@@ -836,6 +861,7 @@ def _drive_parallel_pr_pair(
                     except BaseException as exc:  # noqa: BLE001 — surface to caller
                         launch_results[plan.step.key] = exc
 
+        pending_exception: BaseException | None = None
         for item in prepared:
             if isinstance(item, RunOutcome):
                 outcomes.append(item)
@@ -859,9 +885,13 @@ def _drive_parallel_pr_pair(
                         "unavailable",
                         note=f"launch failed ({plan.role} {plan.vendor})",
                     )
-                raise payload
+                if pending_exception is None:
+                    pending_exception = payload
+                continue
             if isinstance(payload, BaseException):
-                raise payload
+                if pending_exception is None:
+                    pending_exception = payload
+                continue
             outcome = complete_spine_agent_step(
                 store,
                 tid,
@@ -874,6 +904,8 @@ def _drive_parallel_pr_pair(
                 defer_round_start=True,
             )
             outcomes.append(outcome)
+        if pending_exception is not None:
+            raise pending_exception
         if _batch_should_round_start(outcomes):
             _round_start(tid)
         return outcomes
@@ -884,6 +916,17 @@ def _drive_parallel_pr_pair(
             pair,
             note="parallel PR-dimension pair aborted",
         )
+        try:
+            _write_rejection_feedback(
+                store,
+                tid,
+                outcomes,
+                error_id=error_id,
+                repo=repo,
+                session_id=session_id,
+            )
+        except (Exception, SystemExit):
+            pass
         # Best-effort: keep a committed rejection reset consistent with a new
         # task_round. Never let round_start's failure mask the original
         # exception (e.g. OSError → vendor-cli-unavailable in _drive_one).
@@ -1083,6 +1126,9 @@ def _drive_one(
                     runner=runner,
                     lane_runner=lane_runner,
                     round_cap=round_cap,
+                    error_id=error_id,
+                    repo=repo,
+                    session_id=session_id,
                 )
             except OSError as exc:
                 return (

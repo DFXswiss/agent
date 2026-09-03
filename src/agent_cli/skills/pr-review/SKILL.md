@@ -56,6 +56,9 @@ Review lanes execute no software (no tests, builds, or servers).
   context, and it buries the finding it is printed next to.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
   substitute another vendor.
+- `unavailable` → neutral release for that case: clears the `working` agent
+  row, does not record `approved`, does not affect gate/checklist/round state;
+  a later scan retries.
 
 Zero findings only after an explicit complete pass. Empty, partial,
 timeout, or unavailable output is not zero findings.

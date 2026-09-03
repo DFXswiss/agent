@@ -966,7 +966,7 @@ def cmd_agent(args: list[str]) -> None:
             if role == "implementer":
                 # unavailable already handled by the early return above.
                 if verdict not in ("done", "blocked"):
-                    die("implementer verdict must be done|blocked")
+                    die("implementer verdict must be done|blocked|unavailable")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "implementing":
@@ -986,7 +986,7 @@ def cmd_agent(args: list[str]) -> None:
             elif role == "reviewer":
                 # unavailable already handled by the early return above.
                 if verdict not in ("approved", "rejected"):
-                    die("reviewer verdict must be approved|rejected")
+                    die("reviewer verdict must be approved|rejected|unavailable")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "reviewing":
@@ -1007,7 +1007,7 @@ def cmd_agent(args: list[str]) -> None:
             elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
                 # unavailable already handled by the early return above.
                 if verdict not in ("approved", "rejected"):
-                    die("pr-reviewer verdict must be approved|rejected")
+                    die("pr-reviewer verdict must be approved|rejected|unavailable")
                 _require_owned(store, task, "task")
             else:
                 die(f"unknown agent role: {role}")

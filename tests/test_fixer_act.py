@@ -3237,6 +3237,15 @@ def test_parallel_pr_pair_launch_oserror_releases_sibling_agent(
     ]
     assert len(pr_agents) >= 2, f"expected both grok PR agent rows, got {pr_agents}"
     assert not any(a.get("status") == "working" for a in pr_agents), pr_agents
+    gates = _gates(tmp_path, tid)
+    approved_logic = [
+        g
+        for g in gates
+        if g.get("stage") == "grok-pr"
+        and g.get("dimension") == "logic"
+        and g.get("verdict") == "approved"
+    ]
+    assert approved_logic, f"expected approved gate for logic, got {gates}"
 
 
 def test_parallel_pr_pair_prepare_exception_releases_first_agent(
@@ -3543,3 +3552,9 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
     assert _task_state(tmp_path, tid) == "implementing"
     agents = _agents(tmp_path, tid)
     assert not any(a.get("status") == "working" for a in agents), agents
+    spec_text = (tmp_path / "error-fix-specs" / tid / ".spec.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Prior Rejection Feedback" in spec_text
+    assert findings_marker in spec_text
+    assert spec_text.count("## grok_pr_quality") == 1
