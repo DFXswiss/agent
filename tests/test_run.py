@@ -1253,6 +1253,7 @@ def _advance_to_pushed(
     _finish_reviewer(home, tid, capsys)
     run(home, ["run", "--task", tid])
     capsys.readouterr()
+
     def fake_check_exec(argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "rev-parse" in argv or "merge-base" in argv:
             return Completed(0, "abcdef1\n", "")

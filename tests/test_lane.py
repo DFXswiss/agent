@@ -724,8 +724,6 @@ def test_default_runner_second_reap_timeout_kills_again(
 ) -> None:
     """Same third fallback tier via the shared runtime.kill_process_group_and_reap
     helper, exercised through lane._default_runner."""
-    import agent_cli.lane as lane_mod
-
     killpg_calls: list[int] = []
     wait_calls: list[object] = []
 
