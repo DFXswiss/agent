@@ -23,7 +23,7 @@ Two dimensions (quality, logic) and two vendor stages (`grok-pr`, then
 ```bash
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
-agent agent finish --id <uuid> --verdict approved|rejected
+agent agent finish --id <uuid> --verdict approved|rejected|unavailable
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
   --verdict approved --head <sha> --agent <reviewer-uuid>
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
@@ -64,7 +64,13 @@ Review lanes execute no software (no tests, builds, or servers).
   row, does not record `approved`, does not affect gate/checklist/round state;
   a later scan retries.
 
-Zero findings only after an explicit complete pass. Empty, partial,
+Auto-pass only when the lane output is a single terminal report with
+`STATUS: complete` and an explicit, present `FINDINGS:` header that parses to
+zero -- a missing or duplicated `FINDINGS:` header, or multiple STATUS:/FINDINGS:
+blocks in the output, resolves to retry instead. A zero-`FINDINGS:` report still
+resolves to retry, not an automatic pass, when its `GAPS:` section discloses
+genuine, non-trivial content (anything other than a zero token like `none`/`0`),
+or when the output contains more than one `GAPS:` header. Empty, partial,
 timeout, or unavailable output is not zero findings.
 
 A reported point that contradicts a verified repo rule or fact may be
