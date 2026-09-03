@@ -136,6 +136,46 @@ def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
     assert row2["result"]["draft"] is True
 
 
+def test_pr_open_resume_prefers_github_base_ref_name(tmp_path: Path) -> None:
+    """On resume, result.base must be GitHub's baseRefName, not the payload base."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-resume"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Base mismatch",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            assert "baseRefName" in argv[argv.index("--json") + 1]
+            body = {
+                "number": 7,
+                "url": "https://github.com/dfxswiss/agent/pull/7",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "main",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"create must not run: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=7"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["base"] == "main"
+    assert row["result"]["base"] != "origin/develop"
+
+
 def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

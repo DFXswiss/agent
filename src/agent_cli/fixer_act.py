@@ -165,6 +165,7 @@ def template_pr_open_payload(
     brief: str,
     fingerprint: str,
     title_suffix: str | None = None,
+    base: str | None = None,
 ) -> dict[str, Any]:
     """Build pr.open payload (repo/title/head/body) per CONTRIBUTING.md."""
     short = error_id[:8]
@@ -210,6 +211,7 @@ def template_pr_open_payload(
         "title": title,
         "head": head,
         "body": body,
+        "base": base,
     }
 
 
@@ -266,6 +268,33 @@ def _pr_open_number(store: Store, *, head: str, repo: str) -> int | None:
             return number
         if isinstance(number, str) and number.isdigit() and int(number) > 0:
             return int(number)
+        continue
+    return None
+
+
+def _pr_open_base(store: Store, *, head: str, repo: str) -> str | None:
+    """Return result.base from a done pr.open for head, or None if missing."""
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "pr.open":
+            continue
+        if row.get("execution_status") != "done":
+            continue
+        payload = row.get("payload")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("head") != head
+            or payload.get("repo") != repo
+        ):
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict):
+            continue
+        base = result.get("base")
+        if isinstance(base, str) and base:
+            return base
         continue
     return None
 
@@ -1039,6 +1068,12 @@ def _drive_one(
                         else {}
                     )
                     fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
+                    resolved_ref = _nonempty_str(task.get("ref"))
+                    pr_base = (
+                        resolved_ref.removeprefix("origin/")
+                        if resolved_ref is not None
+                        else None
+                    )
                     pr_payload = template_pr_open_payload(
                         session_id=session_id,
                         repo=repo,
@@ -1046,6 +1081,7 @@ def _drive_one(
                         brief=brief,
                         fingerprint=fingerprint,
                         title_suffix=str(task.get("title") or ""),
+                        base=pr_base,
                     )
                     insert_pr_open_and_scan(
                         store,
@@ -1077,8 +1113,10 @@ def _drive_one(
         ):
             try:
                 pr_number = _pr_open_number(store, head=pr_head, repo=repo)
+                pr_base = _pr_open_base(store, head=pr_head, repo=repo)
+                task = store.row("task", tid) or task
+                dirty = False
                 if pr_number is not None:
-                    task = store.row("task", tid) or task
                     task_payload = (
                         task.get("payload")
                         if isinstance(task.get("payload"), dict)
@@ -1088,7 +1126,12 @@ def _drive_one(
                         task_payload = dict(task_payload)
                         task_payload["pr_number"] = pr_number
                         task["payload"] = task_payload
-                        store.write("task", "update", tid, main_mod._strip(task))
+                        dirty = True
+                if pr_base and pr_base != task.get("ref"):
+                    task["ref"] = pr_base
+                    dirty = True
+                if dirty:
+                    store.write("task", "update", tid, main_mod._strip(task))
             except (StoreError, OSError, SystemExit) as exc:
                 return f"error-fix-work {tid} pr.open-error ({exc})"
 

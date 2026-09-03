@@ -130,6 +130,45 @@ def test_scan_error_fix_clones_then_reuses(tmp_path: Path) -> None:
     assert len(store.rows("task")) == 1
 
 
+def test_scan_error_fix_persists_origin_default_base_as_ref(tmp_path: Path) -> None:
+    """Fresh clone: task.ref must record origin/HEAD (e.g. origin/main), no extra runner call."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "clone", "--"]:
+            destination = Path(argv[-1])
+            (destination / ".git").mkdir(parents=True)
+            head_ref = destination / ".git" / "refs" / "remotes" / "origin" / "HEAD"
+            head_ref.parent.mkdir(parents=True, exist_ok=True)
+            head_ref.write_text("ref: refs/remotes/origin/main\n", encoding="utf-8")
+        return Completed(0, "", "")
+
+    lines = scan_error_fix(store, runner)
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    task_id = tasks[0]["id"]
+    staging = tmp_path / "error-fix-work" / "pending-fix-1"
+    worktree = tmp_path / "error-fix-work" / task_id
+    assert lines == [f"error.fix fix-1 task={task_id} worktree={worktree}"]
+    assert calls == [
+        ["git", "clone", "--", "https://github.com/org/app.git", str(staging)],
+        [
+            "git",
+            "-C",
+            str(staging),
+            "checkout",
+            "-B",
+            "error-fix-error-se",
+        ],
+    ]
+    assert tasks[0]["ref"] == "origin/main"
+
+
 def test_scan_error_fix_prints_valid_line_fingerprint(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)

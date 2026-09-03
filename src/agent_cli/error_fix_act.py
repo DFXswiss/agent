@@ -349,6 +349,24 @@ def _run_git(runner: Runner, argv: list[str], fallback: str) -> str | None:
     return detail or fallback
 
 
+def _resolved_default_base(staging: Path) -> str | None:
+    """Best-effort: read the origin default-branch symref `git clone` writes to
+    .git/refs/remotes/origin/HEAD, without shelling out (avoids an extra runner
+    call whose ordering every existing caller would otherwise have to assert on).
+    Returns e.g. "origin/develop", or None if unavailable — callers fall back to
+    the candidate-list probe in that case (same as today's behavior)."""
+    ref_file = staging / ".git" / "refs" / "remotes" / "origin" / "HEAD"
+    try:
+        content = ref_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/remotes/"
+    if not content.startswith(prefix):
+        return None
+    name = content[len(prefix):].strip()
+    return name or None
+
+
 def scan_error_fix(store: Store, runner: Runner) -> list[str]:
     with store.exclusive("error-fix-act:" + store.device_id()):
         return _scan_error_fix(store, runner)
@@ -409,13 +427,14 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 continue
         checkout = ["git", "-C", str(staging), "checkout", "-B", head]
         existing_task = _lookup_implement_task(store, session_id, error_id)
+        existing_ref = None
         if existing_task is not None:
             existing_row = store.row("task", existing_task)
-            existing_ref = None
             if existing_row is not None:
                 existing_ref = _nonempty_str(existing_row.get("ref"))
             if existing_ref is not None:
                 checkout.append(existing_ref)
+        resolved_base = existing_ref if existing_ref is not None else _resolved_default_base(staging)
         error = _run_git(
             runner,
             checkout,
@@ -431,6 +450,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 session_id,
                 error_id,
                 f"error-fix {error_id[:8]}",
+                ref=resolved_base,
             )
         except StoreError as exc:
             shutil.rmtree(staging, ignore_errors=True)

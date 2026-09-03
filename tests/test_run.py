@@ -560,6 +560,43 @@ def test_collect_review_diff_no_base_candidate_resolves_marks_probes_not_ok(
     assert probes_ok is False
 
 
+def test_collect_review_diff_explicit_base_wins_over_candidates(
+    tmp_path: Path,
+) -> None:
+    """An explicit base_ref must be used even when origin/develop also resolves."""
+    hunk = "diff --git a/src/foo.py b/src/foo.py\n+explicit-base-hunk\n"
+    calls: list[list[str]] = []
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            # Both the explicit base and origin/develop resolve — explicit must win.
+            if argv[3] in ("origin/main", "origin/develop"):
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "deadbeef\n", "")
+        if argv[:2] == ["git", "diff"]:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, hunk, "")
+        return Completed(0, "", "")
+
+    _diff, _paths, probes_ok = _collect_review_diff(
+        str(tmp_path), fake_exec, base_ref="origin/main"
+    )
+    assert probes_ok is True
+    assert ["git", "rev-parse", "--verify", "origin/main"] in calls
+    assert ["git", "merge-base", "HEAD", "origin/main"] in calls
+    assert not any(
+        c[:3] == ["git", "rev-parse", "--verify"] and c[3] == "origin/develop"
+        for c in calls
+    )
+    assert not any(
+        c[:2] == ["git", "merge-base"] and "origin/develop" in c for c in calls
+    )
+
+
 def test_collect_review_diff_empty_merge_base_stdout_marks_probes_not_ok(
     tmp_path: Path,
 ) -> None:

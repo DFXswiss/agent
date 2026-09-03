@@ -312,7 +312,7 @@ def _interpret_lane(
 
 
 def _collect_review_diff(
-    cwd: str, exec_argv: ExecArgv
+    cwd: str, exec_argv: ExecArgv, base_ref: str | None = None
 ) -> tuple[str, list[str], bool]:
     """Materialize unified diff + changed paths against a base branch.
 
@@ -322,19 +322,29 @@ def _collect_review_diff(
     When *no* candidate resolves at all, that counts as a probe failure
     (not expected control flow), so probes_ok becomes False.
     """
-    base_ref: str | None = None
-    for candidate in _BASE_CANDIDATES:
-        completed = exec_argv(["git", "rev-parse", "--verify", candidate], cwd=cwd)
+    explicit = base_ref
+    resolved: str | None = None
+    if explicit is not None and str(explicit).strip():
+        completed = exec_argv(
+            ["git", "rev-parse", "--verify", explicit], cwd=cwd
+        )
         if int(getattr(completed, "returncode", 1)) == 0:
-            base_ref = candidate
-            break
+            resolved = explicit
+    if resolved is None:
+        for candidate in _BASE_CANDIDATES:
+            completed = exec_argv(
+                ["git", "rev-parse", "--verify", candidate], cwd=cwd
+            )
+            if int(getattr(completed, "returncode", 1)) == 0:
+                resolved = candidate
+                break
     chunks: list[str] = []
     paths: list[str] = []
     probes_ok = True
-    if base_ref is None:
+    if resolved is None:
         probes_ok = False
-    if base_ref is not None:
-        mb = exec_argv(["git", "merge-base", "HEAD", base_ref], cwd=cwd)
+    if resolved is not None:
+        mb = exec_argv(["git", "merge-base", "HEAD", resolved], cwd=cwd)
         mb_rc = int(getattr(mb, "returncode", 1))
         base_sha = str(getattr(mb, "stdout", "") or "").strip()
         if mb_rc != 0 or not base_sha:
@@ -394,9 +404,12 @@ def build_review_spec_file(
     implement_spec_file: str | None,
     cwd: str,
     exec_argv: ExecArgv,
+    base_ref: str | None = None,
 ) -> str:
     """Write a four-part review prompt under $AGENT_HOME/review-work/<task_id>/; return its path."""
-    diff_text, changed_paths, probes_ok = _collect_review_diff(cwd, exec_argv)
+    diff_text, changed_paths, probes_ok = _collect_review_diff(
+        cwd, exec_argv, base_ref
+    )
     if not probes_ok:
         raise ReviewDiffUnavailableError(
             "git probe failed while collecting the review diff"
@@ -942,6 +955,11 @@ def prepare_spine_agent_step(
     launch_spec = spec_file
     if role in _REVIEW_ROLES:
         try:
+            base_ref = None
+            if is_error_fix_originated(snap):
+                from .error_fix_act import _nonempty_str
+
+                base_ref = _nonempty_str(task.get("ref"))
             launch_spec = build_review_spec_file(
                 store,
                 tid,
@@ -950,6 +968,7 @@ def prepare_spine_agent_step(
                 implement_spec_file=spec_file,
                 cwd=run_cwd,
                 exec_argv=exec_argv,
+                base_ref=base_ref,
             )
         except EmptyReviewDiffError as exc:
             working = main_mod._find_working_agent(

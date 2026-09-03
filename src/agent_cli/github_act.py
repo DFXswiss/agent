@@ -202,7 +202,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             "--repo",
             repo,
             "--json",
-            "number,url,state,isDraft",
+            "number,url,state,isDraft,baseRefName",
         ]
         try:
             completed = runner(view_argv)
@@ -237,7 +237,17 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 raise _GhError("existing pull request is not open")
             if not _is_draft(viewed.get("isDraft")):
                 raise _GhError("existing pull request is not a draft")
-            result = {"repo": repo, "number": number, "url": url, "draft": True}
+            real_base = viewed.get("baseRefName")
+            resolved_result_base = (
+                real_base if isinstance(real_base, str) and real_base else base
+            )
+            result = {
+                "repo": repo,
+                "number": number,
+                "url": url,
+                "draft": True,
+                "base": resolved_result_base,
+            }
             _mark(store, row, status="done", result=result)
             return f"pr.open {rid} done number={number}"
         create_body = _with_marker(body, rid)
@@ -259,7 +269,13 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             argv.extend(["--base", base])
         stdout = _gh_text(argv, runner)
         url, number = _parse_url_number(stdout)
-        result = {"repo": repo, "number": number, "url": url, "draft": True}
+        result = {
+            "repo": repo,
+            "number": number,
+            "url": url,
+            "draft": True,
+            "base": base,
+        }
         _mark(store, row, status="done", result=result)
         return f"pr.open {rid} done number={number}"
     except _GhError as exc:
