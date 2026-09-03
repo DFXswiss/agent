@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .runtime import kill_process_group_and_reap
+
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 LANE_VENDORS = ("grok", "codex")
 WRITE_ROLES = frozenset({"implementer"})
@@ -267,32 +269,9 @@ def _default_runner(
     try:
         stdout, stderr = proc.communicate(input=stdin_text, timeout=limit)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
-        try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except (subprocess.TimeoutExpired, OSError):
-            stdout, stderr = "", ""
-            # Mirror daemon._terminate: one more kill+wait after a timed-out
-            # reap; orphans past this point are an accepted limitation.
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-            try:
-                proc.wait(timeout=5)
-            except (ProcessLookupError, PermissionError, OSError, subprocess.TimeoutExpired):
-                pass
+        stdout, stderr = kill_process_group_and_reap(proc)
         # returncode 124 matches parse_status's external-timeout convention.
-        return subprocess.CompletedProcess(argv, 124, stdout or "", stderr or "")
+        return subprocess.CompletedProcess(argv, 124, stdout, stderr)
     return subprocess.CompletedProcess(
         argv,
         proc.returncode if proc.returncode is not None else 1,

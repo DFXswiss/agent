@@ -79,6 +79,46 @@ def run_argv(argv: list[str]) -> Completed:
     return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
 
 
+def kill_process_group_and_reap(
+    proc: subprocess.Popen[str],
+    *,
+    first_reap_timeout: float = 5,
+    second_reap_timeout: float = 5,
+) -> tuple[str, str]:
+    """Kill proc's whole process group (SIGKILL) and reap it.
+
+    Shared by run_argv_killing_tree (this module) and lane._default_runner --
+    both need the identical kill pattern after their own communicate() call
+    has already timed out: kill, reap, and if that reap ALSO times out, kill
+    again + wait. Duplicating this independently in two places is exactly how
+    they drifted out of sync before (runtime.py silently dropped the second
+    tier). Mirrors daemon._terminate: one more kill+wait after a timed-out
+    reap; orphans past this point are an accepted limitation."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    try:
+        stdout, stderr = proc.communicate(timeout=first_reap_timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        stdout, stderr = "", ""
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=second_reap_timeout)
+        except (ProcessLookupError, PermissionError, OSError, subprocess.TimeoutExpired):
+            pass
+    return stdout or "", stderr or ""
+
+
 def run_argv_killing_tree(
     argv: list[str],
     *,
@@ -101,18 +141,8 @@ def run_argv_killing_tree(
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
-        try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except (subprocess.TimeoutExpired, OSError):
-            stdout, stderr = "", ""
-        return Completed(124, stdout or "", stderr or f"timed out after {timeout}s")
+        stdout, stderr = kill_process_group_and_reap(proc)
+        return Completed(124, stdout, stderr or f"timed out after {timeout}s")
     return Completed(
         proc.returncode if proc.returncode is not None else 1, stdout or "", stderr or ""
     )

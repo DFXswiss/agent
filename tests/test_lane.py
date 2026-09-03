@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -716,6 +717,43 @@ def test_default_runner_timeout_returns_124_and_releases_lock(
     thread.join(timeout=2.0)
     assert not thread.is_alive()
     assert acquired["ok"], "lock held around runner must be released after timeout"
+
+
+def test_default_runner_second_reap_timeout_kills_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same third fallback tier via the shared runtime.kill_process_group_and_reap
+    helper, exercised through lane._default_runner."""
+    import agent_cli.lane as lane_mod
+
+    killpg_calls: list[int] = []
+    wait_calls: list[object] = []
+
+    class FakeProc:
+        pid = 4343
+        returncode = None
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=["x"], timeout=timeout)
+
+        def wait(self, timeout=None):
+            wait_calls.append(timeout)
+            return None
+
+    def fake_popen(*args, **kwargs):
+        return FakeProc()
+
+    def fake_killpg(pid, sig):
+        killpg_calls.append(pid)
+
+    monkeypatch.setattr(lane_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lane_mod.os, "killpg", fake_killpg)
+
+    result = lane_mod._default_runner(["sleep", "999"], None, timeout=0.01)
+
+    assert result.returncode == 124
+    assert len(killpg_calls) == 2, "must kill the process group a second time"
+    assert len(wait_calls) == 1, "must wait() once after the second kill"
 
 
 def test_default_runner_concurrent_workers_no_deadlock() -> None:

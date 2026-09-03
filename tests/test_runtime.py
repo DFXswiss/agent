@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 
 import pytest
 
@@ -242,3 +243,41 @@ def test_is_busy_false_on_idle_prompt() -> None:
 def test_grok_working_false_when_session_missing() -> None:
     rt = Runtime(runner=lambda argv: Completed(1, "", "no session"))
     assert rt.grok_working("missing") is False
+
+
+def test_run_argv_killing_tree_second_reap_timeout_kills_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the post-kill communicate() also times out, a SECOND killpg +
+    proc.wait must run (lane._default_runner's third fallback tier, now
+    shared via runtime.kill_process_group_and_reap)."""
+    from agent_cli import runtime as runtime_mod
+
+    killpg_calls: list[int] = []
+    wait_calls: list[object] = []
+
+    class FakeProc:
+        pid = 4242
+        returncode = None
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=["x"], timeout=timeout)
+
+        def wait(self, timeout=None):
+            wait_calls.append(timeout)
+            return None
+
+    def fake_popen(*args, **kwargs):
+        return FakeProc()
+
+    def fake_killpg(pid, sig):
+        killpg_calls.append(pid)
+
+    monkeypatch.setattr(runtime_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(runtime_mod.os, "killpg", fake_killpg)
+
+    result = runtime_mod.run_argv_killing_tree(["sleep", "999"], timeout=0.01)
+
+    assert result.returncode == 124
+    assert len(killpg_calls) == 2, "must kill the process group a second time"
+    assert len(wait_calls) == 1, "must wait() once after the second kill"
