@@ -1646,6 +1646,12 @@ def test_classify_gh_failure_exit_code_4_is_permanent() -> None:
     assert _classify_gh_failure(completed) == "permanent"
 
 
+def test_classify_gh_failure_exit_code_4_wins_over_not_found_text() -> None:
+    """Exit code 4 must beat text heuristics that would otherwise classify first."""
+    completed = Completed(4, "", "pull request not found")
+    assert _classify_gh_failure(completed) == "permanent"
+
+
 def test_resolve_actual_base_surfaces_permanent_classification() -> None:
     """Non-zero gh failures must surface the real classification, not a bool."""
 

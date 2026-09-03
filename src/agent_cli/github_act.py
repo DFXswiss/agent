@@ -198,6 +198,9 @@ def _classify_gh_failure(
     completed: Completed,
 ) -> Literal["transient", "not_found", "permanent"]:
     """Classify a non-zero gh CLI failure for retry / create / terminalize decisions."""
+    # gh exit 4 = authentication required; permanent regardless of stderr text
+    if completed.returncode == 4:
+        return "permanent"
     if _gh_not_found(completed):
         return "not_found"
     text = f"{completed.stderr or ''}{completed.stdout or ''}".casefold()
@@ -207,9 +210,6 @@ def _classify_gh_failure(
         or "abuse detection" in text
     ):
         return "transient"
-    # gh exit 4 = authentication required
-    if completed.returncode == 4:
-        return "permanent"
     if (
         "http 401" in text
         or "http 403" in text
