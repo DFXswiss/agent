@@ -1976,7 +1976,7 @@ def test_fixer_backfills_task_ref_from_pr_open_real_base(
                     "number": 42,
                     "url": "https://github.com/org/app/pull/42",
                     "draft": True,
-                    "base": "origin/main",
+                    "base": "main",
                 },
             },
         )
@@ -1994,6 +1994,26 @@ def test_fixer_backfills_task_ref_from_pr_open_real_base(
         updated = store.row("task", tid)
         assert updated is not None
         assert updated.get("ref") == "origin/main"
+
+        from agent_cli.run_core import _collect_review_diff
+
+        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+            if argv[:3] == ["git", "rev-parse", "--verify"]:
+                if argv[3] == "origin/main":
+                    return Completed(0, "abc123\n", "")
+                return Completed(1, "", "")
+            if argv[:2] == ["git", "merge-base"]:
+                return Completed(0, "deadbeef\n", "")
+            if argv[:2] == ["git", "diff"]:
+                if "--name-only" in argv:
+                    return Completed(0, "src/foo.py\n", "")
+                return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+            return Completed(0, "", "")
+
+        _diff, _paths, probes_ok = _collect_review_diff(
+            str(tmp_path), fake_exec, base_ref=updated.get("ref")
+        )
+        assert probes_ok is True
     finally:
         store.close()
 

@@ -1127,9 +1127,11 @@ def _drive_one(
                         task_payload["pr_number"] = pr_number
                         task["payload"] = task_payload
                         dirty = True
-                if pr_base and pr_base != task.get("ref"):
-                    task["ref"] = pr_base
-                    dirty = True
+                if pr_base:
+                    normalized_pr_base = pr_base if "/" in pr_base else f"origin/{pr_base}"
+                    if normalized_pr_base != task.get("ref"):
+                        task["ref"] = normalized_pr_base
+                        dirty = True
                 if dirty:
                     store.write("task", "update", tid, main_mod._strip(task))
             except (StoreError, OSError, SystemExit) as exc:
