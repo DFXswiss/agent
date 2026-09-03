@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -360,6 +361,42 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     assert pg_sentinel not in output
     assert os.environ.get("AGENT_ERROR_FIX_PASSWORD") == sentinel
     assert os.environ.get("AGENT_PG_DSN") == pg_dsn_with_sentinel
+
+
+def test_run_local_check_redacts_secret_values_from_persisted_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local-check output redaction must scrub secret VALUES after the subprocess.
+
+    Independent of the env-pop layer: the check command prints the sentinel
+    as a hardcoded literal (not by reading the env), so only the post-return
+    `output.replace(secret, "[REDACTED]")` step can explain its absence.
+    Uses a fresh task/tmp_path so the local-check cache cannot short-circuit.
+    """
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    sentinel = "sentinel-value-should-not-leak-standalone"
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
+    monkeypatch.setenv(
+        "AGENT_CHECK_COMMAND",
+        f'{sys.executable} -c "print(\'check-genuinely-ran\'); print(\'{sentinel}\')"',
+    )
+    run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
+    capsys.readouterr()
+
+    local_rows = [c for c in _local_checks(tmp_path, tid) if c.get("name") == "local"]
+    assert local_rows, "expected a local check record"
+    last = local_rows[-1]
+    assert str(last.get("result") or "") == "pass"
+    output = str(last.get("output") or "")
+    assert "check-genuinely-ran" in output
+    assert "[REDACTED]" in output
+    assert sentinel not in output
 
 
 def test_run_dry_run_skips_local_check(
