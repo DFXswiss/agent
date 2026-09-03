@@ -319,37 +319,6 @@ def _pr_open_pending_row_exists(store: Store, *, head: str, repo: str) -> bool:
     return False
 
 
-def _pr_open_pending_number(store: Store, *, head: str, repo: str) -> int | None:
-    """Return result.number from a pending pr.open for head, or None if missing."""
-    origin = store.device_id()
-    for row in store.rows("activity"):
-        if row.get("_origin_device_id") != origin:
-            continue
-        if row.get("type") != "pr.open":
-            continue
-        if row.get("execution_status") != "pending":
-            continue
-        payload = row.get("payload")
-        if (
-            not isinstance(payload, dict)
-            or payload.get("head") != head
-            or payload.get("repo") != repo
-        ):
-            continue
-        result = row.get("result")
-        if not isinstance(result, dict):
-            continue
-        number = result.get("number")
-        if isinstance(number, bool):
-            continue
-        if isinstance(number, int) and number > 0:
-            return number
-        if isinstance(number, str) and number.isdigit() and int(number) > 0:
-            return int(number)
-        continue
-    return None
-
-
 def _pr_open_recorded_number(
     store: Store, *, head: str, repo: str
 ) -> tuple[int, str] | None:
