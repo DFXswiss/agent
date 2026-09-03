@@ -319,6 +319,37 @@ def _pr_open_pending_row_exists(store: Store, *, head: str, repo: str) -> bool:
     return False
 
 
+def _pr_open_pending_number(store: Store, *, head: str, repo: str) -> int | None:
+    """Return result.number from a pending pr.open for head, or None if missing."""
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "pr.open":
+            continue
+        if row.get("execution_status") != "pending":
+            continue
+        payload = row.get("payload")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("head") != head
+            or payload.get("repo") != repo
+        ):
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict):
+            continue
+        number = result.get("number")
+        if isinstance(number, bool):
+            continue
+        if isinstance(number, int) and number > 0:
+            return number
+        if isinstance(number, str) and number.isdigit() and int(number) > 0:
+            return int(number)
+        continue
+    return None
+
+
 def insert_pr_open_and_scan(
     store: Store,
     *,
@@ -1070,7 +1101,7 @@ def _drive_one(
                     fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
                     resolved_ref = _nonempty_str(task.get("ref"))
                     pr_base = (
-                        resolved_ref.removeprefix("origin/")
+                        (resolved_ref.removeprefix("origin/") or None)
                         if resolved_ref is not None
                         else None
                     )
@@ -1093,6 +1124,14 @@ def _drive_one(
                 # (auth/rate-limit/permissions). Leave the task untouched for the
                 # next scan rather than failing it; each cron/knock scan retries.
                 if not _pr_open_row_exists(store, head=pr_head, repo=repo):
+                    pending_number = _pr_open_pending_number(
+                        store, head=pr_head, repo=repo
+                    )
+                    if pending_number is not None:
+                        return (
+                            f"error-fix-work {tid} pr.open-pending "
+                            f"(base resolution retry needed)"
+                        )
                     return f"error-fix-work {tid} pr.open-error (create failed)"
             except (StoreError, OSError, SystemExit) as exc:
                 return f"error-fix-work {tid} pr.open-error ({exc})"

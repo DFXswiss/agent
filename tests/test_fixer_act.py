@@ -3037,6 +3037,107 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
     assert "pr.open-error" not in result
 
 
+def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pending pr.open that already recorded a real number must not say create failed.
+
+    Mirrors the post-create path where gh pr create succeeded but the immediate
+    base-resolution gh pr view failed transiently: row stays pending with
+    result.number set. The status message must distinguish that from a genuine
+    create failure so an operator does not open a duplicate PR.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+    head = f"error-fix-{ERROR_ID[:8]}"
+    activity_id = str(uuid.uuid4())
+    scan_calls: list[tuple] = []
+    insert_calls: list[tuple] = []
+
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+        return pushed_sha
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "pr-reviewer-quality")
+        vendor = str(kwargs.get("vendor") or "grok")
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_scan_github(store, runner):  # type: ignore[no-untyped-def]
+        # Leave the row pending with its recorded number — base resolution
+        # still needs a retry on a later scan.
+        scan_calls.append((store, runner))
+        return []
+
+    def fake_insert(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
+        insert_calls.append((store, session_id, payload, runner))
+        return []
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.github_act.scan_github", fake_scan_github)
+    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", fake_insert)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _rtc_via_neutral_runner
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": "org/app",
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "pending",
+                "result": {
+                    "repo": "org/app",
+                    "number": 100,
+                    "url": "https://github.com/org/app/pull/100",
+                    "draft": True,
+                    "base": "develop",
+                },
+            },
+        )
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_until_stable(
+            store,
+            task,
+            runner=_neutral_runner,
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert len(scan_calls) == 1
+    assert insert_calls == []
+    assert "pr.open-pending" in result
+    assert "base resolution retry needed" in result
+    assert "create failed" not in result
+    assert "pr.open-error" not in result
+
+
 def test_drive_error_fix_tasks_isolates_per_task_crash(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1429,7 +1429,7 @@ def execute_spine_step(
             )
         has_fresh = False
         if check_head:
-            latest_local: dict | None = None
+            latest_local: dict[str, Any] | None = None
             for c in snap.get("local_checks") or []:
                 if not isinstance(c, dict):
                     continue

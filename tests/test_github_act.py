@@ -231,6 +231,47 @@ def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
     assert row["result"]["base"] == "develop"
 
 
+def test_pr_open_create_origin_only_base_omits_base_flag(tmp_path: Path) -> None:
+    """payload.base of exactly 'origin/' must not become gh pr create --base ''."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-origin-only"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Origin-only base",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/",
+        },
+    )
+    create_argv: list[str] = []
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(0, json.dumps({"number": 101}), "")
+        if "create" in argv:
+            create_argv.extend(argv)
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/101\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=101"]
+    assert create_argv, "expected gh pr create to run"
+    assert "--base" not in create_argv
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+
+
 def test_pr_open_create_base_resolve_transient_failure_stays_pending(
     tmp_path: Path,
 ) -> None:

@@ -246,7 +246,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         body_opt = _optional_str_field(payload, "body")
         body = "" if body_opt is None else body_opt
         base = _optional_str_field(payload, "base", nonempty=True)
-        base = base.removeprefix("origin/") if base else base
+        base = (base.removeprefix("origin/") or None) if base else base
     except _GhError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"pr.open {rid} error"
@@ -277,7 +277,8 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             detail = f"gh is not available: {exc}"
             completed = None
         if classification is None:
-            assert completed is not None
+            if completed is None:
+                raise _GhError("gh pr view produced no result")
             if completed.returncode != 0:
                 classification = _classify_gh_failure(completed)
                 detail = (completed.stderr or completed.stdout or "gh failed").strip()
@@ -308,7 +309,8 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             if classification == "not_found" and not has_prior_number:
                 viewed = None
             elif has_prior_number and classification in ("not_found", "transient"):
-                assert isinstance(prior, dict)
+                if not isinstance(prior, dict):
+                    raise _GhError("prior pr.open result is not an object")
                 _mark(store, row, status="pending", result=prior)
                 return f"pr.open {rid} pending (view retry needed)"
             else:
