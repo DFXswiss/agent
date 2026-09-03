@@ -2536,7 +2536,7 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
                 return Completed(0, "src/foo.py\n", "")
             return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
         if "rev-parse" in argv or "merge-base" in argv:
-            return Completed(0, "abcdef1\n", "")
+            return Completed(0, "ccccccc\n", "")
         return Completed(0, "", "")
 
     monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
