@@ -217,7 +217,7 @@ def test_scan_github_serializes_via_exclusive_and_skips_done(
     assert row2["result"]["number"] == 77
 
 
-def test_scan_github_exclusive_blocks_second_thread(tmp_path: Path) -> None:
+def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) -> None:
     """A second thread blocked on github-scan exclusive must wait until the first exits."""
     store = Store(tmp_path)
     _owned_session(store)
