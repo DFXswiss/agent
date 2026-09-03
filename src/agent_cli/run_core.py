@@ -20,6 +20,7 @@ from .git_act import _SHA_RE
 from .lane import (
     LaneResult,
     count_findings,
+    extract_findings_text,
     findings_header_present,
     has_single_terminal_report,
     launch,
@@ -104,6 +105,24 @@ class RunOutcome:
     verdict: str | None = None  # approved|rejected|done|… when an agent finished
     message: str | None = None
     rejection_findings: str | None = None
+    needs_round_start: bool = False
+
+
+@dataclass
+class AgentLaunchPlan:
+    """Store-free launch inputs for one prepared agent spine step.
+
+    Built on the calling thread (all Store I/O already done). Safe to hand to a
+    worker that only calls lane.launch — never pass the Store on this object.
+    """
+
+    step: Step
+    role: str
+    vendor: str
+    round_num: int | None
+    head: str | None
+    launch_spec: str
+    cwd: str
 
 
 def _checklist_set(tid: str, key: str, status: str, *, evidence: str | None = None) -> None:
@@ -331,23 +350,24 @@ def _collect_review_diff(
                     for p in str(getattr(names, "stdout", "") or "").splitlines()
                     if p.strip()
                 )
-    for argv_extra in (["HEAD"], ["--cached"]):
-        diff = exec_argv(["git", "diff", *argv_extra], cwd=cwd)
-        if int(getattr(diff, "returncode", 1)) != 0:
-            probes_ok = False
-        else:
-            text = str(getattr(diff, "stdout", "") or "")
-            if text.strip():
-                chunks.append(text)
-        names = exec_argv(["git", "diff", "--name-only", *argv_extra], cwd=cwd)
-        if int(getattr(names, "returncode", 1)) != 0:
-            probes_ok = False
-        else:
-            paths.extend(
-                p.strip()
-                for p in str(getattr(names, "stdout", "") or "").splitlines()
-                if p.strip()
-            )
+    # git diff HEAD already covers staged + unstaged vs HEAD; a separate
+    # --cached content probe would duplicate every staged hunk in the prompt.
+    diff = exec_argv(["git", "diff", "HEAD"], cwd=cwd)
+    if int(getattr(diff, "returncode", 1)) != 0:
+        probes_ok = False
+    else:
+        text = str(getattr(diff, "stdout", "") or "")
+        if text.strip():
+            chunks.append(text)
+    names = exec_argv(["git", "diff", "--name-only", "HEAD"], cwd=cwd)
+    if int(getattr(names, "returncode", 1)) != 0:
+        probes_ok = False
+    else:
+        paths.extend(
+            p.strip()
+            for p in str(getattr(names, "stdout", "") or "").splitlines()
+            if p.strip()
+        )
     # Preserve order, drop dupes.
     seen: set[str] = set()
     unique_paths: list[str] = []
@@ -489,6 +509,7 @@ def _apply_rejection_resets(
     *,
     round_cap: int | None,
     evidence: str,
+    defer_round_start: bool = False,
 ) -> RunOutcome:
     """Reset checklist keys then round-start, or fail on cap (no reset)."""
     task = store.row("task", tid)
@@ -512,13 +533,18 @@ def _apply_rejection_resets(
         _reset_keys(store, tid, _REVIEWER_REJECT_RESET_KEYS, evidence=evidence)
     else:
         _reset_keys(store, tid, _PR_REJECT_RESET_KEYS, evidence=evidence)
-    _round_start(tid)
+    if defer_round_start:
+        needs_round_start = True
+    else:
+        _round_start(tid)
+        needs_round_start = False
     return RunOutcome(
         kind="rejected_new_round",
         key="reviewer_approved" if role == "reviewer" else None,
         reason=f"{role} rejected",
         verdict="rejected",
         message=f"{role} rejected; new round started",
+        needs_round_start=needs_round_start,
     )
 
 
@@ -626,6 +652,7 @@ def _finish_agent_fail(
     round_cap: int | None,
     cwd: str | None = None,
     exec_argv: ExecArgv | None = None,
+    defer_round_start: bool = False,
 ) -> RunOutcome:
     from . import main as main_mod
 
@@ -641,7 +668,9 @@ def _finish_agent_fail(
             message="working agent not found after lane",
         )
     agent_id = str(working["id"])
-    evidence = findings_text[:8000] or "findings"
+    # PR comments should carry FINDINGS body only, not STATUS:/REASON: preamble.
+    extracted = extract_findings_text(findings_text)
+    evidence = (extracted or findings_text)[:8000] or "findings"
     _agent_finish(agent_id, "rejected", note="lane findings")
     if role in ("pr-reviewer-quality", "pr-reviewer-logic"):
         dim = "quality" if role.endswith("quality") else "logic"
@@ -668,7 +697,12 @@ def _finish_agent_fail(
             evidence=evidence,
         )
     out = _apply_rejection_resets(
-        store, tid, role, round_cap=round_cap, evidence=evidence
+        store,
+        tid,
+        role,
+        round_cap=round_cap,
+        evidence=evidence,
+        defer_round_start=defer_round_start,
     )
     out.lane_result = result
     out.key = step.key
@@ -693,6 +727,7 @@ def _lane_retry_then_fail(
     first: LaneResult,
     round_cap: int | None,
     exec_argv: ExecArgv | None = None,
+    defer_round_start: bool = False,
 ) -> RunOutcome:
     """Re-invoke launch once; on second unparseable/non-pass, fail the task."""
     try:
@@ -745,6 +780,7 @@ def _lane_retry_then_fail(
             round_cap=round_cap,
             cwd=cwd,
             exec_argv=exec_argv,
+            defer_round_start=defer_round_start,
         )
         out.lane_results = [first, second]
         return out
@@ -813,6 +849,275 @@ def _lane_retry_then_fail(
     )
 
 
+def prepare_spine_agent_step(
+    store: Store,
+    tid: str,
+    step: Step,
+    *,
+    head: str | None,
+    spec_file: str | None,
+    cwd: str | None,
+    snap: dict[str, Any],
+    task: dict[str, Any],
+    exec_argv: ExecArgv,
+) -> RunOutcome | AgentLaunchPlan:
+    """All Store-touching prep for an agent step; returns a plan or an early outcome.
+
+    Does not call lane.launch. Safe to invoke only on the thread that owns the
+    Store lock (including inside store.exclusive).
+    """
+    from . import main as main_mod
+
+    wf = str(snap["workflow"])
+    already = close_allowed(
+        wf,
+        step.key,
+        checklist=snap["checklist"],
+        source="script",
+        evidence="run auto",
+        snapshot=snap,
+    )
+    if already.allowed:
+        close_evidence = f"run auto:{already.reason}"
+        _close_step(tid=tid, key=step.key, evidence=close_evidence, head=head)
+        return RunOutcome(
+            kind="closed",
+            key=step.key,
+            step=step,
+            head_sha=head,
+            close_evidence=close_evidence,
+        )
+    if spec_file is None:
+        return RunOutcome(
+            kind="agent_handoff",
+            key=step.key,
+            step=step,
+            head_sha=head,
+            reason="agent step needs --spec-file or finished artifact",
+        )
+    spec_path = Path(spec_file)
+    if not spec_path.is_file():
+        return RunOutcome(
+            kind="failed",
+            key=step.key,
+            step=step,
+            reason=f"spec-file not found: {spec_file}",
+            message=f"spec-file not found: {spec_file}",
+        )
+    if not spec_path.read_text(encoding="utf-8").strip():
+        return RunOutcome(
+            kind="failed",
+            key=step.key,
+            step=step,
+            reason=f"spec-file is empty: {spec_file}",
+            message=f"spec-file is empty: {spec_file}",
+        )
+    run_cwd = cwd or os.getcwd()
+    role = str(step.role or "")
+    vendor = str(step.vendor or "")
+    session_id = str(snap.get("session_id") or "")
+    task = store.row("task", tid) or task
+    current_round = int(task.get("current_round") or 0)
+    round_num: int | None = None
+    if role in ("implementer", "reviewer"):
+        round_num = current_round
+    working = main_mod._find_working_agent(
+        store, tid, role=role, vendor=vendor, round_num=round_num
+    )
+    if working is None:
+        _agent_start(
+            session_id=session_id,
+            tid=tid,
+            role=role,
+            vendor=vendor,
+            round_num=round_num,
+        )
+    launch_spec = spec_file
+    if role in _REVIEW_ROLES:
+        try:
+            launch_spec = build_review_spec_file(
+                store,
+                tid,
+                role=role,
+                round_num=round_num,
+                implement_spec_file=spec_file,
+                cwd=run_cwd,
+                exec_argv=exec_argv,
+            )
+        except EmptyReviewDiffError as exc:
+            working = main_mod._find_working_agent(
+                store, tid, role=role, vendor=vendor, round_num=round_num
+            )
+            if working is not None:
+                _agent_finish(str(working["id"]), "unavailable", note=str(exc))
+            _check_record(
+                tid=tid,
+                name="empty-review-diff",
+                command=f"role={role} vendor={vendor}",
+                result="fail",
+                output=str(exc),
+            )
+            return RunOutcome(
+                kind="failed",
+                key=step.key,
+                step=step,
+                reason=str(exc),
+                message=str(exc),
+            )
+        except ReviewDiffUnavailableError as exc:
+            working = main_mod._find_working_agent(
+                store, tid, role=role, vendor=vendor, round_num=round_num
+            )
+            if working is not None:
+                _agent_finish(str(working["id"]), "unavailable", note=str(exc))
+            return RunOutcome(
+                kind="vendor_unavailable",
+                key=step.key,
+                reason=str(exc),
+                message=str(exc),
+            )
+        except OSError:
+            working = main_mod._find_working_agent(
+                store, tid, role=role, vendor=vendor, round_num=round_num
+            )
+            if working is not None:
+                _agent_finish(
+                    str(working["id"]),
+                    "unavailable",
+                    note=f"review-spec write failed ({role} {vendor})",
+                )
+            raise
+    return AgentLaunchPlan(
+        step=step,
+        role=role,
+        vendor=vendor,
+        round_num=round_num,
+        head=head,
+        launch_spec=launch_spec,
+        cwd=run_cwd,
+    )
+
+
+def launch_agent_plan(
+    plan: AgentLaunchPlan,
+    *,
+    runner: LaneRunner | None = None,
+    tmux: bool = True,
+) -> LaneResult:
+    """Call lane.launch for a prepared plan. Store-free; safe on a worker thread."""
+    return launch(
+        role=plan.role,
+        vendor=plan.vendor,
+        spec_file=plan.launch_spec,
+        cwd=plan.cwd,
+        runner=runner,
+        tmux=tmux,
+    )
+
+
+def complete_spine_agent_step(
+    store: Store,
+    tid: str,
+    plan: AgentLaunchPlan,
+    result: LaneResult,
+    *,
+    round_cap: int | None,
+    tmux: bool = True,
+    runner: LaneRunner | None = None,
+    exec_argv: ExecArgv | None = None,
+    defer_round_start: bool = False,
+) -> RunOutcome:
+    """Interpret a lane result and perform all Store writes (pass/fail/retry).
+
+    Must run on the thread that owns the Store lock. Retry re-invokes launch on
+    this same thread (sequential), matching the single-step path.
+    """
+    decision, findings_text = _interpret_lane(plan.role, result)
+    if decision == "pass":
+        out = _finish_agent_pass(
+            store,
+            tid,
+            role=plan.role,
+            vendor=plan.vendor,
+            round_num=plan.round_num,
+            head=plan.head,
+            result=result,
+            step=plan.step,
+            cwd=plan.cwd,
+            exec_argv=exec_argv,
+        )
+        out.lane_results = [result]
+        return out
+    if decision == "fail" and findings_text is not None:
+        out = _finish_agent_fail(
+            store,
+            tid,
+            role=plan.role,
+            vendor=plan.vendor,
+            round_num=plan.round_num,
+            head=plan.head,
+            result=result,
+            step=plan.step,
+            findings_text=findings_text,
+            round_cap=round_cap,
+            cwd=plan.cwd,
+            exec_argv=exec_argv,
+            defer_round_start=defer_round_start,
+        )
+        out.lane_results = [result]
+        return out
+    return _lane_retry_then_fail(
+        store,
+        tid,
+        role=plan.role,
+        vendor=plan.vendor,
+        round_num=plan.round_num,
+        head=plan.head,
+        step=plan.step,
+        spec_file=plan.launch_spec,
+        cwd=plan.cwd,
+        tmux=tmux,
+        runner=runner,
+        first=result,
+        round_cap=round_cap,
+        exec_argv=exec_argv,
+        defer_round_start=defer_round_start,
+    )
+
+
+def abandon_prepared_agent(
+    store: Store,
+    tid: str,
+    plan: AgentLaunchPlan,
+    *,
+    note: str,
+) -> RunOutcome:
+    """Release a working agent without gate/checklist mutation.
+
+    Used when a sibling PR-dimension already rejected/failed and further
+    pass/fail finishing would double-reset or start a second round.
+    """
+    from . import main as main_mod
+
+    working = main_mod._find_working_agent(
+        store, tid, role=plan.role, vendor=plan.vendor, round_num=plan.round_num
+    )
+    if working is not None:
+        _agent_finish(str(working["id"]), "rejected", note=note)
+    return RunOutcome(
+        kind="closed",
+        key=plan.step.key,
+        step=plan.step,
+        reason=note,
+        # No head_sha: this outcome asserts nothing about head. Setting it
+        # to plan.head (the pre-attempt head this abandoned sibling was
+        # prepared with) would re-clobber a head=None reset the sibling's
+        # own rejected_new_round outcome already applied earlier in the
+        # same batch -- let whatever the caller already has stand.
+        head_sha=None,
+    )
+
+
 def execute_spine_step(
     store: Store,
     tid: str,
@@ -825,11 +1130,16 @@ def execute_spine_step(
     runner: LaneRunner | None = None,
     round_cap: int | None = None,
     exec_argv: ExecArgv | None = None,
+    only_key: str | None = None,
 ) -> RunOutcome:
     """Execute the single open spine step for tid.
 
     `round_cap=None` means unbounded (interactive `agent run`). The fixer
     passes an explicit int (DEFAULT_ROUND_CAP).
+
+    When `only_key` is set, select that key from the ready list instead of
+    `ready[0]`. If it is absent (defensive/race), return kind=idle without
+    mutating state.
     """
     from . import main as main_mod
 
@@ -846,7 +1156,17 @@ def execute_spine_step(
     if not ready:
         return RunOutcome(kind="idle")
 
-    step = ready[0]
+    if only_key is not None:
+        matched = [s for s in ready if s.key == only_key]
+        if not matched:
+            return RunOutcome(
+                kind="idle",
+                key=only_key,
+                reason=f"only_key {only_key} not in ready",
+            )
+        step = matched[0]
+    else:
+        step = ready[0]
     if dry_run:
         return RunOutcome(
             kind="dry_run",
@@ -1055,197 +1375,45 @@ def execute_spine_step(
             snap = main_mod._chain_snapshot(store, tid, extra_head=head)
 
     if step.kind == "agent":
-        already = close_allowed(
-            wf,
-            step.key,
-            checklist=snap["checklist"],
-            source="script",
-            evidence="run auto",
-            snapshot=snap,
+        prepared = prepare_spine_agent_step(
+            store,
+            tid,
+            step,
+            head=head,
+            spec_file=spec_file,
+            cwd=cwd,
+            snap=snap,
+            task=task,
+            exec_argv=exec_argv,
         )
-        if already.allowed:
-            close_evidence = f"run auto:{already.reason}"
-            _close_step(tid=tid, key=step.key, evidence=close_evidence, head=head)
-            return RunOutcome(
-                kind="closed",
-                key=step.key,
-                step=step,
-                head_sha=head,
-                close_evidence=close_evidence,
-            )
-        if spec_file is None:
-            return RunOutcome(
-                kind="agent_handoff",
-                key=step.key,
-                step=step,
-                head_sha=head,
-                reason="agent step needs --spec-file or finished artifact",
-            )
-        spec_path = Path(spec_file)
-        if not spec_path.is_file():
-            return RunOutcome(
-                kind="failed",
-                key=step.key,
-                step=step,
-                reason=f"spec-file not found: {spec_file}",
-                message=f"spec-file not found: {spec_file}",
-            )
-        if not spec_path.read_text(encoding="utf-8").strip():
-            return RunOutcome(
-                kind="failed",
-                key=step.key,
-                step=step,
-                reason=f"spec-file is empty: {spec_file}",
-                message=f"spec-file is empty: {spec_file}",
-            )
-        run_cwd = cwd or os.getcwd()
-        role = str(step.role or "")
-        vendor = str(step.vendor or "")
-        session_id = str(snap.get("session_id") or "")
-        # Re-read task: round may have changed
-        task = store.row("task", tid) or task
-        current_round = int(task.get("current_round") or 0)
-        round_num: int | None = None
-        if role in ("implementer", "reviewer"):
-            round_num = current_round
-        working = main_mod._find_working_agent(
-            store, tid, role=role, vendor=vendor, round_num=round_num
-        )
-        if working is None:
-            _agent_start(
-                session_id=session_id,
-                tid=tid,
-                role=role,
-                vendor=vendor,
-                round_num=round_num,
-            )
-        launch_spec = spec_file
-        if role in _REVIEW_ROLES:
-            try:
-                launch_spec = build_review_spec_file(
-                    store,
-                    tid,
-                    role=role,
-                    round_num=round_num,
-                    implement_spec_file=spec_file,
-                    cwd=run_cwd,
-                    exec_argv=exec_argv,
-                )
-            except EmptyReviewDiffError as exc:
-                working = main_mod._find_working_agent(
-                    store, tid, role=role, vendor=vendor, round_num=round_num
-                )
-                if working is not None:
-                    _agent_finish(str(working["id"]), "unavailable", note=str(exc))
-                _check_record(
-                    tid=tid,
-                    name="empty-review-diff",
-                    command=f"role={role} vendor={vendor}",
-                    result="fail",
-                    output=str(exc),
-                )
-                return RunOutcome(
-                    kind="failed",
-                    key=step.key,
-                    step=step,
-                    reason=str(exc),
-                    message=str(exc),
-                )
-            except ReviewDiffUnavailableError as exc:
-                # External/transient git failure — leave task untouched for retry
-                # (same shape as vendor_unavailable in _lane_retry_then_fail).
-                working = main_mod._find_working_agent(
-                    store, tid, role=role, vendor=vendor, round_num=round_num
-                )
-                if working is not None:
-                    _agent_finish(str(working["id"]), "unavailable", note=str(exc))
-                return RunOutcome(
-                    kind="vendor_unavailable",
-                    key=step.key,
-                    reason=str(exc),
-                    message=str(exc),
-                )
-            except OSError:
-                working = main_mod._find_working_agent(
-                    store, tid, role=role, vendor=vendor, round_num=round_num
-                )
-                if working is not None:
-                    _agent_finish(
-                        str(working["id"]),
-                        "unavailable",
-                        note=f"review-spec write failed ({role} {vendor})",
-                    )
-                raise
+        if isinstance(prepared, RunOutcome):
+            return prepared
         # OSError propagates to caller (fixer catches; cmd_run surfaces).
         try:
-            result = launch(
-                role=role,
-                vendor=vendor,
-                spec_file=launch_spec,
-                cwd=run_cwd,
-                runner=runner,
-                tmux=tmux,
-            )
+            result = launch_agent_plan(prepared, runner=runner, tmux=tmux)
         except OSError:
             working = main_mod._find_working_agent(
-                store, tid, role=role, vendor=vendor, round_num=round_num
+                store,
+                tid,
+                role=prepared.role,
+                vendor=prepared.vendor,
+                round_num=prepared.round_num,
             )
             if working is not None:
                 _agent_finish(
                     str(working["id"]),
                     "unavailable",
-                    note=f"launch failed ({role} {vendor})",
+                    note=f"launch failed ({prepared.role} {prepared.vendor})",
                 )
             raise
-
-        decision, findings_text = _interpret_lane(role, result)
-        if decision == "pass":
-            out = _finish_agent_pass(
-                store,
-                tid,
-                role=role,
-                vendor=vendor,
-                round_num=round_num,
-                head=head,
-                result=result,
-                step=step,
-                cwd=run_cwd,
-                exec_argv=exec_argv,
-            )
-            out.lane_results = [result]
-            return out
-        if decision == "fail" and findings_text is not None:
-            out = _finish_agent_fail(
-                store,
-                tid,
-                role=role,
-                vendor=vendor,
-                round_num=round_num,
-                head=head,
-                result=result,
-                step=step,
-                findings_text=findings_text,
-                round_cap=round_cap,
-                cwd=run_cwd,
-                exec_argv=exec_argv,
-            )
-            out.lane_results = [result]
-            return out
-        # retry once
-        return _lane_retry_then_fail(
+        return complete_spine_agent_step(
             store,
             tid,
-            role=role,
-            vendor=vendor,
-            round_num=round_num,
-            head=head,
-            step=step,
-            spec_file=launch_spec,
-            cwd=run_cwd,
+            prepared,
+            result,
+            round_cap=round_cap,
             tmux=tmux,
             runner=runner,
-            first=result,
-            round_cap=round_cap,
             exec_argv=exec_argv,
         )
 

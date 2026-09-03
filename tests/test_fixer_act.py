@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -1992,15 +1993,24 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
         _fake_insert_pr_open_and_scan,
     )
 
+    # Spy on complete_spine_agent_step (not execute_spine_step): the
+    # parallel PR-dimension path calls it directly, bypassing
+    # execute_spine_step entirely, so a spy at that higher level would
+    # silently miss every outcome routed through the parallel pair.
+    # complete_spine_agent_step is imported into both run_core's own
+    # module globals (used by execute_spine_step's bare-name call) and
+    # fixer_act's (used by _drive_parallel_pr_pair's bare-name call) --
+    # each is a separate binding, so both must be patched.
     calls: list[tuple[str | None, str, str | None]] = []
-    real_execute = fixer_mod.execute_spine_step
+    real_complete = fixer_mod.complete_spine_agent_step
 
-    def spy_execute(*args, **kwargs):  # type: ignore[no-untyped-def]
-        outcome = real_execute(*args, **kwargs)
-        calls.append((kwargs.get("head"), outcome.kind, outcome.key))
+    def spy_complete(store, tid, plan, result, **kwargs):  # type: ignore[no-untyped-def]
+        outcome = real_complete(store, tid, plan, result, **kwargs)
+        calls.append((plan.head, outcome.kind, outcome.key))
         return outcome
 
-    monkeypatch.setattr("agent_cli.fixer_act.execute_spine_step", spy_execute)
+    monkeypatch.setattr("agent_cli.fixer_act.complete_spine_agent_step", spy_complete)
+    monkeypatch.setattr("agent_cli.run_core.complete_spine_agent_step", spy_complete)
 
     store = _store(tmp_path)
     try:
@@ -2626,3 +2636,92 @@ def test_review_diff_probe_failure_leaves_task_retryable(
 
     assert any(tid in line for line in lines2)
     assert _task_state(tmp_path, tid) != "failed"
+
+
+def test_drive_error_fix_tasks_runs_pr_dimensions_concurrently(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same-vendor PR dimensions must overlap in wall-clock time under exclusive().
+
+    Uses threading.Barrier(2): sequential launch would hang until timeout. Goes
+    through drive_error_fix_tasks (not bare _drive_one) so a Store RLock
+    deadlock under exclusive() would also hang this test.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+    barriers = {
+        "grok": threading.Barrier(2),
+        "codex": threading.Barrier(2),
+    }
+    events: list[tuple[str, str, str, float]] = []
+    lock = threading.Lock()
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        with lock:
+            events.append(("enter", vendor, role, time.monotonic()))
+        barriers[vendor].wait(timeout=5)
+        with lock:
+            events.append(("exit", vendor, role, time.monotonic()))
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, pushed_sha + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+fixed\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr("agent_cli.fixer_act._runner_to_completed", fake_rtc)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        lines = drive_error_fix_tasks(
+            store,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert any(tid in line for line in lines)
+    assert _task_state(tmp_path, tid) == "done"
+
+    for vendor in ("grok", "codex"):
+        vendor_events = [e for e in events if e[1] == vendor]
+        enters = [e for e in vendor_events if e[0] == "enter"]
+        exits = [e for e in vendor_events if e[0] == "exit"]
+        assert len(enters) == 2, f"{vendor}: expected 2 parallel enters, got {enters}"
+        assert len(exits) == 2, f"{vendor}: expected 2 exits, got {exits}"
+        # Second enter before first exit → genuine overlap (Barrier already
+        # enforced rendezvous; this asserts the recorded timestamps too).
+        assert max(e[3] for e in enters) < min(e[3] for e in exits), (
+            f"{vendor}: launches did not overlap: {vendor_events}"
+        )

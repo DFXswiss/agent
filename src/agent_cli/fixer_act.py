@@ -10,20 +10,39 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from .chain import close_allowed, is_error_fix_originated, next_steps
+from .chain import Step, close_allowed, is_error_fix_originated, next_steps
 from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
 from .lane import Runner as LaneRunner, extract_findings_text
 from .runtime import Completed
-from .run_core import DEFAULT_ROUND_CAP, RunOutcome, _fence_marker, execute_spine_step
+from .run_core import (
+    DEFAULT_ROUND_CAP,
+    AgentLaunchPlan,
+    RunOutcome,
+    _agent_finish,
+    _fence_marker,
+    _round_start,
+    abandon_prepared_agent,
+    complete_spine_agent_step,
+    execute_spine_step,
+    launch_agent_plan,
+    prepare_spine_agent_step,
+)
 from .store import Store, StoreError
 
 Runner = Callable[[list[str]], Completed]
 
 # Bound the per-task step loop (rounds × spine length, with headroom).
 _MAX_STEPS_PER_TASK = 40
+
+# Same-vendor PR-review dimensions that CONTRIBUTING.md requires in parallel.
+_PR_DIMENSION_PAIRS = (
+    frozenset({"grok_pr_quality", "grok_pr_logic"}),
+    frozenset({"codex_pr_quality", "codex_pr_logic"}),
+)
 
 _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 # Longer forms first so "Mrs" wins over "Mr" on endswith checks.
@@ -511,6 +530,224 @@ def _open_error_fix_tasks(store: Store) -> list[dict[str, Any]]:
     return out
 
 
+def _ready_pr_dimension_pair(ready: list[Step]) -> list[Step] | None:
+    """If ready holds both dimensions of one vendor pair, return them in ready order."""
+    ready_keys = {s.key for s in ready}
+    for pair in _PR_DIMENSION_PAIRS:
+        if pair <= ready_keys:
+            return [s for s in ready if s.key in pair]
+    return None
+
+
+def _apply_drive_outcome(
+    store: Store,
+    tid: str,
+    outcome: RunOutcome,
+    *,
+    head: str | None,
+    error_id: str,
+    repo: str,
+    session_id: str,
+    brief: str,
+) -> tuple[str | None, str | None, bool]:
+    """Apply one RunOutcome the way the sequential _drive_one loop does.
+
+    Returns (return_message | None, updated_head, should_continue).
+    When return_message is set, the caller must return it immediately.
+    should_continue True means continue the outer step loop (e.g. closed /
+    rejected_new_round); False with no return_message means keep processing
+    further outcomes in the same iteration.
+    """
+    updated_head = outcome.head_sha or head
+
+    if outcome.kind == "idle":
+        return _finish_task_done(store, tid, brief=brief), updated_head, False
+
+    if outcome.kind == "human_required":
+        return (
+            f"error-fix-work {tid} human-required key={outcome.key}",
+            updated_head,
+            False,
+        )
+
+    if outcome.kind == "failed":
+        return (
+            f"error-fix-work {tid} failed "
+            f"({outcome.message or outcome.reason or 'failed'})",
+            updated_head,
+            False,
+        )
+
+    if outcome.kind == "local_check_failed":
+        return f"error-fix-work {tid} failed (local_check)", updated_head, False
+
+    if outcome.kind == "agent_handoff":
+        return (
+            f"error-fix-work {tid} blocked (agent handoff key={outcome.key})",
+            updated_head,
+            False,
+        )
+
+    if outcome.kind == "not_closable":
+        return (
+            f"error-fix-work {tid} not-closable "
+            f"key={outcome.key} ({outcome.reason})",
+            updated_head,
+            False,
+        )
+
+    if outcome.kind == "vendor_unavailable":
+        return (
+            f"error-fix-work {tid} vendor-cli-unavailable "
+            f"({outcome.reason or outcome.message or 'lane unavailable'})",
+            updated_head,
+            False,
+        )
+
+    if outcome.kind == "rejected_new_round":
+        # PR-gate rejection resets `pushed` (see _PR_REJECT_RESET_KEYS) and
+        # expects a new commit — drop the stale head so the next push is
+        # not compared against the pre-rejection sha. Inner reviewer
+        # rejection keeps key="reviewer_approved" and does not reset pushed.
+        if outcome.key != "reviewer_approved":
+            updated_head = None
+        if error_id and repo and outcome.rejection_findings:
+            write_error_fix_spec(
+                store,
+                tid,
+                error_id=error_id,
+                session_id=session_id,
+                repo=repo,
+                rejection_feedback=outcome.rejection_findings,
+            )
+        return None, updated_head, True
+
+    if outcome.kind in ("closed", "agent_closed"):
+        return None, updated_head, True
+
+    return (
+        f"error-fix-work {tid} stop kind={outcome.kind}",
+        updated_head,
+        False,
+    )
+
+
+def _drive_parallel_pr_pair(
+    store: Store,
+    tid: str,
+    pair: list[Step],
+    *,
+    head: str | None,
+    spec_file: str | None,
+    cwd: str,
+    snap: dict[str, Any],
+    task: dict[str, Any],
+    runner: Runner,
+    lane_runner: LaneRunner | None,
+    round_cap: int,
+) -> list[RunOutcome]:
+    """Prepare both dimensions on this thread, launch concurrently, finish here.
+
+    Store I/O stays on the calling thread. Workers only call launch_agent_plan
+    (lane.launch) — never Store methods — so this is safe under store.exclusive's
+    threading.RLock.
+    """
+    from . import main as main_mod
+
+    exec_argv = lambda argv, cwd=None: _runner_to_completed(  # noqa: E731
+        runner, argv, cwd=cwd
+    )
+
+    early: list[RunOutcome] = []
+    plans: list[AgentLaunchPlan] = []
+    for step in pair:
+        # Re-snapshot so the second prepare sees agents started by the first.
+        snap = main_mod._chain_snapshot(store, tid, extra_head=head)
+        task = store.row("task", tid) or task
+        prepared = prepare_spine_agent_step(
+            store,
+            tid,
+            step,
+            head=head,
+            spec_file=spec_file,
+            cwd=cwd,
+            snap=snap,
+            task=task,
+            exec_argv=exec_argv,
+        )
+        if isinstance(prepared, RunOutcome):
+            early.append(prepared)
+        else:
+            plans.append(prepared)
+
+    launch_results: dict[str, LaneResult | BaseException] = {}
+    if plans:
+        with ThreadPoolExecutor(max_workers=len(plans)) as pool:
+            futures = {
+                pool.submit(
+                    launch_agent_plan, plan, runner=lane_runner, tmux=False
+                ): plan
+                for plan in plans
+            }
+            for fut in as_completed(futures):
+                plan = futures[fut]
+                try:
+                    launch_results[plan.step.key] = fut.result()
+                except BaseException as exc:  # noqa: BLE001 — surface to caller
+                    launch_results[plan.step.key] = exc
+
+    outcomes: list[RunOutcome] = list(early)
+    stop_sibling_finish = False
+    for plan in plans:
+        payload = launch_results[plan.step.key]
+        if isinstance(payload, OSError):
+            # Mirror execute_spine_step: release agent, re-raise for vendor-cli path.
+            working = main_mod._find_working_agent(
+                store,
+                tid,
+                role=plan.role,
+                vendor=plan.vendor,
+                round_num=plan.round_num,
+            )
+            if working is not None:
+                _agent_finish(
+                    str(working["id"]),
+                    "unavailable",
+                    note=f"launch failed ({plan.role} {plan.vendor})",
+                )
+            raise payload
+        if isinstance(payload, BaseException):
+            raise payload
+        if stop_sibling_finish:
+            outcomes.append(
+                abandon_prepared_agent(
+                    store,
+                    tid,
+                    plan,
+                    note="sibling PR dimension already rejected or failed",
+                )
+            )
+            continue
+        outcome = complete_spine_agent_step(
+            store,
+            tid,
+            plan,
+            payload,
+            round_cap=round_cap,
+            tmux=False,
+            runner=lane_runner,
+            exec_argv=exec_argv,
+            defer_round_start=True,
+        )
+        outcomes.append(outcome)
+        if outcome.kind in ("rejected_new_round", "failed"):
+            # Match sequential semantics: one rejection owns the reset/round-start.
+            stop_sibling_finish = True
+    if any(o.needs_round_start for o in outcomes):
+        _round_start(tid)
+    return outcomes
+
+
 def _drive_one(
     store: Store,
     task: dict[str, Any],
@@ -684,8 +921,52 @@ def _drive_one(
                 repo=repo,
             )
 
+        pair = _ready_pr_dimension_pair(ready)
+        if pair is not None:
+            try:
+                outcomes = _drive_parallel_pr_pair(
+                    store,
+                    tid,
+                    pair,
+                    head=head,
+                    spec_file=str(spec_path) if spec_path.is_file() else None,
+                    cwd=cwd,
+                    snap=snap,
+                    task=task,
+                    runner=runner,
+                    lane_runner=lane_runner,
+                    round_cap=round_cap,
+                )
+            except OSError as exc:
+                return (
+                    f"error-fix-work {tid} vendor-cli-unavailable "
+                    f"({type(exc).__name__}: {exc})"
+                )
+            # Process in ready order (quality then logic). Finish writes already
+            # happened; a terminal kind returns after that full finish pass.
+            continue_outer = False
+            for outcome in outcomes:
+                msg, head, cont = _apply_drive_outcome(
+                    store,
+                    tid,
+                    outcome,
+                    head=head,
+                    error_id=error_id,
+                    repo=repo,
+                    session_id=session_id,
+                    brief=brief,
+                )
+                if msg is not None:
+                    return msg
+                if cont:
+                    continue_outer = True
+            if continue_outer:
+                continue
+            kind = outcomes[-1].kind if outcomes else "empty"
+            return f"error-fix-work {tid} stop kind={kind}"
+
         try:
-            outcome: RunOutcome = execute_spine_step(
+            outcome = execute_spine_step(
                 store,
                 tid,
                 head=head,
@@ -706,60 +987,20 @@ def _drive_one(
                 f"({type(exc).__name__}: {exc})"
             )
 
-        if outcome.head_sha:
-            head = outcome.head_sha
-
-        if outcome.kind == "idle":
-            return _finish_task_done(store, tid, brief=brief)
-
-        if outcome.kind == "human_required":
-            return f"error-fix-work {tid} human-required key={outcome.key}"
-
-        if outcome.kind == "failed":
-            return (
-                f"error-fix-work {tid} failed "
-                f"({outcome.message or outcome.reason or 'failed'})"
-            )
-
-        if outcome.kind == "local_check_failed":
-            return f"error-fix-work {tid} failed (local_check)"
-
-        if outcome.kind == "agent_handoff":
-            return f"error-fix-work {tid} blocked (agent handoff key={outcome.key})"
-
-        if outcome.kind == "not_closable":
-            return (
-                f"error-fix-work {tid} not-closable "
-                f"key={outcome.key} ({outcome.reason})"
-            )
-
-        if outcome.kind == "vendor_unavailable":
-            return (
-                f"error-fix-work {tid} vendor-cli-unavailable "
-                f"({outcome.reason or outcome.message or 'lane unavailable'})"
-            )
-
-        if outcome.kind == "rejected_new_round":
-            # PR-gate rejection resets `pushed` (see _PR_REJECT_RESET_KEYS) and
-            # expects a new commit — drop the stale head so the next push is
-            # not compared against the pre-rejection sha. Inner reviewer
-            # rejection keeps key="reviewer_approved" and does not reset pushed.
-            if outcome.key != "reviewer_approved":
-                head = None
-            if error_id and repo and outcome.rejection_findings:
-                write_error_fix_spec(
-                    store,
-                    tid,
-                    error_id=error_id,
-                    session_id=session_id,
-                    repo=repo,
-                    rejection_feedback=outcome.rejection_findings,
-                )
+        msg, head, cont = _apply_drive_outcome(
+            store,
+            tid,
+            outcome,
+            head=head,
+            error_id=error_id,
+            repo=repo,
+            session_id=session_id,
+            brief=brief,
+        )
+        if msg is not None:
+            return msg
+        if cont:
             continue
-
-        if outcome.kind in ("closed", "agent_closed"):
-            continue
-
         return f"error-fix-work {tid} stop kind={outcome.kind}"
 
     return f"error-fix-work {tid} step-cap"

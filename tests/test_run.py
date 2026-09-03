@@ -553,7 +553,7 @@ def test_collect_review_diff_no_base_candidate_resolves_marks_probes_not_ok(
     def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             return Completed(1, "", "")
-        # Supplemental HEAD / --cached probes succeed but empty.
+        # Supplemental HEAD probe succeeds but empty.
         return Completed(0, "", "")
 
     _diff, _paths, probes_ok = _collect_review_diff(str(tmp_path), fake_exec)
@@ -572,11 +572,48 @@ def test_collect_review_diff_empty_merge_base_stdout_marks_probes_not_ok(
             return Completed(1, "", "")
         if argv[:2] == ["git", "merge-base"]:
             return Completed(0, "   \n", "")
-        # Supplemental HEAD / --cached probes succeed but empty.
+        # Supplemental HEAD probe succeeds but empty.
         return Completed(0, "", "")
 
     _diff, _paths, probes_ok = _collect_review_diff(str(tmp_path), fake_exec)
     assert probes_ok is False
+
+
+def test_collect_review_diff_does_not_duplicate_overlapping_staged_hunk(
+    tmp_path: Path,
+) -> None:
+    """Staged hunk must appear once: git diff HEAD already covers the index."""
+    hunk = "diff --git a/src/foo.py b/src/foo.py\n+overlapping-staged-hunk\n"
+    calls: list[list[str]] = []
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            # No base candidate resolves, so only the plain-HEAD probes run
+            # (no separate range-diff probe to also pick up the same hunk).
+            # probes_ok is correctly False here per the round-33 no-base-
+            # candidate rule -- this test targets dedup, not probes_ok.
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "diff"]:
+            # Both HEAD and a legacy --cached probe would return the same text;
+            # after the fix only HEAD is queried for content, so the hunk once.
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, hunk, "")
+        return Completed(0, "", "")
+
+    diff_text, paths, probes_ok = _collect_review_diff(str(tmp_path), fake_exec)
+    assert probes_ok is False
+    assert diff_text.count("overlapping-staged-hunk") == 1
+    assert diff_text.count(hunk.strip()) == 1
+    assert "src/foo.py" in paths
+    content_diffs = [
+        c
+        for c in calls
+        if c[:2] == ["git", "diff"] and "--name-only" not in c
+    ]
+    assert ["git", "diff", "HEAD"] in content_diffs
+    assert not any("--cached" in c for c in content_diffs)
 
 
 def test_build_review_spec_file_raises_unavailable_when_no_base_resolves(
@@ -2007,3 +2044,97 @@ def test_exec_argv_timeout_returns_124(monkeypatch: pytest.MonkeyPatch) -> None:
     completed = _exec_argv(["sleep", "999"], cwd="/tmp")
     assert completed.returncode == 124
     assert completed.stderr
+
+
+def test_pr_gate_rejection_evidence_omits_status_preamble(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-decision gate evidence must be FINDINGS body only, not raw STATUS: transcript."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+        return pushed_sha
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, pushed_sha + "\n", "")
+        if "diff" in argv:
+            if "--name-only" in argv:
+                return Completed(0, "src/foo.py\n", "")
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+x\n", "")
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "", "")
+
+    fail_stdout = (
+        "STATUS: complete\n"
+        "REASON: found issues\n"
+        "SCOPE: pr diff\n"
+        "DIMENSION: quality\n"
+        "FINDINGS:\n"
+        "- src/foo.py:1 fix the retry loop\n"
+        "NOT-VERIFIABLE: none\n"
+    )
+
+    def reject_launch(**kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role=kwargs["role"],
+            vendor=kwargs["vendor"],
+            status="complete",
+            argv=[kwargs["vendor"]],
+            returncode=0,
+            stdout=fail_stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", reject_launch)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+
+    store = _store(tmp_path)
+    try:
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.kind == "closed" and outcome.key == "pushed"
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=pushed_sha,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+            round_cap=5,
+        )
+        assert outcome.kind == "rejected_new_round"
+        assert outcome.rejection_findings is not None
+        assert "STATUS:" not in outcome.rejection_findings
+        assert "REASON:" not in outcome.rejection_findings
+        assert "SCOPE:" not in outcome.rejection_findings
+        assert "src/foo.py:1 fix the retry loop" in outcome.rejection_findings
+
+        rejected = [
+            g
+            for g in store.rows("review_gate")
+            if g.get("task_id") == tid and g.get("verdict") == "rejected"
+        ]
+        assert rejected, "expected a rejected gate row"
+        evidence = str(rejected[-1].get("evidence") or "")
+        assert "STATUS:" not in evidence
+        assert "REASON:" not in evidence
+        assert "src/foo.py:1 fix the retry loop" in evidence
+    finally:
+        store.close()
