@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 
+import agent_cli.main as main_mod
 from agent_cli.main import main
 from agent_cli.store import Store, StoreError, utcnow
 from agent_cli.usage import AuthStale
@@ -1096,6 +1099,37 @@ def test_watch_error_fix_work_empty_scan_prints_nothing(
     )
     run(tmp_path, ["watch", "error-fix-work"])
     assert "error-fix-work t1 done" in capsys.readouterr().out
+
+
+def test_bounded_gh_runner_timeout_returns_124_and_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hung gh must surface returncode 124 rather than hold the advisory lock.
+
+    Mirrors test_default_runner_timeout_returns_124_and_releases_lock: a local
+    RLock stands in for store.exclusive's process-wide lock around the runner.
+    """
+    monkeypatch.setattr(main_mod, "GH_RUNNER_TIMEOUT_SEC", 0.3)
+    lock = threading.RLock()
+    t0 = time.monotonic()
+    with lock:
+        result = main_mod._bounded_gh_runner(["sleep", "30"])
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"timeout path took too long: {elapsed:.2f}s"
+    assert result.returncode == 124
+
+    acquired = {"ok": False}
+
+    def try_acquire() -> None:
+        if lock.acquire(timeout=1.0):
+            acquired["ok"] = True
+            lock.release()
+
+    thread = threading.Thread(target=try_acquire)
+    thread.start()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert acquired["ok"], "lock held around runner must be released after timeout"
 
 
 def test_knock_once_does_not_poll_usage(

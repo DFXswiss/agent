@@ -2562,6 +2562,23 @@ def _exec_argv(
         return Completed(127, "", str(exc))
 
 
+GH_RUNNER_TIMEOUT_SEC = 120
+
+
+def _bounded_gh_runner(argv: list[str]) -> "Completed":
+    """Bound gh calls driven by drive_error_fix_tasks with a timeout, so a hanging
+    gh process cannot hold the device-wide error-fix-work advisory lock indefinitely.
+    A timeout surfaces as Completed(124, ...); _classify_gh_failure's existing default
+    branch already treats an unrecognized non-zero returncode as "transient" (retryable),
+    so no further classification change is needed here."""
+    from .runtime import Completed, run_argv_killing_tree
+
+    try:
+        return run_argv_killing_tree(argv, timeout=GH_RUNNER_TIMEOUT_SEC)
+    except OSError as exc:
+        return Completed(127, "", str(exc))
+
+
 def _resolve_run_cwd(args: list[str]) -> str:
     cwd_flag = flag(args, "--cwd")
     cwd = cwd_flag if cwd_flag is not None else os.getcwd()
@@ -3156,11 +3173,10 @@ def cmd_watch(args: list[str]) -> None:
             return
         if args[0] == "error-fix-work":
             from .fixer_act import drive_error_fix_tasks
-            from .runtime import run_argv
 
             # Empty scan stays silent, same as sibling watches "errors" and
             # "error-fix" (no "… none" line).
-            lines = drive_error_fix_tasks(store, run_argv)
+            lines = drive_error_fix_tasks(store, _bounded_gh_runner)
             for line in lines:
                 print(line)
             return
