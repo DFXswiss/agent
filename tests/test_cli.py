@@ -1640,7 +1640,7 @@ def test_chain_snapshot_error_fix_confirmed_true_for_whitespace_padded_task_erro
     try:
         task = store.row("task", tid)
         assert task is not None
-        task["payload"] = {"error_id": error_id + " ", "repo": "org/app"}
+        task["payload"] = {"error_id": error_id + "\u00a0", "repo": "org/app"}
         store.write("task", "update", tid, task)
 
         snap = _chain_snapshot(store, tid)

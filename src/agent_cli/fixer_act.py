@@ -1094,7 +1094,7 @@ def _drive_one(
 
     tid = str(task["id"])
     current_round = int(task.get("current_round") or 0)
-    if current_round >= round_cap:
+    if current_round > round_cap:
         cap_msg = f"round cap {round_cap} reached (current_round={current_round})"
         _check_record(
             tid=tid,

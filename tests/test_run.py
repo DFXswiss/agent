@@ -1531,6 +1531,7 @@ def test_pushed_passes_expected_branch_none_for_ordinary_task(
 
     def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         captured["expected_branch"] = expected_branch
+        captured["expected_sha"] = expected_sha
         return "abcdef1234567890abcdef1234567890abcdef12"
 
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
@@ -1538,6 +1539,7 @@ def test_pushed_passes_expected_branch_none_for_ordinary_task(
     capsys.readouterr()
     assert "expected_branch" in captured
     assert captured["expected_branch"] is None
+    assert captured.get("expected_sha") == "abcdef1"
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 

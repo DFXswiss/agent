@@ -618,7 +618,7 @@ def test_has_error_fix_activity_true_for_whitespace_padded_persisted_error_id(
             "session_id": "runner-1",
             "type": "error.fix",
             "payload": {
-                "error_id": "error-seen-12345678 ",
+                "error_id": "error-seen-12345678\u00a0",
                 "fingerprint": "api|TimeoutError|abc|prod",
             },
             "execution_status": "pending",

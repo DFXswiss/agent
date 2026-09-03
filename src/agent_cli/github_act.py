@@ -140,10 +140,13 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
 
 
 def _resolve_actual_base(
-    head: str, repo: str, runner: Runner, fallback: str | None
+    pr_ref: str, repo: str, runner: Runner, fallback: str | None
 ) -> tuple[str | None, Literal["transient", "not_found", "permanent"] | None]:
     """Best-effort: re-resolve the ACTUAL applied base via a live `gh pr view`
     call, mirroring the resume path's existing baseRefName resolution.
+
+    pr_ref: the PR number/identifier used for the `gh pr view` call, not a
+    branch name.
 
     Returns (base, classification). classification is None when gh genuinely
     answered: base is the real baseRefName when present and non-empty, else
@@ -155,7 +158,7 @@ def _resolve_actual_base(
     placeholder."""
     try:
         completed = runner(
-            ["gh", "pr", "view", head, "--repo", repo, "--json", "baseRefName"]
+            ["gh", "pr", "view", pr_ref, "--repo", repo, "--json", "baseRefName"]
         )
     except OSError:
         # Same transient outcome as the resume-path view step for OSError.
@@ -204,6 +207,7 @@ def _classify_gh_failure(
         or "abuse detection" in text
     ):
         return "transient"
+    # gh exit 4 = authentication required
     if completed.returncode == 4:
         return "permanent"
     if (

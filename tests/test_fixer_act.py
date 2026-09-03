@@ -697,6 +697,7 @@ def test_pushed_passes_expected_branch_from_error_id(
     def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
         captured["expected_branch"] = expected_branch
         captured["expected_repo"] = expected_repo
+        captured["expected_sha"] = expected_sha
         return "abcdef1234567890abcdef1234567890abcdef12"
 
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
@@ -704,6 +705,7 @@ def test_pushed_passes_expected_branch_from_error_id(
     capsys.readouterr()
     assert captured.get("expected_branch") == f"error-fix-{ERROR_ID[:8]}"
     assert captured.get("expected_repo") == "org/app"
+    assert captured.get("expected_sha") == "abcdef1"
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
 
@@ -4778,7 +4780,7 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
 def test_drive_one_preflight_fails_when_current_round_at_cap(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Fresh pickup must fail-closed when current_round is already at the cap."""
+    """Fresh pickup must fail-closed when current_round is already past the cap."""
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
 
     store = _store(tmp_path)
@@ -4788,11 +4790,11 @@ def test_drive_one_preflight_fails_when_current_round_at_cap(
         assert int(task.get("current_round") or 0) == 1
         from agent_cli import main as main_mod
 
-        task["current_round"] = DEFAULT_ROUND_CAP
+        task["current_round"] = DEFAULT_ROUND_CAP + 1
         store.write("task", "update", tid, main_mod._strip(task))
         task = store.row("task", tid)
         assert task is not None
-        assert int(task.get("current_round") or 0) == DEFAULT_ROUND_CAP
+        assert int(task.get("current_round") or 0) == DEFAULT_ROUND_CAP + 1
 
         def boom_runner(argv: list[str]) -> Completed:
             raise AssertionError(f"runner must not be called: {argv}")
@@ -4818,6 +4820,55 @@ def test_drive_one_preflight_fails_when_current_round_at_cap(
         task_after = store.row("task", tid)
         assert task_after is not None
         assert task_after.get("state") == "failed"
-        assert int(task_after.get("current_round") or 0) == DEFAULT_ROUND_CAP
+        assert int(task_after.get("current_round") or 0) == DEFAULT_ROUND_CAP + 1
+    finally:
+        store.close()
+
+
+def test_drive_one_survives_scan_boundary_at_round_cap(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At current_round == round_cap, a scan-boundary not_closable must not
+    be preflight-killed as a round-cap failure."""
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        from agent_cli import main as main_mod
+
+        task["current_round"] = DEFAULT_ROUND_CAP
+        store.write("task", "update", tid, main_mod._strip(task))
+        task = store.row("task", tid)
+        assert task is not None
+        assert int(task.get("current_round") or 0) == DEFAULT_ROUND_CAP
+
+        # Force push-time freshness mismatch: advance recorded local check for
+        # abcdef1; resolve HEAD to a different sha so pushed returns not_closable.
+        mismatched_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        monkeypatch.setattr(
+            "agent_cli.fixer_act._runner_to_completed",
+            _pr_pair_rtc(mismatched_sha),
+        )
+
+        def boom_push(*, cwd, runner, expected_branch=None, expected_repo=None, expected_sha=None):  # type: ignore[no-untyped-def]
+            raise AssertionError("push_branch must not be called on stale check")
+
+        monkeypatch.setattr("agent_cli.git_act.push_branch", boom_push)
+
+        result = _drive_one(
+            store,
+            task,
+            _neutral_runner,
+            round_cap=DEFAULT_ROUND_CAP,
+            lane_runner=None,
+        )
+        assert "round cap" not in result
+        assert "not-closable" in result
+        task_after = store.row("task", tid)
+        assert task_after is not None
+        assert task_after.get("state") != "failed"
     finally:
         store.close()
