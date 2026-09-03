@@ -1486,10 +1486,11 @@ def execute_spine_step(
             finally:
                 os.environ.update(saved_secrets)
             result = "pass" if completed.returncode == 0 else "fail"
-            output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
+            output = (completed.stdout or "") + (completed.stderr or "")
             for secret in saved_secrets.values():
                 if secret:
                     output = output.replace(secret, "[REDACTED]")
+            output = output[:8000]
             _check_record(
                 tid=tid,
                 name="local",
