@@ -126,6 +126,53 @@ def count_findings(text: str) -> int:
     return entries
 
 
+_GAPS_HEADER_RE = re.compile(r"(?m)^GAPS:[ \t]*(.*)$", re.IGNORECASE)
+
+
+def _gaps_body_lines(text: str) -> list[str] | None:
+    """Return GAPS-section body lines, or None when no GAPS: header. Mirrors
+    _findings_body_lines exactly, reusing the same section-terminator regex."""
+    match = _GAPS_HEADER_RE.search(text)
+    if match is None:
+        return None
+    same_line = (match.group(1) or "").strip()
+    after = text[match.end() :]
+    body_lines: list[str] = []
+    if same_line:
+        body_lines.append(same_line)
+    for line in after.splitlines():
+        if _FINDINGS_TERMINATOR_RE.match(line):
+            break
+        body_lines.append(line)
+    return body_lines
+
+
+def gaps_disclosed(text: str) -> bool:
+    """True when the GAPS: section body has genuine, non-trivial disclosed content
+    (not one of _ZERO_TOKENS, and not just bullet/number prefixes around a zero
+    token). Absent GAPS: header, or a GAPS: section whose only content is a zero
+    token, both return False. Mirrors count_findings' entry-parsing exactly (bullet
+    prefixes "- "/"* "/"• ", numbered "1." / "1)")."""
+    body_lines = _gaps_body_lines(text)
+    if body_lines is None:
+        return False
+    for raw in body_lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        for prefix in ("- ", "* ", "• "):
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix) :].strip()
+                break
+        else:
+            if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)":
+                stripped = stripped[2:].strip()
+        if stripped.lower() in _ZERO_TOKENS:
+            continue
+        return True
+    return False
+
+
 @dataclass
 class LaneResult:
     role: str

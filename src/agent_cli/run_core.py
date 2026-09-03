@@ -21,6 +21,7 @@ from .lane import (
     count_findings,
     extract_findings_text,
     findings_header_present,
+    gaps_disclosed,
     has_single_terminal_report,
     launch,
     Runner as LaneRunner,
@@ -325,6 +326,8 @@ def _interpret_lane(
         return "retry", None
     n = count_findings(stdout)
     if n == 0:
+        if gaps_disclosed(stdout):
+            return "retry", None
         return "pass", None
     return "fail", stdout.strip() or "findings"
 
