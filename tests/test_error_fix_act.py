@@ -463,6 +463,44 @@ def test_find_or_create_rejects_already_open_draft(tmp_path: Path) -> None:
     assert store.rows("task") == []
 
 
+def test_already_open_draft_blocks_error_status_pr_open_with_number(
+    tmp_path: Path,
+) -> None:
+    """An error-status pr.open that still carries result.number must block a
+    new error.fix task — gh may have created the PR before a later step failed."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "activity",
+        "insert",
+        "pr-open-err-1",
+        {
+            "id": "pr-open-err-1",
+            "session_id": "runner-1",
+            "type": "pr.open",
+            "payload": {
+                "fingerprint": "api|TimeoutError|abc|prod",
+                "repo": "org/app",
+            },
+            "execution_status": "error",
+            "result": {"number": 42, "url": "https://example.invalid/pr/42"},
+        },
+    )
+    assert (
+        error_fix_act_mod._already_open_draft(store, "api|TimeoutError|abc|prod")
+        is True
+    )
+    with pytest.raises(StoreError, match="already-open-draft"):
+        find_or_create_implement_task(
+            store,
+            "runner-1",
+            "error-seen-12345678",
+            "Fix observed error",
+        )
+    assert store.rows("task") == []
+
+
 def test_find_or_create_returns_existing_implement_despite_draft(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)

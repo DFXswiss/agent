@@ -130,6 +130,25 @@ def _draft_matches(payload: dict[str, Any], fingerprint: str, heads: set[str]) -
     return head is not None and head in heads
 
 
+def _pr_open_result_number(result: Any) -> int | None:
+    """Extract a valid positive PR number from a pr.open result dict, or None.
+
+    Mirrors fixer_act._pr_open_number / _pr_open_error_row_with_number validation:
+    reject bool, accept int > 0, accept digit-only str that parses to > 0.
+    Kept local to avoid a circular import with fixer_act.
+    """
+    if not isinstance(result, dict):
+        return None
+    number = result.get("number")
+    if isinstance(number, bool):
+        return None
+    if isinstance(number, int) and number > 0:
+        return number
+    if isinstance(number, str) and number.isdigit() and int(number) > 0:
+        return int(number)
+    return None
+
+
 def _already_open_draft(store: Store, fingerprint: str) -> bool:
     origin = store.device_id()
     heads = _error_fix_heads(store, fingerprint)
@@ -145,6 +164,12 @@ def _already_open_draft(store: Store, fingerprint: str) -> bool:
         if status == "pending":
             return True
         if status == "done" and not _pr_open_merged(store, str(row.get("id") or "")):
+            return True
+        if (
+            status == "error"
+            and _pr_open_result_number(row.get("result")) is not None
+            and not _pr_open_merged(store, str(row.get("id") or ""))
+        ):
             return True
     return False
 
