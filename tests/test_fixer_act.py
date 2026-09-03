@@ -3049,7 +3049,7 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
     assert "pr.open-error" not in result
 
 
-def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
+def test_fixer_pending_pr_open_with_number_reports_pending_retry_not_base_resolution(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pending pr.open that already recorded a real number must not say create failed.
