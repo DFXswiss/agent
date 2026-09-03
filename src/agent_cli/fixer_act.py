@@ -17,7 +17,7 @@ from typing import Any
 from .chain import Step, close_allowed, is_error_fix_originated, next_steps
 from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
 from .lane import LaneResult, Runner as LaneRunner, extract_findings_text
-from .runtime import Completed
+from .runtime import Completed, run_argv_killing_tree
 from .run_core import (
     DEFAULT_ROUND_CAP,
     AgentLaunchPlan,
@@ -1281,18 +1281,11 @@ def _runner_to_completed(
     timeout: float | None = None,
 ) -> Completed:
     """Run argv; honor cwd like main._exec_argv so checks use the worktree."""
-    import subprocess
-
     limit = 120 if timeout is None else timeout
     try:
         if cwd is not None:
-            proc = subprocess.run(  # noqa: S603
-                argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=limit
-            )
-            return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+            return run_argv_killing_tree(argv, cwd=cwd, timeout=limit)
         return runner(argv)
-    except subprocess.TimeoutExpired as exc:
-        return Completed(124, "", str(exc) or f"git/gh call timed out after {limit}s")
     except OSError as exc:
         return Completed(127, "", str(exc))
 

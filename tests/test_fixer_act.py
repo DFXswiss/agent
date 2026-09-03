@@ -1511,19 +1511,44 @@ def test_runner_to_completed_without_cwd_uses_runner() -> None:
 def test_runner_to_completed_timeout_returns_124(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """subprocess.TimeoutExpired in the cwd branch becomes Completed(124)."""
+    """Completed(124) from run_argv_killing_tree propagates through cwd branch."""
 
-    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        raise subprocess.TimeoutExpired(cmd=["sleep", "999"], timeout=120)
+    def fake_tree(
+        _argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+    ) -> Completed:
+        return Completed(124, "", "timed out")
 
-    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr("agent_cli.fixer_act.run_argv_killing_tree", fake_tree)
     completed = _runner_to_completed(
         lambda _argv: Completed(1, "", "runner-should-not-run"),
         ["sleep", "999"],
         cwd=str(tmp_path),
     )
     assert completed.returncode == 124
-    assert completed.stderr
+    assert completed.stderr == "timed out"
+
+
+def test_runner_to_completed_cwd_uses_tree_killing_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """cwd branch must call run_argv_killing_tree with argv/cwd/timeout."""
+    seen: list[tuple[list[str], str | None, float | None]] = []
+
+    def spy(
+        argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+    ) -> Completed:
+        seen.append((list(argv), cwd, timeout))
+        return Completed(0, "from-helper", "")
+
+    monkeypatch.setattr("agent_cli.fixer_act.run_argv_killing_tree", spy)
+    completed = _runner_to_completed(
+        lambda _argv: Completed(1, "", "should not run"),
+        ["echo", "hi"],
+        cwd=str(tmp_path),
+        timeout=1.0,
+    )
+    assert completed.stdout == "from-helper"
+    assert seen == [(["echo", "hi"], str(tmp_path), 1.0)]
 
 
 def _fake_insert_pr_open_and_scan(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]

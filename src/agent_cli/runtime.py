@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
+import signal
 import subprocess
 import uuid
 from collections.abc import Callable
@@ -75,6 +77,45 @@ def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[st
 def run_argv(argv: list[str]) -> Completed:
     proc = subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
     return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+
+
+def run_argv_killing_tree(
+    argv: list[str],
+    *,
+    cwd: str | None = None,
+    timeout: float | None = None,
+) -> Completed:
+    """Run argv in its own process group; on timeout, SIGKILL the whole group,
+    not just the direct child. subprocess.run's default TimeoutExpired handling
+    only kills the direct child — a shell-invoked check command's grandchild
+    worker processes would otherwise survive the timeout. Mirrors
+    lane._default_runner's proven start_new_session + os.killpg pattern."""
+    proc = subprocess.Popen(  # noqa: S603
+        argv,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            stdout, stderr = "", ""
+        return Completed(124, stdout or "", stderr or f"timed out after {timeout}s")
+    return Completed(
+        proc.returncode if proc.returncode is not None else 1, stdout or "", stderr or ""
+    )
 
 
 _default_runner = run_argv

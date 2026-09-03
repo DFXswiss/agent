@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -2207,15 +2208,31 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
 
 
 def test_exec_argv_timeout_returns_124(monkeypatch: pytest.MonkeyPatch) -> None:
-    """subprocess.TimeoutExpired from main._exec_argv becomes Completed(124)."""
+    """Completed(124) from run_argv_killing_tree propagates through _exec_argv."""
 
-    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        raise subprocess.TimeoutExpired(cmd=["sleep", "999"], timeout=120)
+    def fake_tree(
+        _argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+    ) -> Completed:
+        return Completed(124, "", "timed out")
 
-    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr("agent_cli.runtime.run_argv_killing_tree", fake_tree)
     completed = _exec_argv(["sleep", "999"], cwd="/tmp")
     assert completed.returncode == 124
-    assert completed.stderr
+    assert completed.stderr == "timed out"
+
+
+def test_exec_argv_timeout_kills_grandchild(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    argv = ["bash", "-c", f"sleep 30 & echo $! > {pid_file}; wait"]
+    t0 = time.monotonic()
+    completed = _exec_argv(argv, timeout=1.0)
+    elapsed = time.monotonic() - t0
+    assert completed.returncode == 124
+    assert elapsed < 10.0, f"timeout path took too long: {elapsed:.2f}s"
+    assert pid_file.exists(), "grandchild should have had time to write its pid"
+    grandchild_pid = int(pid_file.read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(grandchild_pid, 0)
 
 
 def test_pr_gate_rejection_evidence_omits_status_preamble(
