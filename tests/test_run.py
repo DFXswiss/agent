@@ -311,7 +311,11 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     Uses the real _exec_argv (not a fake) so the env-pop / restore / redact
     path around the check command is actually exercised. AGENT_CHECK_COMMAND
     is `env`, which would echo the full inherited environment if secrets
-    were left in place.
+    were left in place. Asserts positive evidence the check actually ran,
+    completed, and produced real, non-trivial output (PATH= is always present
+    in a real `env` dump) before asserting the sentinel's absence -- an
+    empty/skipped run would otherwise satisfy the sentinel-absence assertion
+    vacuously, without ever exercising the redaction path.
     """
     tid = _bootstrap_implement(tmp_path, capsys)
     _finish_implementer(tmp_path, tid, capsys)
@@ -326,9 +330,17 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
     capsys.readouterr()
 
+    assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+
     local_rows = [c for c in _local_checks(tmp_path, tid) if c.get("name") == "local"]
     assert local_rows, "expected a local check record"
-    output = str(local_rows[-1].get("output") or "")
+    last = local_rows[-1]
+    assert str(last.get("result") or "") == "pass"
+    output = str(last.get("output") or "")
+    # Positive evidence the `env` command genuinely ran and produced real
+    # output -- otherwise an empty/(no output) result would trivially
+    # satisfy the sentinel-absence assertion below without proving anything.
+    assert "PATH=" in output
     assert sentinel not in output
 
 
