@@ -1949,6 +1949,30 @@ def test_interpret_lane_passes_when_gaps_is_zero_token() -> None:
     assert findings is None
 
 
+def test_interpret_lane_passes_when_gaps_is_zero_numeral() -> None:
+    """FINDINGS: none with GAPS: 0 (the numeral zero token) still auto-passes."""
+    from agent_cli.lane import LaneResult
+    from agent_cli.run_core import _interpret_lane
+
+    stdout = (
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+        "GAPS: 0\n"
+    )
+    result = LaneResult(
+        role="reviewer",
+        vendor="grok",
+        status="complete",
+        argv=["grok"],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+    )
+    decision, findings = _interpret_lane("reviewer", result)
+    assert decision == "pass"
+    assert findings is None
+
+
 def test_reviewer_gets_distinct_review_spec_with_diff_and_contract(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
