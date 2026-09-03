@@ -23,6 +23,7 @@ from .lane import (
     findings_header_present,
     gaps_disclosed,
     has_single_terminal_report,
+    is_credential_shaped_env_key,
     launch,
     Runner as LaneRunner,
 )
@@ -1473,11 +1474,10 @@ def execute_spine_step(
                 )
             # Defense-in-depth: strip credential-shaped env vars before the
             # local-check subprocess inherits os.environ (ExecArgv has no env=).
-            secret_keys = [
-                k
-                for k in list(os.environ)
-                if k.startswith("AGENT_ERROR_FIX_") or k == "AGENT_PG_DSN"
-            ]
+            # is_credential_shaped_env_key is the single source of truth for this
+            # predicate -- lane.py's vendor-CLI env stripping (_env_strip_prefix)
+            # reuses the same function rather than duplicating the rule.
+            secret_keys = [k for k in list(os.environ) if is_credential_shaped_env_key(k)]
             saved_secrets = {k: os.environ.pop(k) for k in secret_keys}
             try:
                 completed = exec_argv(

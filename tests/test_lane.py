@@ -241,6 +241,36 @@ def test_codex_implementer_argv() -> None:
         assert key in argv
 
 
+def test_env_strip_prefix_strips_dynamic_credential_shaped_env_vars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENT_ERROR_FIX_*/AGENT_PG_DSN must not reach the vendor CLI subprocess env.
+
+    This PR is what first makes these real env vars in this process (errors.py's
+    production-error-source fetch) -- before it, GROK_STRIP_ENV's omission of them
+    didn't matter. Covers both grok_argv and codex_argv since both build their env
+    prefix via the same _env_strip_prefix(). The `env` command's `-u KEY` unsets
+    the named var for the launched subprocess regardless of its value, so checking
+    that each key is present in argv immediately after a `-u` token is the correct
+    way to prove it will not be inherited (mirrors the existing GROK_STRIP_ENV
+    argv-shape assertions above in this file).
+    """
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", "hunter2")
+    monkeypatch.setenv("AGENT_PG_DSN", "host=127.0.0.1 dbname=hubtest")
+
+    grok_argv_out = grok_argv(spec_file="/tmp/spec.md", cwd="/work", write=True)
+    for key in ("AGENT_ERROR_FIX_PASSWORD", "AGENT_PG_DSN"):
+        assert key in grok_argv_out
+        idx = grok_argv_out.index(key)
+        assert grok_argv_out[idx - 1] == "-u"
+
+    codex_argv_out = codex_argv(cwd="/work", write=True, output_file="/tmp/out.txt")
+    for key in ("AGENT_ERROR_FIX_PASSWORD", "AGENT_PG_DSN"):
+        assert key in codex_argv_out
+        idx = codex_argv_out.index(key)
+        assert codex_argv_out[idx - 1] == "-u"
+
+
 def test_codex_reviewer_argv() -> None:
     argv = codex_argv(cwd="/work", write=False, output_file="/tmp/out.txt")
     assert "read-only" in argv
