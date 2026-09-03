@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -145,6 +147,106 @@ def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
     row2 = store.row("activity", act2)
     assert row2 is not None
     assert row2["result"]["draft"] is True
+
+
+def test_scan_github_serializes_via_exclusive_and_skips_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scanner B after A must not re-process a done pr.open; lock key is github-scan."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-scan-serial"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Serialize scan",
+            "head": "feat-serial",
+            "body": "Please review",
+        },
+    )
+    held_keys: list[str] = []
+    orig_exclusive = Store.exclusive
+
+    @contextmanager
+    def tracking_exclusive(self: Store, key: str):
+        held_keys.append(key)
+        with orig_exclusive(self, key):
+            yield
+
+    monkeypatch.setattr(Store, "exclusive", tracking_exclusive)
+
+    create_calls = {"n": 0}
+    view_calls = {"n": 0}
+
+    def runner_a(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls["n"] += 1
+            if view_calls["n"] == 1:
+                return Completed(1, "", "no pull requests found")
+            # Post-create base-resolution view: definitive empty baseRefName.
+            return Completed(0, "{}", "")
+        if "create" in argv:
+            create_calls["n"] += 1
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/77\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines_a = scan_github(store, runner_a)
+    assert lines_a == [f"pr.open {act_id} done number=77"]
+    assert create_calls["n"] == 1
+    assert held_keys == [f"github-scan:{store.device_id()}"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["number"] == 77
+
+    held_keys.clear()
+
+    def runner_b(argv: list[str]) -> Completed:
+        raise AssertionError(f"scanner B must not invoke runner for done row: {argv}")
+
+    lines_b = scan_github(store, runner_b)
+    assert lines_b == []
+    assert create_calls["n"] == 1
+    assert held_keys == [f"github-scan:{store.device_id()}"]
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "done"
+    assert row2["result"]["number"] == 77
+
+
+def test_scan_github_exclusive_blocks_second_thread(tmp_path: Path) -> None:
+    """A second thread blocked on github-scan exclusive must wait until the first exits."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    lock_key = "github-scan:" + store.device_id()
+    entered = threading.Event()
+    release = threading.Event()
+    second_entered = threading.Event()
+
+    def holder() -> None:
+        with store.exclusive(lock_key):
+            entered.set()
+            assert release.wait(timeout=5)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert entered.wait(timeout=5)
+
+    def waiter() -> None:
+        with store.exclusive(lock_key):
+            second_entered.set()
+
+    t2 = threading.Thread(target=waiter)
+    t2.start()
+    # While the first holder is still inside, the second must not enter.
+    assert not second_entered.wait(timeout=0.3)
+    release.set()
+    t.join(timeout=5)
+    t2.join(timeout=5)
+    assert second_entered.is_set()
 
 
 def test_pr_open_resume_prefers_github_base_ref_name(tmp_path: Path) -> None:

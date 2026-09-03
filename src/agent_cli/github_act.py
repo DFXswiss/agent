@@ -693,22 +693,29 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
 
     Other pending types (subscription.set, query.request, …) are skipped.
     Returns human-readable status lines, one per handled row.
+
+    Device-wide exclusive lock: concurrent OS processes (daemon knock loop,
+    one-shot `agent github pending`, fixer_act synchronous scans) all share
+    the same local Postgres; without serialization two scanners can both
+    read the same pending row, both create a PR, and the loser's stale
+    _mark can wipe the winner's done/result.number.
     """
-    lines: list[str] = []
-    for row in store.pending_work():
-        typ = row.get("type")
-        try:
-            if typ == "pr.open":
-                lines.append(_run_pr_open(store, runner, row))
-            elif typ == "issue.write":
-                lines.append(_run_issue_write(store, runner, row))
-            elif typ == "comment.post":
-                lines.append(_run_comment_post(store, runner, row))
-            elif typ == "review.post":
-                lines.append(_run_review_post(store, runner, row))
-        except Exception as exc:  # noqa: BLE001 — per-row isolation
-            rid = str(row.get("id") or "?")
-            _mark(store, row, status="error", error=str(exc))
-            label = typ if isinstance(typ, str) else "activity"
-            lines.append(f"{label} {rid} error")
-    return lines
+    with store.exclusive("github-scan:" + store.device_id()):
+        lines: list[str] = []
+        for row in store.pending_work():
+            typ = row.get("type")
+            try:
+                if typ == "pr.open":
+                    lines.append(_run_pr_open(store, runner, row))
+                elif typ == "issue.write":
+                    lines.append(_run_issue_write(store, runner, row))
+                elif typ == "comment.post":
+                    lines.append(_run_comment_post(store, runner, row))
+                elif typ == "review.post":
+                    lines.append(_run_review_post(store, runner, row))
+            except Exception as exc:  # noqa: BLE001 — per-row isolation
+                rid = str(row.get("id") or "?")
+                _mark(store, row, status="error", error=str(exc))
+                label = typ if isinstance(typ, str) else "activity"
+                lines.append(f"{label} {rid} error")
+        return lines
