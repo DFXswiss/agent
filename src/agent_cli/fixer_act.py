@@ -177,8 +177,10 @@ def template_pr_open_payload(
         suffix = suffix[:69] + "..."
     title = f"{session_id[:8]} - {suffix}"
     brief_summary = _first_sentence(brief).splitlines()[0].strip() if brief else ""
-    # _first_sentence already includes terminal punctuation when non-empty;
-    # only the empty fallback needs a period baked into the literal.
+    # _first_sentence preserves the source's own terminal punctuation only
+    # when a sentence-boundary match is found; text with no .!? at all comes
+    # back unchanged, with nothing added. The empty-fallback literal already
+    # ends in a period regardless.
     brief_part = brief_summary[:200] if brief_summary else "see task spec."
     brief_part_de = brief_summary[:200] if brief_summary else "siehe Task-Spec."
     en = (
