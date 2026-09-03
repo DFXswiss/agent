@@ -1128,9 +1128,7 @@ def _drive_one(
                         task["payload"] = task_payload
                         dirty = True
                 if pr_base:
-                    normalized_pr_base = (
-                        pr_base if pr_base.startswith("origin/") else f"origin/{pr_base}"
-                    )
+                    normalized_pr_base = f"origin/{pr_base}"
                     if normalized_pr_base != task.get("ref"):
                         task["ref"] = normalized_pr_base
                         dirty = True

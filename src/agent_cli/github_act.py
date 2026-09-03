@@ -190,6 +190,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         body_opt = _optional_str_field(payload, "body")
         body = "" if body_opt is None else body_opt
         base = _optional_str_field(payload, "base", nonempty=True)
+        base = base.removeprefix("origin/") if base else base
     except _GhError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"pr.open {rid} error"

@@ -176,6 +176,45 @@ def test_pr_open_resume_prefers_github_base_ref_name(tmp_path: Path) -> None:
     assert row["result"]["base"] != "origin/develop"
 
 
+def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
+    """Create path must pass a bare --base to gh and persist result.base bare."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-create"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Strip origin base",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    create_argv: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", "no pull requests found")
+        if "create" in argv:
+            create_argv.extend(argv)
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/99\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=99"]
+    assert create_argv, "expected gh pr create to run"
+    base_idx = create_argv.index("--base")
+    assert create_argv[base_idx + 1] == "develop"
+    assert "origin/develop" not in create_argv
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["base"] == "develop"
+
+
 def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
