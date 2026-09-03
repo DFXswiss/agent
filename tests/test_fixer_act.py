@@ -3288,7 +3288,7 @@ def test_parallel_pr_pair_rejection_feedback_survives_sibling_unavailable(
             stderr="",
         )
 
-    def fake_build(store, tid_, *, role, round_num, implement_spec_file, cwd, exec_argv, base_ref=None):  # type: ignore[no-untyped-def]
+    def fake_build(store, tid_, *, role, round_num, implement_spec_file, cwd, exec_argv, base_ref=None, vendor=None):  # type: ignore[no-untyped-def]
         if role == unavailable_role and unavailable_done["n"] == 0:
             unavailable_done["n"] += 1
             raise ReviewDiffUnavailableError(
