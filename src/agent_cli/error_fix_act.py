@@ -165,8 +165,9 @@ def validate_conclusion(
     persisted. Persisting the raw, unstripped payload would validate one
     value and compare a different one.
     """
-    # errors.incident_closed still compares error_id without this normalization
-    # — out of scope for this PR; do not touch errors.py.
+    # incident_closed's error_id comparison is intentionally left unnormalized
+    # (errors.py itself IS touched elsewhere in this PR — fingerprint() and
+    # _latest_seen() both normalize — this comparison specifically does not).
     error_id = _nonempty_str(payload.get("error_id"))
     if error_id is None:
         raise StoreError("error_id is required")
