@@ -3137,8 +3137,8 @@ def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
     # list (" done", "done)", "failed", "blocked", "unavailable").
     assert len(scan_calls) == 2
     assert insert_calls == []
-    assert "pr.open-pending" in result
-    assert "retry needed" in result
+    assert "pr.open-pending (retry needed)" in result
+    assert "base resolution" not in result
     assert "create failed" not in result
     assert "pr.open-error" not in result
 
