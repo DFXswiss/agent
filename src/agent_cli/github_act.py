@@ -139,6 +139,35 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
     return completed.stdout or ""
 
 
+def _resolve_actual_base(
+    head: str, repo: str, runner: Runner, fallback: str | None
+) -> str | None:
+    """Best-effort: re-resolve the ACTUAL applied base via a live `gh pr view`
+    call, mirroring the resume path's existing baseRefName resolution. Never
+    raises — any failure (gh unavailable, non-zero exit, bad JSON, missing
+    field) returns `fallback` unchanged so a successful `gh pr create` is never
+    turned into an error just because this best-effort re-resolution failed."""
+    try:
+        completed = runner(
+            ["gh", "pr", "view", head, "--repo", repo, "--json", "baseRefName"]
+        )
+    except OSError:
+        return fallback
+    if completed.returncode != 0:
+        return fallback
+    raw = (completed.stdout or "").strip()
+    if raw == "":
+        return fallback
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return fallback
+    if not isinstance(data, dict):
+        return fallback
+    real_base = data.get("baseRefName")
+    return real_base if isinstance(real_base, str) and real_base else fallback
+
+
 def _gh_not_found(completed: Completed) -> bool:
     """True only when gh failed because this pull request is missing."""
     if completed.returncode == 0:
@@ -270,12 +299,13 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             argv.extend(["--base", base])
         stdout = _gh_text(argv, runner)
         url, number = _parse_url_number(stdout)
+        resolved_base = _resolve_actual_base(head, repo, runner, base)
         result = {
             "repo": repo,
             "number": number,
             "url": url,
             "draft": True,
-            "base": base,
+            "base": resolved_base,
         }
         _mark(store, row, status="done", result=result)
         return f"pr.open {rid} done number={number}"

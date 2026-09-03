@@ -215,6 +215,49 @@ def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
     assert row["result"]["base"] == "develop"
 
 
+def test_pr_open_create_resolves_actual_base_from_github(tmp_path: Path) -> None:
+    """Create path must re-resolve result.base from GitHub's applied baseRefName."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-create-resolve"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "No base requested",
+            "head": "feat-github",
+            "body": "Please review",
+        },
+    )
+    view_calls = 0
+    created = False
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls, created
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if not created:
+                return Completed(1, "", "no pull requests found")
+            body = {"baseRefName": "main"}
+            return Completed(0, json.dumps(body), "")
+        if "create" in argv:
+            created = True
+            assert "--base" not in argv
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/55\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=55"]
+    assert created
+    assert view_calls == 2
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["base"] == "main"
+
+
 def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)
