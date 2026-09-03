@@ -330,8 +330,15 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
 
     sentinel = "sentinel-value-should-not-leak"
     pg_sentinel = "sentinel-pg-dsn-should-not-leak"
+    # AGENT_PG_DSN is also the real DSN open_store() needs to run this very
+    # command -- unlike AGENT_ERROR_FIX_PASSWORD it can't just be replaced by
+    # an arbitrary string. Embed the sentinel as an extra keyword in the
+    # already-valid DSN (set by the autouse _agent_pg fixture) so the store
+    # still opens while the sentinel is still present in the env value.
+    real_pg_dsn = os.environ["AGENT_PG_DSN"]
+    pg_dsn_with_sentinel = f"{real_pg_dsn} application_name={pg_sentinel}"
     monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
-    monkeypatch.setenv("AGENT_PG_DSN", pg_sentinel)
+    monkeypatch.setenv("AGENT_PG_DSN", pg_dsn_with_sentinel)
     monkeypatch.setenv("AGENT_CHECK_COMMAND", "env")
     run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
     capsys.readouterr()
@@ -352,7 +359,7 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     assert "AGENT_PG_DSN=" not in output
     assert pg_sentinel not in output
     assert os.environ.get("AGENT_ERROR_FIX_PASSWORD") == sentinel
-    assert os.environ.get("AGENT_PG_DSN") == pg_sentinel
+    assert os.environ.get("AGENT_PG_DSN") == pg_dsn_with_sentinel
 
 
 def test_run_dry_run_skips_local_check(
