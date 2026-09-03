@@ -238,6 +238,8 @@ def incident_closed(store: Store, session_id: str, error_id: str) -> bool:
 
 
 def _latest_seen(store: Store, session_id: str, fp: str) -> dict[str, Any] | None:
+    from .error_fix_act import _nonempty_str
+
     origin = store.device_id()
     matches: list[dict[str, Any]] = []
     for row in store.rows("activity"):
@@ -248,7 +250,7 @@ def _latest_seen(store: Store, session_id: str, fp: str) -> dict[str, Any] | Non
         if row.get("session_id") != session_id:
             continue
         inner = row.get("payload")
-        if isinstance(inner, dict) and inner.get("fingerprint") == fp:
+        if isinstance(inner, dict) and _nonempty_str(inner.get("fingerprint")) == fp:
             matches.append(row)
     if not matches:
         return None

@@ -112,7 +112,10 @@ def _error_fix_heads(store: Store, fingerprint: str) -> set[str]:
         if row.get("type") != "error.seen":
             continue
         payload = row.get("payload")
-        if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
+        if (
+            not isinstance(payload, dict)
+            or _nonempty_str(payload.get("fingerprint")) != fingerprint
+        ):
             continue
         seen_id = _nonempty_str(row.get("id"))
         if seen_id is not None:
@@ -121,7 +124,7 @@ def _error_fix_heads(store: Store, fingerprint: str) -> set[str]:
 
 
 def _draft_matches(payload: dict[str, Any], fingerprint: str, heads: set[str]) -> bool:
-    if payload.get("fingerprint") == fingerprint:
+    if _nonempty_str(payload.get("fingerprint")) == fingerprint:
         return True
     head = _nonempty_str(payload.get("head"))
     return head is not None and head in heads
@@ -177,7 +180,10 @@ def validate_conclusion(
             raise StoreError("reason is required")
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
-    if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
+    if (
+        not isinstance(seen_payload, dict)
+        or _nonempty_str(seen_payload.get("fingerprint")) != fingerprint
+    ):
         raise StoreError("fingerprint mismatch")
     origin = store.device_id()
     for row in store.rows("activity"):
@@ -330,7 +336,10 @@ def _pending_fix(store: Store, row: dict[str, Any]) -> tuple[str, str, str]:
         raise StoreError("session_id is required")
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
-    if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
+    if (
+        not isinstance(seen_payload, dict)
+        or _nonempty_str(seen_payload.get("fingerprint")) != fingerprint
+    ):
         raise StoreError("fingerprint mismatch")
     repo = _repo_ok(seen_payload.get("repo"))
     if repo is None:

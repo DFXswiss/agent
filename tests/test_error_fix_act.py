@@ -625,3 +625,113 @@ def test_has_error_fix_activity_true_for_whitespace_padded_persisted_error_id(
         },
     )
     assert has_error_fix_activity(store, "runner-1", "error-seen-12345678") is True
+
+
+def test_validate_conclusion_matches_whitespace_padded_stored_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """Legacy error.seen rows may retain a whitespace-padded fingerprint; the
+    stored side must be stripped before compare (site 1)."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "error-seen-12345678",
+        {
+            "id": "error-seen-12345678",
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {
+                "fingerprint": "api|TimeoutError|abc|prod ",
+                "repo": "org/app",
+            },
+            "execution_status": "done",
+        },
+    )
+    normalized = error_fix_act_mod.validate_conclusion(
+        store,
+        "runner-1",
+        "error.skip",
+        {
+            "error_id": "error-seen-12345678",
+            "fingerprint": "api|TimeoutError|abc|prod",
+            "reason": "noisy",
+        },
+    )
+    assert normalized["fingerprint"] == "api|TimeoutError|abc|prod"
+    assert normalized["error_id"] == "error-seen-12345678"
+
+
+def test_already_open_draft_matches_whitespace_padded_fingerprints(
+    tmp_path: Path,
+) -> None:
+    """_error_fix_heads (site 2) and _draft_matches (site 3) must strip the
+    stored fingerprint before comparing to a bare computed value."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "error-seen-12345678",
+        {
+            "id": "error-seen-12345678",
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {
+                "fingerprint": "api|TimeoutError|abc|prod ",
+                "repo": "org/app",
+            },
+            "execution_status": "done",
+        },
+    )
+    bare = "api|TimeoutError|abc|prod"
+    assert error_fix_act_mod._error_fix_heads(store, bare) == {"error-fix-error-se"}
+    store.write(
+        "activity",
+        "insert",
+        "pr-open-1",
+        {
+            "id": "pr-open-1",
+            "session_id": "runner-1",
+            "type": "pr.open",
+            "payload": {"fingerprint": "api|TimeoutError|abc|prod "},
+            "execution_status": "pending",
+        },
+    )
+    assert error_fix_act_mod._draft_matches(
+        {"fingerprint": "api|TimeoutError|abc|prod "}, bare, set()
+    )
+    assert error_fix_act_mod._already_open_draft(store, bare) is True
+
+
+def test_pending_fix_matches_whitespace_padded_stored_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """_pending_fix / scan_error_fix (site 4): legacy padded fingerprint on
+    error.seen must still match the bare fingerprint on error.fix."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "error-seen-12345678",
+        {
+            "id": "error-seen-12345678",
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {
+                "fingerprint": "api|TimeoutError|abc|prod ",
+                "repo": "org/app",
+            },
+            "execution_status": "done",
+        },
+    )
+    _fix(store)
+    calls: list[list[str]] = []
+    lines = scan_error_fix(store, _clone_runner(calls))
+    assert len(lines) == 1
+    assert lines[0].startswith("error.fix fix-1 task=")
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "done"

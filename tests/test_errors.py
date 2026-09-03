@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli import errors as errors_mod
 from agent_cli.errors import (
     config_path,
     cursor_path,
@@ -194,6 +195,33 @@ def test_fingerprint_strips_service_and_environment_whitespace() -> None:
     # Consumer-side strip of a whitespace-padded fingerprint input matches.
     assert padded == clean.strip()
     assert " api ".strip() + "|TimeoutError|abc123def4567890|" + " prod ".strip() == padded
+
+
+def test_latest_seen_matches_whitespace_padded_stored_fingerprint(tmp_path: Path) -> None:
+    """Legacy error.seen rows may retain a whitespace-padded fingerprint; the
+    stored side must be stripped before compare (site 5 / _latest_seen)."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "error-seen-legacy-1",
+        {
+            "id": "error-seen-legacy-1",
+            "session_id": "runner-1",
+            "type": "error.seen",
+            "payload": {
+                "fingerprint": "api|TimeoutError|abc|prod ",
+                "count": 1,
+                "first_seen": "2026-08-23T16:00:00Z",
+                "last_seen": "2026-08-23T16:00:00Z",
+            },
+            "execution_status": "done",
+        },
+    )
+    found = errors_mod._latest_seen(store, "runner-1", "api|TimeoutError|abc|prod")
+    assert found is not None
+    assert found["id"] == "error-seen-legacy-1"
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
