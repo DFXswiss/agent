@@ -278,6 +278,19 @@ def _default_runner(
             stdout, stderr = proc.communicate(timeout=5)
         except (subprocess.TimeoutExpired, OSError):
             stdout, stderr = "", ""
+            # Mirror daemon._terminate: one more kill+wait after a timed-out
+            # reap; orphans past this point are an accepted limitation.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            try:
+                proc.wait(timeout=5)
+            except (ProcessLookupError, PermissionError, OSError, subprocess.TimeoutExpired):
+                pass
         # returncode 124 matches parse_status's external-timeout convention.
         return subprocess.CompletedProcess(argv, 124, stdout or "", stderr or "")
     return subprocess.CompletedProcess(
