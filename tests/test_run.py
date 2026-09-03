@@ -300,7 +300,9 @@ def test_run_local_check_pass_uses_distinct_longer_timeout(
     assert check_calls[0][1] == 999.0
     probe_calls = [c for c in calls if c[0][:2] == ["git", "rev-parse"]]
     assert probe_calls, "expected the git rev-parse HEAD bookkeeping probe to run too"
-    assert all(t is None for _, t in probe_calls), "fast probes must keep the 120s default"
+    assert all(t is None for _, t in probe_calls), (
+        "fast probes must pass timeout=None, deferring to the callee's own default"
+    )
 
 
 def test_run_local_check_strips_credential_env_from_persisted_output(
@@ -315,7 +317,9 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     completed, and produced real, non-trivial output (PATH= is always present
     in a real `env` dump) before asserting the sentinel's absence -- an
     empty/skipped run would otherwise satisfy the sentinel-absence assertion
-    vacuously, without ever exercising the redaction path.
+    vacuously, without ever exercising the redaction path. Also covers the
+    env-pop step (key names absent), the finally-restore step (os.environ
+    values restored after the call), and the AGENT_PG_DSN exact-match branch.
     """
     tid = _bootstrap_implement(tmp_path, capsys)
     _finish_implementer(tmp_path, tid, capsys)
@@ -325,7 +329,9 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     capsys.readouterr()
 
     sentinel = "sentinel-value-should-not-leak"
+    pg_sentinel = "sentinel-pg-dsn-should-not-leak"
     monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
+    monkeypatch.setenv("AGENT_PG_DSN", pg_sentinel)
     monkeypatch.setenv("AGENT_CHECK_COMMAND", "env")
     run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
     capsys.readouterr()
@@ -342,6 +348,11 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     # satisfy the sentinel-absence assertion below without proving anything.
     assert "PATH=" in output
     assert sentinel not in output
+    assert "AGENT_ERROR_FIX_PASSWORD=" not in output
+    assert "AGENT_PG_DSN=" not in output
+    assert pg_sentinel not in output
+    assert os.environ.get("AGENT_ERROR_FIX_PASSWORD") == sentinel
+    assert os.environ.get("AGENT_PG_DSN") == pg_sentinel
 
 
 def test_run_dry_run_skips_local_check(
@@ -1920,7 +1931,7 @@ def test_interpret_lane_rejects_bypass_via_early_gaps_none_then_real_gaps() -> N
     # Two GAPS: headers make has_single_terminal_report() return False, so
     # _interpret_lane takes the "unparseable report" retry path before it would
     # even reach gaps_disclosed() -- proving the bypass is closed via the
-    # multi-header path (Change A above).
+    # multi-header path (has_single_terminal_report() rejects more than one GAPS: header).
     assert decision == "retry"
     assert findings is None
 
