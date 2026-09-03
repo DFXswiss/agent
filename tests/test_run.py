@@ -825,6 +825,86 @@ def test_build_review_spec_file_fences_diff_with_triple_backtick_line(
         store.close()
 
 
+def test_build_review_spec_file_codex_vendor_uses_readonly_shell_wording(
+    tmp_path: Path,
+) -> None:
+    """vendor=codex must not emit Grok Read-tool vocabulary; name read-only shells."""
+    hunk = "diff --git a/src/foo.py b/src/foo.py\n+codex-vendor-hunk\n"
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "abc123\n", "")
+        if "diff" in argv and "--name-only" in argv:
+            return Completed(0, "src/foo.py\n", "")
+        if "diff" in argv:
+            return Completed(0, hunk, "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        path = build_review_spec_file(
+            store,
+            "codex-vendor-tid",
+            role="pr-reviewer-logic",
+            round_num=1,
+            implement_spec_file=None,
+            cwd=str(tmp_path),
+            exec_argv=fake_exec,
+            vendor="codex",
+        )
+        body = Path(path).read_text(encoding="utf-8")
+        assert "Read tool" not in body
+        assert "Read/Grep/Glob only" not in body
+        assert "git diff" in body or "cat" in body
+        assert "CONTRIBUTING.md" in body
+    finally:
+        store.close()
+
+
+def test_build_review_spec_file_grok_vendor_keeps_read_tool_wording(
+    tmp_path: Path,
+) -> None:
+    """Default/grok vendor path must keep the original Read-tool phrases byte-stable."""
+    hunk = "diff --git a/src/foo.py b/src/foo.py\n+grok-vendor-hunk\n"
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "abc123\n", "")
+        if "diff" in argv and "--name-only" in argv:
+            return Completed(0, "src/foo.py\n", "")
+        if "diff" in argv:
+            return Completed(0, hunk, "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        path = build_review_spec_file(
+            store,
+            "grok-vendor-tid",
+            role="pr-reviewer-logic",
+            round_num=1,
+            implement_spec_file=None,
+            cwd=str(tmp_path),
+            exec_argv=fake_exec,
+        )
+        body = Path(path).read_text(encoding="utf-8")
+        assert (
+            "Read the unified diff via the Read tool from this absolute path"
+            in body
+        )
+        assert "Read/Grep/Glob only" in body
+    finally:
+        store.close()
+
+
 def test_launch_oserror_does_not_leave_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

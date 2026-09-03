@@ -410,6 +410,7 @@ def build_review_spec_file(
     cwd: str,
     exec_argv: ExecArgv,
     base_ref: str | None = None,
+    vendor: str = "grok",
 ) -> str:
     """Write a four-part review prompt under $AGENT_HOME/review-work/<task_id>/; return its path."""
     diff_text, changed_paths, probes_ok = _collect_review_diff(
@@ -456,9 +457,33 @@ def build_review_spec_file(
         )
 
     fence = _fence_marker(diff_text)
+    if vendor == "codex":
+        scope_intro = (
+            "Read the unified diff via a read-only shell command "
+            "(e.g. `cat`, `sed -n`, `git show`) from this absolute path:\n"
+        )
+        exec_rule = (
+            "Do not execute software — no tests, builds, package managers, "
+            "or project scripts. Use read-only shell commands only "
+            "(e.g. `git diff`, `git show`, `git log`, `grep`, `cat`, "
+            "`sed -n`, `ls`, `find`) to inspect the diff file and "
+            "CONTRIBUTING.md. Cite every finding with "
+            "`file:line`. If a judgment needs a test run, put the "
+            "command under NOT-VERIFIABLE instead of running it.\n"
+        )
+    else:
+        scope_intro = (
+            "Read the unified diff via the Read tool from this absolute path:\n"
+        )
+        exec_rule = (
+            "Do not execute software — no tests, builds, package managers, shells, "
+            "or project scripts. Read/Grep/Glob only. Cite every finding with "
+            "`file:line`. If a judgment needs a test run, put the "
+            "command under NOT-VERIFIABLE instead of running it.\n"
+        )
     body = (
         f"# Scope\n\n"
-        f"Read the unified diff via the Read tool from this absolute path:\n"
+        f"{scope_intro}"
         f"`{abs_diff}`\n\n"
         f"Changed paths: {paths_line}\n\n"
         f"Unified diff (also embedded for convenience; the Read path is required):\n\n"
@@ -472,10 +497,7 @@ def build_review_spec_file(
         f"```\n{_REVIEW_OUTPUT_CONTRACT}\n```\n\n"
         f"`FINDINGS: 0` (or `none`) is a valid, expected result when "
         f"`STATUS: complete` and nothing is wrong.\n\n"
-        f"Do not execute software — no tests, builds, package managers, shells, "
-        f"or project scripts. Read/Grep/Glob only. Cite every finding with "
-        f"`file:line`. If a judgment needs a test run, put the "
-        f"command under NOT-VERIFIABLE instead of running it.\n"
+        f"{exec_rule}"
     )
     spec_path.write_text(body, encoding="utf-8")
     return str(spec_path)
@@ -974,6 +996,7 @@ def prepare_spine_agent_step(
                 cwd=run_cwd,
                 exec_argv=exec_argv,
                 base_ref=base_ref,
+                vendor=vendor,
             )
         except EmptyReviewDiffError as exc:
             working = main_mod._find_working_agent(
