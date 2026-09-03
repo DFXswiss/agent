@@ -3130,7 +3130,11 @@ def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
     finally:
         store.close()
 
-    assert len(scan_calls) == 1
+    # _drive_until_stable calls _drive_one twice for a stable non-terminal
+    # ("pending") message: once to observe it, once more to confirm it is
+    # unchanged before returning -- "pending" is not in its terminal-marker
+    # list (" done", "done)", "failed", "blocked", "unavailable").
+    assert len(scan_calls) == 2
     assert insert_calls == []
     assert "pr.open-pending" in result
     assert "base resolution retry needed" in result
