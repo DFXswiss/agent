@@ -39,16 +39,12 @@ from test_run import (
     _finish_implementer,
     _finish_reviewer,
     _local_checks,
+    _store,
     _task_state,
 )
 
 
 ERROR_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-
-
-def _store(home: Path) -> Store:
-    os.environ["AGENT_HOME"] = str(home)
-    return Store(home)
 
 
 def _neutral_runner(argv: list[str]) -> Completed:

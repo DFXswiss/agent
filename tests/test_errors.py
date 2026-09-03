@@ -192,7 +192,6 @@ def test_fingerprint_strips_service_and_environment_whitespace() -> None:
     )
     assert padded == clean
     assert padded == "api|TimeoutError|abc123def4567890|prod"
-    assert " api ".strip() + "|TimeoutError|abc123def4567890|" + " prod ".strip() == padded
 
 
 def test_fingerprint_strips_error_class_and_stack_sig_whitespace() -> None:
