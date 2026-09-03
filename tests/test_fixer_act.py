@@ -50,6 +50,66 @@ def _store(home: Path) -> Store:
     return Store(home)
 
 
+def _neutral_runner(argv: list[str]) -> Completed:
+    """Minimal Runner stub: a realistic sha for rev-parse/merge-base (so
+    execute_spine_step's push-time HEAD resolution succeeds), empty output
+    otherwise. Tests that need specific output for other commands still
+    provide their own runner."""
+    if "rev-parse" in argv or "merge-base" in argv:
+        return Completed(0, "abcdef1\n", "")
+    return Completed(0, "", "")
+
+
+def _rtc_via_neutral_runner(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
+    """_runner_to_completed replacement that always routes through
+    _neutral_runner, regardless of cwd -- the real _runner_to_completed
+    bypasses the injected runner and shells out for real whenever cwd is
+    set, which a bare test worktree (no real project) can't satisfy for a
+    genuine check-command execution."""
+    return _neutral_runner(argv)
+
+
+def _rtc_via_runner_with_sha(inner_runner):  # type: ignore[no-untyped-def]
+    """Like _rtc_via_neutral_runner, but delegates non-git-plumbing argv to
+    inner_runner (a bare Runner the test already defines), only intercepting
+    rev-parse/merge-base with a stable sha -- for tests that care about a
+    specific gh/git argv shape but not about the sha itself."""
+
+    def _rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return inner_runner(argv)
+
+    return _rtc
+
+
+def _drive_until_stable(store, task, *, max_calls: int = 4, **kwargs):  # type: ignore[no-untyped-def]
+    """Call _drive_one repeatedly until it stops making forward progress.
+
+    The push-time SHA-freshness gate (execute_spine_step) reopens
+    local_check_pass and returns "not_closable" -- deliberately, so an
+    unattended scan re-checks before pushing again -- rather than retrying
+    within the same call. Tests exercising a multi-push scenario (e.g. a
+    PR-gate rejection followed by a fresh push) therefore need more than one
+    _drive_one call to reach a terminal state, mirroring how the real
+    fixer driver is re-invoked scan over scan. Stops early once a result
+    looks terminal or stops changing.
+    """
+    last = ""
+    for _ in range(max_calls):
+        result = _drive_one(store, task, **kwargs)
+        task = store.row("task", task["id"]) or task
+        if result == last:
+            return result
+        last = result
+        if any(
+            marker in result
+            for marker in (" done", "done)", "failed", "blocked", "unavailable")
+        ):
+            return result
+    return last
+
+
 def _gates(home: Path, tid: str) -> list[dict]:
     store = _store(home)
     try:
@@ -167,7 +227,27 @@ def _bootstrap_error_fix_task(
     run(home, ["round", "start", "--task", tid])
     worktree = home / "error-fix-work" / tid
     worktree.mkdir(parents=True, exist_ok=True)
-    (worktree / ".git").mkdir(exist_ok=True)
+    # A real (if minimal) git repo, not just a ".git" marker directory:
+    # execute_spine_step's push-time HEAD-freshness gate runs a genuine
+    # `git rev-parse HEAD` subprocess against this cwd (_runner_to_completed
+    # bypasses any injected test runner whenever cwd is set), so it needs to
+    # actually resolve a sha rather than fail against an empty directory.
+    subprocess.run(["git", "init"], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(worktree), "config", "user.email", "test@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(worktree), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(worktree), "commit", "--allow-empty", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
     # Spec lives under error-fix-specs (sibling of the git worktree), never
     # inside the pushed clone.
     specs = home / "error-fix-specs" / tid
@@ -183,15 +263,24 @@ def _advance_error_fix_to_pushed(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Installed before any `run()` call: every git rev-parse/merge-base seen
+    # across this whole helper (implementer/reviewer/check steps) must
+    # resolve to the same sha, since execute_spine_step's push-time gate
+    # later requires the check row it recorded to match the current HEAD
+    # exactly -- a fake only wired in partway through would bind the check
+    # to one value while an earlier step's real/different resolution (or a
+    # later one) leaves it mismatched.
+    def fake_check_exec(argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
+        if "rev-parse" in argv or "merge-base" in argv:
+            return Completed(0, "abcdef1\n", "")
+        return Completed(0, "ok", "")
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_check_exec)
     _finish_implementer(home, tid, capsys)
     run(home, ["run", "--task", tid])
     _finish_reviewer(home, tid, capsys)
     run(home, ["run", "--task", tid])
     capsys.readouterr()
-    monkeypatch.setattr(
-        "agent_cli.main._exec_argv",
-        lambda argv, *, cwd=None, timeout=None: Completed(0, "ok", ""),
-    )
     run(home, ["run", "--task", tid])
     capsys.readouterr()
     assert _checklist(home, tid)["local_check_pass"] == "ja"
@@ -718,10 +807,10 @@ def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -785,10 +874,10 @@ def test_drive_one_skips_github_when_session_inactive(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -853,10 +942,10 @@ def test_fixer_threads_pushed_head_into_pr_gate(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -925,10 +1014,10 @@ def test_fixer_strips_origin_prefix_from_pr_open_base(
         task = store.row("task", tid)
         assert task is not None
         assert task.get("ref") == "origin/main"
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -973,10 +1062,10 @@ def test_fixer_defers_when_worktree_not_ready(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
         )
     finally:
@@ -1021,10 +1110,10 @@ def test_fixer_local_check_exec_uses_worktree_cwd(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
         )
     finally:
@@ -1066,10 +1155,10 @@ def test_fixer_vendor_unavailable_leaves_task_untouched(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1138,15 +1227,18 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", flaky_insert)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _rtc_via_neutral_runner
+    )
 
     store = _store(tmp_path)
     try:
         task = store.row("task", tid)
         assert task is not None
-        first = _drive_one(
+        first = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1165,10 +1257,10 @@ def test_fixer_retries_pr_open_across_scans_after_insert_failure(
 
         task = store.row("task", tid)
         assert task is not None
-        second = _drive_one(
+        second = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1226,12 +1318,16 @@ def test_fixer_stops_on_persistent_gh_pr_create_failure(
 
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed",
+        _rtc_via_runner_with_sha(failing_gh),
+    )
 
     store = _store(tmp_path)
     try:
         task = store.row("task", tid)
         assert task is not None
-        first = _drive_one(
+        first = _drive_until_stable(
             store,
             task,
             runner=failing_gh,
@@ -1249,7 +1345,7 @@ def test_fixer_stops_on_persistent_gh_pr_create_failure(
 
         task = store.row("task", tid)
         assert task is not None
-        second = _drive_one(
+        second = _drive_until_stable(
             store,
             task,
             runner=failing_gh,
@@ -1629,10 +1725,10 @@ def test_fixer_drives_error_fix_task_to_done(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1680,10 +1776,10 @@ def test_ensure_done_readiness_summary_fallback_uses_distinct_german(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1746,10 +1842,10 @@ def test_drive_one_reports_contributing_ok_blocked_instead_of_raising(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1832,10 +1928,10 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -1924,10 +2020,10 @@ def test_fixer_backfills_pr_number_when_pr_open_already_done(
         )
         assert _pr_open_row_exists(store, head=pr_head, repo="org/app")
 
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2009,10 +2105,10 @@ def test_fixer_backfills_task_ref_from_pr_open_real_base(
 
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2112,10 +2208,10 @@ def test_fixer_backfills_task_ref_from_slash_containing_bare_base(
 
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2200,10 +2296,10 @@ def test_fixer_heal_unconditionally_prepends_origin_even_for_origin_prefixed_bas
 
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2288,10 +2384,10 @@ def test_fixer_persists_pr_number_and_queues_gate_findings(
             and task["ref"].isdigit()
             and int(task["ref"]) > 0
         )
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2387,10 +2483,10 @@ def test_rejection_feedback_rewritten_into_spec(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2488,8 +2584,8 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
-            store, task, runner=lambda argv: Completed(0, "", ""),
+        _drive_until_stable(
+            store, task, runner=_neutral_runner,
             round_cap=5, lane_runner=None,
         )
     finally:
@@ -2563,10 +2659,10 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
     try:
         task = store.row("task", tid)
         assert task is not None
-        first = _drive_one(
+        first = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2630,10 +2726,10 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -2904,6 +3000,9 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
     monkeypatch.setattr("agent_cli.github_act.scan_github", fake_scan_github)
     monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", fake_insert)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _rtc_via_neutral_runner
+    )
 
     store = _store(tmp_path)
     try:
@@ -2923,10 +3022,10 @@ def test_fixer_resumes_pending_pr_open_via_scan_github(
         )
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3011,7 +3110,7 @@ def test_drive_error_fix_tasks_isolates_per_task_crash(
     try:
         lines = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3046,7 +3145,7 @@ def test_empty_review_diff_fails_task_and_stops_reselection(
     try:
         lines1 = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3061,7 +3160,7 @@ def test_empty_review_diff_fails_task_and_stops_reselection(
     try:
         lines2 = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3094,7 +3193,7 @@ def test_review_diff_probe_failure_leaves_task_retryable(
     try:
         lines1 = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3111,7 +3210,7 @@ def test_review_diff_probe_failure_leaves_task_retryable(
     try:
         lines2 = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3161,8 +3260,6 @@ def test_drive_error_fix_tasks_runs_pr_dimensions_concurrently(
         )
 
     def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
-        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
-            return Completed(0, pushed_sha + "\n", "")
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -3188,7 +3285,7 @@ def test_drive_error_fix_tasks_runs_pr_dimensions_concurrently(
     try:
         lines = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3347,10 +3444,10 @@ def test_parallel_pr_pair_rejection_feedback_survives_sibling_unavailable(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3444,10 +3541,10 @@ def test_parallel_pr_pair_both_reject_combines_findings(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3584,10 +3681,10 @@ def test_parallel_pr_pair_reject_plus_pass_records_both(
     try:
         task = store.row("task", tid)
         assert task is not None
-        _drive_one(
+        _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3686,10 +3783,10 @@ def test_parallel_pr_pair_launch_oserror_releases_sibling_agent(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3831,10 +3928,10 @@ def test_parallel_pr_pair_retry_oserror_preserves_sibling_result(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -3926,10 +4023,10 @@ def test_parallel_pr_pair_prepare_exception_releases_first_agent(
         task = store.row("task", tid)
         assert task is not None
         with pytest.raises(RuntimeError, match="boom during second prepare"):
-            _drive_one(
+            _drive_until_stable(
                 store,
                 task,
-                runner=lambda argv: Completed(0, "", ""),
+                runner=_neutral_runner,
                 round_cap=5,
                 lane_runner=None,
             )
@@ -4042,10 +4139,10 @@ def test_parallel_pr_pair_failed_plus_reject_keeps_failed_and_skips_round_start(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -4071,7 +4168,7 @@ def test_parallel_pr_pair_failed_plus_reject_keeps_failed_and_skips_round_start(
     try:
         lines2 = drive_error_fix_tasks(
             store,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
@@ -4155,10 +4252,10 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
     try:
         task = store.row("task", tid)
         assert task is not None
-        result = _drive_one(
+        result = _drive_until_stable(
             store,
             task,
-            runner=lambda argv: Completed(0, "", ""),
+            runner=_neutral_runner,
             round_cap=5,
             lane_runner=None,
         )
