@@ -3321,6 +3321,162 @@ def test_parallel_pr_pair_launch_oserror_releases_sibling_agent(
         and g.get("verdict") == "approved"
     ]
     assert approved_logic, f"expected approved gate for logic, got {gates}"
+    assert len(approved_logic) == 1, f"sibling gate must be recorded exactly once: {gates}"
+
+
+@pytest.mark.parametrize(
+    "reverse_pair,retry_fail_role,sibling_role,sibling_verdict",
+    [
+        (False, "pr-reviewer-quality", "pr-reviewer-logic", "approved"),
+        (True, "pr-reviewer-quality", "pr-reviewer-logic", "approved"),
+        (False, "pr-reviewer-logic", "pr-reviewer-quality", "approved"),
+        (True, "pr-reviewer-logic", "pr-reviewer-quality", "approved"),
+        (False, "pr-reviewer-quality", "pr-reviewer-logic", "rejected"),
+        (True, "pr-reviewer-quality", "pr-reviewer-logic", "rejected"),
+        (False, "pr-reviewer-logic", "pr-reviewer-quality", "rejected"),
+        (True, "pr-reviewer-logic", "pr-reviewer-quality", "rejected"),
+    ],
+    ids=[
+        "quality-first-quality-retry-oserror-logic-approved",
+        "logic-first-quality-retry-oserror-logic-approved",
+        "quality-first-logic-retry-oserror-quality-approved",
+        "logic-first-logic-retry-oserror-quality-approved",
+        "quality-first-quality-retry-oserror-logic-rejected",
+        "logic-first-quality-retry-oserror-logic-rejected",
+        "quality-first-logic-retry-oserror-quality-rejected",
+        "logic-first-logic-retry-oserror-quality-rejected",
+    ],
+)
+def test_parallel_pr_pair_retry_oserror_preserves_sibling_result(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    reverse_pair: bool,
+    retry_fail_role: str,
+    sibling_role: str,
+    sibling_verdict: str,
+) -> None:
+    """Retry-phase OSError must not discard a sibling's already-available result.
+
+    Round 48 guarded launch-phase exceptions sitting in launch_results; it did
+    not guard OSError raised from complete_spine_agent_step → _lane_retry_then_fail
+    mid-loop. Both pair orderings × approved/rejected sibling must persist the
+    sibling gate (and rejection feedback) exactly once.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    _patch_pr_pair_order(monkeypatch, reverse=reverse_pair)
+
+    pushed_sha = "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0"
+    findings_marker = "RETRY_OSERROR_SIBLING_REJECT_marker"
+    retry_launches = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "")
+        vendor = str(kwargs.get("vendor") or "grok")
+        if role == retry_fail_role and vendor == "grok":
+            retry_launches["n"] += 1
+            if retry_launches["n"] == 1:
+                # Ambiguous: STATUS complete, no FINDINGS → retry path.
+                return LaneResult(
+                    role=role,
+                    vendor=vendor,
+                    status="complete",
+                    argv=[vendor],
+                    returncode=0,
+                    stdout="STATUS: complete\n",
+                    stderr="",
+                )
+            raise OSError("No such file or directory: 'grok'")
+        if role == sibling_role and vendor == "grok":
+            if sibling_verdict == "rejected":
+                return LaneResult(
+                    role=role,
+                    vendor=vendor,
+                    status="complete",
+                    argv=[vendor],
+                    returncode=0,
+                    stdout=f"STATUS: complete\nFINDINGS:\n- {findings_marker}\n",
+                    stderr="",
+                )
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                status="complete",
+                argv=[vendor],
+                returncode=0,
+                stdout="STATUS: complete\nFINDINGS: none\n",
+                stderr="",
+            )
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: pushed_sha,
+    )
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed", _pr_pair_rtc(pushed_sha)
+    )
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.insert_pr_open_and_scan",
+        _fake_insert_pr_open_and_scan,
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert "vendor-cli-unavailable" in result
+    assert "OSError" in result
+    assert retry_launches["n"] == 2  # initial ambiguous + retry that raises
+    agents = _agents(tmp_path, tid)
+    assert not any(a.get("status") == "working" for a in agents), agents
+
+    sibling_dim = "logic" if sibling_role.endswith("logic") else "quality"
+    gates = _gates(tmp_path, tid)
+    sibling_gates = [
+        g
+        for g in gates
+        if g.get("stage") == "grok-pr"
+        and g.get("dimension") == sibling_dim
+        and g.get("verdict") == sibling_verdict
+    ]
+    assert sibling_gates, (
+        f"expected {sibling_verdict} gate for {sibling_dim}, got {gates}"
+    )
+    assert len(sibling_gates) == 1, (
+        f"sibling gate must be recorded exactly once: {sibling_gates}"
+    )
+
+    if sibling_verdict == "rejected":
+        spec_text = (tmp_path / "error-fix-specs" / tid / ".spec.md").read_text(
+            encoding="utf-8"
+        )
+        assert "# Prior Rejection Feedback" in spec_text
+        assert findings_marker in spec_text
+        reject_key = (
+            "grok_pr_logic" if sibling_role == "pr-reviewer-logic" else "grok_pr_quality"
+        )
+        assert spec_text.count(f"## {reject_key}") == 1
 
 
 def test_parallel_pr_pair_prepare_exception_releases_first_agent(
@@ -3633,3 +3789,15 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
     assert "# Prior Rejection Feedback" in spec_text
     assert findings_marker in spec_text
     assert spec_text.count("## grok_pr_quality") == 1
+
+    gates = _gates(tmp_path, tid)
+    rejected_quality = [
+        g
+        for g in gates
+        if g.get("stage") == "grok-pr"
+        and g.get("dimension") == "quality"
+        and g.get("verdict") == "rejected"
+    ]
+    assert len(rejected_quality) == 1, (
+        f"rejection gate must be recorded exactly once: {gates}"
+    )

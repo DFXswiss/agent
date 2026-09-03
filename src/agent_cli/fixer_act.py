@@ -864,6 +864,9 @@ def _drive_parallel_pr_pair(
                         launch_results[plan.step.key] = exc
 
         pending_exception: BaseException | None = None
+        # Plan whose complete_spine_agent_step raised (retry-phase); launch-
+        # phase exceptions already release their agent row in-loop below.
+        pending_exception_plan: AgentLaunchPlan | None = None
         for item in prepared:
             if isinstance(item, RunOutcome):
                 outcomes.append(item)
@@ -894,19 +897,44 @@ def _drive_parallel_pr_pair(
                 if pending_exception is None:
                     pending_exception = payload
                 continue
-            outcome = complete_spine_agent_step(
-                store,
-                tid,
-                plan,
-                payload,
-                round_cap=round_cap,
-                tmux=False,
-                runner=lane_runner,
-                exec_argv=exec_argv,
-                defer_round_start=True,
-            )
+            # Guard retry-phase exceptions the same way as launch-phase ones:
+            # keep finishing every remaining genuine LaneResult before raising.
+            try:
+                outcome = complete_spine_agent_step(
+                    store,
+                    tid,
+                    plan,
+                    payload,
+                    round_cap=round_cap,
+                    tmux=False,
+                    runner=lane_runner,
+                    exec_argv=exec_argv,
+                    defer_round_start=True,
+                )
+            except BaseException as exc:  # noqa: BLE001 — surface after siblings
+                if pending_exception is None:
+                    pending_exception = exc
+                    pending_exception_plan = plan
+                continue
             outcomes.append(outcome)
         if pending_exception is not None:
+            if pending_exception_plan is not None:
+                working = main_mod._find_working_agent(
+                    store,
+                    tid,
+                    role=pending_exception_plan.role,
+                    vendor=pending_exception_plan.vendor,
+                    round_num=pending_exception_plan.round_num,
+                )
+                if working is not None:
+                    _agent_finish(
+                        str(working["id"]),
+                        "unavailable",
+                        note=(
+                            f"launch failed ({pending_exception_plan.role} "
+                            f"{pending_exception_plan.vendor})"
+                        ),
+                    )
             raise pending_exception
         if _batch_should_round_start(outcomes):
             _round_start(tid)
