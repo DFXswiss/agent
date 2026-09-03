@@ -732,6 +732,81 @@ def test_drive_one_fails_loudly_on_stale_whitespace_only_error_id(
         store.close()
 
 
+def test_drive_one_skips_github_when_session_inactive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closed session + pushed=ja must not call scan_github / insert_pr_open_and_scan.
+
+    Round 51: _drive_one gated only on is_error_fix_originated and never checked
+    session_active, so a task whose session was closed after pushed=ja could still
+    open/scan GitHub PRs — bypassing the session-active invariant every other
+    write path enforces via _require_task_session_active.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner, expected_branch=None, expected_repo=None: (
+            "abcdef1234567890abcdef1234567890abcdef12"
+        ),
+    )
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["pushed"] == "ja"
+
+    store = _store(tmp_path)
+    try:
+        session = store.row("session", "sess-1")
+        assert session is not None
+        session["status"] = "closed"
+        store.write(
+            "session",
+            "update",
+            "sess-1",
+            {k: v for k, v in session.items() if not str(k).startswith("_")},
+        )
+    finally:
+        store.close()
+
+    github_calls: list[str] = []
+
+    def boom_insert(*args, **kwargs):  # type: ignore[no-untyped-def]
+        github_calls.append("insert_pr_open_and_scan")
+        raise AssertionError("insert_pr_open_and_scan must not run for inactive session")
+
+    def boom_scan(*args, **kwargs):  # type: ignore[no-untyped-def]
+        github_calls.append("scan_github")
+        raise AssertionError("scan_github must not run for inactive session")
+
+    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", boom_insert)
+    monkeypatch.setattr("agent_cli.github_act.scan_github", boom_scan)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_one(
+            store,
+            task,
+            runner=lambda argv: Completed(0, "", ""),
+            round_cap=5,
+            lane_runner=None,
+        )
+    finally:
+        store.close()
+
+    assert "skip" in result
+    assert "session inactive" in result
+    assert github_calls == []
+    store = _store(tmp_path)
+    try:
+        assert not _pr_open_row_exists(
+            store, head=f"error-fix-{ERROR_ID[:8]}", repo="org/app"
+        )
+    finally:
+        store.close()
+
+
 def test_fixer_threads_pushed_head_into_pr_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

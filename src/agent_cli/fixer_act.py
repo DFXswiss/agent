@@ -979,6 +979,11 @@ def _drive_one(
         snap = main_mod._chain_snapshot(store, tid, extra_head=head)
         if not is_error_fix_originated(snap):
             return f"error-fix-work {tid} skip (not error-fix)"
+        # Closed sessions must not trigger GitHub/git side effects. Mirror
+        # main._require_task_session_active without failing the task — a
+        # closed session is a skip for this scan, not a task failure.
+        if not snap.get("session_active"):
+            return f"error-fix-work {tid} skip (session inactive)"
         snap_head = str(snap.get("head_sha") or "").strip()
         if snap_head and not head:
             head = snap_head
