@@ -133,9 +133,9 @@ def _draft_matches(payload: dict[str, Any], fingerprint: str, heads: set[str]) -
 def _pr_open_result_number(result: Any) -> int | None:
     """Extract a valid positive PR number from a pr.open result dict, or None.
 
-    Mirrors fixer_act._pr_open_number / _pr_open_error_row_with_number validation:
-    reject bool, accept int > 0, accept digit-only str that parses to > 0.
-    Kept local to avoid a circular import with fixer_act.
+    Reject bool, accept int > 0, accept digit-only str that parses to > 0.
+    This is the shared single source of truth for this validation;
+    fixer_act.py imports it from here.
     """
     if not isinstance(result, dict):
         return None

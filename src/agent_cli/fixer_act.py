@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .chain import Step, close_allowed, is_error_fix_originated, next_steps
-from .error_fix_act import _error_seen, _nonempty_str, _repo_ok
+from .error_fix_act import _error_seen, _nonempty_str, _pr_open_result_number, _repo_ok
 from .lane import LaneResult, Runner as LaneRunner, extract_findings_text
 from .runtime import Completed, run_argv_killing_tree
 from .run_core import (
@@ -266,14 +266,10 @@ def _pr_open_number(store: Store, *, head: str, repo: str) -> int | None:
         result = row.get("result")
         if not isinstance(result, dict):
             continue
-        number = result.get("number")
-        if isinstance(number, bool):
+        number = _pr_open_result_number(result)
+        if number is None:
             continue
-        if isinstance(number, int) and number > 0:
-            return number
-        if isinstance(number, str) and number.isdigit() and int(number) > 0:
-            return int(number)
-        continue
+        return number
     return None
 
 
@@ -352,14 +348,10 @@ def _pr_open_recorded_number(
         result = row.get("result")
         if not isinstance(result, dict):
             continue
-        number = result.get("number")
-        if isinstance(number, bool):
+        number = _pr_open_result_number(result)
+        if number is None:
             continue
-        if isinstance(number, int) and number > 0:
-            return (number, str(status))
-        if isinstance(number, str) and number.isdigit() and int(number) > 0:
-            return (int(number), str(status))
-        continue
+        return (number, str(status))
     return None
 
 
@@ -393,14 +385,10 @@ def _pr_open_error_row_with_number(
         result = row.get("result")
         if not isinstance(result, dict):
             continue
-        number = result.get("number")
-        if isinstance(number, bool):
+        number = _pr_open_result_number(result)
+        if number is None:
             continue
-        if isinstance(number, int) and number > 0:
-            return row
-        if isinstance(number, str) and number.isdigit() and int(number) > 0:
-            return row
-        continue
+        return row
     return None
 
 
