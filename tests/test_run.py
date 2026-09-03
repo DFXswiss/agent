@@ -194,7 +194,7 @@ def test_run_local_check_pass(
 
     seen: list[list[str]] = []
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         seen.append(list(argv))
         return Completed(0, "ok", "")
 
@@ -223,7 +223,7 @@ def test_run_local_check_fail(
 
     monkeypatch.setattr(
         "agent_cli.main._exec_argv",
-        lambda argv, *, cwd=None: Completed(1, "", "boom"),
+        lambda argv, *, cwd=None, timeout=None: Completed(1, "", "boom"),
     )
     with pytest.raises(SystemExit) as exc:
         run(tmp_path, ["run", "--task", tid])
@@ -262,7 +262,7 @@ def test_run_agent_check_command_env(
 
     seen: list[list[str]] = []
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         seen.append(list(argv))
         return Completed(0, "", "")
 
@@ -270,6 +270,37 @@ def test_run_agent_check_command_env(
     monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
     run(tmp_path, ["run", "--task", tid])
     assert ["true"] in seen
+
+
+def test_run_local_check_pass_uses_distinct_longer_timeout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check-command execution must get a timeout distinct from (larger than)
+    the 120s fast git/gh probe default, decoupled via AGENT_CHECK_TIMEOUT_SEC."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    calls: list[tuple[list[str], object]] = []
+
+    def fake_exec(argv, *, cwd=None, timeout=None):
+        calls.append((list(argv), timeout))
+        return Completed(0, "ok", "")
+
+    monkeypatch.setenv("AGENT_CHECK_TIMEOUT_SEC", "999")
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
+    run(tmp_path, ["run", "--task", tid])
+
+    assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+    check_calls = [c for c in calls if c[0] and c[0][0] == "pytest"]
+    assert check_calls, "expected the check command to be invoked"
+    assert check_calls[0][1] == 999.0
+    probe_calls = [c for c in calls if c[0][:2] == ["git", "rev-parse"]]
+    assert probe_calls, "expected the git rev-parse HEAD bookkeeping probe to run too"
+    assert all(t is None for _, t in probe_calls), "fast probes must keep the 120s default"
 
 
 def test_run_dry_run_skips_local_check(
@@ -284,7 +315,7 @@ def test_run_dry_run_skips_local_check(
 
     called = {"n": 0}
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         called["n"] += 1
         return Completed(0, "", "")
 
@@ -550,7 +581,7 @@ def test_collect_review_diff_no_base_candidate_resolves_marks_probes_not_ok(
 ) -> None:
     """When every base candidate fails rev-parse, probes_ok must be False."""
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             return Completed(1, "", "")
         # Supplemental HEAD probe succeeds but empty.
@@ -567,7 +598,7 @@ def test_collect_review_diff_explicit_base_wins_over_candidates(
     hunk = "diff --git a/src/foo.py b/src/foo.py\n+explicit-base-hunk\n"
     calls: list[list[str]] = []
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         calls.append(list(argv))
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             # Both the explicit base and origin/develop resolve — explicit must win.
@@ -647,7 +678,7 @@ def test_collect_review_diff_does_not_duplicate_overlapping_staged_hunk(
     hunk = "diff --git a/src/foo.py b/src/foo.py\n+overlapping-staged-hunk\n"
     calls: list[list[str]] = []
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         calls.append(list(argv))
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             # No base candidate resolves, so only the plain-HEAD probes run
@@ -682,7 +713,7 @@ def test_build_review_spec_file_raises_unavailable_when_no_base_resolves(
 ) -> None:
     """No resolving base candidate → ReviewDiffUnavailableError, not EmptyReviewDiffError."""
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             return Completed(1, "", "")
         return Completed(0, "", "")
@@ -709,7 +740,7 @@ def test_build_review_spec_file_raises_unavailable_when_merge_base_stdout_empty(
 ) -> None:
     """Empty merge-base stdout → ReviewDiffUnavailableError, not EmptyReviewDiffError."""
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             if argv[3] == "origin/develop":
                 return Completed(0, "abc123\n", "")
@@ -740,7 +771,7 @@ def test_build_review_spec_file_raises_unavailable_despite_dirty_worktree_diff(
 ) -> None:
     """Failed range-diff probe must raise even when supplemental dirty-worktree diff is non-empty."""
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             if argv[3] == "origin/develop":
                 return Completed(0, "abc123\n", "")
@@ -785,7 +816,7 @@ def test_build_review_spec_file_fences_diff_with_triple_backtick_line(
         "+```\n"
     )
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:3] == ["git", "rev-parse", "--verify"]:
             if argv[3] == "origin/develop":
                 return Completed(0, "abc123\n", "")
@@ -960,7 +991,7 @@ def test_launch_oserror_on_retry_does_not_leave_working_agent(
             )
         raise OSError("missing vendor CLI binary")
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1012,7 +1043,7 @@ def test_run_spec_file_reviewer_complete_auto_approves(
             stderr="",
         )
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1068,7 +1099,7 @@ def test_run_spec_file_reviewer_complete_without_findings_header_retries_then_fa
             stderr="",
         )
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1123,7 +1154,7 @@ def test_run_spec_file_vendor_unavailable_exits_nonzero(
             stderr="command not found",
         )
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1178,7 +1209,7 @@ def test_run_spec_file_reviewer_retry_exhaustion_finishes_working_agent(
             stderr="",
         )
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1223,7 +1254,7 @@ def _advance_to_pushed(
     capsys.readouterr()
     monkeypatch.setattr(
         "agent_cli.main._exec_argv",
-        lambda argv, *, cwd=None: Completed(0, "ok", ""),
+        lambda argv, *, cwd=None, timeout=None: Completed(0, "ok", ""),
     )
     run(home, ["run", "--task", tid])
     capsys.readouterr()
@@ -1564,7 +1595,7 @@ def test_reviewer_gets_distinct_review_spec_with_diff_and_contract(
     impl_spec.write_text("# Task\n\nImplement the feature.\n", encoding="utf-8")
     captured: dict[str, str] = {}
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1641,7 +1672,7 @@ def test_execute_spine_step_unbounded_round_cap_without_kwarg(
             stderr="",
         )
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if "diff" in argv:
             return Completed(0, "diff --git a/x b/x\n", "")
         if "rev-parse" in argv or "merge-base" in argv:
@@ -1791,7 +1822,7 @@ def test_local_check_reruns_after_same_head_fail(
 
         check_calls = {"n": 0}
 
-        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
             if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
                 return Completed(0, same_sha + "\n", "")
             if argv and argv[0] == "pytest":
@@ -1891,7 +1922,7 @@ def test_local_check_reruns_after_same_head_pass_then_fail(
 
         check_calls = {"n": 0}
 
-        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
             if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
                 return Completed(0, same_sha + "\n", "")
             if argv and argv[0] == "pytest":
@@ -1969,7 +2000,7 @@ def test_local_check_reruns_after_pr_rejection_with_new_head(
         # local_check_pass=nein with prior steps ja -> next spine step is local_check_pass.
         check_calls = {"n": 0}
 
-        def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+        def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
             if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
                 return Completed(0, new_sha + "\n", "")
             if argv and argv[0] == "pytest":
@@ -2025,7 +2056,7 @@ def test_chain_snapshot_does_not_resolve_stale_head_across_fresh_scan(
         push_calls["n"] += 1
         return shas[min(i, len(shas) - 1)]
 
-    def fake_exec(argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_exec(argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
         if "diff" in argv:
@@ -2200,7 +2231,7 @@ def test_pr_gate_rejection_evidence_omits_status_preamble(
     def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         return pushed_sha
 
-    def fake_exec(argv: list[str], *, cwd: str | None = None) -> Completed:
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, pushed_sha + "\n", "")
         if "diff" in argv:

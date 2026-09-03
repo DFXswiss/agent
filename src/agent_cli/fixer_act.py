@@ -28,6 +28,7 @@ from .run_core import (
     complete_spine_agent_step,
     execute_spine_step,
     launch_agent_plan,
+    local_check_timeout_sec,
     prepare_spine_agent_step,
 )
 from .store import Store, StoreError
@@ -846,8 +847,8 @@ def _drive_parallel_pr_pair(
     """
     from . import main as main_mod
 
-    exec_argv = lambda argv, cwd=None: _runner_to_completed(  # noqa: E731
-        runner, argv, cwd=cwd
+    exec_argv = lambda argv, cwd=None, timeout=None: _runner_to_completed(  # noqa: E731
+        runner, argv, cwd=cwd, timeout=timeout
     )
 
     # Visible to the except handler so a committed rejection reset can still
@@ -1245,8 +1246,8 @@ def _drive_one(
                 runner=lane_runner,
                 round_cap=round_cap,
                 # cwd-aware like main._exec_argv so local_check_pass runs in worktree.
-                exec_argv=lambda argv, cwd=None: _runner_to_completed(
-                    runner, argv, cwd=cwd
+                exec_argv=lambda argv, cwd=None, timeout=None: _runner_to_completed(
+                    runner, argv, cwd=cwd, timeout=timeout
                 ),
             )
         except OSError as exc:
@@ -1276,20 +1277,22 @@ def _drive_one(
 
 
 def _runner_to_completed(
-    runner: Runner, argv: list[str], *, cwd: str | None = None
+    runner: Runner, argv: list[str], *, cwd: str | None = None,
+    timeout: float | None = None,
 ) -> Completed:
     """Run argv; honor cwd like main._exec_argv so checks use the worktree."""
     import subprocess
 
+    limit = 120 if timeout is None else timeout
     try:
         if cwd is not None:
             proc = subprocess.run(  # noqa: S603
-                argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=120
+                argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=limit
             )
             return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
         return runner(argv)
     except subprocess.TimeoutExpired as exc:
-        return Completed(124, "", str(exc) or "git/gh call timed out after 120s")
+        return Completed(124, "", str(exc) or f"git/gh call timed out after {limit}s")
     except OSError as exc:
         return Completed(127, "", str(exc))
 

@@ -2550,16 +2550,19 @@ def cmd_close_step(args: list[str]) -> None:
     cmd_checklist(set_args)
 
 
-def _exec_argv(argv: list[str], *, cwd: str | None = None) -> "Completed":
+def _exec_argv(
+    argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+) -> "Completed":
     from .runtime import Completed
     import subprocess
 
+    limit = 120 if timeout is None else timeout
     try:
         proc = subprocess.run(  # noqa: S603
-            argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=120
+            argv, cwd=cwd, capture_output=True, text=True, check=False, timeout=limit
         )
     except subprocess.TimeoutExpired as exc:
-        return Completed(124, "", str(exc) or "git/gh call timed out after 120s")
+        return Completed(124, "", str(exc) or f"git/gh call timed out after {limit}s")
     except OSError as exc:
         return Completed(127, "", str(exc))
     return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")

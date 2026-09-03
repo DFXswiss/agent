@@ -49,11 +49,29 @@ _REVIEW_OUTPUT_CONTRACT = (
 )
 
 
+def local_check_timeout_sec() -> float:
+    """Timeout (seconds) for the local_check_pass project test command.
+
+    Distinct from the fast git/gh probe timeout (120s default in
+    main._exec_argv / fixer_act._runner_to_completed) -- a project's test
+    suite can legitimately run much longer than a git probe. Configurable
+    via AGENT_CHECK_TIMEOUT_SEC; defaults to 1800s (consistent with
+    lane.VENDOR_RUN_TIMEOUT_SEC's "this can genuinely take a while" default).
+    """
+    raw = os.environ.get("AGENT_CHECK_TIMEOUT_SEC")
+    if raw is None or not raw.strip():
+        return 1800.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 1800.0
+
+
 class ExecArgv(Protocol):
     """Callable that runs argv and returns a Completed-like result."""
 
     def __call__(
-        self, argv: list[str], *, cwd: str | None = None
+        self, argv: list[str], *, cwd: str | None = None, timeout: float | None = None
     ) -> Completed: ...
 
 
@@ -1373,7 +1391,7 @@ def execute_spine_step(
                     reason="check command is empty",
                     message="check command is empty",
                 )
-            completed = exec_argv(argv, cwd=run_cwd)
+            completed = exec_argv(argv, cwd=run_cwd, timeout=local_check_timeout_sec())
             result = "pass" if completed.returncode == 0 else "fail"
             output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
             _check_record(

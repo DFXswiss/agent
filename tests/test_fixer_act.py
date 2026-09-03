@@ -190,7 +190,7 @@ def _advance_error_fix_to_pushed(
     capsys.readouterr()
     monkeypatch.setattr(
         "agent_cli.main._exec_argv",
-        lambda argv, *, cwd=None: Completed(0, "ok", ""),
+        lambda argv, *, cwd=None, timeout=None: Completed(0, "ok", ""),
     )
     run(home, ["run", "--task", tid])
     capsys.readouterr()
@@ -832,7 +832,7 @@ def test_fixer_threads_pushed_head_into_pr_gate(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -896,7 +896,7 @@ def test_fixer_strips_origin_prefix_from_pr_open_base(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -963,7 +963,7 @@ def test_fixer_defers_when_worktree_not_ready(
     before_state = _task_state(tmp_path, tid)
     called = {"n": 0}
 
-    def spy_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def spy_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         called["n"] += 1
         return Completed(0, "", "")
 
@@ -1003,7 +1003,7 @@ def test_fixer_local_check_exec_uses_worktree_cwd(
     assert worktree.is_dir()
     captured: dict[str, object] = {}
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         captured["cwd"] = cwd
         captured["argv"] = list(argv)
         return Completed(0, "ok\n", "")
@@ -1580,7 +1580,7 @@ def test_fixer_drives_error_fix_task_to_done(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1631,7 +1631,7 @@ def test_ensure_done_readiness_summary_fallback_uses_distinct_german(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1693,7 +1693,7 @@ def test_drive_one_reports_contributing_ok_blocked_instead_of_raising(
 
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1782,7 +1782,7 @@ def test_fixer_pr_gate_rejection_clears_head_for_new_push(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
         if "diff" in argv:
@@ -1843,7 +1843,7 @@ def test_fixer_backfills_pr_number_when_pr_open_already_done(
     pr_head = f"error-fix-{ERROR_ID[:8]}"
     activity_id = str(uuid.uuid4())
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -1925,7 +1925,7 @@ def test_fixer_backfills_task_ref_from_pr_open_real_base(
     pr_head = f"error-fix-{ERROR_ID[:8]}"
     activity_id = str(uuid.uuid4())
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -2028,7 +2028,7 @@ def test_fixer_backfills_task_ref_from_slash_containing_bare_base(
     pr_head = f"error-fix-{ERROR_ID[:8]}"
     activity_id = str(uuid.uuid4())
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -2117,7 +2117,7 @@ def test_fixer_heal_unconditionally_prepends_origin_even_for_origin_prefixed_bas
     pr_head = f"error-fix-{ERROR_ID[:8]}"
     activity_id = str(uuid.uuid4())
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -2232,7 +2232,7 @@ def test_fixer_persists_pr_number_and_queues_gate_findings(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
         if "diff" in argv:
@@ -2337,7 +2337,7 @@ def test_rejection_feedback_rewritten_into_spec(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
         if "diff" in argv:
@@ -2419,7 +2419,7 @@ def test_fixer_pr_gate_rejection_clears_head_before_next_step(
             returncode=0, stdout="STATUS: complete\nFINDINGS: none\n", stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, shas[min(push_calls["n"], len(shas) - 1)] + "\n", "")
         if "diff" in argv:
@@ -2505,7 +2505,7 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if "diff" in argv:
             if "--name-only" in argv:
                 return Completed(0, "src/foo.py\n", "")
@@ -3007,7 +3007,7 @@ def test_empty_review_diff_fails_task_and_stops_reselection(
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
     _finish_implementer(tmp_path, tid, capsys)
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         # Base ref resolves and merge-base returns a real sha (probes_ok stays
         # True) but every diff call comes back genuinely empty -- a confirmed
         # empty diff, not a probe failure.
@@ -3135,7 +3135,7 @@ def test_drive_error_fix_tasks_runs_pr_dimensions_concurrently(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, pushed_sha + "\n", "")
         if "diff" in argv:
@@ -3204,7 +3204,7 @@ def _patch_pr_pair_order(
 
 
 def _pr_pair_rtc(pushed_sha: str):  # type: ignore[no-untyped-def]
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, pushed_sha + "\n", "")
         if "diff" in argv:
@@ -3633,7 +3633,7 @@ def test_parallel_pr_pair_launch_oserror_releases_sibling_agent(
             stderr="",
         )
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, pushed_sha + "\n", "")
         if "diff" in argv:
@@ -3871,7 +3871,7 @@ def test_parallel_pr_pair_prepare_exception_releases_first_agent(
             raise RuntimeError("boom during second prepare")
         return real_prepare(store, tid_, step, **kwargs)
 
-    def fake_rtc(runner, argv, *, cwd=None):  # type: ignore[no-untyped-def]
+    def fake_rtc(runner, argv, *, cwd=None, timeout=None):  # type: ignore[no-untyped-def]
         if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
             return Completed(0, pushed_sha + "\n", "")
         if "diff" in argv:
