@@ -170,6 +170,32 @@ def test_redact_and_fingerprint() -> None:
     assert fp.endswith("|prod")
 
 
+def test_fingerprint_strips_service_and_environment_whitespace() -> None:
+    """Producer must normalize service/environment the same way consumers strip.
+
+    validate_conclusion compares via _nonempty_str (whole-string .strip()) against
+    the stored fingerprint. Leading/trailing whitespace in service or environment
+    at construction time must not create a stored value that then mismatches.
+    """
+    padded = fingerprint(
+        service=" api ",
+        error_class="TimeoutError",
+        stack_sig="abc123def4567890",
+        environment=" prod ",
+    )
+    clean = fingerprint(
+        service="api",
+        error_class="TimeoutError",
+        stack_sig="abc123def4567890",
+        environment="prod",
+    )
+    assert padded == clean
+    assert padded == "api|TimeoutError|abc123def4567890|prod"
+    # Consumer-side strip of a whitespace-padded fingerprint input matches.
+    assert padded == clean.strip()
+    assert " api ".strip() + "|TimeoutError|abc123def4567890|" + " prod ".strip() == padded
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
