@@ -230,6 +230,7 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
     lock_key = "github-scan:" + store_a.device_id()
     entered = threading.Event()
     release = threading.Event()
+    attempting = threading.Event()
     second_entered = threading.Event()
 
     def holder() -> None:
@@ -242,11 +243,16 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
     assert entered.wait(timeout=5)
 
     def waiter() -> None:
+        attempting.set()
         with store_b.exclusive(lock_key):
             second_entered.set()
 
     t2 = threading.Thread(target=waiter)
     t2.start()
+    # Confirm the waiter has actually reached the lock call before asserting
+    # it hasn't entered -- otherwise a slow-to-schedule thread could make the
+    # negative assertion pass vacuously even with a no-op advisory lock.
+    assert attempting.wait(timeout=5)
     # While the first holder is still inside, the second must not enter.
     assert not second_entered.wait(timeout=0.3)
     release.set()

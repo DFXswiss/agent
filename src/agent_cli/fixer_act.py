@@ -144,7 +144,7 @@ def write_error_fix_spec(
         f"- Patch only what the brief requires.\n"
         f"- Do not commit secrets, credentials, or raw production log lines.\n"
         f"- Follow the target repository CONTRIBUTING.\n"
-        f"- Do not push, open a PR, or run git/gh commands yourself -- the driver handles that after your patch.\n\n"
+        f"- Do not push or open a PR yourself -- the driver runs push and pr.open after your patch. Commit your changes locally; do not run gh.\n\n"
         f"# Verification\n\n"
         f"- Run the repository's usual local check (typically `pytest -q`).\n"
         f"- Confirm the failure mode described by the brief is addressed.\n\n"
