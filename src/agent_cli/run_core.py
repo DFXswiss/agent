@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import os
 import shlex
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .chain import NO_AUTO_CLOSE, Step, close_allowed, is_error_fix_originated, next_steps
 from .git_act import _SHA_RE
@@ -26,6 +25,7 @@ from .lane import (
     launch,
     Runner as LaneRunner,
 )
+from .runtime import Completed
 from .store import Store
 
 DEFAULT_ROUND_CAP = 5
@@ -47,7 +47,14 @@ _REVIEW_OUTPUT_CONTRACT = (
     "NOT-VERIFIABLE: [...]\n"
     "GAPS: [...]"
 )
-ExecArgv = Callable[..., Any]
+
+
+class ExecArgv(Protocol):
+    """Callable that runs argv and returns a Completed-like result."""
+
+    def __call__(
+        self, argv: list[str], *, cwd: str | None = None
+    ) -> Completed: ...
 
 
 def _fence_marker(text: str) -> str:
