@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -7,9 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import agent_cli.lane as lane_mod
 from agent_cli.lane import (
     GROK_STRIP_ENV,
     LaneResult,
+    _default_runner,
     _run_in_tmux,
     codex_argv,
     count_findings,
@@ -676,6 +680,91 @@ def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) ->
     result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
     assert result.returncode == 3
     assert any("kill-session" in c for c in calls)
+
+
+def test_default_runner_timeout_returns_124_and_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hung vendor CLI must surface returncode 124 rather than block forever.
+
+    Round 51: _default_runner had no timeout=, so a stalled vendor process held
+    drive_error_fix_tasks' store.exclusive() (process-wide RLock) indefinitely.
+    Mirror that hold with a local RLock around the runner call and assert a
+    subsequent acquire still succeeds after the timeout path returns.
+    """
+    monkeypatch.setattr(lane_mod, "VENDOR_RUN_TIMEOUT_SEC", 0.3)
+    lock = threading.RLock()
+    t0 = time.monotonic()
+    with lock:
+        result = _default_runner(["sleep", "30"], None)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"timeout path took too long: {elapsed:.2f}s"
+    assert result.returncode == 124
+    # parse_status's external-timeout convention.
+    assert parse_status(result.stdout or "", result.returncode) == "timeout"
+
+    acquired = {"ok": False}
+
+    def try_acquire() -> None:
+        if lock.acquire(timeout=1.0):
+            acquired["ok"] = True
+            lock.release()
+
+    thread = threading.Thread(target=try_acquire)
+    thread.start()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert acquired["ok"], "lock held around runner must be released after timeout"
+
+
+def test_run_in_tmux_timeout_kills_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unbounded pane_dead polling must stop at VENDOR_RUN_TIMEOUT_SEC."""
+    monkeypatch.setattr(lane_mod, "VENDOR_RUN_TIMEOUT_SEC", 0.4)
+    ticks = {"n": 0}
+
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            ticks["n"] += 1
+            # Never becomes dead — deadline must fire.
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "kill-session" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    t0 = time.monotonic()
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"tmux timeout path took too long: {elapsed:.2f}s"
+    assert result.returncode == 124
+    assert any("kill-session" in c for c in calls)
+    assert ticks["n"] >= 1
+
+
+def test_launch_direct_runner_timeout_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """launch(tmux=False) must return LaneResult(status='timeout') on deadline."""
+    monkeypatch.setattr(lane_mod, "VENDOR_RUN_TIMEOUT_SEC", 0.3)
+    monkeypatch.setattr(
+        "agent_cli.lane.grok_argv",
+        lambda **kwargs: ["sleep", "30"],
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    t0 = time.monotonic()
+    result = launch(
+        role="reviewer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        tmux=False,
+    )
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"launch timeout path took too long: {elapsed:.2f}s"
+    assert result.status == "timeout"
+    assert result.returncode == 124
 
 
 def test_cli_lane_run_prints_vendor_stdout(

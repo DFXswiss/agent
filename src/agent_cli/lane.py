@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import resource
+import signal
 import subprocess
 import tempfile
 import time
@@ -19,6 +20,9 @@ WRITE_ROLES = frozenset({"implementer"})
 GROK_LANE_MODEL = "grok-4.5"
 CODEX_LANE_MODEL = "gpt-5.6-sol"
 NPROC_CAP = 800
+# Wall-clock cap for a single vendor CLI invocation (direct or tmux-held).
+# Large codex-pr diffs have been observed near 1500–1800s; keep headroom.
+VENDOR_RUN_TIMEOUT_SEC = 1800
 GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
 
@@ -245,20 +249,50 @@ def parse_status(output: str, returncode: int) -> str:
     return matched if matched is not None else "partial"
 
 
-def _default_runner(argv: list[str], stdin_text: str | None) -> subprocess.CompletedProcess[str]:
+def _default_runner(
+    argv: list[str],
+    stdin_text: str | None,
+    *,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     def _preexec() -> None:
+        # Own process group so a timeout can SIGKILL the whole tree.
+        os.setsid()
         try:
             resource.setrlimit(resource.RLIMIT_NPROC, (NPROC_CAP, NPROC_CAP))
         except (ValueError, OSError, AttributeError):
             raise SystemExit("nproc cap not settable") from None
 
-    return subprocess.run(
+    limit = VENDOR_RUN_TIMEOUT_SEC if timeout is None else timeout
+    proc = subprocess.Popen(  # noqa: S603
         argv,
-        input=stdin_text,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
         preexec_fn=_preexec,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_text, timeout=limit)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        try:
+            stdout, stderr = proc.communicate()
+        except OSError:
+            stdout, stderr = "", ""
+        # returncode 124 matches parse_status's external-timeout convention.
+        return subprocess.CompletedProcess(argv, 124, stdout or "", stderr or "")
+    return subprocess.CompletedProcess(
+        argv,
+        proc.returncode if proc.returncode is not None else 1,
+        stdout or "",
+        stderr or "",
     )
 
 
@@ -272,8 +306,10 @@ def _run_in_tmux(
     name: str,
     cwd: str,
     stdin_text: str | None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Hold the vendor process in tmux, wait for the pane to die, capture output."""
+    limit = VENDOR_RUN_TIMEOUT_SEC if timeout is None else timeout
     wrap = tmux_wrap_argv(inner, name=name, cwd=cwd)
     created = _tmux_call(wrap)
     if created.returncode != 0:
@@ -292,6 +328,7 @@ def _run_in_tmux(
         if eof.returncode != 0:
             _tmux_call(["tmux", "kill-session", "-t", name])
             return eof
+    deadline = time.monotonic() + limit
     while True:
         dead = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead}"])
         if dead.returncode != 0:
@@ -301,6 +338,11 @@ def _run_in_tmux(
             )
         if dead.stdout.strip() == "1":
             break
+        if time.monotonic() >= deadline:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return subprocess.CompletedProcess(
+                wrap, 124, "", "vendor lane timed out"
+            )
         time.sleep(0.2)
     status = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead_status}"])
     returncode = 1
