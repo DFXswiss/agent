@@ -37,6 +37,10 @@ def _runner(
     baseline_stdout: str = _EMPTY_KINDS,
     baseline_rc: int = 0,
     has_rc: int = 1,
+    list_panes_rc: int = 0,
+    list_panes_stdout: str = "1234\n",
+    ps_rc: int = 0,
+    ps_stdout: str = "1234 1 00:00:01\n",
 ):
     """Fake runner recording every argv, answering the commands finalize issues.
 
@@ -54,6 +58,10 @@ def _runner(
             return Completed(0, "", "")
         if "worktree" in joined:
             return Completed(0, "", "")
+        if "list-panes" in joined:
+            return Completed(list_panes_rc, list_panes_stdout, "")
+        if "-axo" in joined:
+            return Completed(ps_rc, ps_stdout, "")
         raise AssertionError(argv)
 
     return run
@@ -237,6 +245,8 @@ def _finalize(
     *,
     exit_code_of: Callable[[str], int | None],
     transcript_of: Callable[[str], str],
+    now_epoch: int = 1767225600,
+    transcript_size_of: Callable[[str], int | None] = lambda jid: 100,
 ) -> tuple[list[str], int]:
     return finalize_running(
         store,
@@ -247,6 +257,8 @@ def _finalize(
         login="davidleomay",
         exit_code_of=exit_code_of,
         transcript_of=transcript_of,
+        now_epoch=now_epoch,
+        transcript_size_of=transcript_size_of,
     )
 
 
@@ -626,3 +638,355 @@ def test_judge_marker_follows_contract_followed() -> None:
 def test_judge_unrecognised_kind_yields_unknown() -> None:
     # An unrecognised kind yields "unknown".
     assert judge(outcome="success", kind="weird", kinds={"comment"}, contract_followed=True) == ("success", "unknown")
+
+
+# ---------------------------------------------------------------- finalize_running budget/stall tests
+
+
+def test_overdue_worker_is_killed_and_recorded_timeout(tmp_path: Path) -> None:
+    # Overdue worker (no exit, live session) must be killed and recorded outcome=timeout, state=failed.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {"timeout_minutes": 1, "stall_minutes": 10}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767229200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "failed"
+        assert saved["outcome"] == "timeout"
+        assert saved["work_performed"] == "n_a"
+        assert any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_worker_inside_budget_but_stalled_is_killed(tmp_path: Path) -> None:
+    # Live worker inside timeout but stalled (no transcript/CPU growth) must be killed with outcome=stalled.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+                "progress_check_epoch": 1767225600,
+                "progress_transcript_size": 100,
+                "progress_cpu_seconds": 1,
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 1}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0, list_panes_stdout="1234\n", ps_stdout="1234 1 00:00:01\n"),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767229200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "failed"
+        assert saved["outcome"] == "stalled"
+        assert any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_baseline_measurement_is_written_and_row_left_running(tmp_path: Path) -> None:
+    # First stall check ("baseline") writes progress_* and leaves row running (skipped).
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0, list_panes_stdout="1234\n", ps_stdout="1234 1 00:00:05\n"),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767226200,
+            transcript_size_of=lambda jid: 123,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "running"
+        assert saved["progress_check_epoch"] == 1767226200
+        assert saved["progress_transcript_size"] == 123
+        assert saved["progress_cpu_seconds"] == 5
+        assert not any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_progress_measurement_updates_stored_values(tmp_path: Path) -> None:
+    # Progress verdict updates progress_* fields and leaves row running.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+                "progress_check_epoch": 1767225600,
+                "progress_transcript_size": 100,
+                "progress_cpu_seconds": 1,
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0, list_panes_stdout="1234\n", ps_stdout="1234 1 00:00:10\n"),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767229200,
+            transcript_size_of=lambda jid: 200,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "running"
+        assert saved["progress_check_epoch"] == 1767229200
+        assert saved["progress_transcript_size"] == 200
+        assert saved["progress_cpu_seconds"] == 10
+    finally:
+        store.close()
+
+
+def test_wait_verdict_leaves_progress_fields_unchanged(tmp_path: Path) -> None:
+    # Wait verdict (inside stall window) leaves progress_* untouched and issues no kill.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+                "progress_check_epoch": 1767225600,
+                "progress_transcript_size": 100,
+                "progress_cpu_seconds": 1,
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 60}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767226200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["progress_check_epoch"] == 1767225600
+        assert saved["progress_transcript_size"] == 100
+        assert saved["progress_cpu_seconds"] == 1
+        assert not any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+def test_unmeasurable_cpu_skips_job_without_killing(tmp_path: Path) -> None:
+    # An unmeasurable CPU must skip the job, not be read as zero. The prior
+    # measurements below are chosen so that a zero would satisfy the stall test
+    # (window elapsed, transcript flat, cpu not above the last value) and get the
+    # worker killed — so this fails if None is ever treated as 0.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+                "progress_check_epoch": 1767225600,
+                "progress_transcript_size": 100,
+                "progress_cpu_seconds": 5,
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0, list_panes_stdout="9999\n", ps_stdout="1234 1 00:00:01\n"),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767226200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "running"
+        assert not any("kill-session" in " ".join(argv) for argv in calls)
+        # Nothing was written: the stored measurement is untouched.
+        assert saved["progress_cpu_seconds"] == 5
+        assert saved["progress_check_epoch"] == 1767225600
+    finally:
+        store.close()
+
+
+def test_policy_without_budgets_skips_job(tmp_path: Path) -> None:
+    # No timeout/stall budgets for job_type -> job skipped and left running.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        policy = {"skills": {"pr-review": {}}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            policy=policy,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767226200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "running"
+    finally:
+        store.close()

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import outputs
+from . import watchdog
 from . import workspace
 from .runtime import Completed
 from .store import Store, utcnow
@@ -22,6 +23,22 @@ DONE_KINDS: tuple[str, ...] = ("pr-reviewed", "pr-mergeable", "marker")
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
+
+
+def _budget(policy: Any, job_type: str, key: str) -> int | None:
+    """Return a non-negative int budget or None if missing or invalid (bool rejected)."""
+    if not isinstance(policy, dict):
+        return None
+    skills = policy.get("skills")
+    if not isinstance(skills, dict):
+        return None
+    skill = skills.get(job_type)
+    if not isinstance(skill, dict):
+        return None
+    raw = skill.get(key)
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+        return raw
+    return None
 
 
 def done_kind(policy: Any, job_type: str) -> str:
@@ -123,6 +140,8 @@ def finalize_running(
     login: str,
     exit_code_of: Callable[[str], int | None],
     transcript_of: Callable[[str], str],
+    now_epoch: int,
+    transcript_size_of: Callable[[str], int | None],
 ) -> tuple[list[str], int]:
     """Finalize running jobs whose workers have exited or whose tmux session is gone.
 
@@ -162,8 +181,6 @@ def finalize_running(
             skipped += 1
             continue
 
-        # Timeout and stall detection are not part of this change. Until they
-        # land a hung worker stays "running" rather than being wrongly failed.
         exit_code = exit_code_of(job_id)
         if exit_code is not None:
             outcome = "success" if exit_code == 0 else "agent_failed"
@@ -171,10 +188,72 @@ def finalize_running(
             # No exit file yet: check whether the tmux session is still alive.
             completed = runner(workspace.has_session_argv(socket, session))
             if completed.returncode == 0:
-                # Worker is still running; skip for now.
-                skipped += 1
-                continue
-            outcome = "crashed"
+                # Session alive and no exit code: apply timeout/stall budgets.
+                timeout_minutes = _budget(policy, job_type, "timeout_minutes")
+                stall_minutes = _budget(policy, job_type, "stall_minutes")
+                if timeout_minutes is None or stall_minutes is None:
+                    skipped += 1
+                    continue
+                overdue = watchdog.is_overdue(started, now_epoch, timeout_minutes)
+                if overdue is None:
+                    skipped += 1
+                    continue
+                if overdue:
+                    runner(workspace.kill_session_argv(socket, session))
+                    outcome = "timeout"
+                else:
+                    pane = runner(watchdog.pane_pids_argv(socket, session))
+                    if pane.returncode != 0:
+                        skipped += 1
+                        continue
+                    pane_pids = watchdog.parse_pane_pids(pane.stdout)
+                    snap = runner(watchdog.ps_snapshot_argv())
+                    if snap.returncode != 0:
+                        skipped += 1
+                        continue
+                    cpu = watchdog.tree_cpu_seconds(snap.stdout, pane_pids)
+                    if cpu is None:
+                        skipped += 1
+                        continue
+                    size = transcript_size_of(job_id)
+                    if size is None:
+                        skipped += 1
+                        continue
+                    verdict = watchdog.stall_verdict(
+                        now_epoch=now_epoch,
+                        transcript_size=size,
+                        cpu=cpu,
+                        last_check=row.get("progress_check_epoch"),
+                        last_size=row.get("progress_transcript_size"),
+                        last_cpu=row.get("progress_cpu_seconds"),
+                        stall_minutes=stall_minutes,
+                    )
+                    if verdict == "wait":
+                        skipped += 1
+                        continue
+                    if verdict in ("baseline", "progress"):
+                        updated = _strip(row)
+                        updated.update(
+                            {
+                                "progress_check_epoch": now_epoch,
+                                "progress_transcript_size": size,
+                                "progress_cpu_seconds": cpu,
+                            }
+                        )
+                        # The write is load-bearing: without it the baseline never
+                        # advances and a genuinely stuck worker looks fresh on
+                        # every pass, so it could never be judged stalled.
+                        try:
+                            store.write("job", "update", job_id, updated)
+                        except Exception:
+                            pass
+                        skipped += 1
+                        continue
+                    # verdict == "stalled"
+                    runner(workspace.kill_session_argv(socket, session))
+                    outcome = "stalled"
+            else:
+                outcome = "crashed"
 
         kind = done_kind(policy, job_type)
         contract_followed = transcript_has_marker(transcript_of(job_id), ref)
