@@ -3905,6 +3905,8 @@ def test_parallel_pr_pair_rejection_feedback_survives_sibling_unavailable(
             implement_spec_file=implement_spec_file,
             cwd=cwd,
             exec_argv=exec_argv,
+            base_ref=base_ref,
+            vendor=vendor,
         )
 
     monkeypatch.setattr(
@@ -4777,7 +4779,7 @@ def test_parallel_pr_pair_reject_then_sibling_oserror_still_round_starts(
     )
 
 
-def test_drive_one_preflight_fails_when_current_round_at_cap(
+def test_drive_one_preflight_fails_when_current_round_exceeds_cap(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fresh pickup must fail-closed when current_round is already past the cap."""
