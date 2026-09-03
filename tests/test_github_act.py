@@ -242,16 +242,29 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
     t.start()
     assert entered.wait(timeout=5)
 
+    real_execute = store_b.conn.execute
+
+    def _execute_and_signal(query: str, *args: Any, **kwargs: Any) -> Any:
+        # Fire exactly when the advisory-lock SQL is issued, not one
+        # statement earlier -- a coarser signal (set before entering
+        # exclusive()) would leave a window where a descheduled waiter
+        # thread could make the negative assertion below pass vacuously
+        # even with a broken/no-op advisory lock.
+        if query.strip().startswith("SELECT pg_advisory_lock"):
+            attempting.set()
+        return real_execute(query, *args, **kwargs)
+
+    store_b.conn.execute = _execute_and_signal  # type: ignore[method-assign]
+
     def waiter() -> None:
-        attempting.set()
         with store_b.exclusive(lock_key):
             second_entered.set()
 
     t2 = threading.Thread(target=waiter)
     t2.start()
-    # Confirm the waiter has actually reached the lock call before asserting
-    # it hasn't entered -- otherwise a slow-to-schedule thread could make the
-    # negative assertion pass vacuously even with a no-op advisory lock.
+    # Confirm the waiter has actually issued the advisory-lock call before
+    # asserting it hasn't entered -- otherwise a slow-to-schedule thread
+    # could make the negative assertion pass vacuously.
     assert attempting.wait(timeout=5)
     # While the first holder is still inside, the second must not enter.
     assert not second_entered.wait(timeout=0.3)
