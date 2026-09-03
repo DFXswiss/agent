@@ -1263,6 +1263,82 @@ def _advance_to_pushed(
     assert _checklist(home, tid)["local_check_pass"] == "ja"
 
 
+def test_pushed_fails_closed_when_head_advances_without_fresh_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A commit landing between local_check_pass closing (for commit A) and a
+    fresh scan reaching "pushed" must not be pushed without a fresh check for
+    it -- must fail closed and reopen local_check_pass instead."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    sha_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    current = {"sha": sha_a}
+
+    def fake_exec(argv, *, cwd=None, timeout=None):
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, current["sha"] + "\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    push_calls = {"n": 0}
+
+    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None):
+        push_calls["n"] += 1
+        return current["sha"]
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+
+    store = _store(tmp_path)
+    try:
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.kind == "closed" and outcome.key == "local_check_pass"
+        assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+
+        # Simulate commit B landing in the worktree without re-running the
+        # local check for it (the cross-scan gap this finding targets).
+        current["sha"] = sha_b
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.key == "pushed"
+        assert outcome.kind != "closed", (
+            "must not push commit B without a fresh local check for it"
+        )
+        assert push_calls["n"] == 0, "push_branch must not run without a fresh check"
+        assert _checklist(tmp_path, tid)["pushed"] != "ja"
+        assert _checklist(tmp_path, tid)["local_check_pass"] != "ja", (
+            "stale local_check_pass must be reopened so the next scan re-checks B"
+        )
+    finally:
+        store.close()
+
+
 def test_run_pushed_calls_push_branch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

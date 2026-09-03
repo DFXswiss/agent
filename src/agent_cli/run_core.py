@@ -1275,6 +1275,73 @@ def execute_spine_step(
             )
         # error_id non-empty here implies is_error_fix_originated (gated above).
         expected_branch = f"error-fix-{error_id[:8]}" if error_id else None
+
+        # Fail-closed SHA-freshness gate: local_check_pass can be 'ja' in the
+        # checklist for a DIFFERENT, older commit than what's actually in the
+        # worktree right now -- e.g. a new commit landed between
+        # local_check_pass closing (in an earlier scan/process) and this scan
+        # reaching "pushed" (process restart, crash, or any other cross-
+        # invocation gap; fixer_act._drive_one only threads head in-process
+        # within a single scan). Re-read HEAD now and, when it resolves to a
+        # real sha, require a check row recorded for that EXACT sha before
+        # pushing it -- never push on a stale checklist flag alone.
+        current_head_completed = exec_argv(["git", "rev-parse", "HEAD"], cwd=run_cwd)
+        current_head_sha = str(
+            getattr(current_head_completed, "stdout", "") or ""
+        ).strip().lower()
+        if (
+            int(getattr(current_head_completed, "returncode", 1)) != 0
+            or not _SHA_RE.fullmatch(current_head_sha)
+        ):
+            current_head_sha = ""
+        if current_head_sha:
+            latest_local_check: dict[str, Any] | None = None
+            for c in snap.get("local_checks") or []:
+                if not isinstance(c, dict):
+                    continue
+                if str(c.get("name") or "") != "local":
+                    continue
+                latest_local_check = c  # oldest -> newest; last one wins
+            checked_sha = ""
+            checked_result = ""
+            if latest_local_check is not None:
+                checked_sha = str(
+                    latest_local_check.get("head_sha") or ""
+                ).strip().lower()
+                checked_result = str(latest_local_check.get("result") or "")
+            # An UNBOUND latest check (head_sha empty -- environment could not
+            # resolve a SHA at check time) carries no freshness signal to
+            # compare against; only enforce the gate when the latest check IS
+            # bound to a concrete sha that turns out to differ (or fail).
+            if checked_sha and (
+                checked_sha != current_head_sha
+                or checked_result not in ("pass", "skip")
+            ):
+                _reset_keys(
+                    store,
+                    tid,
+                    ("local_check_pass",),
+                    evidence=(
+                        f"stale: HEAD {current_head_sha} last check was for "
+                        f"{checked_sha} (re-checked before push)"
+                    ),
+                )
+                return RunOutcome(
+                    kind="not_closable",
+                    key=step.key,
+                    step=step,
+                    reason=(
+                        f"no fresh local check for current HEAD {current_head_sha} "
+                        f"(last check was for {checked_sha}); local_check_pass "
+                        "reopened for a fresh check"
+                    ),
+                    message=(
+                        f"no fresh local check for current HEAD {current_head_sha} "
+                        f"(last check was for {checked_sha}); local_check_pass "
+                        "reopened for a fresh check"
+                    ),
+                )
+
         try:
             sha = push_branch(
                 cwd=run_cwd,
@@ -1290,18 +1357,21 @@ def execute_spine_step(
                 reason=str(exc),
                 message=str(exc),
             )
-        if head is not None:
-            want = head.lower()
-            if want != sha and not (
-                7 <= len(want) < len(sha) and sha.startswith(want)
-            ):
-                return RunOutcome(
-                    kind="failed",
-                    key=step.key,
-                    step=step,
-                    reason=f"--head {head} does not match pushed sha {sha}",
-                    message=f"--head {head} does not match pushed sha {sha}",
-                )
+        # Unconditional cross-check (not only when the caller happens to pass
+        # --head): prefer the freshly re-read, freshness-verified current
+        # HEAD; fall back to the caller-supplied head only when HEAD could
+        # not be resolved above (current_head_sha == "").
+        want = current_head_sha or (head.lower() if head else "")
+        if want and want != sha and not (
+            7 <= len(want) < len(sha) and sha.startswith(want)
+        ):
+            return RunOutcome(
+                kind="failed",
+                key=step.key,
+                step=step,
+                reason=f"expected head {want} does not match pushed sha {sha}",
+                message=f"expected head {want} does not match pushed sha {sha}",
+            )
         head = sha
         snap = main_mod._chain_snapshot(store, tid, extra_head=head)
 
