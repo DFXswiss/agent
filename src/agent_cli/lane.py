@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import resource
 import signal
 import subprocess
 import tempfile
@@ -19,7 +18,6 @@ LANE_VENDORS = ("grok", "codex")
 WRITE_ROLES = frozenset({"implementer"})
 GROK_LANE_MODEL = "grok-4.5"
 CODEX_LANE_MODEL = "gpt-5.6-sol"
-NPROC_CAP = 800
 # Wall-clock cap for a single vendor CLI invocation (direct or tmux-held).
 # Large codex-pr diffs have been observed near 1500–1800s; keep headroom.
 VENDOR_RUN_TIMEOUT_SEC = 1800
@@ -255,22 +253,16 @@ def _default_runner(
     *,
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    def _preexec() -> None:
-        # Own process group so a timeout can SIGKILL the whole tree.
-        os.setsid()
-        try:
-            resource.setrlimit(resource.RLIMIT_NPROC, (NPROC_CAP, NPROC_CAP))
-        except (ValueError, OSError, AttributeError):
-            raise SystemExit("nproc cap not settable") from None
-
     limit = VENDOR_RUN_TIMEOUT_SEC if timeout is None else timeout
+    # start_new_session=True ≡ setsid without post-fork Python (preexec_fn is
+    # unsafe in a multithreaded parent). RLIMIT_NPROC was only defense-in-depth.
     proc = subprocess.Popen(  # noqa: S603
         argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        preexec_fn=_preexec,
+        start_new_session=True,
     )
     try:
         stdout, stderr = proc.communicate(input=stdin_text, timeout=limit)
@@ -283,8 +275,8 @@ def _default_runner(
             except OSError:
                 pass
         try:
-            stdout, stderr = proc.communicate()
-        except OSError:
+            stdout, stderr = proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
             stdout, stderr = "", ""
         # returncode 124 matches parse_status's external-timeout convention.
         return subprocess.CompletedProcess(argv, 124, stdout or "", stderr or "")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import threading
 import time
 from dataclasses import dataclass
@@ -715,6 +716,25 @@ def test_default_runner_timeout_returns_124_and_releases_lock(
     thread.join(timeout=2.0)
     assert not thread.is_alive()
     assert acquired["ok"], "lock held around runner must be released after timeout"
+
+
+def test_default_runner_concurrent_workers_no_deadlock() -> None:
+    """Real Popen from concurrent threads must not hang (no preexec_fn hazard).
+
+    Round 52: preexec_fn after fork in a multithreaded parent can deadlock on
+    locks held by sibling threads. Exercise the real _default_runner from two
+    ThreadPoolExecutor workers with a genuine subprocess.
+    """
+    t0 = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(_default_runner, ["true"], None),
+            pool.submit(_default_runner, ["true"], None),
+        ]
+        results = [f.result(timeout=10) for f in futures]
+    elapsed = time.monotonic() - t0
+    assert elapsed < 10.0, f"concurrent runners took too long: {elapsed:.2f}s"
+    assert all(r.returncode == 0 for r in results)
 
 
 def test_run_in_tmux_timeout_kills_session(monkeypatch: pytest.MonkeyPatch) -> None:
