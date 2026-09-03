@@ -358,6 +358,47 @@ def _pr_open_recorded_number(
     return None
 
 
+def _pr_open_error_row_with_number(
+    store: Store, *, head: str, repo: str
+) -> dict[str, Any] | None:
+    """Return the error-status pr.open row for head/repo carrying a recorded
+    result.number, or None if no such row exists.
+
+    Used to re-pend a specific row (rather than inserting a fresh one) when
+    an earlier gh pr create succeeded but a later step (e.g. a permanent gh
+    pr view auth failure) left the row in error status. Re-pending preserves
+    has_prior_number for github_act.py's resume path, which is what stops a
+    spurious "not found" from re-creating a duplicate PR.
+    """
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("type") != "pr.open":
+            continue
+        if row.get("execution_status") != "error":
+            continue
+        payload = row.get("payload")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("head") != head
+            or payload.get("repo") != repo
+        ):
+            continue
+        result = row.get("result")
+        if not isinstance(result, dict):
+            continue
+        number = result.get("number")
+        if isinstance(number, bool):
+            continue
+        if isinstance(number, int) and number > 0:
+            return row
+        if isinstance(number, str) and number.isdigit() and int(number) > 0:
+            return row
+        continue
+    return None
+
+
 def insert_pr_open_and_scan(
     store: Store,
     *,
@@ -1100,34 +1141,55 @@ def _drive_one(
 
                     scan_github(store, runner)
                 else:
-                    seen = _error_seen(store, session_id, error_id)
-                    seen_payload = (
-                        seen.get("payload")
-                        if isinstance(seen.get("payload"), dict)
-                        else {}
+                    error_row = _pr_open_error_row_with_number(
+                        store, head=pr_head, repo=repo
                     )
-                    fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
-                    resolved_ref = _nonempty_str(task.get("ref"))
-                    pr_base = (
-                        (resolved_ref.removeprefix("origin/") or None)
-                        if resolved_ref is not None
-                        else None
-                    )
-                    pr_payload = template_pr_open_payload(
-                        session_id=session_id,
-                        repo=repo,
-                        error_id=error_id,
-                        brief=brief,
-                        fingerprint=fingerprint,
-                        title_suffix=str(task.get("title") or ""),
-                        base=pr_base,
-                    )
-                    insert_pr_open_and_scan(
-                        store,
-                        session_id=session_id,
-                        payload=pr_payload,
-                        runner=runner,
-                    )
+                    if error_row is not None:
+                        # A gh pr create succeeded earlier (result.number recorded) but
+                        # a LATER step left the row in error status (e.g. a permanent
+                        # gh pr view auth failure). scan_github only drains
+                        # store.pending_work(), so this row is invisible to it until
+                        # re-pended -- re-pending (instead of inserting a fresh row)
+                        # keeps has_prior_number=True on resume, avoiding a duplicate
+                        # gh pr create.
+                        from .github_act import _mark, scan_github
+
+                        _mark(
+                            store,
+                            error_row,
+                            status="pending",
+                            result=error_row.get("result"),
+                        )
+                        scan_github(store, runner)
+                    else:
+                        seen = _error_seen(store, session_id, error_id)
+                        seen_payload = (
+                            seen.get("payload")
+                            if isinstance(seen.get("payload"), dict)
+                            else {}
+                        )
+                        fingerprint = _nonempty_str(seen_payload.get("fingerprint")) or ""
+                        resolved_ref = _nonempty_str(task.get("ref"))
+                        pr_base = (
+                            (resolved_ref.removeprefix("origin/") or None)
+                            if resolved_ref is not None
+                            else None
+                        )
+                        pr_payload = template_pr_open_payload(
+                            session_id=session_id,
+                            repo=repo,
+                            error_id=error_id,
+                            brief=brief,
+                            fingerprint=fingerprint,
+                            title_suffix=str(task.get("title") or ""),
+                            base=pr_base,
+                        )
+                        insert_pr_open_and_scan(
+                            store,
+                            session_id=session_id,
+                            payload=pr_payload,
+                            runner=runner,
+                        )
                 # Persistent gh pr create failures are almost always external
                 # (auth/rate-limit/permissions). Leave the task untouched for the
                 # next scan rather than failing it; each cron/knock scan retries.
@@ -1138,10 +1200,7 @@ def _drive_one(
                     if recorded is not None:
                         number, status = recorded
                         if status == "pending":
-                            return (
-                                f"error-fix-work {tid} pr.open-pending "
-                                f"(base resolution retry needed)"
-                            )
+                            return f"error-fix-work {tid} pr.open-pending (retry needed)"
                         return (
                             f"error-fix-work {tid} pr.open-error "
                             f"(PR #{number} recorded; view/auth retry needed)"

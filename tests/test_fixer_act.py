@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -3137,7 +3138,7 @@ def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
     assert len(scan_calls) == 2
     assert insert_calls == []
     assert "pr.open-pending" in result
-    assert "base resolution retry needed" in result
+    assert "retry needed" in result
     assert "create failed" not in result
     assert "pr.open-error" not in result
 
@@ -3145,13 +3146,14 @@ def test_fixer_pending_pr_open_with_number_reports_base_resolution_retry(
 def test_fixer_error_pr_open_with_number_reports_view_auth_retry_needed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Error pr.open that still carries a recorded number must not say create failed.
+    """Error pr.open with a recorded number must re-pend and resume, not re-insert.
 
-    Mirrors the resume-path case where gh pr create succeeded (result.number
-    set) but a later gh pr view failed permanently (e.g. auth), so _mark left
-    execution_status=error while preserving result. The status message must
-    distinguish that from a genuine create failure so an operator does not
-    open a duplicate PR.
+    Seeds an error-status row where gh pr create already succeeded (result.number
+    set) but a later permanent gh pr view auth failure left the row in error.
+    The driver must re-pend that specific row and let real scan_github retry it
+    (preserving has_prior_number) rather than inserting a fresh row. A persistent
+    HTTP 403 on view keeps the row in error with the number recorded; the status
+    message must distinguish that from a genuine create failure.
     """
     tid = _bootstrap_error_fix_task(tmp_path, capsys)
     _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
@@ -3159,8 +3161,8 @@ def test_fixer_error_pr_open_with_number_reports_view_auth_retry_needed(
     pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
     head = f"error-fix-{ERROR_ID[:8]}"
     activity_id = str(uuid.uuid4())
-    scan_calls: list[tuple] = []
-    insert_calls: list[tuple] = []
+    view_calls = {"n": 0}
+    create_calls = {"n": 0}
 
     def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
         return pushed_sha
@@ -3178,22 +3180,26 @@ def test_fixer_error_pr_open_with_number_reports_view_auth_retry_needed(
             stderr="",
         )
 
-    def fake_scan_github(store, runner):  # type: ignore[no-untyped-def]
-        # Leave the row error with its recorded number — view/auth still
-        # needs a retry on a later scan.
-        scan_calls.append((store, runner))
-        return []
+    def unexpected_insert(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
+        raise AssertionError(
+            "insert_pr_open_and_scan must not be called when a recorded error row exists"
+        )
 
-    def fake_insert(store, *, session_id, payload, runner):  # type: ignore[no-untyped-def]
-        insert_calls.append((store, session_id, payload, runner))
-        return []
+    def denying_gh(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls["n"] += 1
+            return Completed(1, "", "HTTP 403: Forbidden")
+        if argv[:3] == ["gh", "pr", "create"]:
+            create_calls["n"] += 1
+            return Completed(1, "", "must not be called")
+        return Completed(0, "", "")
 
     monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
     monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
-    monkeypatch.setattr("agent_cli.github_act.scan_github", fake_scan_github)
-    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", fake_insert)
+    monkeypatch.setattr("agent_cli.fixer_act.insert_pr_open_and_scan", unexpected_insert)
     monkeypatch.setattr(
-        "agent_cli.fixer_act._runner_to_completed", _rtc_via_neutral_runner
+        "agent_cli.fixer_act._runner_to_completed",
+        _rtc_via_runner_with_sha(denying_gh),
     )
 
     store = _store(tmp_path)
@@ -3229,28 +3235,140 @@ def test_fixer_error_pr_open_with_number_reports_view_auth_retry_needed(
         result = _drive_until_stable(
             store,
             task,
-            runner=_neutral_runner,
+            runner=denying_gh,
             round_cap=5,
             lane_runner=None,
         )
     finally:
         store.close()
 
-    # Error-status rows are not mid-flight pending, so the driver takes the
-    # insert_pr_open_and_scan path (scan_github resume is pending-only). The
-    # faked insert leaves the seeded error row (and its number) untouched.
-    # _drive_until_stable calls _drive_one twice for a stable non-terminal
-    # message: once to observe it, once more to confirm it is unchanged --
-    # "view/auth retry needed" is not in its terminal-marker list
-    # (" done", "done)", "failed", "blocked", "unavailable"), unlike the
-    # old "create failed" wording which matched "failed" and stopped after
-    # one round.
-    assert len(insert_calls) == 2
-    assert scan_calls == []
+    assert create_calls["n"] == 0
+    assert view_calls["n"] >= 1
     assert "pr.open-error" in result
     assert "PR #100" in result
     assert "view/auth retry needed" in result
     assert "create failed" not in result
+
+
+def test_fixer_error_row_with_number_repends_and_resumes_without_duplicate_create(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding-1 regression: error row with recorded number must resume in place.
+
+    An error-status pr.open carrying result.number must be re-pended and resumed
+    via the real scan_github/_run_pr_open path, never silently replaced by a
+    fresh insert_pr_open_and_scan row that could spuriously re-create the PR.
+    """
+    tid = _bootstrap_error_fix_task(tmp_path, capsys)
+    _advance_error_fix_to_pushed(tmp_path, tid, capsys, monkeypatch)
+
+    pushed_sha = "abcdef1234567890abcdef1234567890abcdef12"
+    head = f"error-fix-{ERROR_ID[:8]}"
+    activity_id = str(uuid.uuid4())
+    create_calls = {"n": 0}
+
+    def fake_push(*, cwd: str, runner, expected_branch=None, expected_repo=None):  # type: ignore[no-untyped-def]
+        return pushed_sha
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        role = str(kwargs.get("role") or "pr-reviewer-quality")
+        vendor = str(kwargs.get("vendor") or "grok")
+        return LaneResult(
+            role=role,
+            vendor=vendor,
+            status="complete",
+            argv=[vendor],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    def resuming_gh(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "number": 100,
+                        "url": "https://github.com/org/app/pull/100",
+                        "state": "OPEN",
+                        "isDraft": True,
+                        "baseRefName": "develop",
+                    }
+                ),
+                "",
+            )
+        if argv[:3] == ["gh", "pr", "create"]:
+            create_calls["n"] += 1
+            return Completed(
+                0, "https://github.com/org/app/pull/999", ""
+            )
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    monkeypatch.setattr(
+        "agent_cli.fixer_act._runner_to_completed",
+        _rtc_via_runner_with_sha(resuming_gh),
+    )
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": task["session_id"],
+                "type": "pr.open",
+                "payload": {
+                    "head": head,
+                    "repo": "org/app",
+                    "title": "x",
+                    "body": "y",
+                },
+                "execution_status": "error",
+                "result": {
+                    "repo": "org/app",
+                    "number": 100,
+                    "url": "https://github.com/org/app/pull/100",
+                    "draft": True,
+                    "base": "develop",
+                },
+            },
+        )
+        task = store.row("task", tid)
+        assert task is not None
+        result = _drive_until_stable(
+            store,
+            task,
+            runner=resuming_gh,
+            round_cap=5,
+            lane_runner=None,
+        )
+
+        origin = store.device_id()
+        pr_rows = [
+            r
+            for r in store.rows("activity")
+            if r.get("_origin_device_id") == origin
+            and r.get("type") == "pr.open"
+            and isinstance(r.get("payload"), dict)
+            and r["payload"].get("head") == head
+            and r["payload"].get("repo") == "org/app"
+        ]
+        assert len(pr_rows) == 1
+        assert pr_rows[0]["id"] == activity_id
+        assert pr_rows[0]["execution_status"] == "done"
+        assert pr_rows[0]["result"]["number"] == 100
+    finally:
+        store.close()
+
+    assert create_calls["n"] == 0
+    assert "pr.open-error" not in result
 
 
 def test_drive_error_fix_tasks_isolates_per_task_crash(
