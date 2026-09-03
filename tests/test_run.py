@@ -1874,6 +1874,45 @@ def test_interpret_lane_retries_when_gaps_disclosed() -> None:
     assert findings is None
 
 
+def test_interpret_lane_rejects_bypass_via_early_gaps_none_then_real_gaps() -> None:
+    """An early template-echo GAPS: none must not hide a later, real GAPS: section.
+
+    Before the fix: has_single_terminal_report() didn't count GAPS: headers at all
+    (only STATUS:/FINDINGS:), and gaps_disclosed() used _GAPS_HEADER_RE.search()
+    (first match only) — so this transcript's first "GAPS: none" match terminated
+    right at the second "GAPS:" line (a section terminator), giving gaps_disclosed()
+    an all-zero-token body ("none") and returning False, even though a second, real
+    GAPS: section with genuine disclosed content follows immediately after. That
+    made _interpret_lane resolve to "pass" despite a real disclosed gap -- the exact
+    bypass this test proves is now closed.
+    """
+    from agent_cli.lane import LaneResult
+    from agent_cli.run_core import _interpret_lane
+
+    stdout = (
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+        "GAPS: none\n"
+        "GAPS: Did not read tests/test_foo.py due to size\n"
+    )
+    result = LaneResult(
+        role="reviewer",
+        vendor="grok",
+        status="complete",
+        argv=["grok"],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+    )
+    decision, findings = _interpret_lane("reviewer", result)
+    # Two GAPS: headers make has_single_terminal_report() return False, so
+    # _interpret_lane takes the "unparseable report" retry path before it would
+    # even reach gaps_disclosed() -- proving the bypass is closed via the
+    # multi-header path (Change A above).
+    assert decision == "retry"
+    assert findings is None
+
+
 def test_interpret_lane_passes_when_gaps_is_zero_token() -> None:
     """FINDINGS: none with GAPS: none (a zero token) still auto-passes."""
     from agent_cli.lane import LaneResult

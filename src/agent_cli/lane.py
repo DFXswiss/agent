@@ -51,6 +51,12 @@ def has_single_terminal_report(text: str) -> bool:
     real report) are unparseable — callers must not trust parse_status /
     count_findings on such transcripts.
 
+    Multiple GAPS: headers are treated the same way (e.g. an early template-echo
+    "GAPS: none" in narration followed by a real GAPS: section with genuine disclosed
+    content): trusting only the first GAPS: match would let the real disclosure hide
+    behind the harmless early one and silently bypass the retry-on-disclosed-gaps check.
+    GAPS: itself is allowed to be absent (0 occurrences) — only duplication is rejected.
+
     Known limitation, accepted by design: this does not attempt to detect a
     real finding stated only in free-text preamble/reasoning narration ahead
     of an otherwise clean STATUS: complete / FINDINGS: none block. Reasoning
@@ -67,7 +73,8 @@ def has_single_terminal_report(text: str) -> bool:
     """
     status_n = len(list(_STATUS_RE.finditer(text)))
     findings_n = len(list(_FINDINGS_HEADER_RE.finditer(text)))
-    return status_n == 1 and findings_n == 1
+    gaps_n = len(list(_GAPS_HEADER_RE.finditer(text)))
+    return status_n == 1 and findings_n == 1 and gaps_n <= 1
 
 
 def _findings_body_lines(text: str) -> list[str] | None:
@@ -129,12 +136,11 @@ def count_findings(text: str) -> int:
 _GAPS_HEADER_RE = re.compile(r"(?m)^GAPS:[ \t]*(.*)$", re.IGNORECASE)
 
 
-def _gaps_body_lines(text: str) -> list[str] | None:
-    """Return GAPS-section body lines, or None when no GAPS: header. Mirrors
-    _findings_body_lines exactly, reusing the same section-terminator regex."""
-    match = _GAPS_HEADER_RE.search(text)
-    if match is None:
-        return None
+def _gaps_section_body_lines(match: re.Match[str], text: str) -> list[str]:
+    """Body lines for one already-located GAPS: header match, mirroring
+    _findings_body_lines' same-line + until-terminator logic exactly. A helper
+    (rather than only operating on the first match) because gaps_disclosed()
+    below must scan every GAPS: header, not just the first."""
     same_line = (match.group(1) or "").strip()
     after = text[match.end() :]
     body_lines: list[str] = []
@@ -148,28 +154,31 @@ def _gaps_body_lines(text: str) -> list[str] | None:
 
 
 def gaps_disclosed(text: str) -> bool:
-    """True when the GAPS: section body has genuine, non-trivial disclosed content
-    (not one of _ZERO_TOKENS, and not just bullet/number prefixes around a zero
-    token). Absent GAPS: header, or a GAPS: section whose only content is a zero
-    token, both return False. Mirrors count_findings' entry-parsing exactly (bullet
-    prefixes "- "/"* "/"• ", numbered "1." / "1)")."""
-    body_lines = _gaps_body_lines(text)
-    if body_lines is None:
-        return False
-    for raw in body_lines:
-        stripped = raw.strip()
-        if not stripped:
-            continue
-        for prefix in ("- ", "* ", "• "):
-            if stripped.startswith(prefix):
-                stripped = stripped[len(prefix) :].strip()
-                break
-        else:
-            if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)":
-                stripped = stripped[2:].strip()
-        if stripped.lower() in _ZERO_TOKENS:
-            continue
-        return True
+    """True when ANY GAPS: section in the text has genuine, non-trivial disclosed
+    content (not one of _ZERO_TOKENS, and not just bullet/number prefixes around a
+    zero token). Scans every GAPS: header via finditer, not just the first via
+    search — an early template-echo "GAPS: none" in narration/preamble followed by
+    a later, real GAPS: section with actual disclosed content must still be
+    detected; checking only the first match let that later disclosure silently
+    bypass the retry-on-disclosed-gaps check. Absent GAPS: header returns False.
+    Mirrors count_findings' entry-parsing exactly (bullet prefixes "- "/"* "/"• ",
+    numbered "1." / "1)")."""
+    for match in _GAPS_HEADER_RE.finditer(text):
+        body_lines = _gaps_section_body_lines(match, text)
+        for raw in body_lines:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            for prefix in ("- ", "* ", "• "):
+                if stripped.startswith(prefix):
+                    stripped = stripped[len(prefix) :].strip()
+                    break
+            else:
+                if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)":
+                    stripped = stripped[2:].strip()
+            if stripped.lower() in _ZERO_TOKENS:
+                continue
+            return True
     return False
 
 
