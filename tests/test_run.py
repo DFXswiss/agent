@@ -1341,6 +1341,162 @@ def test_pushed_fails_closed_when_head_advances_without_fresh_check(
         store.close()
 
 
+def test_pushed_fails_closed_when_latest_check_is_unbound(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unbound latest local check (empty head_sha) must fail the push gate
+    closed and reopen local_check_pass -- not silently skip the freshness check."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    current = {"sha": sha_a}
+
+    def fake_exec(argv, *, cwd=None, timeout=None):
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            return Completed(0, current["sha"] + "\n", "")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    push_calls = {"n": 0}
+
+    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None):
+        push_calls["n"] += 1
+        return current["sha"]
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+
+    store = _store(tmp_path)
+    try:
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.kind == "closed" and outcome.key == "local_check_pass"
+        assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+
+        # Newest "local" check is unbound (empty head_sha) -- last-wins row
+        # that carries no freshness signal against the still-resolvable HEAD.
+        unbound_id = "unbound-local-check"
+        store.write(
+            "local_check",
+            "insert",
+            unbound_id,
+            {
+                "id": unbound_id,
+                "task_id": tid,
+                "name": "local",
+                "command": "pytest",
+                "result": "pass",
+                "output": "",
+                "head_sha": "",
+            },
+        )
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.key == "pushed"
+        assert outcome.kind == "not_closable"
+        assert push_calls["n"] == 0, "push_branch must not run on an unbound latest check"
+        assert _checklist(tmp_path, tid)["local_check_pass"] != "ja", (
+            "unbound latest check must reopen local_check_pass for a fresh check"
+        )
+    finally:
+        store.close()
+
+
+def test_pushed_fails_closed_when_current_head_unresolvable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When HEAD cannot be resolved at push time, fail closed without pushing
+    and without resetting local_check_pass (unlike a freshness mismatch)."""
+    from agent_cli.run_core import execute_spine_step
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    sha_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    head_ok = {"value": True}
+
+    def fake_exec(argv, *, cwd=None, timeout=None):
+        if argv[:2] == ["git", "rev-parse"] and "HEAD" in argv:
+            if head_ok["value"]:
+                return Completed(0, sha_a + "\n", "")
+            return Completed(1, "", "fatal: not a git repository")
+        if argv and argv[0] == "pytest":
+            return Completed(0, "ok\n", "")
+        return Completed(0, "", "")
+
+    push_calls = {"n": 0}
+
+    def fake_push(*, cwd, runner, expected_branch=None, expected_repo=None):
+        push_calls["n"] += 1
+        return sha_a
+
+    monkeypatch.setattr("agent_cli.git_act.push_branch", fake_push)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+
+    store = _store(tmp_path)
+    try:
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.kind == "closed" and outcome.key == "local_check_pass"
+        assert _checklist(tmp_path, tid)["local_check_pass"] == "ja"
+
+        head_ok["value"] = False
+
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=None,
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            tmux=False,
+            exec_argv=fake_exec,
+        )
+        assert outcome.key == "pushed"
+        assert outcome.kind == "failed"
+        assert push_calls["n"] == 0, "push_branch must not run when HEAD is unresolvable"
+        assert _checklist(tmp_path, tid)["local_check_pass"] == "ja", (
+            "unresolvable HEAD must not reset local_check_pass"
+        )
+    finally:
+        store.close()
+
+
 def test_run_pushed_calls_push_branch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
