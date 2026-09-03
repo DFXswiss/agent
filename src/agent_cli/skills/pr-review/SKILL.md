@@ -45,8 +45,12 @@ Review lanes execute no software (no tests, builds, or servers).
   records the rejection and reports that nothing was queued.
 
   On implement / resolve-conflicts, `agent gate record` returns the task to
-  `implementing`. On workflow `review`, the task stays in pr-review and is not
-  `done`.
+  `implementing`. `agent gate record --verdict rejected` also leaves
+  `state=failed` unchanged (rather than its usual auto-transition to
+  `implementing`) when the sibling already failed the task in the same
+  batch — the rejected gate row is still recorded either way, for audit,
+  even though the task stays permanently stopped. On workflow `review`,
+  the task stays in pr-review and is not `done`.
 
   The evidence becomes the body of that review unaltered, under a generated
   heading naming vendor, dimension and head. Write it for the
