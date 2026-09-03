@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -14,9 +13,9 @@ from agent_cli.main import (
     _latest_gates,
     _origin_seq_sort_key,
     load_task_dict,
-    main,
 )
 from agent_cli.store import Store, dumps
+from test_cli import _last_agent_id, _last_task_id, run
 
 
 def _insert_legacy_row(store: Store, table: str, row_id: str, payload: dict) -> None:
@@ -27,21 +26,6 @@ def _insert_legacy_row(store: Store, table: str, row_id: str, payload: dict) -> 
         store._upsert_row(
             table, row_id, origin, dumps(payload), str(payload.get("recorded_at") or "")
         )
-
-
-def _run(home: Path, argv: list[str]) -> None:
-    os.environ["AGENT_HOME"] = str(home)
-    main(argv)
-
-
-def _last_task_id(out: str) -> str:
-    task_line = [ln for ln in out.splitlines() if ln.startswith("task ")][-1]
-    return task_line.split()[1]
-
-
-def _last_agent_id(out: str) -> str:
-    agent_line = [ln for ln in out.splitlines() if ln.startswith("agent ")][-1]
-    return agent_line.split()[1]
 
 
 def test_latest_gates_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Path) -> None:
@@ -262,8 +246,8 @@ def test_check_record_stamps_origin_seq_via_command(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Real check record stamps origin_seq inside write(); later call wins latest."""
-    _run(tmp_path, ["init"])
-    _run(
+    run(tmp_path, ["init"])
+    run(
         tmp_path,
         [
             "session",
@@ -280,13 +264,13 @@ def test_check_record_stamps_origin_seq_via_command(
             "pr-review",
         ],
     )
-    _run(
+    run(
         tmp_path,
         ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"],
     )
     tid = _last_task_id(capsys.readouterr().out)
 
-    _run(
+    run(
         tmp_path,
         [
             "check",
@@ -303,7 +287,7 @@ def test_check_record_stamps_origin_seq_via_command(
             "stale fail",
         ],
     )
-    _run(
+    run(
         tmp_path,
         [
             "check",
@@ -347,8 +331,8 @@ def test_agent_finish_does_not_bump_origin_seq_so_latest_reviewer_is_retry(
     seq and can reorder the released reviewer past a later retry in
     agents_ordered / _latest_agent.
     """
-    _run(tmp_path, ["init"])
-    _run(
+    run(tmp_path, ["init"])
+    run(
         tmp_path,
         [
             "session",
@@ -365,16 +349,16 @@ def test_agent_finish_does_not_bump_origin_seq_so_latest_reviewer_is_retry(
             "pr-review",
         ],
     )
-    _run(
+    run(
         tmp_path,
         ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"],
     )
     tid = _last_task_id(capsys.readouterr().out)
 
-    _run(tmp_path, ["round", "start", "--task", tid])
+    run(tmp_path, ["round", "start", "--task", tid])
     capsys.readouterr()
 
-    _run(
+    run(
         tmp_path,
         [
             "agent",
@@ -392,10 +376,10 @@ def test_agent_finish_does_not_bump_origin_seq_so_latest_reviewer_is_retry(
         ],
     )
     impl_id = _last_agent_id(capsys.readouterr().out)
-    _run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
     capsys.readouterr()
 
-    _run(
+    run(
         tmp_path,
         [
             "agent",
@@ -423,7 +407,7 @@ def test_agent_finish_does_not_bump_origin_seq_so_latest_reviewer_is_retry(
     finally:
         store.close()
 
-    _run(
+    run(
         tmp_path,
         [
             "agent",
@@ -447,7 +431,7 @@ def test_agent_finish_does_not_bump_origin_seq_so_latest_reviewer_is_retry(
     finally:
         store.close()
 
-    _run(
+    run(
         tmp_path,
         [
             "agent",
@@ -476,7 +460,7 @@ def test_agent_finish_does_not_bump_origin_seq_so_latest_reviewer_is_retry(
     finally:
         store.close()
 
-    _run(
+    run(
         tmp_path,
         [
             "agent",

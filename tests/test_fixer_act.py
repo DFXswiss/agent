@@ -31,7 +31,7 @@ from agent_cli.git_act import GitActError, push_branch
 from agent_cli.lane import LaneResult, findings_header_present
 from agent_cli.run_core import ReviewDiffUnavailableError, build_review_spec_file
 from agent_cli.runtime import Completed
-from agent_cli.store import Store, StoreError
+from agent_cli.store import Store, StoreError, dumps
 from test_cli import _last_task_id, run
 from test_run import (
     _agents,
@@ -2667,7 +2667,6 @@ def test_fixer_inner_reviewer_rejection_keeps_head(
             round_cap=5,
             lane_runner=None,
         )
-        assert "done-blocked" in first or _checklist(tmp_path, tid)["pushed"] == "ja"
         assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
         for row in store.rows("checklist_item"):
@@ -2898,26 +2897,28 @@ def test_pr_open_number_skips_malformed_newer_row(
                 "result": {"number": 42},
             },
         )
-        # utcnow() is second-precision; sleep so the malformed row sorts first.
-        time.sleep(1.1)
-        store.write(
-            "activity",
-            "insert",
-            newer_id,
-            {
-                "id": newer_id,
-                "session_id": session_id,
-                "type": "pr.open",
-                "payload": {
-                    "head": head,
-                    "repo": repo,
-                    "title": "x",
-                    "body": "y",
-                },
-                "execution_status": "done",
-                "result": {"number": "not-a-number"},
-            },
-        )
+        with store._lock, store.conn.transaction():
+            store._upsert_row(
+                "activity",
+                newer_id,
+                store.device_id(),
+                dumps(
+                    {
+                        "id": newer_id,
+                        "session_id": session_id,
+                        "type": "pr.open",
+                        "payload": {
+                            "head": head,
+                            "repo": repo,
+                            "title": "x",
+                            "body": "y",
+                        },
+                        "execution_status": "done",
+                        "result": {"number": "not-a-number"},
+                    }
+                ),
+                "2099-01-01T00:00:00Z",
+            )
         assert _pr_open_number(store, head=head, repo=repo) == 42
     finally:
         store.close()

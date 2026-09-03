@@ -90,7 +90,7 @@ def test_count_findings_unbulleted_error_line_is_not_section_header() -> None:
         "GAPS:\n"
         "- later section\n"
     )
-    assert count_findings(text) >= 1
+    assert count_findings(text) == 1
 
 
 @pytest.mark.parametrize(
@@ -107,7 +107,7 @@ def test_count_findings_unbulleted_preamble_word_is_not_terminator(word: str) ->
         "GAPS:\n"
         "- later section\n"
     )
-    assert count_findings(text) >= 1
+    assert count_findings(text) == 2
 
 
 def test_count_findings_absent_header_is_zero() -> None:

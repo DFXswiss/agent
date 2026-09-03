@@ -2075,7 +2075,8 @@ def test_local_check_reruns_after_same_head_fail(
             exec_argv=fake_exec,
         )
         assert check_calls["n"] == 1, "must re-run check after same-head fail"
-        assert outcome.kind in ("closed", "agent_closed") or outcome.key == "local_check_pass"
+        assert outcome.kind in ("closed", "agent_closed")
+        assert outcome.key == "local_check_pass"
         checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
         assert any(
             c.get("name") == "local"
@@ -2175,7 +2176,8 @@ def test_local_check_reruns_after_same_head_pass_then_fail(
             exec_argv=fake_exec,
         )
         assert check_calls["n"] == 1, "must re-run check after same-head pass→fail"
-        assert outcome.kind in ("closed", "agent_closed") or outcome.key == "local_check_pass"
+        assert outcome.kind in ("closed", "agent_closed")
+        assert outcome.key == "local_check_pass"
         checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
         assert any(
             c.get("name") == "local"
@@ -2253,7 +2255,8 @@ def test_local_check_reruns_after_pr_rejection_with_new_head(
             exec_argv=fake_exec,
         )
         assert check_calls["n"] == 1, "must re-run check for the new head"
-        assert outcome.kind in ("closed", "agent_closed") or outcome.key == "local_check_pass"
+        assert outcome.kind in ("closed", "agent_closed")
+        assert outcome.key == "local_check_pass"
         checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
         assert any(
             c.get("name") == "local"

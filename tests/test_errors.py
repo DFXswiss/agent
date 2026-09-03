@@ -192,8 +192,6 @@ def test_fingerprint_strips_service_and_environment_whitespace() -> None:
     )
     assert padded == clean
     assert padded == "api|TimeoutError|abc123def4567890|prod"
-    # Consumer-side strip of a whitespace-padded fingerprint input matches.
-    assert padded == clean.strip()
     assert " api ".strip() + "|TimeoutError|abc123def4567890|" + " prod ".strip() == padded
 
 
