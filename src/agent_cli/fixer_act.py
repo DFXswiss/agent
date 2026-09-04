@@ -1079,6 +1079,18 @@ def _drive_one(
     tid = str(task["id"])
     current_round = int(task.get("current_round") or 0)
     if current_round > round_cap:
+        # payload.error_id alone is not enough (mirrors the "pushed" step's
+        # guard in run_core.py) -- an unconfirmed error.fix must be a skip,
+        # not a round-cap failure that mutates task.state to "failed". Only
+        # consulted here, not unconditionally: a task with a genuinely
+        # corrupted payload.error_id (see the whitespace-only test below)
+        # must still reach that specific, louder failure rather than being
+        # silently reclassified as "not error-fix" by this gate.
+        preflight_snap = main_mod._chain_snapshot(store, tid)
+        if not is_error_fix_originated(preflight_snap):
+            return f"error-fix-work {tid} skip (not error-fix)"
+        if not preflight_snap.get("session_active"):
+            return f"error-fix-work {tid} skip (session inactive)"
         cap_msg = f"round cap {round_cap} reached (current_round={current_round})"
         _check_record(
             tid=tid,
@@ -1361,7 +1373,9 @@ def _drive_one(
                 ),
             )
         except OSError as exc:
-            # Missing vendor CLI binary: mutate nothing, leave task for next scan.
+            # Missing vendor CLI binary: execute_spine_step already released the
+            # working agent row as unavailable before re-raising; task/checklist
+            # state is left untouched here for next scan.
             return (
                 f"error-fix-work {tid} vendor-cli-unavailable "
                 f"({type(exc).__name__}: {exc})"

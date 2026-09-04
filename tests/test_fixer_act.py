@@ -39,6 +39,7 @@ from agent_cli.store import Store, StoreError, dumps
 from test_cli import _last_task_id, run
 from test_run import (
     _agents,
+    _bootstrap_implement,
     _checklist,
     _finish_implementer,
     _finish_reviewer,
@@ -4827,6 +4828,56 @@ def test_drive_one_preflight_fails_when_current_round_exceeds_cap(
         assert task_after is not None
         assert task_after.get("state") == "failed"
         assert int(task_after.get("current_round") or 0) == DEFAULT_ROUND_CAP + 1
+    finally:
+        store.close()
+
+
+def test_drive_one_skips_not_fails_when_unconfirmed_error_id_exceeds_cap(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """payload.error_id alone (no confirmed error.fix) must be a skip, not a
+    round-cap failure -- mirrors run_core.py's "pushed"-step guard. Writing
+    the payload directly bypasses error-fix bootstrap, so error_fix_confirmed
+    stays False, same as test_pushed_fails_loudly_on_error_id_without_error_fix_confirmed."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {"error_id": "abc123def456"}
+        task["current_round"] = DEFAULT_ROUND_CAP + 1
+        from agent_cli import main as main_mod
+
+        store.write("task", "update", tid, main_mod._strip(task))
+        task = store.row("task", tid)
+        assert task is not None
+        assert int(task.get("current_round") or 0) == DEFAULT_ROUND_CAP + 1
+
+        def boom_runner(argv: list[str]) -> Completed:
+            raise AssertionError(f"runner must not be called: {argv}")
+
+        def boom_launch(**kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError(f"launch must not be called: {kwargs}")
+
+        monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
+
+        checks_before = list(store.rows("check"))
+        result = _drive_one(
+            store,
+            task,
+            boom_runner,
+            round_cap=DEFAULT_ROUND_CAP,
+            lane_runner=None,
+        )
+        assert "skip (not error-fix)" in result
+        task_after = store.row("task", tid)
+        assert task_after is not None
+        assert task_after.get("state") != "failed"
+        checks_after = list(store.rows("check"))
+        assert len(checks_after) == len(checks_before), (
+            "unconfirmed error_id must never reach the round-cap check-record path"
+        )
     finally:
         store.close()
 
