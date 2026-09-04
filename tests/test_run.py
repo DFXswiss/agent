@@ -2914,3 +2914,242 @@ def test_pr_gate_rejection_evidence_omits_status_preamble(
         assert "src/foo.py:1 fix the retry loop" in evidence
     finally:
         store.close()
+
+
+def test_review_workflow_pr_reviewer_start_does_not_pass_round(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review-workflow pr-reviewer must start without --round (no task_round row).
+
+    Pre-fix, prepare_spine_agent_step reused a too-wide round_num for
+    _agent_start, so cmd_agent start --round 0 called _find_round and die()'d
+    with SystemExit on workflow=review tasks.
+    """
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(
+        tmp_path,
+        ["task", "create", "--session", "s", "--workflow", "review", "--title", "Look"],
+    )
+    tid = _last_task_id(capsys.readouterr().out)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "x",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "contributing_read",
+            "--source",
+            "human",
+            "--evidence",
+            "x",
+        ],
+    )
+    capsys.readouterr()
+
+    def fake_exec(
+        argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+    ) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "abc123\n", "")
+        # Gate-head resolution via _resolve_gate_head → git rev-parse HEAD.
+        if argv[:3] == ["git", "rev-parse", "HEAD"]:
+            return Completed(
+                0, "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678\n", ""
+            )
+        if "diff" in argv and "--name-only" in argv:
+            return Completed(0, "src/foo.py\n", "")
+        if "diff" in argv:
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+x\n", "")
+        return Completed(0, "", "")
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role=kwargs["role"],
+            vendor=kwargs["vendor"],
+            status="complete",
+            argv=[kwargs["vendor"]],
+            returncode=0,
+            stdout="STATUS: complete\nFINDINGS: none\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "run",
+            "--task",
+            tid,
+            "--spec-file",
+            str(spec),
+            "--no-tmux",
+            "--cwd",
+            str(tmp_path),
+        ],
+    )
+    assert _checklist(tmp_path, tid)["grok_pr_quality"] == "ja"
+
+
+def test_review_workflow_pr_rejection_skips_round_start(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review-workflow PR rejection must not call cmd_round start.
+
+    Pre-fix (and with only Finding A fixed), _apply_rejection_resets always
+    called _round_start, which die()'s for workflow=review. Fixed code returns
+    kind=rejected with no task_round row created.
+    """
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(
+        tmp_path,
+        ["task", "create", "--session", "s", "--workflow", "review", "--title", "Look"],
+    )
+    tid = _last_task_id(capsys.readouterr().out)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "x",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "contributing_read",
+            "--source",
+            "human",
+            "--evidence",
+            "x",
+        ],
+    )
+    capsys.readouterr()
+
+    def fake_exec(
+        argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+    ) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "abc123\n", "")
+        if "diff" in argv and "--name-only" in argv:
+            return Completed(0, "src/foo.py\n", "")
+        if "diff" in argv:
+            return Completed(0, "diff --git a/src/foo.py b/src/foo.py\n+x\n", "")
+        return Completed(0, "", "")
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role=kwargs["role"],
+            vendor=kwargs["vendor"],
+            status="complete",
+            argv=[kwargs["vendor"]],
+            returncode=0,
+            stdout=(
+                "STATUS: complete\n"
+                "REASON: found issues\n"
+                "FINDINGS:\n"
+                "- src/foo.py:1 fix this\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.main._exec_argv", fake_exec)
+    monkeypatch.setattr("agent_cli.run_core.launch", fake_launch)
+    spec = tmp_path / "spec.md"
+    spec.write_text("do work\n", encoding="utf-8")
+    run(
+        tmp_path,
+        [
+            "run",
+            "--task",
+            tid,
+            "--spec-file",
+            str(spec),
+            "--no-tmux",
+            "--cwd",
+            str(tmp_path),
+            "--head",
+            "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+        ],
+    )
+    assert _checklist(tmp_path, tid)["grok_pr_quality"] != "ja"
+    store = _store(tmp_path)
+    try:
+        rejected_gates = [
+            g
+            for g in store.rows("review_gate")
+            if g.get("task_id") == tid and g.get("verdict") == "rejected"
+        ]
+        assert rejected_gates, "expected a rejected gate row"
+        task_rounds = [r for r in store.rows("task_round") if r.get("task_id") == tid]
+        assert task_rounds == [], "review-workflow task must never get a task_round row"
+        task_row = store.row("task", tid)
+        assert task_row is not None
+        assert task_row.get("current_round") in (0, None)
+    finally:
+        store.close()

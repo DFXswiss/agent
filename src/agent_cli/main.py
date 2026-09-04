@@ -2713,6 +2713,11 @@ def cmd_run(args: list[str]) -> None:
             raise SystemExit(2)
         if outcome.kind == "failed":
             die(outcome.message or outcome.reason or "run failed")
+        if outcome.kind == "rejected":
+            print(
+                f"run task={tid} {outcome.message or 'rejected; no new round'}"
+            )
+            return
         if outcome.kind == "rejected_new_round":
             print(
                 f"run task={tid} {outcome.message or 'rejected; new round started'}"

@@ -121,7 +121,8 @@ class RunOutcome:
 
     kind: str
     # idle | human_required | not_closable | dry_run | closed | agent_handoff |
-    # agent_closed | rejected_new_round | failed | local_check_failed | vendor_unavailable
+    # agent_closed | rejected_new_round | rejected | failed | local_check_failed |
+    # vendor_unavailable
     key: str | None = None
     reason: str | None = None
     step: Step | None = None
@@ -602,6 +603,21 @@ def _apply_rejection_resets(
         _reset_keys(store, tid, _REVIEWER_REJECT_RESET_KEYS, evidence=evidence)
     else:
         _reset_keys(store, tid, _PR_REJECT_RESET_KEYS, evidence=evidence)
+    workflow = str((task or {}).get("workflow") or "")
+    if workflow not in ("implement", "resolve-conflicts"):
+        # review-workflow tasks have no round concept at all: cmd_round start
+        # (main.py) refuses any workflow other than implement/resolve-conflicts,
+        # so there is no task_round row to reopen here. The checklist reset
+        # above is the terminal signal for this rejection; leave the task in
+        # its current state (do not call _round_start).
+        return RunOutcome(
+            kind="rejected",
+            key="reviewer_approved" if role == "reviewer" else None,
+            reason=f"{role} rejected",
+            verdict="rejected",
+            message=f"{role} rejected; no new round (workflow={workflow})",
+            needs_round_start=False,
+        )
     if defer_round_start:
         needs_round_start = True
     else:
@@ -775,7 +791,7 @@ def _finish_agent_fail(
     )
     out.lane_result = result
     out.key = step.key
-    if out.kind == "rejected_new_round":
+    if out.kind in ("rejected_new_round", "rejected"):
         out.rejection_findings = evidence
     return out
 
@@ -988,8 +1004,11 @@ def prepare_spine_agent_step(
     task = store.row("task", tid) or task
     current_round = int(task.get("current_round") or 0)
     round_num: int | None = None
-    if role == "implementer" or role in _REVIEW_ROLES:
+    if role in ("implementer", "reviewer"):
         round_num = current_round
+    spec_round_num: int | None = None
+    if role in _REVIEW_ROLES:
+        spec_round_num = current_round
     working = main_mod._find_working_agent(
         store, tid, role=role, vendor=vendor, round_num=round_num
     )
@@ -1013,7 +1032,7 @@ def prepare_spine_agent_step(
                 store,
                 tid,
                 role=role,
-                round_num=round_num,
+                round_num=spec_round_num,
                 implement_spec_file=spec_file,
                 cwd=run_cwd,
                 exec_argv=exec_argv,
