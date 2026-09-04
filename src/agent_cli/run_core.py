@@ -47,7 +47,7 @@ _REVIEW_OUTPUT_CONTRACT = (
     "DIMENSION: [...]\n"
     "FINDINGS: none\n"
     "NOT-VERIFIABLE: [...]\n"
-    "GAPS: [...]"
+    "GAPS: none"
 )
 
 

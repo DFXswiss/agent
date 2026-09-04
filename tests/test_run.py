@@ -2028,6 +2028,52 @@ def test_interpret_lane_passes_when_gaps_is_zero_numeral() -> None:
     assert findings is None
 
 
+def test_interpret_lane_passes_when_gaps_is_placeholder_ellipsis() -> None:
+    """GAPS: [...] (template-placeholder echo) must not false-retry a clean review.
+
+    The review output contract teaches GAPS: none (a real zero form). Defense in
+    depth also treats the literal placeholder [...] as a zero token, so a lane
+    that still echoes the old unfilled-placeholder syntax on an otherwise clean
+    report resolves to pass rather than a mechanical retry.
+    """
+    from agent_cli.lane import LaneResult
+    from agent_cli.run_core import _REVIEW_OUTPUT_CONTRACT, _interpret_lane
+
+    assert "GAPS: [...]" not in _REVIEW_OUTPUT_CONTRACT
+    assert "GAPS: none" in _REVIEW_OUTPUT_CONTRACT
+
+    stdout = (
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+        "GAPS: [...]\n"
+    )
+    result = LaneResult(
+        role="reviewer",
+        vendor="grok",
+        status="complete",
+        argv=["grok"],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
+    )
+    decision, findings = _interpret_lane("reviewer", result)
+    assert decision == "pass"
+    assert findings is None
+
+    taught = LaneResult(
+        role="reviewer",
+        vendor="grok",
+        status="complete",
+        argv=["grok"],
+        returncode=0,
+        stdout="STATUS: complete\nFINDINGS: none\nGAPS: none\n",
+        stderr="",
+    )
+    taught_decision, taught_findings = _interpret_lane("reviewer", taught)
+    assert taught_decision == "pass"
+    assert taught_findings is None
+
+
 def test_reviewer_gets_distinct_review_spec_with_diff_and_contract(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

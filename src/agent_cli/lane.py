@@ -47,7 +47,8 @@ _FINDINGS_HEADER_RE = re.compile(r"(?m)^FINDINGS:[ \t]*(.*)$", re.IGNORECASE)
 _FINDINGS_TERMINATOR_RE = re.compile(
     r"(?m)^(?:FINDINGS|NOT-VERIFIABLE|GAPS):([ \t]|$)", re.IGNORECASE
 )
-_ZERO_TOKENS = frozenset({"", "0", "none", "n/a", "-", "—", "–"})
+# "[...]" = unfilled-placeholder echo; not a real disclosed gap.
+_ZERO_TOKENS = frozenset({"", "0", "none", "n/a", "-", "—", "–", "[...]"})
 
 
 def findings_header_present(text: str) -> bool:
