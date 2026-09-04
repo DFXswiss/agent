@@ -5,8 +5,9 @@ import socket
 
 import pytest
 
-from agent_cli.cli_bridge import allowed, handle_request
+from agent_cli.cli_bridge import allowed, handle_request, serve
 from agent_cli.runtime import Completed
+from agent_cli.store import StoreError
 from agent_cli.stub import parse_endpoint
 
 
@@ -116,3 +117,9 @@ def test_stub_call_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "create_connection", lambda *_a, **_k: fake)
     code = stub.call(["task", "list"], endpoint="127.0.0.1:7846")
     assert code == 0
+
+
+@pytest.mark.no_pg
+def test_serve_rejects_non_loopback() -> None:
+    with pytest.raises(StoreError, match="127.0.0.1"):
+        serve(host="0.0.0.0", port=7846)

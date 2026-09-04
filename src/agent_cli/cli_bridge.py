@@ -9,6 +9,7 @@ from typing import Any
 
 from .daemon import agent_argv
 from .runtime import Completed, run_argv as _default_run_argv
+from .store import StoreError
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 7846
@@ -81,16 +82,25 @@ def serve(
 ) -> None:
     """Listen on loopback and serve one request per connection. Does not return."""
     opener = bind or socket.socket
-    sock = opener(socket.AF_INET, socket.SOCK_STREAM)
+    if host not in ("127.0.0.1", "::1"):
+        raise StoreError("cli-bridge bind must be 127.0.0.1 or ::1")
+    family = socket.AF_INET6 if host == "::1" else socket.AF_INET
+    sock = opener(family, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
     sock.listen(16)
     while True:
-        conn, _addr = sock.accept()
+        conn, addr = sock.accept()
         try:
+            conn.settimeout(30)
+            peer = addr[0] if addr else ""
+            if peer not in ("127.0.0.1", "::1", ""):
+                continue
             raw = _read_request(conn)
             payload = handle_request(raw, runner=runner)
             conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+        except OSError:
+            continue
         finally:
             conn.close()
 

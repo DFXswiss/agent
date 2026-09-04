@@ -1803,6 +1803,10 @@ def cmd_dashboard(args: list[str]) -> None:
 
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"dashboard http://127.0.0.1:{port}")
+    try:
+        httpd.serve_forever()
+    finally:
+        store.close()
 
 
 def cmd_cli_bridge(args: list[str]) -> None:
@@ -1816,11 +1820,9 @@ def cmd_cli_bridge(args: list[str]) -> None:
     host = os.environ.get("AGENT_CLI_BRIDGE_BIND", DEFAULT_HOST)
     if host == "":
         die("AGENT_CLI_BRIDGE_BIND is set but empty")
+    if host not in ("127.0.0.1", "::1"):
+        die("cli-bridge bind must be 127.0.0.1 or ::1")
     serve(host=host, port=port)
-    try:
-        httpd.serve_forever()
-    finally:
-        store.close()
 
 
 def _sync_once(store: Store) -> None:
