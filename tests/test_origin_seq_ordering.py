@@ -224,6 +224,72 @@ def test_load_task_dict_gate_order_follows_origin_seq(tmp_path: Path) -> None:
         store.close()
 
 
+def test_load_task_dict_check_order_follows_origin_seq(tmp_path: Path) -> None:
+    """load_task_dict lists checks oldest→newest by origin_seq, not physical order.
+
+    A separate sort call site from _latest_checks -- physical updated_at
+    contradicts origin_seq order -- see the first test's docstring for why
+    this is needed to genuinely exercise the tie-break."""
+    store = Store(tmp_path)
+    try:
+        tid = "task-load-check-order"
+        same_ts = "2026-04-01T12:00:00Z"
+        store.write(
+            "task",
+            "insert",
+            tid,
+            {
+                "id": tid,
+                "session_id": "s",
+                "workflow": "implement",
+                "state": "implementing",
+                "title": "t",
+                "change_summary_en": "",
+                "change_summary_de": "",
+                "payload": {},
+            },
+        )
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
+            "local_check",
+            "c1",
+            {
+                "id": "c1",
+                "task_id": tid,
+                "name": "pytest",
+                "command": "pytest",
+                "result": "fail",
+                "output": "",
+                "head_sha": "aa",
+                "ran_at": same_ts,
+                "origin_seq": 4,
+            },
+            updated_at="2026-04-01T13:00:00Z",  # physically newer despite lower origin_seq
+        )
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
+            "local_check",
+            "c2",
+            {
+                "id": "c2",
+                "task_id": tid,
+                "name": "pytest",
+                "command": "pytest",
+                "result": "pass",
+                "output": "",
+                "head_sha": "bb",
+                "ran_at": same_ts,
+                "origin_seq": 9,
+            },
+            updated_at="2026-04-01T11:00:00Z",  # physically older despite higher origin_seq
+        )
+        snap = load_task_dict(store, tid)
+        pytest_checks = [c for c in snap["local_checks"] if c.get("name") == "pytest"]
+        assert [c["result"] for c in pytest_checks] == ["fail", "pass"]
+    finally:
+        store.close()
+
+
 def test_missing_origin_seq_sorts_before_stamped_rows(tmp_path: Path) -> None:
     """Pre-change rows without origin_seq are older than any stamped row."""
     store = Store(tmp_path)
