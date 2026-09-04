@@ -438,6 +438,8 @@ One product with the hub. The team reads every visible session; **this device wr
 
 **tmux is the process holder; the hub is not.** The local client is the only place that starts, stops, or types into a live terminal. The hub may send `control` frames (`start` / `stop` / `input` / `resize`); this device executes them only when it owns the session row, then replies with `control-ack`. After connect, the client sends `control-ready`. Control and terminal message types must not trigger push+pull.
 
+A local file `$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` invocation for that session. A missing key means tmux runs on this device as today. The file is not a hub event and is not stored on the session row. One Runtime instance looks the prefix up per session id so mixed local and prefixed sessions can share knock, keep-working, and control.
+
 Owned-row runtime fields (start/stop set control and tmux; `keep-working` may also update `keep_working`; not a new vendor):
 
 ```json

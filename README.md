@@ -132,6 +132,8 @@ agent session stop --id <session-id>
 
 `agent session keep-working` is for a session whose standing job is already in the working directory. The Grok TUI stops after each turn; this command does not interrupt an in-flight turn. A tool-approval modal is cleared with Enter. The first idle composer tick (caret visible) sends one standing instruction to keep going until the assignment is complete. Later idle ticks send only `Continue.`. Bare `keep-working` and `--once` are one tick; `--follow` polls every 30s. A missing tmux session is reported and left alone. An unreadable pane is not typed into.
 
+`$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` call for that session. A missing key is local tmux, as today. The file stays on this device; it is not a hub event.
+
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
 
 ## Testing against another hub

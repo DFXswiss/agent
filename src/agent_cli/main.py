@@ -41,6 +41,7 @@ from .runtime import (
     grok_model,
     grok_new_session_id,
     grok_tmux_command_argv,
+    load_tmux_targets,
     run_argv,
     tmux_name,
 )
@@ -189,6 +190,10 @@ def home() -> Path:
     if override:
         return Path(override).expanduser()
     return default_home()
+
+
+def _runtime() -> Runtime:
+    return Runtime(tmux_targets=load_tmux_targets(home()))
 
 
 def pg_dsn_from_env() -> str | None:
@@ -458,7 +463,7 @@ def cmd_session(args: list[str]) -> None:
             model = flag(rest, "--model")
             cols = _dim_flag(rest, "--cols")
             rows = _dim_flag(rest, "--rows")
-            runtime = Runtime()
+            runtime = _runtime()
             name = _session_start(
                 store, runtime, sid, cmd, cols, rows, provider=provider, model=model
             )
@@ -475,7 +480,7 @@ def cmd_session(args: list[str]) -> None:
             return
         if sub == "stop":
             sid = require_flag(rest, "--id")
-            runtime = Runtime()
+            runtime = _runtime()
             _session_stop(store, runtime, sid)
             print(f"stopped {sid}")
             return
@@ -483,7 +488,7 @@ def cmd_session(args: list[str]) -> None:
             sid = require_flag(rest, "--id")
             data = flag(rest, "--data")
             key = flag(rest, "--key")
-            runtime = Runtime()
+            runtime = _runtime()
             _session_input(store, runtime, sid, data, key)
             print(f"input {sid}")
             return
@@ -493,7 +498,7 @@ def cmd_session(args: list[str]) -> None:
             follow = "--follow" in rest
             if once and follow:
                 die("keep-working takes at most one of --once or --follow")
-            runtime = Runtime()
+            runtime = _runtime()
             _session_keep_working(store, runtime, sid, once=once or not follow)
             return
         if sub == "skill":
@@ -1470,7 +1475,7 @@ def cmd_sync(args: list[str]) -> None:
             _sync_once(store)
             return
         hub: Hub | None = None
-        runtime = Runtime()
+        runtime = _runtime()
         terminal_seq: dict[str, int] = {}
         last_capture: dict[str, str] = {}
         try:
@@ -1782,7 +1787,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 "payload": payload,
             }
             try:
-                ack = apply_control(store, Runtime(), message)
+                ack = apply_control(store, _runtime(), message)
             except StoreConnectionError as exc:
                 try:
                     store.reconnect()
@@ -1905,7 +1910,7 @@ def _session_start(
     _require_owned(store, row, "session")
     if row.get("status") != "active":
         die(f"session {sid} is not active")
-    if not runtime.available():
+    if not runtime.available(sid):
         die("tmux is not installed")
     if provider is not None and provider != "grok":
         die("provider must be grok")
@@ -1968,7 +1973,7 @@ def _session_keep_working(
     _require_owned(store, row, "session")
     if row.get("status") != "active":
         die(f"session {sid} is not active")
-    if not runtime.available():
+    if not runtime.available(sid):
         die("tmux is not installed")
     sleep_s = 30
 
@@ -2987,7 +2992,7 @@ def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
     try:
-        runtime = Runtime()
+        runtime = _runtime()
         if once:
             for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
@@ -3211,7 +3216,7 @@ def cmd_watch(args: list[str]) -> None:
                             sync=lambda: _sync_once(store),
                             start=lambda session_id, cwd: _session_start(
                                 store,
-                                Runtime(),
+                                _runtime(),
                                 session_id,
                                 None,
                                 None,
@@ -3219,9 +3224,9 @@ def cmd_watch(args: list[str]) -> None:
                                 provider="grok",
                                 cwd=str(cwd),
                             ),
-                            knock=lambda activity_id: deliver(store, Runtime(), activity_id),
+                            knock=lambda activity_id: deliver(store, _runtime(), activity_id),
                             workspace_root=workspace_root,
-                            pane_up=lambda session_id: Runtime().exists(session_id),
+                            pane_up=lambda session_id: _runtime().exists(session_id),
                         )
                 for activity_id in created:
                     print(f"issue.assigned {activity_id}")
@@ -3300,7 +3305,7 @@ def cmd_supervise(args: list[str]) -> None:
                 die(f"supervise --follow already running for session {sid}")
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
-        runtime = Runtime()
+        runtime = _runtime()
         from .telegram_act import reset_idle_clock
 
         reset_idle_clock(store, working=runtime.exists(sid))
