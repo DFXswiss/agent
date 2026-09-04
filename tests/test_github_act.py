@@ -264,27 +264,32 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
 
     t2 = threading.Thread(target=waiter)
     t2.start()
-    assert attempting.wait(timeout=5)
-    # Positive external confirmation: store_b's backend is waiting on a Lock.
-    deadline = time.monotonic() + 5.0
-    saw_lock_wait = False
-    while time.monotonic() < deadline:
-        row = store_a.conn.execute(
-            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
-            (waiter_pid,),
-        ).fetchone()
-        if row is not None and row.get("wait_event_type") == "Lock":
-            saw_lock_wait = True
-            break
-        time.sleep(0.05)
-    assert saw_lock_wait, (
-        f"waiter backend pid {waiter_pid} never reached wait_event_type=Lock"
-    )
-    # While the first holder is still inside, the second must not enter.
-    assert not second_entered.wait(timeout=0.3)
-    release.set()
-    t.join(timeout=5)
-    t2.join(timeout=5)
+    try:
+        assert attempting.wait(timeout=5)
+        # Positive external confirmation: store_b's backend is waiting on a Lock.
+        deadline = time.monotonic() + 5.0
+        saw_lock_wait = False
+        while time.monotonic() < deadline:
+            row = store_a.conn.execute(
+                "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                (waiter_pid,),
+            ).fetchone()
+            if row is not None and row.get("wait_event_type") == "Lock":
+                saw_lock_wait = True
+                break
+            time.sleep(0.05)
+        assert saw_lock_wait, (
+            f"waiter backend pid {waiter_pid} never reached wait_event_type=Lock"
+        )
+        # While the first holder is still inside, the second must not enter.
+        assert not second_entered.wait(timeout=0.3)
+    finally:
+        # Always release the holder and reap both threads, even if an
+        # assertion above fails -- otherwise a failing run leaks two live
+        # threads and open connections past this test's own scope.
+        release.set()
+        t.join(timeout=5)
+        t2.join(timeout=5)
     assert second_entered.is_set()
 
 

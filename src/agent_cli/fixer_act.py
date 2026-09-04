@@ -191,7 +191,7 @@ def template_pr_open_payload(
     )
     de = (
         f"Automatischer error-fix für `{fingerprint or short}` in `{repo}`. "
-        f"Nur Entwurf; ein Mensch merged. Einzelheiten siehe Anhang."
+        f"Nur Entwurf; ein Mensch merged. Einzelheiten siehe Details."
     )
     brief_text = brief or "(none)"
     brief_fence = _fence_marker(brief_text)
@@ -866,8 +866,9 @@ def _release_pair_working_agents(
     for step in pair:
         role = str(step.role or "")
         vendor = str(step.vendor or "")
-        # PR-reviewer rows are started with round_num=None; a None lookup
-        # matches any round for that role/vendor (see _find_working_agent).
+        # PR-reviewer rows are started with the current round number; this
+        # cleanup path passes round_num=None deliberately, to match any
+        # still-working row regardless of round (see _find_working_agent).
         working = main_mod._find_working_agent(
             store, tid, role=role, vendor=vendor, round_num=None
         )

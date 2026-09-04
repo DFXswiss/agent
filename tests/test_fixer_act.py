@@ -1529,7 +1529,7 @@ def test_template_pr_open_payload_empty_brief_fallback_has_one_period() -> None:
     de_summary = body[de_start:de_end]
     assert "Brief:" not in de_summary
     assert "siehe Task-Spec." not in de_summary
-    assert "Einzelheiten siehe Anhang." in de_summary
+    assert "Einzelheiten siehe Details." in de_summary
     assert de_summary.rstrip().endswith(".")
     assert not de_summary.rstrip().endswith("..")
 
