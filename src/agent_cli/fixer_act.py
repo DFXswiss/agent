@@ -866,9 +866,10 @@ def _release_pair_working_agents(
     for step in pair:
         role = str(step.role or "")
         vendor = str(step.vendor or "")
-        # PR-reviewer rows are started with the current round number; this
-        # cleanup path passes round_num=None deliberately, to match any
-        # still-working row regardless of round (see _find_working_agent).
+        # PR-reviewer agent rows have no round at all (round_num stays None
+        # for these roles in _agent_start/_find_working_agent -- only
+        # implementer/reviewer roles get a real round number); this
+        # cleanup path passes round_num=None to match, same as the start.
         working = main_mod._find_working_agent(
             store, tid, role=role, vendor=vendor, round_num=None
         )
