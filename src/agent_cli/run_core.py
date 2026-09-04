@@ -520,6 +520,9 @@ def build_review_spec_file(
         f"```\n{_REVIEW_OUTPUT_CONTRACT}\n```\n\n"
         f"`FINDINGS: 0` (or `none`) is a valid, expected result when "
         f"`STATUS: complete` and nothing is wrong.\n\n"
+        f"`GAPS:` lists anything you could not check or verify within this "
+        f"review (limits on your own coverage, not findings); write `none` "
+        f"only after a genuinely complete pass with nothing to disclose.\n\n"
         f"{exec_rule}"
     )
     spec_path.write_text(body, encoding="utf-8")
