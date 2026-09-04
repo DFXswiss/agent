@@ -4862,7 +4862,10 @@ def test_drive_one_skips_not_fails_when_unconfirmed_error_id_exceeds_cap(
 
         monkeypatch.setattr("agent_cli.run_core.launch", boom_launch)
 
-        checks_before = list(store.rows("check"))
+        state_before = task.get("state")
+        checks_before = [
+            c for c in store.rows("local_check") if c.get("task_id") == tid
+        ]
         result = _drive_one(
             store,
             task,
@@ -4873,8 +4876,13 @@ def test_drive_one_skips_not_fails_when_unconfirmed_error_id_exceeds_cap(
         assert "skip (not error-fix)" in result
         task_after = store.row("task", tid)
         assert task_after is not None
-        assert task_after.get("state") != "failed"
-        checks_after = list(store.rows("check"))
+        assert task_after.get("state") == state_before
+        checks_after = [
+            c for c in store.rows("local_check") if c.get("task_id") == tid
+        ]
+        assert not any(c.get("name") == "round-cap" for c in checks_after), (
+            "unconfirmed error_id must never reach the round-cap check-record path"
+        )
         assert len(checks_after) == len(checks_before), (
             "unconfirmed error_id must never reach the round-cap check-record path"
         )

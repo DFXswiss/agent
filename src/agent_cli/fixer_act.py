@@ -1079,9 +1079,11 @@ def _drive_one(
     tid = str(task["id"])
     current_round = int(task.get("current_round") or 0)
     if current_round > round_cap:
-        # payload.error_id alone is not enough (mirrors the "pushed" step's
-        # guard in run_core.py) -- an unconfirmed error.fix must be a skip,
-        # not a round-cap failure that mutates task.state to "failed". Only
+        # payload.error_id alone is not enough (same predicate as run_core.py's
+        # "pushed" step, though that step fails closed -- here it must skip,
+        # matching this function's own while-loop skip below) -- an
+        # unconfirmed error.fix must be a skip, not a round-cap failure that
+        # mutates task.state to "failed". Only
         # consulted here, not unconditionally: a task with a genuinely
         # corrupted payload.error_id (see the whitespace-only test below)
         # must still reach that specific, louder failure rather than being
