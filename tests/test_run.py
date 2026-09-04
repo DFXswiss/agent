@@ -399,6 +399,52 @@ def test_run_local_check_redacts_secret_values_from_persisted_output(
     assert sentinel not in output
 
 
+def test_run_local_check_redacts_prefix_secret_before_longer_secret(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Redaction must replace longer secrets first when one value prefixes another.
+
+    If the shorter value is replaced first, a longer secret that starts with that
+    prefix is only partially consumed and the remaining fragment leaks. Sorting
+    by length (desc) closes that hole. AGENT_PG_DSN keeps a valid DSN via the
+    application_name= embedding so the store still opens.
+    """
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    short = "secret-"
+    longer = "secret-longer-tail"
+    real_pg_dsn = os.environ["AGENT_PG_DSN"]
+    pg_dsn_with_longer = f"{real_pg_dsn} application_name={longer}"
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", short)
+    monkeypatch.setenv("AGENT_ERROR_FIX_TOKEN", longer)
+    monkeypatch.setenv("AGENT_PG_DSN", pg_dsn_with_longer)
+    monkeypatch.setenv(
+        "AGENT_CHECK_COMMAND",
+        (
+            f'{sys.executable} -c "print(\'check-genuinely-ran\'); '
+            f'print(\'{short}\'); print(\'{longer}\')"'
+        ),
+    )
+    run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
+    capsys.readouterr()
+
+    local_rows = [c for c in _local_checks(tmp_path, tid) if c.get("name") == "local"]
+    assert local_rows, "expected a local check record"
+    last = local_rows[-1]
+    assert str(last.get("result") or "") == "pass"
+    output = str(last.get("output") or "")
+    assert "check-genuinely-ran" in output
+    assert "[REDACTED]" in output
+    assert short not in output
+    assert longer not in output
+    assert "longer-tail" not in output
+
+
 def test_run_dry_run_skips_local_check(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1487,7 +1487,7 @@ def execute_spine_step(
                 os.environ.update(saved_secrets)
             result = "pass" if completed.returncode == 0 else "fail"
             output = (completed.stdout or "") + (completed.stderr or "")
-            for secret in saved_secrets.values():
+            for secret in sorted(set(saved_secrets.values()), key=len, reverse=True):
                 if secret:
                     output = output.replace(secret, "[REDACTED]")
             output = output[:8000]
