@@ -366,6 +366,10 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
         "TELEGRAM_CHAT_ID": "sentinel-telegram-chat-id-should-not-leak",
         "GH_TOKEN": "sentinel-gh-token-should-not-leak",
         "GITHUB_TOKEN": "sentinel-github-token-should-not-leak",
+        # The orchestrator's own live credential -- GROK_STRIP_ENV already
+        # keeps it out of the vendor-CLI launch argv, but this local-check
+        # subprocess path has no separate strip loop of its own.
+        "ANTHROPIC_API_KEY": "sentinel-anthropic-api-key-should-not-leak",
     }
     monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
     monkeypatch.setenv("AGENT_PG_DSN", pg_dsn_with_sentinel)

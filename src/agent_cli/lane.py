@@ -28,8 +28,18 @@ GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 # Non-AGENT_-prefixed credential names already used elsewhere in this
 # codebase (e.g. telegram_act.py, the gh CLI's own ambient auth) that the
 # AGENT_ERROR_FIX_*/AGENT_PG_DSN prefix rule below would otherwise miss.
+# ANTHROPIC_API_KEY is also included: GROK_STRIP_ENV (above) already keeps
+# it out of the vendor-CLI launch argv, but the local-check subprocess path
+# (run_core.py) has no separate strip loop of its own -- it relies solely on
+# this shared predicate, so ANTHROPIC_API_KEY must be covered here too.
 _KNOWN_CREDENTIAL_ENV_KEYS = frozenset(
-    {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GH_TOKEN", "GITHUB_TOKEN"}
+    {
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "ANTHROPIC_API_KEY",
+    }
 )
 
 
