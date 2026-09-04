@@ -896,6 +896,56 @@ def test_build_review_spec_file_raises_unavailable_despite_dirty_worktree_diff(
         store.close()
 
 
+def test_build_review_spec_file_pr_reviewer_rounds_get_distinct_filenames(
+    tmp_path: Path,
+) -> None:
+    """PR-reviewer round N and round N+1 must write distinct review-* filenames."""
+    hunk = "diff --git a/src/foo.py b/src/foo.py\n+round-distinct-hunk\n"
+
+    def fake_exec(argv: list[str], *, cwd: str | None = None, timeout: float | None = None) -> Completed:
+        if argv[:3] == ["git", "rev-parse", "--verify"]:
+            if argv[3] == "origin/develop":
+                return Completed(0, "abc123\n", "")
+            return Completed(1, "", "")
+        if argv[:2] == ["git", "merge-base"]:
+            return Completed(0, "abc123\n", "")
+        if "diff" in argv and "--name-only" in argv:
+            return Completed(0, "src/foo.py\n", "")
+        if "diff" in argv:
+            return Completed(0, hunk, "")
+        return Completed(0, "", "")
+
+    store = _store(tmp_path)
+    try:
+        path_r1 = build_review_spec_file(
+            store,
+            "pr-round-tid",
+            role="pr-reviewer-quality",
+            round_num=1,
+            implement_spec_file=None,
+            cwd=str(tmp_path),
+            exec_argv=fake_exec,
+        )
+        path_r2 = build_review_spec_file(
+            store,
+            "pr-round-tid",
+            role="pr-reviewer-quality",
+            round_num=2,
+            implement_spec_file=None,
+            cwd=str(tmp_path),
+            exec_argv=fake_exec,
+        )
+        name1 = Path(path_r1).name
+        name2 = Path(path_r2).name
+        assert name1 != name2
+        assert "round1" in name1
+        assert "round2" in name2
+        assert Path(path_r1).is_file()
+        assert Path(path_r2).is_file()
+    finally:
+        store.close()
+
+
 def test_build_review_spec_file_fences_diff_with_triple_backtick_line(
     tmp_path: Path,
 ) -> None:

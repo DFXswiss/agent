@@ -988,7 +988,7 @@ def prepare_spine_agent_step(
     task = store.row("task", tid) or task
     current_round = int(task.get("current_round") or 0)
     round_num: int | None = None
-    if role in ("implementer", "reviewer"):
+    if role == "implementer" or role in _REVIEW_ROLES:
         round_num = current_round
     working = main_mod._find_working_agent(
         store, tid, role=role, vendor=vendor, round_num=round_num
