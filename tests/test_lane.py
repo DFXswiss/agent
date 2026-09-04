@@ -271,6 +271,33 @@ def test_env_strip_prefix_strips_dynamic_credential_shaped_env_vars(
         assert codex_argv_out[idx - 1] == "-u"
 
 
+def test_env_strip_prefix_strips_known_first_party_credential_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-AGENT_-prefixed credentials already used elsewhere in this codebase
+    (telegram_act.py, the gh CLI's own ambient auth) must also not reach the
+    vendor CLI subprocess env -- same mechanism as the AGENT_ERROR_FIX_* test
+    above, covering the fixed known-name set instead of the dynamic prefix."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tg-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "tg-chat")
+    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+
+    known_keys = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GH_TOKEN", "GITHUB_TOKEN")
+
+    grok_argv_out = grok_argv(spec_file="/tmp/spec.md", cwd="/work", write=True)
+    for key in known_keys:
+        assert key in grok_argv_out
+        idx = grok_argv_out.index(key)
+        assert grok_argv_out[idx - 1] == "-u"
+
+    codex_argv_out = codex_argv(cwd="/work", write=True, output_file="/tmp/out.txt")
+    for key in known_keys:
+        assert key in codex_argv_out
+        idx = codex_argv_out.index(key)
+        assert codex_argv_out[idx - 1] == "-u"
+
+
 def test_codex_reviewer_argv() -> None:
     argv = codex_argv(cwd="/work", write=False, output_file="/tmp/out.txt")
     assert "read-only" in argv

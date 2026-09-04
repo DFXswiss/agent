@@ -25,13 +25,26 @@ VENDOR_RUN_TIMEOUT_SEC = 1800
 GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 
 
+# Non-AGENT_-prefixed credential names already used elsewhere in this
+# codebase (e.g. telegram_act.py, the gh CLI's own ambient auth) that the
+# AGENT_ERROR_FIX_*/AGENT_PG_DSN prefix rule below would otherwise miss.
+_KNOWN_CREDENTIAL_ENV_KEYS = frozenset(
+    {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GH_TOKEN", "GITHUB_TOKEN"}
+)
+
+
 def is_credential_shaped_env_key(key: str) -> bool:
-    """True for env var names carrying secrets: an AGENT_ERROR_FIX_* prefix, or
-    AGENT_PG_DSN exactly. Single source of truth for this predicate -- both
-    lane.py's vendor-CLI env stripping (_env_strip_prefix, below) and
+    """True for env var names carrying secrets: an AGENT_ERROR_FIX_* prefix,
+    AGENT_PG_DSN exactly, or a known first-party credential name used
+    elsewhere in this codebase. Single source of truth for this predicate --
+    both lane.py's vendor-CLI env stripping (_env_strip_prefix, below) and
     run_core.py's local-check env stripping reuse this function instead of
     duplicating the prefix-matching rule in two places."""
-    return key.startswith("AGENT_ERROR_FIX_") or key == "AGENT_PG_DSN"
+    return (
+        key.startswith("AGENT_ERROR_FIX_")
+        or key == "AGENT_PG_DSN"
+        or key in _KNOWN_CREDENTIAL_ENV_KEYS
+    )
 
 
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")

@@ -14,6 +14,7 @@ from agent_cli.run_core import (
     ReviewDiffUnavailableError,
     _collect_review_diff,
     build_review_spec_file,
+    local_check_timeout_sec,
 )
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -306,6 +307,23 @@ def test_run_local_check_pass_uses_distinct_longer_timeout(
     )
 
 
+@pytest.mark.parametrize("raw", ["0", "-1", "nan", "inf", "-inf"])
+def test_local_check_timeout_sec_rejects_non_positive_and_non_finite(
+    raw: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Zero, negative, NaN, and infinite values must fall back to the 1800s
+    default rather than producing an unbounded or immediately-expired wait."""
+    monkeypatch.setenv("AGENT_CHECK_TIMEOUT_SEC", raw)
+    assert local_check_timeout_sec() == 1800.0
+
+
+def test_local_check_timeout_sec_accepts_valid_positive_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_CHECK_TIMEOUT_SEC", "42")
+    assert local_check_timeout_sec() == 42.0
+
+
 def test_run_local_check_strips_credential_env_from_persisted_output(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -397,6 +415,42 @@ def test_run_local_check_redacts_secret_values_from_persisted_output(
     assert "check-genuinely-ran" in output
     assert "[REDACTED]" in output
     assert sentinel not in output
+
+
+def test_run_local_check_redacts_secret_from_persisted_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The persisted command string, not just output, must be redacted.
+
+    AGENT_CHECK_COMMAND itself can embed a secret value (e.g. copy-pasted
+    with a token in it); the stored command field must scrub it the same
+    way persisted output already is.
+    """
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    _finish_reviewer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+
+    sentinel = "sentinel-in-the-command-line-itself"
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
+    monkeypatch.setenv(
+        "AGENT_CHECK_COMMAND",
+        # sentinel appears literally in the command string via a comment,
+        # not just something the process reads from env.
+        f'{sys.executable} -c "print(1)"  # {sentinel}',
+    )
+    run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
+    capsys.readouterr()
+
+    local_rows = [c for c in _local_checks(tmp_path, tid) if c.get("name") == "local"]
+    assert local_rows, "expected a local check record"
+    last = local_rows[-1]
+    assert str(last.get("result") or "") == "pass"
+    command = str(last.get("command") or "")
+    assert "[REDACTED]" in command
+    assert sentinel not in command
 
 
 def test_run_local_check_redacts_prefix_secret_before_longer_secret(

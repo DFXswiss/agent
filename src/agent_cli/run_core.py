@@ -8,6 +8,7 @@ OSError from a missing vendor CLI binary propagates (fixer catches it).
 
 from __future__ import annotations
 
+import math
 import os
 import shlex
 from dataclasses import dataclass, field
@@ -64,9 +65,12 @@ def local_check_timeout_sec() -> float:
     if raw is None or not raw.strip():
         return 1800.0
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         return 1800.0
+    if not math.isfinite(value) or value <= 0:
+        return 1800.0
+    return value
 
 
 class ExecArgv(Protocol):
@@ -1509,14 +1513,16 @@ def execute_spine_step(
                 os.environ.update(saved_secrets)
             result = "pass" if completed.returncode == 0 else "fail"
             output = (completed.stdout or "") + (completed.stderr or "")
+            persisted_command = command
             for secret in sorted(set(saved_secrets.values()), key=len, reverse=True):
                 if secret:
                     output = output.replace(secret, "[REDACTED]")
+                    persisted_command = persisted_command.replace(secret, "[REDACTED]")
             output = output[:8000]
             _check_record(
                 tid=tid,
                 name="local",
-                command=command,
+                command=persisted_command,
                 result=result,
                 output=output or "(no output)",
                 head=check_head or None,
