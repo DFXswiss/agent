@@ -47,13 +47,18 @@ rules live in DESIGN.md §§14–15, §19, and §21.
    (never the origin checkout). Mandatory checks must `pass`, then
    `pr.open` opens a **draft** via `agent github pending`. A retry reuses
    head `error-fix-<id8>`. Gates run on that head after `pushed`. A human
-   merges.
+   merges. `agent watch error-fix-work` (DESIGN.md §21.7) automates this same
+   path end to end — from `spec_written` through the draft `pr.open`, the PR
+   gates, and task state `done` — using only script control flow and the
+   `grok`/`codex` CLIs, with no manual `agent run` steps; it is not wired into
+   `agent daemon`.
 
 ```bash
 agent activity add --session <id> --type error.skip --payload-file <path>
 agent activity add --session <id> --type error.fix --payload-file <path>
 agent task create --session <id> --workflow implement --title "Fix error" --error-id <error.seen-id>
 agent watch error-fix
+agent watch error-fix-work  # one scan; drains spec_written → draft pr.open → PR gates → done (§21.7); not wired into agent daemon
 agent github pending
 ```
 
@@ -76,6 +81,7 @@ stay out of this public client.
 ```bash
 agent watch errors   # one scan; knock daemon (no --once) polls every 60s
 agent watch error-fix  # one scan; find-or-create task + worktree; knock daemon polls with grok-usage
+agent watch error-fix-work  # one scan; drains spec_written → draft pr.open → PR gates → done (§21.7); not wired into agent daemon
 ```
 
 This file ships in the packaged tree. `agent skills path` may print an

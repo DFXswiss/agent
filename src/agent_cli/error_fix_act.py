@@ -48,8 +48,15 @@ def _repo_ok(repo: Any) -> str | None:
 
 
 def _nonempty_str(raw: Any) -> str | None:
-    if isinstance(raw, str) and raw != "":
-        return raw
+    # Layer (a): strip here so whitespace-only values (e.g. U+00A0) cannot
+    # pass validation then strip to empty in run_core's expected_branch
+    # derivation and silently skip the push identity check. Same rule for
+    # id/head/fingerprint/reason/ref: whitespace-only is absent — desired,
+    # those fields have no meaningful whitespace-only content.
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped != "":
+            return stripped
     return None
 
 
@@ -63,6 +70,24 @@ def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
     ):
         raise StoreError("error.seen not found")
     return row
+
+
+def has_error_fix_activity(store: Store, session_id: str, error_id: str) -> bool:
+    """True when this session has an error.fix activity for error_id."""
+    if not error_id:
+        return False
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin:
+            continue
+        if row.get("session_id") != session_id:
+            continue
+        if row.get("type") != "error.fix":
+            continue
+        payload = row.get("payload")
+        if isinstance(payload, dict) and _nonempty_str(payload.get("error_id")) == error_id:
+            return True
+    return False
 
 
 def _pr_open_merged(store: Store, pr_open_id: str) -> bool:
@@ -87,7 +112,10 @@ def _error_fix_heads(store: Store, fingerprint: str) -> set[str]:
         if row.get("type") != "error.seen":
             continue
         payload = row.get("payload")
-        if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
+        if (
+            not isinstance(payload, dict)
+            or _nonempty_str(payload.get("fingerprint")) != fingerprint
+        ):
             continue
         seen_id = _nonempty_str(row.get("id"))
         if seen_id is not None:
@@ -96,10 +124,29 @@ def _error_fix_heads(store: Store, fingerprint: str) -> set[str]:
 
 
 def _draft_matches(payload: dict[str, Any], fingerprint: str, heads: set[str]) -> bool:
-    if payload.get("fingerprint") == fingerprint:
+    if _nonempty_str(payload.get("fingerprint")) == fingerprint:
         return True
     head = _nonempty_str(payload.get("head"))
     return head is not None and head in heads
+
+
+def _pr_open_result_number(result: Any) -> int | None:
+    """Extract a valid positive PR number from a pr.open result dict, or None.
+
+    Reject bool, accept int > 0, accept digit-only str that parses to > 0.
+    This is the shared single source of truth for this validation;
+    fixer_act.py imports it from here.
+    """
+    if not isinstance(result, dict):
+        return None
+    number = result.get("number")
+    if isinstance(number, bool):
+        return None
+    if isinstance(number, int) and number > 0:
+        return number
+    if isinstance(number, str) and number.isdigit() and int(number) > 0:
+        return int(number)
+    return None
 
 
 def _already_open_draft(store: Store, fingerprint: str) -> bool:
@@ -118,6 +165,12 @@ def _already_open_draft(store: Store, fingerprint: str) -> bool:
             return True
         if status == "done" and not _pr_open_merged(store, str(row.get("id") or "")):
             return True
+        if (
+            status == "error"
+            and _pr_open_result_number(row.get("result")) is not None
+            and not _pr_open_merged(store, str(row.get("id") or ""))
+        ):
+            return True
     return False
 
 
@@ -126,18 +179,37 @@ def validate_conclusion(
     session_id: str,
     typ: str,
     payload: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
+    """Validate payload and return the payload to persist.
+
+    Callers MUST write the returned dict, not the original `payload`, to the
+    store. Validation checks the stripped (normalized) error_id/fingerprint/
+    reason; every downstream comparison
+    (has_error_fix_activity, _chain_snapshot's error_fix_confirmed,
+    fixer_act._error_fix_brief) does exact `==` against whatever was
+    persisted. Persisting the raw, unstripped payload would validate one
+    value and compare a different one.
+    """
+    # incident_closed's error_id comparison is intentionally left unnormalized.
+    # fingerprint() / _latest_seen() normalize; this comparison intentionally
+    # does not.
     error_id = _nonempty_str(payload.get("error_id"))
     if error_id is None:
         raise StoreError("error_id is required")
     fingerprint = _nonempty_str(payload.get("fingerprint"))
     if fingerprint is None:
         raise StoreError("fingerprint is required")
-    if typ == "error.skip" and _nonempty_str(payload.get("reason")) is None:
-        raise StoreError("reason is required")
+    reason = None
+    if typ == "error.skip":
+        reason = _nonempty_str(payload.get("reason"))
+        if reason is None:
+            raise StoreError("reason is required")
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
-    if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
+    if (
+        not isinstance(seen_payload, dict)
+        or _nonempty_str(seen_payload.get("fingerprint")) != fingerprint
+    ):
         raise StoreError("fingerprint mismatch")
     origin = store.device_id()
     for row in store.rows("activity"):
@@ -146,12 +218,18 @@ def validate_conclusion(
         if row.get("type") not in ("error.skip", "error.fix"):
             continue
         inner = row.get("payload")
-        if isinstance(inner, dict) and inner.get("error_id") == error_id:
+        if isinstance(inner, dict) and _nonempty_str(inner.get("error_id")) == error_id:
             raise StoreError("conclusion already exists")
     if typ == "error.fix" and _repo_ok(seen_payload.get("repo")) is None:
         raise StoreError("unmapped-repo")
     if typ == "error.fix" and _already_open_draft(store, fingerprint):
         raise StoreError("already-open-draft")
+    normalized = dict(payload)
+    normalized["error_id"] = error_id
+    normalized["fingerprint"] = fingerprint
+    if typ == "error.skip":
+        normalized["reason"] = reason
+    return normalized
 
 
 def find_or_create_implement_task(
@@ -176,7 +254,7 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
         if row.get("workflow") != "implement":
             continue
         payload = row.get("payload")
-        if isinstance(payload, dict) and payload.get("error_id") == error_id:
+        if isinstance(payload, dict) and _nonempty_str(payload.get("error_id")) == error_id:
             return str(row["id"])
     return None
 
@@ -189,8 +267,15 @@ def _find_or_create_implement_task(
     *,
     ref: str | None = None,
 ) -> tuple[str, bool]:
-    if _nonempty_str(error_id) is None:
+    normalized_error_id = _nonempty_str(error_id)
+    if normalized_error_id is None:
         raise StoreError("error_id is required")
+    # Use the normalized (stripped) value for both the lookup and the
+    # persisted payload below, so a whitespace-padded caller (e.g. `agent
+    # task create --error-id`) matches the same stripped value everything
+    # else (has_error_fix_activity, _chain_snapshot, _error_fix_brief)
+    # compares against.
+    error_id = normalized_error_id
     existing = _lookup_implement_task(store, session_id, error_id)
     if existing is not None:
         return existing, False
@@ -277,7 +362,10 @@ def _pending_fix(store: Store, row: dict[str, Any]) -> tuple[str, str, str]:
         raise StoreError("session_id is required")
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
-    if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
+    if (
+        not isinstance(seen_payload, dict)
+        or _nonempty_str(seen_payload.get("fingerprint")) != fingerprint
+    ):
         raise StoreError("fingerprint mismatch")
     repo = _repo_ok(seen_payload.get("repo"))
     if repo is None:
@@ -294,6 +382,24 @@ def _run_git(runner: Runner, argv: list[str], fallback: str) -> str | None:
         return None
     detail = (completed.stderr or completed.stdout or fallback).strip()
     return detail or fallback
+
+
+def _resolved_default_base(staging: Path) -> str | None:
+    """Best-effort: read the origin default-branch symref `git clone` writes to
+    .git/refs/remotes/origin/HEAD, without shelling out (avoids an extra runner
+    call whose ordering every existing caller would otherwise have to assert on).
+    Returns e.g. "origin/develop", or None if unavailable — callers fall back to
+    the candidate-list probe in that case (same as today's behavior)."""
+    ref_file = staging / ".git" / "refs" / "remotes" / "origin" / "HEAD"
+    try:
+        content = ref_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/remotes/"
+    if not content.startswith(prefix):
+        return None
+    name = content[len(prefix):].strip()
+    return name or None
 
 
 def scan_error_fix(store: Store, runner: Runner) -> list[str]:
@@ -356,13 +462,14 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 continue
         checkout = ["git", "-C", str(staging), "checkout", "-B", head]
         existing_task = _lookup_implement_task(store, session_id, error_id)
+        existing_ref = None
         if existing_task is not None:
             existing_row = store.row("task", existing_task)
-            existing_ref = None
             if existing_row is not None:
                 existing_ref = _nonempty_str(existing_row.get("ref"))
             if existing_ref is not None:
                 checkout.append(existing_ref)
+        resolved_base = existing_ref if existing_ref is not None else _resolved_default_base(staging)
         error = _run_git(
             runner,
             checkout,
@@ -378,6 +485,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 session_id,
                 error_id,
                 f"error-fix {error_id[:8]}",
+                ref=resolved_base,
             )
         except StoreError as exc:
             shutil.rmtree(staging, ignore_errors=True)

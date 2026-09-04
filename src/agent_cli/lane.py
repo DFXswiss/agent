@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import resource
 import subprocess
 import tempfile
 import time
@@ -13,19 +12,209 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .runtime import kill_process_group_and_reap
+
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 LANE_VENDORS = ("grok", "codex")
 WRITE_ROLES = frozenset({"implementer"})
 GROK_LANE_MODEL = "grok-4.5"
 CODEX_LANE_MODEL = "gpt-5.6-sol"
-NPROC_CAP = 800
+# Wall-clock cap for a single vendor CLI invocation (direct or tmux-held).
+# Large codex-pr diffs have been observed near 1500–1800s; keep headroom.
+VENDOR_RUN_TIMEOUT_SEC = 1800
 GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+
+
+# Non-AGENT_-prefixed credential names already used elsewhere in this
+# codebase (e.g. telegram_act.py, the gh CLI's own ambient auth) that the
+# AGENT_ERROR_FIX_*/AGENT_PG_DSN prefix rule below would otherwise miss.
+# ANTHROPIC_API_KEY is also included: GROK_STRIP_ENV (above) already keeps
+# it out of the vendor-CLI launch argv, but the local-check subprocess path
+# (run_core.py) has no separate strip loop of its own -- it relies solely on
+# this shared predicate, so ANTHROPIC_API_KEY must be covered here too.
+_KNOWN_CREDENTIAL_ENV_KEYS = frozenset(
+    {
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "ANTHROPIC_API_KEY",
+    }
+)
+
+
+def is_credential_shaped_env_key(key: str) -> bool:
+    """True for env var names carrying secrets: an AGENT_ERROR_FIX_* prefix,
+    AGENT_PG_DSN exactly, or a known first-party credential name used
+    elsewhere in this codebase. Single source of truth for this predicate --
+    both lane.py's vendor-CLI env stripping (_env_strip_prefix, below) and
+    run_core.py's local-check env stripping reuse this function instead of
+    duplicating the prefix-matching rule in two places."""
+    return (
+        key.startswith("AGENT_ERROR_FIX_")
+        or key == "AGENT_PG_DSN"
+        or key in _KNOWN_CREDENTIAL_ENV_KEYS
+    )
+
+
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
 
 _STATUS_RE = re.compile(
     r"(?m)^STATUS:[ \t]*(complete|partial|timeout|unavailable)[ \t]*\r?$",
     re.IGNORECASE,
 )
+# FINDINGS section: header line, then entries until NOT-VERIFIABLE / GAPS /
+# a duplicate FINDINGS header, or end of text. STATUS / REASON / SCOPE /
+# DIMENSION are not terminators — they may appear as finding text.
+_FINDINGS_HEADER_RE = re.compile(r"(?m)^FINDINGS:[ \t]*(.*)$", re.IGNORECASE)
+_FINDINGS_TERMINATOR_RE = re.compile(
+    r"(?m)^(?:FINDINGS|NOT-VERIFIABLE|GAPS):([ \t]|$)", re.IGNORECASE
+)
+# "[...]" = unfilled-placeholder echo; not a real disclosed gap.
+_ZERO_TOKENS = frozenset({"", "0", "none", "n/a", "-", "—", "–", "[...]"})
+
+
+def findings_header_present(text: str) -> bool:
+    """True when a FINDINGS: section header is present (parseable report)."""
+    return _FINDINGS_HEADER_RE.search(text) is not None
+
+
+def has_single_terminal_report(text: str) -> bool:
+    """True when STATUS: and FINDINGS: each appear exactly once.
+
+    Multiple STATUS or FINDINGS headers (e.g. an early example block plus a
+    real report) are unparseable — callers must not trust parse_status /
+    count_findings on such transcripts.
+
+    Multiple GAPS: headers are treated the same way (e.g. an early template-echo
+    "GAPS: none" in narration followed by a real GAPS: section with genuine disclosed
+    content): trusting only the first GAPS: match would let the real disclosure hide
+    behind the harmless early one and silently bypass the retry-on-disclosed-gaps check.
+    GAPS: itself is allowed to be absent (0 occurrences) — only duplication is rejected.
+
+    Known limitation, accepted by design: this does not attempt to detect a
+    real finding stated only in free-text preamble/reasoning narration ahead
+    of an otherwise clean STATUS: complete / FINDINGS: none block. Reasoning
+    narration before the terminal report is normal, expected model output
+    (the review contract says reports must "end with" this block, not
+    "consist solely of" it) — rejecting on any preamble text caused
+    near-universal false-fail retries on legitimate reports. Distinguishing
+    harmless narration from a stated finding is a semantic judgment on
+    natural-language text, not a mechanical one; no regex/keyword heuristic
+    here would be reliable, so none is attempted (matches this system's
+    "model text is never itself a transition" principle, DESIGN.md §19).
+    The structured FINDINGS: section remains the sole source of truth for
+    pass/fail.
+    """
+    status_n = len(list(_STATUS_RE.finditer(text)))
+    findings_n = len(list(_FINDINGS_HEADER_RE.finditer(text)))
+    gaps_n = len(list(_GAPS_HEADER_RE.finditer(text)))
+    return status_n == 1 and findings_n == 1 and gaps_n <= 1
+
+
+def _findings_body_lines(text: str) -> list[str] | None:
+    """Return FINDINGS-section body lines, or None when no FINDINGS: header."""
+    match = _FINDINGS_HEADER_RE.search(text)
+    if match is None:
+        return None
+    same_line = (match.group(1) or "").strip()
+    after = text[match.end() :]
+    body_lines: list[str] = []
+    if same_line:
+        body_lines.append(same_line)
+    for line in after.splitlines():
+        if _FINDINGS_TERMINATOR_RE.match(line):
+            break
+        body_lines.append(line)
+    return body_lines
+
+
+def extract_findings_text(text: str) -> str:
+    """Return the raw FINDINGS-section body (no bullet stripping), or ''."""
+    body_lines = _findings_body_lines(text)
+    if body_lines is None:
+        return ""
+    return "\n".join(body_lines).strip()
+
+
+def count_findings(text: str) -> int:
+    """Count non-empty FINDINGS entries. Empty / 0 / none → 0.
+
+    Absent FINDINGS: header also returns 0; callers that must distinguish
+    "explicitly zero" from "unparseable" should use findings_header_present().
+
+    Calibrated to the grok-reviewer / codex-reviewer report contract:
+    STATUS / REASON / SCOPE / DIMENSION / FINDINGS / NOT-VERIFIABLE / GAPS.
+    """
+    body_lines = _findings_body_lines(text)
+    if body_lines is None:
+        return 0
+    entries = 0
+    for raw in body_lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        # bullet / numbered prefixes
+        for prefix in ("- ", "* ", "• "):
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix) :].strip()
+                break
+        else:
+            if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)":
+                stripped = stripped[2:].strip()
+        if stripped.lower() in _ZERO_TOKENS:
+            continue
+        entries += 1
+    return entries
+
+
+_GAPS_HEADER_RE = re.compile(r"(?m)^GAPS:[ \t]*(.*)$", re.IGNORECASE)
+
+
+def _gaps_section_body_lines(match: re.Match[str], text: str) -> list[str]:
+    """Body lines for one already-located GAPS: header match, mirroring
+    _findings_body_lines' same-line + until-terminator logic exactly. A helper
+    (rather than only operating on the first match) because gaps_disclosed()
+    below must scan every GAPS: header, not just the first."""
+    same_line = (match.group(1) or "").strip()
+    after = text[match.end() :]
+    body_lines: list[str] = []
+    if same_line:
+        body_lines.append(same_line)
+    for line in after.splitlines():
+        if _FINDINGS_TERMINATOR_RE.match(line):
+            break
+        body_lines.append(line)
+    return body_lines
+
+
+def gaps_disclosed(text: str) -> bool:
+    """True when ANY GAPS: section in the text has genuine, non-trivial disclosed
+    content (not one of _ZERO_TOKENS, and not just bullet/number prefixes around a
+    zero token). Scans every GAPS: header via finditer, not just the first via
+    search — an early template-echo "GAPS: none" in narration/preamble followed by
+    a later, real GAPS: section with actual disclosed content must still be
+    detected; checking only the first match let that later disclosure silently
+    bypass the retry-on-disclosed-gaps check. Absent GAPS: header returns False.
+    Mirrors count_findings' entry-parsing exactly (bullet prefixes "- "/"* "/"• ",
+    numbered "1." / "1)")."""
+    for match in _GAPS_HEADER_RE.finditer(text):
+        body_lines = _gaps_section_body_lines(match, text)
+        for raw in body_lines:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            for prefix in ("- ", "* ", "• "):
+                if stripped.startswith(prefix):
+                    stripped = stripped[len(prefix) :].strip()
+                    break
+            else:
+                if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] in ".)":
+                    stripped = stripped[2:].strip()
+            if stripped.lower() in _ZERO_TOKENS:
+                continue
+            return True
+    return False
 
 
 @dataclass
@@ -48,6 +237,11 @@ def _env_strip_prefix() -> list[str]:
     argv = ["env"]
     for key in GROK_STRIP_ENV:
         argv.extend(["-u", key])
+    for key in sorted(os.environ):
+        if key in GROK_STRIP_ENV:
+            continue
+        if is_credential_shaped_env_key(key):
+            argv.extend(["-u", key])
     return argv
 
 
@@ -135,29 +329,49 @@ def tmux_wrap_argv(inner: list[str], *, name: str, cwd: str) -> list[str]:
 
 def parse_status(output: str, returncode: int) -> str:
     matches = list(_STATUS_RE.finditer(output))
-    if matches:
-        return matches[-1].group(1).lower()
+    matched = matches[-1].group(1).lower() if matches else None
+    # Trust embedded STATUS only when it already implies failure, or when the
+    # process actually exited 0. A crash/timeout after printing STATUS: complete
+    # must not auto-approve.
+    if matched in ("timeout", "unavailable"):
+        return matched
+    if matched is not None and returncode == 0:
+        return matched
     if returncode == 124:
         return "timeout"
     if returncode != 0:
         return "unavailable"
-    return "partial"
+    return matched if matched is not None else "partial"
 
 
-def _default_runner(argv: list[str], stdin_text: str | None) -> subprocess.CompletedProcess[str]:
-    def _preexec() -> None:
-        try:
-            resource.setrlimit(resource.RLIMIT_NPROC, (NPROC_CAP, NPROC_CAP))
-        except (ValueError, OSError, AttributeError):
-            raise SystemExit("nproc cap not settable") from None
-
-    return subprocess.run(
+def _default_runner(
+    argv: list[str],
+    stdin_text: str | None,
+    *,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    limit = VENDOR_RUN_TIMEOUT_SEC if timeout is None else timeout
+    # start_new_session=True ≡ setsid without post-fork Python (preexec_fn is
+    # unsafe in a multithreaded parent). RLIMIT_NPROC was only defense-in-depth.
+    proc = subprocess.Popen(  # noqa: S603
         argv,
-        input=stdin_text,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-        preexec_fn=_preexec,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_text, timeout=limit)
+    except subprocess.TimeoutExpired:
+        stdout, stderr = kill_process_group_and_reap(proc)
+        # returncode 124 matches parse_status's external-timeout convention.
+        return subprocess.CompletedProcess(argv, 124, stdout, stderr)
+    return subprocess.CompletedProcess(
+        argv,
+        proc.returncode if proc.returncode is not None else 1,
+        stdout or "",
+        stderr or "",
     )
 
 
@@ -171,8 +385,10 @@ def _run_in_tmux(
     name: str,
     cwd: str,
     stdin_text: str | None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Hold the vendor process in tmux, wait for the pane to die, capture output."""
+    limit = VENDOR_RUN_TIMEOUT_SEC if timeout is None else timeout
     wrap = tmux_wrap_argv(inner, name=name, cwd=cwd)
     created = _tmux_call(wrap)
     if created.returncode != 0:
@@ -191,6 +407,7 @@ def _run_in_tmux(
         if eof.returncode != 0:
             _tmux_call(["tmux", "kill-session", "-t", name])
             return eof
+    deadline = time.monotonic() + limit
     while True:
         dead = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead}"])
         if dead.returncode != 0:
@@ -200,6 +417,11 @@ def _run_in_tmux(
             )
         if dead.stdout.strip() == "1":
             break
+        if time.monotonic() >= deadline:
+            _tmux_call(["tmux", "kill-session", "-t", name])
+            return subprocess.CompletedProcess(
+                wrap, 124, "", "vendor lane timed out"
+            )
         time.sleep(0.2)
     status = _tmux_call(["tmux", "display-message", "-p", "-t", name, "#{pane_dead_status}"])
     returncode = 1

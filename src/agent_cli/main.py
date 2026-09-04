@@ -7,7 +7,6 @@ import json
 import os
 import re
 import secrets
-import shlex
 import socket
 import sys
 import time
@@ -29,6 +28,7 @@ from .chain import (
     required_source,
     to_json as step_to_json,
 )
+from .git_act import _SHA_RE
 from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
@@ -558,7 +558,12 @@ def cmd_activity(args: list[str]) -> None:
 
             _require_skill(session, "error-fix")
             with store.exclusive("error-fix-act:" + store.device_id()):
-                validate_conclusion(store, sid, typ, raw)
+                # Persist the NORMALIZED payload validate_conclusion returns,
+                # not raw — otherwise a whitespace-padded but valid error_id
+                # validates fine here and then compares != everywhere it's
+                # read back (has_error_fix_activity, error_fix_confirmed,
+                # _error_fix_brief).
+                normalized = validate_conclusion(store, sid, typ, raw)
                 activity_id = str(uuid.uuid4())
                 store.write(
                     "activity",
@@ -568,7 +573,7 @@ def cmd_activity(args: list[str]) -> None:
                         "id": activity_id,
                         "session_id": sid,
                         "type": typ,
-                        "payload": raw,
+                        "payload": normalized,
                         "execution_status": "pending",
                     },
                 )
@@ -810,6 +815,8 @@ def cmd_round(args: list[str]) -> None:
             die("round start requires workflow implement|resolve-conflicts")
         if task.get("state") == "done":
             die("cannot start a round on a done task")
+        if task.get("state") == "failed":
+            die("cannot start a round on a failed task")
         current = int(task.get("current_round") or 0)
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
@@ -947,9 +954,20 @@ def cmd_agent(args: list[str]) -> None:
                 _require_skill(session, skill_for_agent_role(str(role)))
             except ValueError:
                 die(f"unknown agent role: {role}")
+            # Neutral release: clear working without task/round state changes.
+            # Used when a vendor CLI is unavailable so a later retry is unblocked.
+            if verdict == "unavailable":
+                agent["status"] = "done"
+                agent["finished_at"] = utcnow()
+                if note is not None:
+                    agent["note"] = note
+                store.write("agent", "update", aid, _strip(agent))
+                print(f"agent {aid} verdict={verdict}")
+                return
             if role == "implementer":
+                # unavailable already handled by the early return above.
                 if verdict not in ("done", "blocked"):
-                    die("implementer verdict must be done|blocked")
+                    die("implementer verdict must be done|blocked|unavailable")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "implementing":
@@ -967,8 +985,9 @@ def cmd_agent(args: list[str]) -> None:
                 task["updated_at"] = utcnow()
                 store.write("task", "update", task["id"], _strip(task))
             elif role == "reviewer":
+                # unavailable already handled by the early return above.
                 if verdict not in ("approved", "rejected"):
-                    die("reviewer verdict must be approved|rejected")
+                    die("reviewer verdict must be approved|rejected|unavailable")
                 if agent.get("round") != int(task.get("current_round") or 0):
                     die("agent round is not the current round")
                 if task.get("state") != "reviewing":
@@ -987,8 +1006,9 @@ def cmd_agent(args: list[str]) -> None:
                 task["updated_at"] = utcnow()
                 store.write("task", "update", task["id"], _strip(task))
             elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
+                # unavailable already handled by the early return above.
                 if verdict not in ("approved", "rejected"):
-                    die("pr-reviewer verdict must be approved|rejected")
+                    die("pr-reviewer verdict must be approved|rejected|unavailable")
                 _require_owned(store, task, "task")
             else:
                 die(f"unknown agent role: {role}")
@@ -1007,7 +1027,7 @@ def cmd_check(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
             "Usage: agent check record --task UUID --name NAME --command CMD "
-            "--result pass|fail|skip [--output TEXT]"
+            "--result pass|fail|skip [--output TEXT] [--head SHA]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
@@ -1015,10 +1035,15 @@ def cmd_check(args: list[str]) -> None:
     command = require_flag(rest, "--command")
     result = require_flag(rest, "--result")
     output = flag(rest, "--output")
+    head = flag(rest, "--head")
     if result not in ("pass", "fail", "skip"):
         die("result must be pass|fail|skip")
     if result == "skip" and (output is None or output == ""):
         die("skip requires --output")
+    if head:
+        head = head.lower()
+        if not _SHA_RE.fullmatch(head):
+            die("--head must be a git SHA (lowercase hex, length 7-40)")
     store = open_store()
     try:
         task = _need(store, "task", tid)
@@ -1039,6 +1064,7 @@ def cmd_check(args: list[str]) -> None:
                 "command": command,
                 "result": result,
                 "output": output,
+                "head_sha": head or None,
                 "ran_at": utcnow(),
             },
         )
@@ -1131,13 +1157,34 @@ def cmd_local_ci(args: list[str]) -> None:
 
 def _task_pull_request(task: dict) -> tuple[str, int] | None:
     """The task's pull request as (repo, number), or None when it has none."""
-    repo = _repo_ok(task.get("repo"))
-    ref = task.get("ref")
+    from .error_fix_act import _nonempty_str
+
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    repo = _repo_ok(payload.get("repo") or task.get("repo"))
     if repo is None:
         return None
-    if not isinstance(ref, str) or not ref.isdigit() or int(ref) <= 0:
+    is_error_fix = bool(_nonempty_str(payload.get("error_id")))
+    ref = task.get("ref")
+    if (
+        not is_error_fix
+        and isinstance(ref, str)
+        and ref.isdigit()
+        and int(ref) > 0
+    ):
+        return repo, int(ref)
+    # error-fix tasks keep task["ref"] as a git checkout ref; the PR number
+    # lives on payload.pr_number (set by the fixer after pr.open succeeds).
+    # For error-fix tasks specifically, ref is never consulted for the PR
+    # number even when it happens to be a positive digit string (e.g. an
+    # operator-set --ref on task create).
+    pr_number = payload.get("pr_number")
+    if isinstance(pr_number, bool):
         return None
-    return repo, int(ref)
+    if isinstance(pr_number, int) and pr_number > 0:
+        return repo, pr_number
+    if isinstance(pr_number, str) and pr_number.isdigit() and int(pr_number) > 0:
+        return repo, int(pr_number)
+    return None
 
 
 def _queue_gate_findings(
@@ -1303,7 +1350,11 @@ def cmd_gate(args: list[str]) -> None:
             },
         )
         if verdict == "rejected" and task.get("workflow") in ("implement", "resolve-conflicts"):
-            if task.get("state") != "implementing":
+            # A sibling PR-review dimension's own gate rejection must never
+            # resurrect a task another dimension in the same batch already
+            # failed permanently (round-cap/lane-retry exhaustion) -- the
+            # gate row itself is still recorded above either way.
+            if task.get("state") not in ("implementing", "failed"):
                 task["state"] = "implementing"
                 task["updated_at"] = utcnow()
                 store.write("task", "update", tid, _strip(task))
@@ -2144,11 +2195,27 @@ def _find_round(store: Store, task_id: str, round_num: object) -> dict:
     return matches[0]
 
 
+def _origin_seq_sort_key(row: dict, ts_field: str, *extra_fallback: str) -> tuple:
+    """Oldest→newest by payload origin_seq (Store.next_seq at write time).
+
+    Rows written before origin_seq was stamped sort before every stamped row;
+    among themselves they keep the old timestamp (and optional extra) order.
+    """
+    fallback = (str(row.get(ts_field) or ""), *(str(row.get(f) or "") for f in extra_fallback))
+    raw = row.get("origin_seq")
+    if raw is not None:
+        try:
+            return (1, int(raw), *("" for _ in fallback))
+        except (TypeError, ValueError):
+            pass
+    return (0, 0, *fallback)
+
+
 def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
     gates = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
-    # rows() is updated_at DESC; reverse for older-first, then stable sort by recorded_at.
+    # rows() is updated_at DESC; reverse for older-first, then origin_seq order.
     ordered = list(reversed(gates))
-    ordered.sort(key=lambda g: g.get("recorded_at") or "")
+    ordered.sort(key=lambda g: _origin_seq_sort_key(g, "recorded_at"))
     latest: dict[tuple[str, str], dict] = {}
     for g in ordered:
         latest[(g.get("stage"), g.get("dimension"))] = g
@@ -2158,7 +2225,7 @@ def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
 def _latest_checks(store: Store, task_id: str) -> dict[str, dict]:
     checks = [c for c in store.rows("local_check") if c.get("task_id") == task_id]
     ordered = list(reversed(checks))
-    ordered.sort(key=lambda c: c.get("ran_at") or "")
+    ordered.sort(key=lambda c: _origin_seq_sort_key(c, "ran_at"))
     latest: dict[str, dict] = {}
     for c in ordered:
         latest[c["name"]] = c
@@ -2176,20 +2243,23 @@ def load_task_dict(store: Store, tid: str) -> dict:
         if r.get("task_id") == tid
     }
     checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
+    # Keep full history (like gates). Order by origin_seq so same-second ran_at
+    # ties cannot drop a fresh head-bound pass — chain._artifact_ok / allow
+    # last-wins walk this list oldest→newest.
     ordered_checks = list(reversed(checks))
-    ordered_checks.sort(key=lambda c: c.get("ran_at") or "")
-    latest_by_name: dict[str, dict] = {}
-    for c in ordered_checks:
-        name = c.get("name")
-        if name is None:
-            continue
-        latest_by_name[str(name)] = c
+    ordered_checks.sort(key=lambda c: _origin_seq_sort_key(c, "ran_at"))
     local_checks = [
-        {"name": name, "result": c.get("result")} for name, c in latest_by_name.items()
+        {
+            "name": c.get("name"),
+            "result": c.get("result"),
+            "head_sha": c.get("head_sha") or "",
+        }
+        for c in ordered_checks
+        if c.get("name") is not None
     ]
     gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
     ordered_gates = list(reversed(gates_raw))
-    ordered_gates.sort(key=lambda g: g.get("recorded_at") or "")
+    ordered_gates.sort(key=lambda g: _origin_seq_sort_key(g, "recorded_at"))
     gates = [
         {
             "stage": g.get("stage"),
@@ -2212,6 +2282,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         },
         "gates": gates,
         "local_checks": local_checks,
+        "payload": task.get("payload") or {},
     }
 
 
@@ -2222,12 +2293,14 @@ def load_session_tasks(store: Store, session_id: str) -> list[dict]:
 
 
 def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> dict:
+    from .error_fix_act import _nonempty_str, has_error_fix_activity
+
     task = load_task_dict(store, tid)
     sid = str(task.get("session_id") or "")
     session = store.row("session", sid) if sid else None
     agents_raw = [a for a in store.rows("agent") if a.get("task_id") == tid]
     agents_ordered = list(reversed(agents_raw))
-    agents_ordered.sort(key=lambda a: (a.get("started_at") or "", str(a.get("id") or "")))
+    agents_ordered.sort(key=lambda a: _origin_seq_sort_key(a, "started_at", "id"))
     agents = [
         {
             "role": a.get("role"),
@@ -2242,10 +2315,39 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
     rounds_ordered.sort(key=lambda r: (r.get("round") or 0, str(r.get("id") or "")))
     last_round = rounds_ordered[-1] if rounds_ordered else {}
     head = extra_head or ""
-    if not head:
-        for g in task.get("gates") or []:
-            if g.get("head_sha"):
-                head = str(g["head_sha"])
+    if not head and str((task.get("checklist") or {}).get("pushed") or "") == "ja":
+        # Primary: the SHA the "pushed" step itself recorded when it closed
+        # (run_core.execute_spine_step sets evidence=f"pushed {sha}"). Gate rows
+        # for a superseded head are never deleted on PR-gate rejection
+        # (_PR_REJECT_RESET_KEYS only resets checklist status), so trusting
+        # "the last gate's head_sha" can resolve to a stale, pre-rejection head
+        # across a fresh scan/process boundary with no in-memory head to correct it.
+        for row in store.rows("checklist_item"):
+            if row.get("task_id") != tid or row.get("key") != "pushed":
+                continue
+            if row.get("status") != "ja":
+                continue
+            ev = str(row.get("evidence") or "").strip().lower()
+            for token in ev.replace(":", " ").split():
+                if _SHA_RE.fullmatch(token):
+                    head = token
+                    break
+            break
+        if not head:
+            # Fallback: most recent local_check with its own head_sha and a
+            # pass/skip result.
+            for c in task.get("local_checks") or []:
+                if str(c.get("result") or "") in ("pass", "skip") and c.get("head_sha"):
+                    head = str(c["head_sha"])
+        if not head:
+            # Unresolvable: do not fall back to empty (== unscoped matching
+            # downstream) and never to a stale gate's head.
+            head = "unresolved-pushed-head"
+    payload = task.get("payload") or {}
+    error_id = _nonempty_str(payload.get("error_id")) if isinstance(payload, dict) else None
+    error_fix_confirmed = bool(
+        error_id and sid and has_error_fix_activity(store, sid, error_id)
+    )
     return {
         "session_active": bool(session is not None and session.get("status") == "active"),
         "agents": agents,
@@ -2257,6 +2359,8 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
         "workflow": task.get("workflow"),
         "checklist": task.get("checklist") or {},
         "session_id": sid,
+        "payload": payload,
+        "error_fix_confirmed": error_fix_confirmed,
     }
 
 
@@ -2503,6 +2607,7 @@ def cmd_close_step(args: list[str]) -> None:
             source=chain_source,
             evidence=evidence,
             snapshot=snap,
+            status=status,
         )
         if not verdict.allowed:
             die(verdict.reason)
@@ -2524,15 +2629,33 @@ def cmd_close_step(args: list[str]) -> None:
     cmd_checklist(set_args)
 
 
-def _exec_argv(argv: list[str], *, cwd: str | None = None) -> "Completed":
-    from .runtime import Completed
-    import subprocess
+def _exec_argv(
+    argv: list[str], *, cwd: str | None = None, timeout: float | None = None
+) -> "Completed":
+    from .runtime import Completed, run_argv_killing_tree
 
+    limit = 120 if timeout is None else timeout
     try:
-        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)  # noqa: S603
+        return run_argv_killing_tree(argv, cwd=cwd, timeout=limit)
     except OSError as exc:
         return Completed(127, "", str(exc))
-    return Completed(proc.returncode, proc.stdout or "", proc.stderr or "")
+
+
+GH_RUNNER_TIMEOUT_SEC = 120
+
+
+def _bounded_gh_runner(argv: list[str]) -> "Completed":
+    """Bound gh calls driven by drive_error_fix_tasks with a timeout, so a hanging
+    gh process cannot hold the device-wide error-fix-work advisory lock indefinitely.
+    A timeout surfaces as Completed(124, ...); _classify_gh_failure's existing default
+    branch already treats an unrecognized non-zero returncode as "transient" (retryable),
+    so no further classification change is needed here."""
+    from .runtime import Completed, run_argv_killing_tree
+
+    try:
+        return run_argv_killing_tree(argv, timeout=GH_RUNNER_TIMEOUT_SEC)
+    except OSError as exc:
+        return Completed(127, "", str(exc))
 
 
 def _resolve_run_cwd(args: list[str]) -> str:
@@ -2578,6 +2701,8 @@ def _agent_handoff_exit(step, tid: str, session_id: str | None) -> None:
 
 
 def cmd_run(args: list[str]) -> None:
+    from .run_core import execute_spine_step
+
     tid = flag(args, "--task")
     head = flag(args, "--head")
     dry = "--dry-run" in args
@@ -2588,12 +2713,9 @@ def cmd_run(args: list[str]) -> None:
             "Usage: agent run --task ID [--dry-run] [--head SHA] "
             "[--cwd PATH] [--spec-file PATH] [--no-tmux]"
         )
-    close_key: str | None = None
-    close_evidence: str | None = None
-    evidence: str | None = None
     store = open_store()
     try:
-        task = _require_task_session_active(store, tid)
+        _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid, extra_head=head)
         wf = str(snap["workflow"])
         ready = next_steps(wf, snap["checklist"], spine_only=True)
@@ -2612,201 +2734,78 @@ def cmd_run(args: list[str]) -> None:
                     )
                 )
             return
-        if step.kind == "human":
+        cwd: str | None = None
+        if step.key in ("pushed", "mergeable", "local_check_pass") or (
+            step.kind == "agent" and spec_file is not None
+        ):
+            cwd = _resolve_run_cwd(args)
+        tmux = "--no-tmux" not in args
+        outcome = execute_spine_step(
+            store,
+            tid,
+            head=head,
+            dry_run=False,
+            spec_file=spec_file,
+            cwd=cwd,
+            tmux=tmux,
+            exec_argv=_exec_argv,
+        )
+        printed: set[int] = set()
+        for lr in outcome.lane_results:
+            _print_lane_result(lr)
+            printed.add(id(lr))
+        if outcome.lane_result is not None and id(outcome.lane_result) not in printed:
+            _print_lane_result(outcome.lane_result)
+
+        if outcome.kind == "human_required":
             print(
-                f"agent: human must close {step.key} (close-step --source human)",
+                f"agent: human must close {outcome.key} (close-step --source human)",
                 file=sys.stderr,
             )
             raise SystemExit(2)
-        if step.key == "pushed":
-            cwd = _resolve_run_cwd(args)
-            from .git_act import GitActError, push_branch
-
-            try:
-                sha = push_branch(
-                    cwd=cwd, runner=lambda argv: _exec_argv(argv, cwd=cwd)
-                )
-            except GitActError as exc:
-                die(str(exc))
-            if head is not None:
-                want = head.lower()
-                if want != sha and not (
-                    7 <= len(want) < len(sha) and sha.startswith(want)
-                ):
-                    die(f"--head {head} does not match pushed sha {sha}")
-            head = sha
-            snap = _chain_snapshot(store, tid, extra_head=head)
-
-        if step.key == "mergeable":
-            cwd = _resolve_run_cwd(args)
-            from .git_act import GitActError, measure_mergeable
-
-            try:
-                expected = str(snap.get("head_sha") or head or "").strip() or None
-                evidence = measure_mergeable(
-                    cwd=cwd,
-                    runner=lambda argv: _exec_argv(argv, cwd=cwd),
-                    expected_head=expected,
-                )
-            except GitActError as exc:
-                die(str(exc))
-        if step.key in NO_AUTO_CLOSE:
-            print(
-                f"agent: {step.key} is not auto-closable — "
-                "close-step --source script --evidence …",
-                file=sys.stderr,
+        if outcome.kind == "agent_handoff":
+            handoff_step = outcome.step or step
+            _agent_handoff_exit(
+                handoff_step, tid, str(snap.get("session_id"))
             )
-            raise SystemExit(2)
-        if step.key == "local_check_pass" and not snap["local_checks"]:
-            cwd = _resolve_run_cwd(args)
-            env_cmd = os.environ.get("AGENT_CHECK_COMMAND")
-            if env_cmd is None:
-                command = "pytest -q"
-            elif env_cmd == "":
-                die("AGENT_CHECK_COMMAND is set but empty")
-            else:
-                command = env_cmd
-            argv = shlex.split(command)
-            if not argv:
-                die("check command is empty")
-            completed = _exec_argv(argv, cwd=cwd)
-            result = "pass" if completed.returncode == 0 else "fail"
-            output = ((completed.stdout or "") + (completed.stderr or ""))[:8000]
-            cmd_check(
-                [
-                    "record",
-                    "--task",
-                    tid,
-                    "--name",
-                    "local",
-                    "--command",
-                    command,
-                    "--result",
-                    result,
-                    "--output",
-                    output or "(no output)",
-                ]
-            )
-            if result == "fail":
-                raise SystemExit(2)
-            snap = _chain_snapshot(store, tid, extra_head=head)
-        if step.kind == "agent":
-            already = close_allowed(
-                wf,
-                step.key,
-                checklist=snap["checklist"],
-                source="script",
-                evidence="run auto",
-                snapshot=snap,
-            )
-            if already.allowed:
-                close_key = step.key
-                close_evidence = f"run auto:{already.reason}"
-            elif spec_file is not None:
-                spec_path = Path(spec_file)
-                if not spec_path.is_file():
-                    die(f"spec-file not found: {spec_file}")
-                if not spec_path.read_text(encoding="utf-8").strip():
-                    die(f"spec-file is empty: {spec_file}")
-                cwd = _resolve_run_cwd(args)
-                tmux = "--no-tmux" not in args
-                role = str(step.role or "")
-                vendor = str(step.vendor or "")
-                session_id = str(snap.get("session_id") or "")
-                current_round = int(task.get("current_round") or 0)
-                round_num: int | None = None
-                if role in ("implementer", "reviewer"):
-                    round_num = current_round
-                working = _find_working_agent(
-                    store, tid, role=role, vendor=vendor, round_num=round_num
-                )
-                if working is None:
-                    start_args = [
-                        "start",
-                        "--session",
-                        session_id,
-                        "--task",
-                        tid,
-                        "--role",
-                        role,
-                        "--vendor",
-                        vendor,
-                    ]
-                    if round_num is not None:
-                        start_args.extend(["--round", str(round_num)])
-                    cmd_agent(start_args)
-                result = launch(
-                    role=role,
-                    vendor=vendor,
-                    spec_file=spec_file,
-                    cwd=cwd,
-                    tmux=tmux,
-                )
-                _print_lane_result(result)
-                if role == "implementer" and result.status == "complete":
-                    working = _find_working_agent(
-                        store, tid, role=role, vendor=vendor, round_num=round_num
-                    )
-                    if working is None:
-                        die("implementer working agent not found after lane")
-                    cmd_agent(
-                        [
-                            "finish",
-                            "--id",
-                            str(working["id"]),
-                            "--verdict",
-                            "done",
-                            "--note",
-                            "lane STATUS=complete",
-                        ]
-                    )
-                    snap = _chain_snapshot(store, tid, extra_head=head)
-                    task = _need(store, "task", tid)
-                else:
-                    _agent_handoff_exit(step, tid, str(snap.get("session_id")))
-            else:
-                _agent_handoff_exit(step, tid, str(snap.get("session_id")))
-        if close_key is None:
-            close_ev = (
-                evidence
-                if step.key == "mergeable"
-                else "run auto"
-            )
-            verdict = close_allowed(
-                wf,
-                step.key,
-                checklist=snap["checklist"],
-                source="script",
-                evidence=close_ev,
-                snapshot=snap,
-            )
-            if not verdict.allowed:
+        if outcome.kind == "not_closable":
+            if outcome.key in NO_AUTO_CLOSE:
                 print(
-                    f"agent: script step {step.key} not closable: {verdict.reason}",
+                    f"agent: {outcome.key} is not auto-closable — "
+                    "close-step --source script --evidence …",
                     file=sys.stderr,
                 )
-                raise SystemExit(2)
-            close_key = step.key
-            close_evidence = (
-                evidence
-                if step.key == "mergeable"
-                else f"run auto:{verdict.reason}"
+            else:
+                print(
+                    f"agent: script step {outcome.key} not closable: {outcome.reason}",
+                    file=sys.stderr,
+                )
+            raise SystemExit(2)
+        if outcome.kind == "vendor_unavailable":
+            print(
+                f"agent: vendor unavailable for {outcome.key}: "
+                f"{outcome.reason or outcome.message}",
+                file=sys.stderr,
             )
+            raise SystemExit(2)
+        if outcome.kind == "local_check_failed":
+            raise SystemExit(2)
+        if outcome.kind == "failed":
+            die(outcome.message or outcome.reason or "run failed")
+        if outcome.kind == "rejected":
+            print(
+                f"run task={tid} {outcome.message or 'rejected; no new round'}"
+            )
+            return
+        if outcome.kind == "rejected_new_round":
+            print(
+                f"run task={tid} {outcome.message or 'rejected; new round started'}"
+            )
+            return
+        # closed | agent_closed — ledger already updated by execute_spine_step
+        return
     finally:
         store.close()
-    close_args = [
-        "--task",
-        tid,
-        "--key",
-        str(close_key),
-        "--source",
-        "script",
-        "--evidence",
-        str(close_evidence),
-    ]
-    if head:
-        close_args.extend(["--head", head])
-    cmd_close_step(close_args)
 
 
 def cmd_github(args: list[str]) -> None:
@@ -3157,10 +3156,12 @@ def cmd_watch(args: list[str]) -> None:
         "grok-usage",
         "errors",
         "error-fix",
+        "error-fix-work",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|grok-usage|errors|"
+            "error-fix|error-fix-work"
         )
     store = open_store()
     try:
@@ -3194,7 +3195,8 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|"
+                    "error-fix|error-fix-work"
                 )
             follow = extra == ["--follow"]
             while True:
@@ -3250,6 +3252,15 @@ def cmd_watch(args: list[str]) -> None:
             from .runtime import run_argv
 
             lines = scan_error_fix(store, run_argv)
+            for line in lines:
+                print(line)
+            return
+        if args[0] == "error-fix-work":
+            from .fixer_act import drive_error_fix_tasks
+
+            # Empty scan stays silent, same as sibling watches "errors" and
+            # "error-fix" (no "… none" line).
+            lines = drive_error_fix_tasks(store, _bounded_gh_runner)
             for line in lines:
                 print(line)
             return

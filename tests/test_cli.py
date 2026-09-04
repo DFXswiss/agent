@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 
+import agent_cli.main as main_mod
 from agent_cli.main import main
 from agent_cli.store import Store, StoreError, utcnow
 from agent_cli.usage import AuthStale
@@ -1080,6 +1083,55 @@ def test_watch_error_fix_empty_scan_prints_nothing(
     assert "error.fix x task=t worktree=/tmp/w" in capsys.readouterr().out
 
 
+def test_watch_error_fix_work_empty_scan_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.drive_error_fix_tasks", lambda store, runner: []
+    )
+    run(tmp_path, ["watch", "error-fix-work"])
+    assert capsys.readouterr().out == ""
+    monkeypatch.setattr(
+        "agent_cli.fixer_act.drive_error_fix_tasks",
+        lambda store, runner: ["error-fix-work t1 done"],
+    )
+    run(tmp_path, ["watch", "error-fix-work"])
+    assert "error-fix-work t1 done" in capsys.readouterr().out
+
+
+def test_bounded_gh_runner_timeout_returns_124_and_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hung gh must surface returncode 124 rather than hold the advisory lock.
+
+    Mirrors test_default_runner_timeout_returns_124_and_releases_lock: a local
+    RLock stands in for store.exclusive's process-wide lock around the runner.
+    """
+    monkeypatch.setattr(main_mod, "GH_RUNNER_TIMEOUT_SEC", 0.3)
+    lock = threading.RLock()
+    t0 = time.monotonic()
+    with lock:
+        result = main_mod._bounded_gh_runner(["sleep", "30"])
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"timeout path took too long: {elapsed:.2f}s"
+    assert result.returncode == 124
+
+    acquired = {"ok": False}
+
+    def try_acquire() -> None:
+        if lock.acquire(timeout=1.0):
+            acquired["ok"] = True
+            lock.release()
+
+    thread = threading.Thread(target=try_acquire)
+    thread.start()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert acquired["ok"], "lock held around runner must be released after timeout"
+
+
 def test_knock_once_does_not_poll_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1507,6 +1559,130 @@ def test_activity_add_error_skip_happy_path(tmp_path: Path) -> None:
         store.close()
 
 
+def test_activity_add_error_fix_whitespace_padded_error_id_resolves_end_to_end(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round 25 regression: round 24 made `_nonempty_str` strip for VALIDATION,
+    but `cmd_activity` and `_find_or_create_implement_task` used to persist the
+    RAW, unstripped payload. Two independent call sites (`activity add` and
+    `task create --error-id`) padding the same logical error_id with different
+    incidental whitespace must still resolve as the same identifier end to
+    end: persisted normalized, not just validated normalized. This exercises
+    the real persist-then-compare path (has_error_fix_activity /
+    error_fix_confirmed / the fixer's brief lookup) against actual store
+    rows written by the CLI — not the `_nonempty_str` helper in isolation.
+    """
+    from agent_cli.error_fix_act import has_error_fix_activity
+    from agent_cli.fixer_act import _error_fix_brief
+    from agent_cli.main import _chain_snapshot
+
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    brief = "Add a retry around the timeout."
+    # Different incidental whitespace at each call site (NBSP vs tab/space/
+    # newline) — same identifier after stripping, different raw bytes.
+    activity_error_id = error_id + "\u00a0"
+    task_error_id = "\t" + error_id + "  \n"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.fix",
+        payload={"error_id": activity_error_id, "fingerprint": fingerprint, "brief": brief},
+    )
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "task",
+            "create",
+            "--session",
+            "error-session",
+            "--workflow",
+            "implement",
+            "--error-id",
+            task_error_id,
+            "--title",
+            "Fix timeout",
+        ],
+    )
+    tid = _last_task_id(capsys.readouterr().out)
+
+    store = Store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        payload = task.get("payload") or {}
+        # The persisted task payload must be the NORMALIZED id, not the raw
+        # whitespace-padded CLI argument.
+        assert payload.get("error_id") == error_id
+
+        fix_rows = [row for row in store.rows("activity") if row["type"] == "error.fix"]
+        assert len(fix_rows) == 1
+        # The persisted activity payload must also be normalized, matching
+        # the task's normalized error_id above (not activity_error_id).
+        assert fix_rows[0]["payload"]["error_id"] == error_id
+
+        assert has_error_fix_activity(store, "error-session", error_id) is True
+
+        snap = _chain_snapshot(store, tid)
+        assert snap["error_fix_confirmed"] is True
+
+        assert _error_fix_brief(store, "error-session", error_id) == brief
+    finally:
+        store.close()
+
+
+def test_chain_snapshot_error_fix_confirmed_true_for_whitespace_padded_task_error_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round 26 regression: _chain_snapshot must normalize the task's
+    payload.error_id before comparing, not trust it is already clean.
+    Simulated by overwriting the task row directly after normal creation,
+    bypassing _find_or_create_implement_task's own normalization."""
+    from agent_cli.main import _chain_snapshot
+
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+    _add_cli_error_conclusion(
+        tmp_path,
+        typ="error.fix",
+        payload={"error_id": error_id, "fingerprint": fingerprint, "brief": "fix it"},
+    )
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "task",
+            "create",
+            "--session",
+            "error-session",
+            "--workflow",
+            "implement",
+            "--error-id",
+            error_id,
+            "--title",
+            "Fix timeout",
+        ],
+    )
+    tid = _last_task_id(capsys.readouterr().out)
+
+    store = Store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        task["payload"] = {"error_id": error_id + "\u00a0", "repo": "org/app"}
+        store.write("task", "update", tid, task)
+
+        snap = _chain_snapshot(store, tid)
+        assert snap["error_fix_confirmed"] is True
+    finally:
+        store.close()
+
+
 def test_activity_add_error_fix_requires_mapped_repo(tmp_path: Path) -> None:
     error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     fingerprint = "traceback-fingerprint"
@@ -1562,6 +1738,46 @@ def test_activity_add_refuses_second_error_conclusion(tmp_path: Path) -> None:
             tmp_path,
             typ="error.fix",
             payload={"error_id": error_id, "fingerprint": fingerprint},
+        )
+
+
+def test_activity_add_refuses_duplicate_against_whitespace_padded_conclusion(
+    tmp_path: Path,
+) -> None:
+    """A prior conclusion persisted with incidental whitespace in error_id
+    (simulated by writing the activity row directly, bypassing
+    validate_conclusion's normalization) must still be found by the
+    duplicate-conclusion guard for a normalized error_id."""
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    fingerprint = "traceback-fingerprint"
+    _seed_cli_error_seen_for_conclusion(tmp_path, error_id=error_id, fingerprint=fingerprint)
+
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "fix-1",
+            {
+                "id": "fix-1",
+                "session_id": "error-session",
+                "type": "error.fix",
+                "payload": {"error_id": f"{error_id} ", "fingerprint": fingerprint},
+                "execution_status": "pending",
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="conclusion already exists"):
+        _add_cli_error_conclusion(
+            tmp_path,
+            typ="error.skip",
+            payload={
+                "error_id": error_id,
+                "fingerprint": fingerprint,
+                "reason": "Known external failure",
+            },
         )
 
 

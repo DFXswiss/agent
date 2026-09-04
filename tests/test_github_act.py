@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_cli.github_act import ACTIVITY_MARKER, scan_github
+from agent_cli.github_act import (
+    ACTIVITY_MARKER,
+    _classify_gh_failure,
+    _resolve_actual_base,
+    scan_github,
+)
 from agent_cli.main import main
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -62,10 +70,16 @@ def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
     )
     calls: list[list[str]] = []
 
+    view_calls = 0
+
     def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
         calls.append(list(argv))
         if argv[:3] == ["gh", "pr", "view"]:
-            return Completed(1, "", "no pull requests found")
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(0, "{}", "")
         if "create" in argv:
             assert "--draft" in argv
             assert "--repo" in argv
@@ -134,6 +148,645 @@ def test_pr_open_create_then_idempotent(tmp_path: Path) -> None:
     row2 = store.row("activity", act2)
     assert row2 is not None
     assert row2["result"]["draft"] is True
+
+
+def test_scan_github_serializes_via_exclusive_and_skips_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scanner B after A must not re-process a done pr.open; lock key is github-scan."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-scan-serial"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Serialize scan",
+            "head": "feat-serial",
+            "body": "Please review",
+        },
+    )
+    held_keys: list[str] = []
+    orig_exclusive = Store.exclusive
+
+    @contextmanager
+    def tracking_exclusive(self: Store, key: str):
+        held_keys.append(key)
+        with orig_exclusive(self, key):
+            yield
+
+    monkeypatch.setattr(Store, "exclusive", tracking_exclusive)
+
+    create_calls = {"n": 0}
+    view_calls = {"n": 0}
+
+    def runner_a(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls["n"] += 1
+            if view_calls["n"] == 1:
+                return Completed(1, "", "no pull requests found")
+            # Post-create base-resolution view: definitive empty baseRefName.
+            return Completed(0, "{}", "")
+        if "create" in argv:
+            create_calls["n"] += 1
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/77\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines_a = scan_github(store, runner_a)
+    assert lines_a == [f"pr.open {act_id} done number=77"]
+    assert create_calls["n"] == 1
+    assert held_keys == [f"github-scan:{store.device_id()}"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["number"] == 77
+
+    held_keys.clear()
+
+    def runner_b(argv: list[str]) -> Completed:
+        raise AssertionError(f"scanner B must not invoke runner for done row: {argv}")
+
+    lines_b = scan_github(store, runner_b)
+    assert lines_b == []
+    assert create_calls["n"] == 1
+    assert held_keys == [f"github-scan:{store.device_id()}"]
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "done"
+    assert row2["result"]["number"] == 77
+
+
+def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) -> None:
+    """Postgres advisory lock must block a second Store connection on the same key.
+
+    Uses two independent Store instances (separate RLocks, separate psycopg
+    connections) so only pg_advisory_lock — not the in-process threading.RLock —
+    can explain the observed blocking. Before the negative assertion, poll
+    pg_stat_activity on store_a's connection for a positive Lock wait on
+    store_b's backend PID — client-side "about to call" signals alone can
+    pass vacuously against a no-op lock.
+    """
+    store_a = Store(tmp_path)
+    store_b = Store(tmp_path)
+    _owned_session(store_a)
+    lock_key = "github-scan:" + store_a.device_id()
+    entered = threading.Event()
+    release = threading.Event()
+    attempting = threading.Event()
+    second_entered = threading.Event()
+    waiter_pid = store_b.conn.info.backend_pid
+
+    def holder() -> None:
+        with store_a.exclusive(lock_key):
+            entered.set()
+            assert release.wait(timeout=5)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    assert entered.wait(timeout=5)
+
+    real_execute = store_b.conn.execute
+
+    def _execute_and_signal(query: str, *args: Any, **kwargs: Any) -> Any:
+        # Fast local pre-check: fire when the advisory-lock SQL is issued.
+        # Positive proof of blocking still comes from pg_stat_activity below.
+        if query.strip().startswith("SELECT pg_advisory_lock"):
+            attempting.set()
+        return real_execute(query, *args, **kwargs)
+
+    store_b.conn.execute = _execute_and_signal  # type: ignore[method-assign]
+
+    def waiter() -> None:
+        with store_b.exclusive(lock_key):
+            second_entered.set()
+
+    t2 = threading.Thread(target=waiter)
+    t2.start()
+    try:
+        assert attempting.wait(timeout=5)
+        # Positive external confirmation: store_b's backend is waiting on a Lock.
+        deadline = time.monotonic() + 5.0
+        saw_lock_wait = False
+        while time.monotonic() < deadline:
+            row = store_a.conn.execute(
+                "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                (waiter_pid,),
+            ).fetchone()
+            if row is not None and row.get("wait_event_type") == "Lock":
+                saw_lock_wait = True
+                break
+            time.sleep(0.05)
+        assert saw_lock_wait, (
+            f"waiter backend pid {waiter_pid} never reached wait_event_type=Lock"
+        )
+        # While the first holder is still inside, the second must not enter.
+        assert not second_entered.wait(timeout=0.3)
+    finally:
+        # Always release the holder and reap both threads, even if an
+        # assertion above fails -- otherwise a failing run leaks two live
+        # threads and open connections past this test's own scope.
+        release.set()
+        t.join(timeout=5)
+        t2.join(timeout=5)
+    assert second_entered.is_set()
+
+
+def test_pr_open_resume_prefers_github_base_ref_name(tmp_path: Path) -> None:
+    """On resume, result.base must be GitHub's baseRefName, not the payload base."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-resume"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Base mismatch",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            assert "baseRefName" in argv[argv.index("--json") + 1]
+            body = {
+                "number": 7,
+                "url": "https://github.com/dfxswiss/agent/pull/7",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "main",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"create must not run: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=7"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["base"] == "main"
+    assert row["result"]["base"] != "origin/develop"
+
+
+def test_pr_open_create_strips_origin_prefix_from_base(tmp_path: Path) -> None:
+    """Create path must pass a bare --base to gh and persist result.base bare.
+
+    The post-create base-resolution gh pr view call is mocked as a genuinely
+    successful response missing baseRefName (a definitive "no better base
+    known yet" answer) so this stays a test of the terminal/definitive case,
+    not the transient-failure retry path (covered separately)."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-create"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Strip origin base",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    create_argv: list[str] = []
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(0, json.dumps({"number": 99}), "")
+        if "create" in argv:
+            create_argv.extend(argv)
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/99\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=99"]
+    assert create_argv, "expected gh pr create to run"
+    base_idx = create_argv.index("--base")
+    assert create_argv[base_idx + 1] == "develop"
+    assert "origin/develop" not in create_argv
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["base"] == "develop"
+
+
+def test_pr_open_create_origin_only_base_omits_base_flag(tmp_path: Path) -> None:
+    """payload.base of exactly 'origin/' must not become gh pr create --base ''."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-origin-only"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Origin-only base",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/",
+        },
+    )
+    create_argv: list[str] = []
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(0, json.dumps({"number": 101}), "")
+        if "create" in argv:
+            create_argv.extend(argv)
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/101\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=101"]
+    assert create_argv, "expected gh pr create to run"
+    assert "--base" not in create_argv
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+
+
+def test_pr_open_create_base_resolve_transient_failure_stays_pending(
+    tmp_path: Path,
+) -> None:
+    """A transient failure re-resolving the base right after create must not
+    freeze an unverified base -- the row stays pending for the next scan to
+    retry (which resumes via the existing gh-pr-view-succeeds branch)."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-transient"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Transient resolve failure",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/100\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "pending", (
+        "must not freeze the unverified fallback base as done"
+    )
+
+    def runner2(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            body = {
+                "number": 100,
+                "url": "https://github.com/dfxswiss/agent/pull/100",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "main",
+                "headRefName": "feat-github",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} done number=100"]
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "done"
+    assert row2["result"]["base"] == "main"
+
+
+def test_pr_open_resume_transient_gh_view_failure_stays_pending(
+    tmp_path: Path,
+) -> None:
+    """After create left the row pending with a real PR number, a transient
+    resume-path gh pr view failure must keep the row pending (not error) so a
+    later scan can finish via view -- and must not re-create."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-resume-view-transient"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Resume view transient",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/101\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "pending"
+    assert row["result"]["number"] == 101
+
+    def runner2(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} pending (view retry needed)"]
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "pending", (
+        "resume-path transient view failure must not terminalize an already-created PR"
+    )
+    assert row2["result"]["number"] == 101
+
+    def runner3(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            body = {
+                "number": 101,
+                "url": "https://github.com/dfxswiss/agent/pull/101",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "main",
+                "headRefName": "feat-github",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines3 = scan_github(store, runner3)
+    assert lines3 == [f"pr.open {act_id} done number=101"]
+    row3 = store.row("activity", act_id)
+    assert row3 is not None
+    assert row3["execution_status"] == "done"
+    assert row3["result"]["number"] == 101
+    assert row3["result"]["base"] == "main"
+
+
+def test_pr_open_resume_permanent_gh_view_failure_errors(tmp_path: Path) -> None:
+    """A permanent auth failure on the resume-path view must terminalize to
+    error (not loop as pending forever) and must not re-create."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-resume-view-permanent"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Resume view permanent",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/102\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "pending"
+    assert row["result"]["number"] == 102
+
+    calls: list[list[str]] = []
+
+    def runner2(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", "HTTP 401")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} error"]
+    assert not any("create" in c for c in calls)
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "error", (
+        "resume-path permanent view failure must terminalize, not stay pending"
+    )
+    assert "HTTP 401" in (row2.get("execution_error") or "")
+    assert row2["result"]["number"] == 102
+
+
+def test_pr_open_resume_oserror_and_malformed_json_stay_pending(
+    tmp_path: Path,
+) -> None:
+    """OSError and malformed-JSON-on-exit-0 on the resume-path view must both
+    stay pending (retry) when a prior result.number exists — same as a
+    generic non-zero transient failure."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-resume-view-oserror-malformed"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Resume view OSError/malformed",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/103\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["result"]["number"] == 103
+
+    def runner_oserror(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            raise OSError("gh binary missing")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines_os = scan_github(store, runner_oserror)
+    assert lines_os == [f"pr.open {act_id} pending (view retry needed)"]
+    row_os = store.row("activity", act_id)
+    assert row_os is not None
+    assert row_os["execution_status"] == "pending", (
+        "resume-path OSError must retry, not terminalize an already-created PR"
+    )
+    assert row_os["result"]["number"] == 103
+
+    def runner_malformed(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(0, "not-valid-json{{{", "")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines_bad = scan_github(store, runner_malformed)
+    assert lines_bad == [f"pr.open {act_id} pending (view retry needed)"]
+    row_bad = store.row("activity", act_id)
+    assert row_bad is not None
+    assert row_bad["execution_status"] == "pending", (
+        "resume-path malformed JSON must retry, not terminalize an already-created PR"
+    )
+    assert row_bad["result"]["number"] == 103
+
+
+def test_pr_open_resume_not_found_with_prior_number_no_recreate(
+    tmp_path: Path,
+) -> None:
+    """A transient 'not found' on the resume-path view must not fall through
+    to gh pr create when a prior result.number is already known."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-resume-view-not-found-prior"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Resume view not-found with prior",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/104\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["result"]["number"] == 104
+
+    calls: list[list[str]] = []
+
+    def runner2(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", "no pull requests found")
+        raise AssertionError(f"create must not run again: {argv}")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} pending (view retry needed)"]
+    assert not any("create" in c for c in calls)
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "pending"
+    assert row2["result"]["number"] == 104
+
+
+def test_pr_open_create_resolves_actual_base_from_github(tmp_path: Path) -> None:
+    """Create path must re-resolve result.base from GitHub's applied baseRefName."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-base-create-resolve"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "No base requested",
+            "head": "feat-github",
+            "body": "Please review",
+        },
+    )
+    view_calls = 0
+    created = False
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls, created
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if not created:
+                return Completed(1, "", "no pull requests found")
+            body = {"baseRefName": "main"}
+            return Completed(0, json.dumps(body), "")
+        if "create" in argv:
+            created = True
+            assert "--base" not in argv
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/55\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=55"]
+    assert created
+    assert view_calls == 2
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "done"
+    assert row["result"]["base"] == "main"
 
 
 def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
@@ -1075,3 +1728,243 @@ def test_a_rejected_gate_never_approves(tmp_path: Path, capsys: pytest.CaptureFi
 
     src = inspect.getsource(_queue_gate_findings)
     assert "APPROVE" not in src
+
+
+def test_task_pull_request_error_fix_uses_payload_pr_number_not_ref() -> None:
+    """error-fix tasks resolve PR via payload.pr_number; digit-string ref is ignored."""
+    from agent_cli.main import _task_pull_request  # noqa: PLC0415
+
+    error_fix_task = {
+        "repo": "org/app",
+        "ref": "7",
+        "payload": {"error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "pr_number": 42},
+    }
+    assert _task_pull_request(error_fix_task) == ("org/app", 42)
+
+    ordinary_task = {
+        "repo": "org/app",
+        "ref": "7",
+        "payload": {},
+    }
+    assert _task_pull_request(ordinary_task) == ("org/app", 7)
+
+    ordinary_no_payload = {
+        "repo": "org/app",
+        "ref": "7",
+    }
+    assert _task_pull_request(ordinary_no_payload) == ("org/app", 7)
+
+
+def test_task_pull_request_prefers_payload_repo_over_task_repo() -> None:
+    """When task.repo and payload.repo both resolve but differ, payload wins —
+    same precedence as fixer_act._drive_one (which creates the PR) and
+    run_core's push-destination check. The pr_number backfilled by the fixer
+    lives on payload, so it belongs to the payload-resolved repo, not
+    task.repo."""
+    from agent_cli.main import _task_pull_request  # noqa: PLC0415
+
+    task = {
+        "repo": "org/task-repo",
+        "ref": "some-branch",
+        "payload": {
+            "error_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "repo": "org/payload-repo",
+            "pr_number": 99,
+        },
+    }
+    assert _task_pull_request(task) == ("org/payload-repo", 99)
+
+
+def test_classify_gh_failure_rate_limit_is_transient() -> None:
+    """HTTP 403 wrappers around rate-limit text must not be permanent."""
+    completed = Completed(
+        1,
+        "",
+        "HTTP 403: You have exceeded a secondary rate limit "
+        "(https://docs.github.com/rest/overview/rate-limits)",
+    )
+    assert _classify_gh_failure(completed) == "transient"
+
+
+def test_classify_gh_failure_exit_code_4_is_permanent() -> None:
+    """gh exit code 4 (auth required) is permanent regardless of stderr text."""
+    completed = Completed(4, "", "something unrelated to auth phrasing")
+    assert _classify_gh_failure(completed) == "permanent"
+
+
+def test_classify_gh_failure_exit_code_4_wins_over_not_found_text() -> None:
+    """Exit code 4 must beat text heuristics that would otherwise classify first."""
+    completed = Completed(4, "", "pull request not found")
+    assert _classify_gh_failure(completed) == "permanent"
+    # Control: the same text without exit code 4 genuinely classifies as
+    # not_found, proving the exit-code check is what wins the race above.
+    assert _classify_gh_failure(Completed(1, "", "pull request not found")) == "not_found"
+
+
+def test_resolve_actual_base_surfaces_permanent_classification() -> None:
+    """Non-zero gh failures must surface the real classification, not a bool."""
+
+    def runner(argv: list[str]) -> Completed:
+        assert argv[:3] == ["gh", "pr", "view"]
+        return Completed(1, "", "HTTP 401")
+
+    base, classification = _resolve_actual_base(
+        "feat-x", "dfxswiss/agent", runner, "develop"
+    )
+    assert base == "develop"
+    assert classification == "permanent"
+
+
+def test_pr_open_resume_head_ref_mismatch_errors(tmp_path: Path) -> None:
+    """Resume by prior number must refuse when headRefName no longer matches."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-resume-head-mismatch"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "Head mismatch",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/77\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["result"]["number"] == 77
+
+    def runner2(argv: list[str]) -> Completed:
+        assert argv[:3] == ["gh", "pr", "view"]
+        assert argv[3] == "77"
+        body = {
+            "number": 77,
+            "url": "https://github.com/dfxswiss/agent/pull/77",
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "develop",
+            "headRefName": "some-other-branch",
+        }
+        return Completed(0, json.dumps(body), "")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} error"]
+    row2 = store.row("activity", act_id)
+    assert row2 is not None
+    assert row2["execution_status"] == "error"
+    assert "headRefName" in str(row2.get("execution_error") or "")
+
+
+def test_pr_open_view_uses_number_when_prior_recorded(tmp_path: Path) -> None:
+    """With a prior result.number, gh pr view must identify by that number."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-view-by-number"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "View by number",
+            "head": "feat-github",
+            "body": "Please review",
+            "base": "origin/develop",
+        },
+    )
+    view_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_calls
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_calls += 1
+            if view_calls == 1:
+                return Completed(1, "", "no pull requests found")
+            return Completed(1, "", "HTTP 502 Bad Gateway")
+        if "create" in argv:
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/88\n", "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} pending (base resolution retry needed)"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["result"]["number"] == 88
+
+    view_argv: list[str] | None = None
+
+    def runner2(argv: list[str]) -> Completed:
+        nonlocal view_argv
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_argv = list(argv)
+            body = {
+                "number": 88,
+                "url": "https://github.com/dfxswiss/agent/pull/88",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "develop",
+                "headRefName": "feat-github",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines2 = scan_github(store, runner2)
+    assert lines2 == [f"pr.open {act_id} done number=88"]
+    assert view_argv is not None
+    assert view_argv[3] == "88"
+    assert view_argv[3] != "feat-github"
+
+
+def test_pr_open_view_uses_head_when_no_prior_number(tmp_path: Path) -> None:
+    """Without a prior result.number, gh pr view must identify by head branch."""
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-view-by-head"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {
+            "repo": "dfxswiss/agent",
+            "title": "View by head",
+            "head": "feat-github",
+            "body": "Please review",
+        },
+    )
+    view_argv: list[str] | None = None
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal view_argv
+        if argv[:3] == ["gh", "pr", "view"]:
+            view_argv = list(argv)
+            body = {
+                "number": 89,
+                "url": "https://github.com/dfxswiss/agent/pull/89",
+                "state": "OPEN",
+                "isDraft": True,
+                "baseRefName": "develop",
+            }
+            return Completed(0, json.dumps(body), "")
+        raise AssertionError(f"unexpected argv: {argv}")
+
+    lines = scan_github(store, runner)
+    assert lines == [f"pr.open {act_id} done number=89"]
+    assert view_argv is not None
+    assert view_argv[3] == "feat-github"

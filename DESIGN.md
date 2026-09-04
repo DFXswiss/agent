@@ -421,6 +421,7 @@ agent watch grok-usage                         # one scan; knock child (under th
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
+agent watch error-fix-work                    # one scan; drains error-fix implement tasks from spec_written through PR gates to done (§21.7); not wired into agent daemon
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard [--port 7845]
@@ -499,7 +500,7 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 
 A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition. Opening a draft is not done.
 
-No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, timeout, or unavailable review output is not zero findings). A patch that does not apply is a failed check, not a debate.
+No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, timeout, or unavailable review output is not zero findings). A patch that does not apply is a failed check, not a debate. The structured `FINDINGS:` section is the sole source of truth for a review verdict; a real finding stated only in a reviewer's free-text preamble and not restated there is not mechanically detectable and is accepted residual risk, not something a heuristic tries to close.
 
 ### 19.2 Untrusted inputs
 
@@ -667,9 +668,25 @@ The model never receives production credentials. Analysis that only reads the ex
 
 `agent watch error-fix` find-or-creates the implement task and clones `https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`; `agent github pending` still opens drafts, and a retry draft uses the existing head `error-fix-<id8>`.
 
+`spec_written` stays human-only for ordinary implement tasks (`HUMAN_KEYS`, step kind `human`). Exception: when the task is error-fix-originated — payload carries `error_id` **and** a matching validated `error.fix` activity exists for that `error_id` in the same session — `close-step --source script` may set `spec_written=ja` with evidence. Evidence is still mandatory. An `error.seen` or `error.skip` alone does not qualify.
+
+For confirmed error-fix tasks only (same `error_fix_confirmed` condition), `close-step --source script --status n_a` may close `deviation_declared` / `deviation_granted` with evidence. Any other status (e.g. `--status ja`), or any task without a confirmed `error.fix` origin, stays human-only. Without this carve-out no error-fix task can reach `done`, since both keys are `HUMAN_KEYS` with no other script path to close them.
+
 ### 21.6 Not in this revision
 
 - A second hub state machine, leases, or autonomous merge
+
+### 21.7 Automated fixer driver
+
+`agent watch error-fix-work` drains open error-fix `implement` tasks on this device (`payload.error_id` set and a matching `error.fix` confirmed for that id in the same session, state not `done`/`failed`) from `spec_written` through a draft `pr.open`, the PR gates (`grok_pr_quality`, `grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`, plus the scripted `contributing_ok` carve-out), and task state `done`, using only script control flow and the `grok`/`codex` CLIs via `lane.launch()`. A human still merges the PR; the spine has no `merged` step. It is not wired into `agent daemon`.
+
+- Scripts the five-part spec under `$AGENT_HOME/error-fix-specs/<task_id>/.spec.md` (a sibling of `error-fix-work`, never inside the pushed git worktree) from the `error.fix` brief plus `error.seen` metadata (never raw log excerpts), closes `spec_written` via the script carve-out above, then `agent round start`.
+- Walks the spine with the same step executor as `agent run` (including auto pass/fail for reviewer and PR-reviewer lanes from `STATUS:` + `FINDINGS:` + `GAPS:` — a zero-`FINDINGS:` report with a non-trivial disclosed `GAPS:` body, or more than one `GAPS:` header, retries instead of auto-passing). Each reviewer/PR-reviewer lane's four-part prompt and its diff are scripted under `$AGENT_HOME/review-work/<task_id>/` (a sibling of `error-fix-work`/`error-fix-specs`, never inside the pushed git worktree), one `review-<role>-round<N>.md`/`.diff` pair per round. Round retries reset the relevant checklist keys to `nein` and call `agent round start`. Cap is `task.current_round` against 5: exceeding it sets `task state failed` and stops touching that task.
+- When both dimensions of one vendor PR-review pair (`grok_pr_quality`/`grok_pr_logic`, or `codex_pr_quality`/`codex_pr_logic`) are ready simultaneously, the driver prepares both on the store-owning thread, launches any still-pending dimensions concurrently via a thread pool (worker threads only call the lane launch itself, never touch the store), then fully finishes both on that same thread (gate row, checklist, agent finish — no abandon/discard). Task-level continue-vs-message and the combined rejection-feedback write happen once afterward, aggregated across the batch so either dimension's rejection is preserved regardless of pair order; a `failed` outcome in the batch skips the deferred `round start` and wins over a sibling's `cont=True`. On an unhandled exception mid-prepare/launch/finish, any still-working agent row for either dimension is released before the exception propagates, and a rejection reset already committed earlier in the batch still receives its deferred `round start` (best-effort) when no outcome failed the task. `agent round start` itself refuses `state=failed` the same way it refuses `state=done`. `agent gate record --verdict rejected` also leaves `state=failed` unchanged (rather than its usual auto-transition to `implementing`) when the sibling already failed the task in the same batch — the rejected gate row is still recorded either way, for audit, even though the task stays permanently stopped. Ordinary `agent run` and every other spine step remain one-at-a-time.
+- If a vendor CLI binary is missing (`OSError` / `FileNotFoundError` before any `LaneResult`) or a lane returns `LaneResult(status="unavailable")` on both the initial attempt and the one retry, the driver leaves task and checklist state untouched for retry, but releases any already-started agent row (`cmd_agent finish --verdict unavailable`) rather than leaving it `working` forever — notes the CLI looks unavailable, and moves on; the next scan retries after a human fixes PATH/auth.
+- Each scan re-checks from the ledger (not per-call local state) whether `pushed` is closed but no successful (`done`) `pr.open` activity row exists yet for that task's branch head. A mid-flight `pending` row is resumed via `scan_github` (no duplicate insert); an `error` row carrying a recorded PR number is re-pended (preserving the number) then resumed via `scan_github` rather than re-inserted, so resuming never spuriously re-creates the PR; an `error` row with no recorded number, or no row at all, triggers a fresh `insert_pr_open_and_scan` — so a failed create is not silently skipped by the next scan.
+- After `pushed`, inserts a pending `pr.open` (title/body per CONTRIBUTING) and runs `agent github pending`, then continues through the PR gates to `done`.
+- Failing a task via lane retry-exhaustion also finishes the still-working agent row (`blocked` for implementer, `rejected` for reviewer/pr-reviewer roles) so the row does not block a later manual round-start recovery.
 
 ## 22. Static supervise loop (v1)
 

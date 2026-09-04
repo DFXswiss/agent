@@ -14,6 +14,14 @@ PROTECTED = frozenset({"develop", "main", "master"})
 
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
+# Deny-by-default allowlist for attacker-controlled remote push URLs. Capture
+# groups 1/2 are the sole source of org/repo — no further string surgery.
+_REAL_REMOTE_URL_RES = (
+    re.compile(r"^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(\.git)?/?\Z"),
+    re.compile(r"^[A-Za-z0-9._-]+@github\.com:([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(\.git)?\Z"),
+    re.compile(r"^ssh://[A-Za-z0-9._-]+@github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(\.git)?\Z"),
+)
+
 
 class GitActError(Exception):
     """Fail-loud; cmd_run maps this to die()."""
@@ -28,14 +36,100 @@ def _fail_detail(completed: Completed, fallback: str) -> str:
     return detail or fallback
 
 
-def push_branch(*, cwd: str, runner: Runner) -> str:
+def _resolve_remote(cwd: str, runner: Runner) -> str:
+    """Pick the remote to use: the sole remote, or 'origin' when there are several.
+
+    Shared by the fresh-branch push (no @{upstream} yet) and, as a
+    defense-in-depth check, by the existing-upstream push path — both must
+    agree on which remote an unattended push is allowed to target.
+    """
+    remotes_done = runner(_git(cwd, "remote"))
+    if remotes_done.returncode != 0:
+        raise GitActError(_fail_detail(remotes_done, "git remote failed"))
+    remotes = [r for r in remotes_done.stdout.splitlines() if r.strip()]
+    if not remotes:
+        raise GitActError("no remotes")
+    if len(remotes) == 1:
+        return remotes[0]
+    if "origin" in remotes:
+        return "origin"
+    raise GitActError("ambiguous remotes (no origin)")
+
+
+def _match_real_remote_url(raw: str) -> str | None:
+    """Return 'org/repo' only for the three allowlisted github.com URL forms."""
+    for pattern in _REAL_REMOTE_URL_RES:
+        m = pattern.fullmatch(raw)
+        if m is not None:
+            return f"{m.group(1)}/{m.group(2)}"
+    return None
+
+
+def _normalize_repo_identity(raw: str, *, require_host: bool = False) -> str | None:
+    """Normalize a git remote URL or org/repo string down to 'org/repo'.
+
+    When require_host is True (real remote push URLs — attacker-controllable),
+    only three exact github.com forms are accepted via regex allowlist; every
+    other scheme, host, or shape is rejected. When require_host is False
+    (trusted expected_repo config), bare 'org/repo' is normalized without a
+    host check.
+    """
+    s = raw.strip()
+    if not s:
+        return None
+    if require_host:
+        return _match_real_remote_url(s)
+    if s.endswith(".git"):
+        s = s[: -len(".git")]
+    parts = s.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
+def _ensure_remote_matches_repo(
+    cwd: str, runner: Runner, remote: str, expected_repo: str
+) -> None:
+    """Fail-closed when remote's push URL does not resolve to expected_repo."""
+    completed = runner(_git(cwd, "remote", "get-url", "--push", remote))
+    if completed.returncode != 0:
+        raise GitActError(_fail_detail(completed, "git remote get-url failed"))
+    url = completed.stdout.strip()
+    got = _normalize_repo_identity(url, require_host=True)
+    want = _normalize_repo_identity(expected_repo)
+    if got is None or want is None or got != want:
+        raise GitActError(
+            f"remote {remote!r} push URL does not match expected repo {expected_repo!r}"
+        )
+
+
+def push_branch(
+    *,
+    cwd: str,
+    runner: Runner,
+    expected_sha: str,
+    expected_branch: str | None = None,
+    expected_repo: str | None = None,
+) -> str:
     """Push the current branch if needed. Return HEAD sha (lowercase hex)."""
+    if not _SHA_RE.fullmatch(expected_sha):
+        raise GitActError(f"invalid expected_sha: {expected_sha!r}")
+    expected_sha = expected_sha.lower()
+    if expected_branch is not None and expected_repo is None:
+        raise GitActError(
+            "expected_branch set without expected_repo — refusing to push "
+            "without a destination check"
+        )
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "git failed"))
     branch = completed.stdout.strip()
     if not branch:
         raise GitActError("empty branch name")
+    if expected_branch is not None and branch != expected_branch:
+        raise GitActError(
+            f"on branch {branch!r} but task expects {expected_branch!r} — refusing to push"
+        )
     if branch in PROTECTED:
         raise GitActError(f"refusing to push protected branch {branch}")
 
@@ -46,54 +140,99 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
         raise GitActError("uncommitted changes")
 
     completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "@{upstream}"))
-    if completed.returncode != 0:
-        raise GitActError("no upstream")
-    upstream = completed.stdout.strip()
-    if not upstream:
-        raise GitActError("no upstream")
-
-    completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
     if completed.returncode != 0 or not completed.stdout.strip():
-        raise GitActError("no upstream remote")
-    remote = completed.stdout.strip()
-    completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.merge"))
-    if completed.returncode != 0 or not completed.stdout.strip():
-        raise GitActError("no upstream merge ref")
-    merge_ref = completed.stdout.strip()
-    if not merge_ref.startswith("refs/heads/"):
-        raise GitActError(f"unexpected merge ref {merge_ref!r}")
-    merge_short = merge_ref[len("refs/heads/") :]
-    if merge_short in PROTECTED:
-        raise GitActError(f"upstream tracks protected branch {merge_short}")
-
-    completed = runner(_git(cwd, "fetch", "--", remote))
-    if completed.returncode != 0:
-        raise GitActError(_fail_detail(completed, "git fetch failed"))
-
-    completed = runner(
-        _git(cwd, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
-    )
-    if completed.returncode != 0:
-        raise GitActError(_fail_detail(completed, "git failed"))
-    count_raw = completed.stdout.strip()
-    parts = count_raw.replace("\t", " ").split()
-    if len(parts) != 2:
-        raise GitActError(f"bad rev-list count: {count_raw!r}")
-    try:
-        behind = int(parts[0])
-        ahead = int(parts[1])
-    except ValueError as exc:
-        raise GitActError(f"bad rev-list count: {count_raw!r}") from exc
-    if behind < 0 or ahead < 0:
-        raise GitActError(f"bad rev-list count: {count_raw!r}")
-    if behind > 0:
-        raise GitActError("branch is behind upstream")
-    if ahead > 0:
+        if expected_branch is None:
+            # No identity to check against: keep the original fail-closed
+            # behavior for ordinary (non-error-fix) tasks — a human must
+            # push manually rather than this silently auto-setting upstream.
+            raise GitActError("no upstream")
+        # Fresh branch (e.g. error-fix checkout -B): set upstream on first push.
+        remote = _resolve_remote(cwd, runner)
+        if expected_repo is not None:
+            _ensure_remote_matches_repo(cwd, runner, remote, expected_repo)
+        merge_ref = f"refs/heads/{branch}"
+        merge_short = branch
+        if merge_short in PROTECTED:
+            raise GitActError(f"upstream tracks protected branch {merge_short}")
+        recheck = runner(_git(cwd, "rev-parse", "HEAD"))
+        if recheck.returncode != 0:
+            raise GitActError(_fail_detail(recheck, "git failed"))
+        recheck_sha = recheck.stdout.strip().lower()
+        if recheck_sha != expected_sha:
+            raise GitActError(
+                f"HEAD moved to {recheck_sha} since expected_sha "
+                f"{expected_sha} was verified -- refusing to push"
+            )
         completed = runner(
-            _git(cwd, "push", "--", remote, f"HEAD:{merge_ref}")
+            _git(cwd, "push", "--set-upstream", "--", remote, f"{expected_sha}:{merge_ref}")
         )
         if completed.returncode != 0:
             raise GitActError(_fail_detail(completed, "git push failed"))
+    else:
+        completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.remote"))
+        if completed.returncode != 0 or not completed.stdout.strip():
+            raise GitActError("no upstream remote")
+        remote = completed.stdout.strip()
+        completed = runner(_git(cwd, "config", "--get", f"branch.{branch}.merge"))
+        if completed.returncode != 0 or not completed.stdout.strip():
+            raise GitActError("no upstream merge ref")
+        merge_ref = completed.stdout.strip()
+        if not merge_ref.startswith("refs/heads/"):
+            raise GitActError(f"unexpected merge ref {merge_ref!r}")
+        merge_short = merge_ref[len("refs/heads/") :]
+        if merge_short in PROTECTED:
+            raise GitActError(f"upstream tracks protected branch {merge_short}")
+        if expected_branch is not None and merge_short != expected_branch:
+            raise GitActError(
+                f"branch {branch!r} tracks {merge_short!r} but task expects "
+                f"{expected_branch!r} — refusing to push"
+            )
+        expected_remote = _resolve_remote(cwd, runner)
+        if remote != expected_remote:
+            raise GitActError(
+                f"branch {branch!r} tracks remote {remote!r} but expected "
+                f"{expected_remote!r} — refusing to push"
+            )
+        if expected_repo is not None:
+            _ensure_remote_matches_repo(cwd, runner, remote, expected_repo)
+
+        completed = runner(_git(cwd, "fetch", "--", remote))
+        if completed.returncode != 0:
+            raise GitActError(_fail_detail(completed, "git fetch failed"))
+
+        completed = runner(
+            _git(cwd, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
+        )
+        if completed.returncode != 0:
+            raise GitActError(_fail_detail(completed, "git failed"))
+        count_raw = completed.stdout.strip()
+        parts = count_raw.replace("\t", " ").split()
+        if len(parts) != 2:
+            raise GitActError(f"bad rev-list count: {count_raw!r}")
+        try:
+            behind = int(parts[0])
+            ahead = int(parts[1])
+        except ValueError as exc:
+            raise GitActError(f"bad rev-list count: {count_raw!r}") from exc
+        if behind < 0 or ahead < 0:
+            raise GitActError(f"bad rev-list count: {count_raw!r}")
+        if behind > 0:
+            raise GitActError("branch is behind upstream")
+        if ahead > 0:
+            recheck = runner(_git(cwd, "rev-parse", "HEAD"))
+            if recheck.returncode != 0:
+                raise GitActError(_fail_detail(recheck, "git failed"))
+            recheck_sha = recheck.stdout.strip().lower()
+            if recheck_sha != expected_sha:
+                raise GitActError(
+                    f"HEAD moved to {recheck_sha} since expected_sha "
+                    f"{expected_sha} was verified -- refusing to push"
+                )
+            completed = runner(
+                _git(cwd, "push", "--", remote, f"{expected_sha}:{merge_ref}")
+            )
+            if completed.returncode != 0:
+                raise GitActError(_fail_detail(completed, "git push failed"))
 
     completed = runner(_git(cwd, "rev-parse", "HEAD"))
     if completed.returncode != 0:

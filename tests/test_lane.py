@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures
+import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -7,12 +11,17 @@ from types import SimpleNamespace
 
 import pytest
 
+import agent_cli.lane as lane_mod
 from agent_cli.lane import (
     GROK_STRIP_ENV,
     LaneResult,
+    _default_runner,
     _run_in_tmux,
     codex_argv,
+    count_findings,
+    extract_findings_text,
     grok_argv,
+    has_single_terminal_report,
     launch,
     parse_status,
     tmux_wrap_argv,
@@ -24,6 +33,122 @@ pytestmark = pytest.mark.no_pg
 
 def run(argv: list[str]) -> None:
     main(argv)
+
+
+def test_count_findings_none_token() -> None:
+    assert count_findings("STATUS: complete\nFINDINGS: none\n") == 0
+
+
+def test_count_findings_zero_token() -> None:
+    assert count_findings("STATUS: complete\nFINDINGS: 0\n") == 0
+
+
+def test_count_findings_bulleted_entries() -> None:
+    text = "STATUS: complete\nFINDINGS:\n- a\n* b\n• c\n"
+    assert count_findings(text) == 3
+
+
+def test_count_findings_numbered_entries() -> None:
+    text = "STATUS: complete\nFINDINGS:\n1. a\n2) b\n"
+    assert count_findings(text) == 2
+
+
+def test_count_findings_stops_at_next_section_header() -> None:
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "- real one\n"
+        "- real two\n"
+        "NOT-VERIFIABLE:\n"
+        "- skip me\n"
+        "- skip me too\n"
+    )
+    assert count_findings(text) == 2
+
+
+def test_count_findings_terminator_is_case_insensitive() -> None:
+    """Non-canonical-case NOT-VERIFIABLE:/GAPS: still terminate the body."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "- real one\n"
+        "- real two\n"
+        "Not-Verifiable:\n"
+        "- skip me\n"
+        "gaps:\n"
+        "- skip me too\n"
+    )
+    assert count_findings(text) == 2
+
+
+def test_count_findings_unbulleted_error_line_is_not_section_header() -> None:
+    """Unbulleted ALL-CAPS lines inside FINDINGS: must not truncate the body."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "ERROR: SQL injection in auth.py:42\n"
+        "GAPS:\n"
+        "- later section\n"
+    )
+    assert count_findings(text) == 1
+
+
+@pytest.mark.parametrize(
+    "word",
+    ["REASON", "SCOPE", "DIMENSION", "STATUS"],
+)
+def test_count_findings_unbulleted_preamble_word_is_not_terminator(word: str) -> None:
+    """Unbulleted FINDINGS lines starting with preamble words must count, not truncate."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        f"{word}: null dereference in parser.py:88\n"
+        "- second real finding\n"
+        "GAPS:\n"
+        "- later section\n"
+    )
+    assert count_findings(text) == 2
+
+
+def test_count_findings_absent_header_is_zero() -> None:
+    """Absent FINDINGS: also returns 0; callers use findings_header_present() to distinguish."""
+    assert count_findings("STATUS: complete\nREASON: ok\n") == 0
+
+
+def test_extract_findings_text_body_until_terminator() -> None:
+    """extract_findings_text keeps raw body lines up to NOT-VERIFIABLE/GAPS/end."""
+    text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "- real one\n"
+        "- real two\n"
+        "NOT-VERIFIABLE:\n"
+        "- skip me\n"
+    )
+    assert extract_findings_text(text) == "- real one\n- real two"
+
+    gaps_text = (
+        "STATUS: complete\n"
+        "FINDINGS:\n"
+        "1. alpha\n"
+        "2) beta\n"
+        "GAPS:\n"
+        "- later\n"
+    )
+    assert extract_findings_text(gaps_text) == "1. alpha\n2) beta"
+
+    end_text = "STATUS: complete\nFINDINGS:\n- only finding\n"
+    assert extract_findings_text(end_text) == "- only finding"
+
+    assert extract_findings_text("STATUS: complete\nREASON: ok\n") == ""
+    assert extract_findings_text("FINDINGS: none\n") == "none"
+
+
+def test_review_output_contract_echo_parses_as_zero_findings() -> None:
+    """Unfilled review-output-contract template must not count as a real finding."""
+    from agent_cli.run_core import _REVIEW_OUTPUT_CONTRACT
+
+    assert count_findings(_REVIEW_OUTPUT_CONTRACT) == 0
 
 
 def test_grok_implementer_argv() -> None:
@@ -116,6 +241,63 @@ def test_codex_implementer_argv() -> None:
         assert key in argv
 
 
+def test_env_strip_prefix_strips_dynamic_credential_shaped_env_vars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENT_ERROR_FIX_*/AGENT_PG_DSN must not reach the vendor CLI subprocess env.
+
+    This PR is what first makes these real env vars in this process (errors.py's
+    production-error-source fetch) -- before it, GROK_STRIP_ENV's omission of them
+    didn't matter. Covers both grok_argv and codex_argv since both build their env
+    prefix via the same _env_strip_prefix(). The `env` command's `-u KEY` unsets
+    the named var for the launched subprocess regardless of its value, so checking
+    that each key is present in argv immediately after a `-u` token is the correct
+    way to prove it will not be inherited (mirrors the existing GROK_STRIP_ENV
+    argv-shape assertions above in this file).
+    """
+    monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", "hunter2")
+    monkeypatch.setenv("AGENT_PG_DSN", "host=127.0.0.1 dbname=hubtest")
+
+    grok_argv_out = grok_argv(spec_file="/tmp/spec.md", cwd="/work", write=True)
+    for key in ("AGENT_ERROR_FIX_PASSWORD", "AGENT_PG_DSN"):
+        assert key in grok_argv_out
+        idx = grok_argv_out.index(key)
+        assert grok_argv_out[idx - 1] == "-u"
+
+    codex_argv_out = codex_argv(cwd="/work", write=True, output_file="/tmp/out.txt")
+    for key in ("AGENT_ERROR_FIX_PASSWORD", "AGENT_PG_DSN"):
+        assert key in codex_argv_out
+        idx = codex_argv_out.index(key)
+        assert codex_argv_out[idx - 1] == "-u"
+
+
+def test_env_strip_prefix_strips_known_first_party_credential_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-AGENT_-prefixed credentials already used elsewhere in this codebase
+    (telegram_act.py, the gh CLI's own ambient auth) must also not reach the
+    vendor CLI subprocess env -- same mechanism as the AGENT_ERROR_FIX_* test
+    above, covering the fixed known-name set instead of the dynamic prefix."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tg-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "tg-chat")
+    monkeypatch.setenv("GH_TOKEN", "gh-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+
+    known_keys = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GH_TOKEN", "GITHUB_TOKEN")
+
+    grok_argv_out = grok_argv(spec_file="/tmp/spec.md", cwd="/work", write=True)
+    for key in known_keys:
+        assert key in grok_argv_out
+        idx = grok_argv_out.index(key)
+        assert grok_argv_out[idx - 1] == "-u"
+
+    codex_argv_out = codex_argv(cwd="/work", write=True, output_file="/tmp/out.txt")
+    for key in known_keys:
+        assert key in codex_argv_out
+        idx = codex_argv_out.index(key)
+        assert codex_argv_out[idx - 1] == "-u"
+
+
 def test_codex_reviewer_argv() -> None:
     argv = codex_argv(cwd="/work", write=False, output_file="/tmp/out.txt")
     assert "read-only" in argv
@@ -155,6 +337,62 @@ def test_parse_status_rc_nonzero_unavailable() -> None:
 
 def test_parse_status_rc_zero_partial() -> None:
     assert parse_status("no status here", 0) == "partial"
+
+
+def test_parse_status_complete_body_with_timeout_rc_is_timeout() -> None:
+    """A clean STATUS: complete body must not win over returncode 124."""
+    body = "STATUS: complete\nFINDINGS: none\n"
+    assert parse_status(body, 124) == "timeout"
+    assert parse_status(body, 124) != "complete"
+
+
+def test_parse_status_complete_body_with_nonzero_rc_is_unavailable() -> None:
+    """A clean STATUS: complete body must not win over a nonzero returncode."""
+    body = "STATUS: complete\nFINDINGS: none\n"
+    assert parse_status(body, 1) == "unavailable"
+    assert parse_status(body, 1) != "complete"
+
+
+def test_parse_status_complete_body_with_zero_rc_still_complete() -> None:
+    body = "STATUS: complete\nFINDINGS: none\n"
+    assert parse_status(body, 0) == "complete"
+
+
+def test_has_single_terminal_report_accepts_one_block() -> None:
+    text = "STATUS: complete\nFINDINGS: none\n"
+    assert has_single_terminal_report(text) is True
+
+
+def test_has_single_terminal_report_accepts_preamble_before_status() -> None:
+    """Reasoning narration before a clean STATUS/FINDINGS block is accepted.
+
+    Reasoning narration ahead of the terminal report is normal, expected
+    model output (the review contract says reports must "end with" the
+    block, not "consist solely of" it) — rejecting on any preamble text
+    would false-fail near-universally on legitimate reports.
+    """
+    text = (
+        "Let me walk through the diff section by section and check each "
+        "changed file against the review dimension before concluding.\n"
+        "\n"
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+    )
+    assert has_single_terminal_report(text) is True
+
+
+def test_has_single_terminal_report_rejects_example_plus_real() -> None:
+    """Early example STATUS/FINDINGS plus a real report → unparseable."""
+    text = (
+        "Example format:\n"
+        "STATUS: complete\n"
+        "FINDINGS: none\n"
+        "\n"
+        "FINDINGS:\n"
+        "- real bug in foo.py:1\n"
+        "STATUS: complete\n"
+    )
+    assert has_single_terminal_report(text) is False
 
 
 def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
@@ -501,6 +739,145 @@ def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) ->
     result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
     assert result.returncode == 3
     assert any("kill-session" in c for c in calls)
+
+
+def test_default_runner_timeout_returns_124_and_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hung vendor CLI must surface returncode 124 rather than block forever.
+
+    Round 51: _default_runner had no timeout=, so a stalled vendor process held
+    drive_error_fix_tasks' store.exclusive() (process-wide RLock) indefinitely.
+    Mirror that hold with a local RLock around the runner call and assert a
+    subsequent acquire still succeeds after the timeout path returns.
+    """
+    monkeypatch.setattr(lane_mod, "VENDOR_RUN_TIMEOUT_SEC", 0.3)
+    lock = threading.RLock()
+    t0 = time.monotonic()
+    with lock:
+        result = _default_runner(["sleep", "30"], None)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"timeout path took too long: {elapsed:.2f}s"
+    assert result.returncode == 124
+    # parse_status's external-timeout convention.
+    assert parse_status(result.stdout or "", result.returncode) == "timeout"
+
+    acquired = {"ok": False}
+
+    def try_acquire() -> None:
+        if lock.acquire(timeout=1.0):
+            acquired["ok"] = True
+            lock.release()
+
+    thread = threading.Thread(target=try_acquire)
+    thread.start()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert acquired["ok"], "lock held around runner must be released after timeout"
+
+
+def test_default_runner_second_reap_timeout_kills_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same third fallback tier via the shared runtime.kill_process_group_and_reap
+    helper, exercised through lane._default_runner."""
+    killpg_calls: list[int] = []
+    wait_calls: list[object] = []
+
+    class FakeProc:
+        pid = 4343
+        returncode = None
+
+        def communicate(self, input=None, timeout=None):
+            raise subprocess.TimeoutExpired(cmd=["x"], timeout=timeout)
+
+        def wait(self, timeout=None):
+            wait_calls.append(timeout)
+            return None
+
+    def fake_popen(*args, **kwargs):
+        return FakeProc()
+
+    def fake_killpg(pid, sig):
+        killpg_calls.append(pid)
+
+    monkeypatch.setattr(lane_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lane_mod.os, "killpg", fake_killpg)
+
+    result = lane_mod._default_runner(["sleep", "999"], None, timeout=0.01)
+
+    assert result.returncode == 124
+    assert len(killpg_calls) == 2, "must kill the process group a second time"
+    assert len(wait_calls) == 1, "must wait() once after the second kill"
+
+
+def test_default_runner_concurrent_workers_no_deadlock() -> None:
+    """Real Popen from concurrent threads must not hang (no preexec_fn hazard).
+
+    Round 52: preexec_fn after fork in a multithreaded parent can deadlock on
+    locks held by sibling threads. Exercise the real _default_runner from two
+    ThreadPoolExecutor workers with a genuine subprocess.
+    """
+    t0 = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(_default_runner, ["true"], None),
+            pool.submit(_default_runner, ["true"], None),
+        ]
+        results = [f.result(timeout=10) for f in futures]
+    elapsed = time.monotonic() - t0
+    assert elapsed < 10.0, f"concurrent runners took too long: {elapsed:.2f}s"
+    assert all(r.returncode == 0 for r in results)
+
+
+def test_run_in_tmux_timeout_kills_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unbounded pane_dead polling must stop at VENDOR_RUN_TIMEOUT_SEC."""
+    monkeypatch.setattr(lane_mod, "VENDOR_RUN_TIMEOUT_SEC", 0.4)
+    ticks = {"n": 0}
+
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[-1] == "#{pane_dead}":
+            ticks["n"] += 1
+            # Never becomes dead — deadline must fire.
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "kill-session" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    t0 = time.monotonic()
+    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"tmux timeout path took too long: {elapsed:.2f}s"
+    assert result.returncode == 124
+    assert any("kill-session" in c for c in calls)
+    assert ticks["n"] >= 1
+
+
+def test_launch_direct_runner_timeout_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """launch(tmux=False) must return LaneResult(status='timeout') on deadline."""
+    monkeypatch.setattr(lane_mod, "VENDOR_RUN_TIMEOUT_SEC", 0.3)
+    monkeypatch.setattr(
+        "agent_cli.lane.grok_argv",
+        lambda **kwargs: ["sleep", "30"],
+    )
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    t0 = time.monotonic()
+    result = launch(
+        role="reviewer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        tmux=False,
+    )
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"launch timeout path took too long: {elapsed:.2f}s"
+    assert result.status == "timeout"
+    assert result.returncode == 124
 
 
 def test_cli_lane_run_prints_vendor_stdout(

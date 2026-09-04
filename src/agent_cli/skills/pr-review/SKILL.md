@@ -23,7 +23,7 @@ Two dimensions (quality, logic) and two vendor stages (`grok-pr`, then
 ```bash
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
-agent agent finish --id <uuid> --verdict approved|rejected
+agent agent finish --id <uuid> --verdict approved|rejected|unavailable
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
   --verdict approved --head <sha> --agent <reviewer-uuid>
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
@@ -45,8 +45,12 @@ Review lanes execute no software (no tests, builds, or servers).
   records the rejection and reports that nothing was queued.
 
   On implement / resolve-conflicts, `agent gate record` returns the task to
-  `implementing`. On workflow `review`, the task stays in pr-review and is not
-  `done`.
+  `implementing`. `agent gate record --verdict rejected` also leaves
+  `state=failed` unchanged (rather than its usual auto-transition to
+  `implementing`) when the sibling already failed the task in the same
+  batch — the rejected gate row is still recorded either way, for audit,
+  even though the task stays permanently stopped. On workflow `review`,
+  the task stays in pr-review and is not `done`.
 
   The evidence becomes the body of that review unaltered, under a generated
   heading naming vendor, dimension and head. Write it for the
@@ -56,8 +60,17 @@ Review lanes execute no software (no tests, builds, or servers).
   context, and it buries the finding it is printed next to.
 - If a vendor cannot run, abort loudly. Do not record `approved`. Do not
   substitute another vendor.
+- `unavailable` → neutral release for that case: clears the `working` agent
+  row, does not record `approved`, does not affect gate/checklist/round state;
+  a later scan retries.
 
-Zero findings only after an explicit complete pass. Empty, partial,
+Auto-pass only when the lane output is a single terminal report with
+`STATUS: complete` and an explicit, present `FINDINGS:` header that parses to
+zero -- a missing or duplicated `FINDINGS:` header, or multiple STATUS:/FINDINGS:
+blocks in the output, resolves to retry instead. A zero-`FINDINGS:` report still
+resolves to retry, not an automatic pass, when its `GAPS:` section discloses
+genuine, non-trivial content (anything other than a zero token like `none`/`0`),
+or when the output contains more than one `GAPS:` header. Empty, partial,
 timeout, or unavailable output is not zero findings.
 
 A reported point that contradicts a verified repo rule or fact may be

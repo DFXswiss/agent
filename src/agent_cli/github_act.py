@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from .runtime import Completed
 from .store import Store
@@ -139,6 +139,49 @@ def _gh_text(argv: list[str], runner: Runner) -> str:
     return completed.stdout or ""
 
 
+def _resolve_actual_base(
+    pr_ref: str, repo: str, runner: Runner, fallback: str | None
+) -> tuple[str | None, Literal["transient", "not_found", "permanent"] | None]:
+    """Best-effort: re-resolve the ACTUAL applied base via a live `gh pr view`
+    call, mirroring the resume path's existing baseRefName resolution.
+
+    pr_ref: the PR number/identifier used for the `gh pr view` call, not a
+    branch name.
+
+    Returns (base, classification). classification is None when gh genuinely
+    answered: base is the real baseRefName when present and non-empty, else
+    `fallback` (the PR genuinely has no better-known base yet -- a definitive
+    terminal answer). A non-None classification means the call itself failed
+    with that category (gh unavailable, non-zero exit, empty/invalid JSON, or
+    a non-object JSON body) -- an indeterminate result that should be retried
+    on a later scan, not treated as final; base is then `fallback` only as a
+    placeholder."""
+    try:
+        completed = runner(
+            ["gh", "pr", "view", pr_ref, "--repo", repo, "--json", "baseRefName"]
+        )
+    except OSError:
+        # Same transient outcome as the resume-path view step for OSError.
+        return fallback, "transient"
+    if completed.returncode != 0:
+        # Shared classifier; every category is indeterminate here — retry later.
+        return fallback, _classify_gh_failure(completed)
+    raw = (completed.stdout or "").strip()
+    if raw == "":
+        # Same transient outcome as the resume-path view step for empty stdout.
+        return fallback, "transient"
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        # Same transient outcome as the resume-path view step for invalid JSON.
+        return fallback, "transient"
+    if not isinstance(data, dict):
+        # Same transient outcome as the resume-path view step for non-dict JSON.
+        return fallback, "transient"
+    real_base = data.get("baseRefName")
+    return (real_base if isinstance(real_base, str) and real_base else fallback), None
+
+
 def _gh_not_found(completed: Completed) -> bool:
     """True only when gh failed because this pull request is missing."""
     if completed.returncode == 0:
@@ -149,6 +192,31 @@ def _gh_not_found(completed: Completed) -> bool:
     if "pull request" in text and ("not found" in text or "could not find" in text):
         return True
     return False
+
+
+def _classify_gh_failure(
+    completed: Completed,
+) -> Literal["transient", "not_found", "permanent"]:
+    """Classify a non-zero gh CLI failure for retry / create / terminalize decisions."""
+    # gh exit 4 = authentication required; permanent regardless of stderr text
+    if completed.returncode == 4:
+        return "permanent"
+    if _gh_not_found(completed):
+        return "not_found"
+    text = f"{completed.stderr or ''}{completed.stdout or ''}".casefold()
+    if (
+        "rate limit" in text
+        or "secondary rate limit" in text
+        or "abuse detection" in text
+    ):
+        return "transient"
+    if (
+        "http 401" in text
+        or "http 403" in text
+        or "authentication token not found" in text
+    ):
+        return "permanent"
+    return "transient"
 
 
 def _is_draft(raw: Any) -> bool:
@@ -190,44 +258,84 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         body_opt = _optional_str_field(payload, "body")
         body = "" if body_opt is None else body_opt
         base = _optional_str_field(payload, "base", nonempty=True)
+        base = (base.removeprefix("origin/") or None) if base else base
     except _GhError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"pr.open {rid} error"
     try:
+        prior = row.get("result")
+        prior_number = (
+            _as_int(prior.get("number")) if isinstance(prior, dict) else None
+        )
+        has_prior_number = prior_number is not None
         view_argv = [
             "gh",
             "pr",
             "view",
-            head,
+            str(prior_number) if has_prior_number else head,
             "--repo",
             repo,
             "--json",
-            "number,url,state,isDraft",
+            "number,url,state,isDraft,baseRefName,headRefName",
         ]
+        viewed: dict[str, Any] | None = None
+        classification: Literal["transient", "not_found", "permanent"] | None = None
+        detail = ""
+        completed: Completed | None
         try:
             completed = runner(view_argv)
         except OSError as exc:
-            raise _GhError(f"gh is not available: {exc}") from exc
-        viewed: dict[str, Any] | None
-        if completed.returncode != 0:
-            # Not-found → create; any other view failure must not create.
-            if _gh_not_found(completed):
-                viewed = None
-            else:
+            # Same transient classification as _resolve_actual_base for OSError.
+            classification = "transient"
+            detail = f"gh is not available: {exc}"
+            completed = None
+        if classification is None:
+            if completed is None:
+                raise _GhError("gh pr view produced no result")
+            if completed.returncode != 0:
+                classification = _classify_gh_failure(completed)
                 detail = (completed.stderr or completed.stdout or "gh failed").strip()
-                raise _GhError(detail or "gh failed")
-        else:
-            raw = completed.stdout.strip()
-            if raw == "":
-                raise _GhError("gh returned empty output")
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise _GhError("gh returned invalid JSON") from exc
-            if not isinstance(data, dict):
-                raise _GhError("gh output is not a JSON object or array")
-            viewed = data
+                detail = detail or "gh failed"
+            else:
+                raw = completed.stdout.strip()
+                if raw == "":
+                    # Same transient classification as _resolve_actual_base.
+                    classification = "transient"
+                    detail = "gh returned empty output"
+                else:
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        classification = "transient"
+                        detail = "gh returned invalid JSON"
+                    else:
+                        if not isinstance(data, dict):
+                            classification = "transient"
+                            detail = "gh output is not a JSON object or array"
+                        else:
+                            viewed = data
+        if classification is not None:
+            # Decision table: not_found without a prior number → create;
+            # not_found/transient with a prior number → pending retry (never
+            # re-create); permanent always errors; transient without a prior
+            # number also errors.
+            if classification == "not_found" and not has_prior_number:
+                viewed = None
+            elif has_prior_number and classification in ("not_found", "transient"):
+                if not isinstance(prior, dict):
+                    raise _GhError("prior pr.open result is not an object")
+                _mark(store, row, status="pending", result=prior)
+                return f"pr.open {rid} pending (view retry needed)"
+            else:
+                raise _GhError(detail)
         if isinstance(viewed, dict):
+            if has_prior_number:
+                viewed_head = viewed.get("headRefName")
+                if not isinstance(viewed_head, str) or viewed_head != head:
+                    raise _GhError(
+                        f"PR #{prior_number} headRefName {viewed_head!r} does "
+                        f"not match expected head {head!r} -- refusing to rebind"
+                    )
             state = str(viewed.get("state") or "").upper()
             number = _as_int(viewed.get("number"))
             url = viewed.get("url")
@@ -237,7 +345,17 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 raise _GhError("existing pull request is not open")
             if not _is_draft(viewed.get("isDraft")):
                 raise _GhError("existing pull request is not a draft")
-            result = {"repo": repo, "number": number, "url": url, "draft": True}
+            real_base = viewed.get("baseRefName")
+            resolved_result_base = (
+                real_base if isinstance(real_base, str) and real_base else base
+            )
+            result = {
+                "repo": repo,
+                "number": number,
+                "url": url,
+                "draft": True,
+                "base": resolved_result_base,
+            }
             _mark(store, row, status="done", result=result)
             return f"pr.open {rid} done number={number}"
         create_body = _with_marker(body, rid)
@@ -259,7 +377,23 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             argv.extend(["--base", base])
         stdout = _gh_text(argv, runner)
         url, number = _parse_url_number(stdout)
-        result = {"repo": repo, "number": number, "url": url, "draft": True}
+        resolved_base, classification = _resolve_actual_base(
+            str(number), repo, runner, base
+        )
+        result = {
+            "repo": repo,
+            "number": number,
+            "url": url,
+            "draft": True,
+            "base": resolved_base,
+        }
+        if classification is not None:
+            # Never freeze an unverified fallback base as permanently done --
+            # leave pending so the next scan_github retries the live
+            # resolution (it resumes via the gh-pr-view-succeeds branch
+            # above, since the PR now exists).
+            _mark(store, row, status="pending", result=result)
+            return f"pr.open {rid} pending (base resolution retry needed)"
         _mark(store, row, status="done", result=result)
         return f"pr.open {rid} done number={number}"
     except _GhError as exc:
@@ -559,22 +693,29 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
 
     Other pending types (subscription.set, query.request, …) are skipped.
     Returns human-readable status lines, one per handled row.
+
+    Device-wide exclusive lock: concurrent OS processes (daemon knock loop,
+    one-shot `agent github pending`, fixer_act synchronous scans) all share
+    the same local Postgres; without serialization two scanners can both
+    read the same pending row, both create a PR, and the loser's stale
+    _mark can wipe the winner's done/result.number.
     """
-    lines: list[str] = []
-    for row in store.pending_work():
-        typ = row.get("type")
-        try:
-            if typ == "pr.open":
-                lines.append(_run_pr_open(store, runner, row))
-            elif typ == "issue.write":
-                lines.append(_run_issue_write(store, runner, row))
-            elif typ == "comment.post":
-                lines.append(_run_comment_post(store, runner, row))
-            elif typ == "review.post":
-                lines.append(_run_review_post(store, runner, row))
-        except Exception as exc:  # noqa: BLE001 — per-row isolation
-            rid = str(row.get("id") or "?")
-            _mark(store, row, status="error", error=str(exc))
-            label = typ if isinstance(typ, str) else "activity"
-            lines.append(f"{label} {rid} error")
-    return lines
+    with store.exclusive("github-scan:" + store.device_id()):
+        lines: list[str] = []
+        for row in store.pending_work():
+            typ = row.get("type")
+            try:
+                if typ == "pr.open":
+                    lines.append(_run_pr_open(store, runner, row))
+                elif typ == "issue.write":
+                    lines.append(_run_issue_write(store, runner, row))
+                elif typ == "comment.post":
+                    lines.append(_run_comment_post(store, runner, row))
+                elif typ == "review.post":
+                    lines.append(_run_review_post(store, runner, row))
+            except Exception as exc:  # noqa: BLE001 — per-row isolation
+                rid = str(row.get("id") or "?")
+                _mark(store, row, status="error", error=str(exc))
+                label = typ if isinstance(typ, str) else "activity"
+                lines.append(f"{label} {rid} error")
+        return lines
