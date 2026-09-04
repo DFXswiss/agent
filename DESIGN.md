@@ -441,7 +441,7 @@ One product with the hub. The team reads every visible session; **this device wr
 
 A local file `$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` invocation for that session. A missing key means tmux runs on this device as today. The file is not a hub event and is not stored on the session row. One Runtime instance looks the prefix up per session id so mixed local and prefixed sessions can share knock, keep-working, and control.
 
-The daemon also serves `agent cli-bridge` on loopback (default `127.0.0.1:7846`). A remote process may send `{"argv":[…]}` and receive stdout/stderr/exit. The allowlist is store and spine only (`session register|heartbeat|list|close|skill`, `task`, `next`, `close-step`, `gate`, `check`, `status`, `skills`, …). Control (`session start|input|keep-working`), `run`, GitHub, mail, pair, and sync are refused. Git and `gh` stay in the process that owns the worktree. The bridge is not a hub event.
+The daemon also serves `agent cli-bridge` on loopback (default `127.0.0.1:7846`; bind `AGENT_CLI_BRIDGE_BIND` must be `127.0.0.1` or `::1`). A remote process may send `{"argv":[…]}` (`AGENT_CLI_BRIDGE=host:port` on the stub) and receive stdout/stderr/exit. The allowlist is store and spine only (`session register|heartbeat|list|close|skill`, `task`, `next`, `close-step`, `gate`, `check`, `status`, `skills`, …). Control (`session start|input|keep-working`), `run`, GitHub, mail, pair, and sync are refused. Git and `gh` stay in the process that owns the worktree. The bridge is not a hub event.
 
 Owned-row runtime fields (start/stop set control and tmux; `keep-working` may also update `keep_working`; not a new vendor):
 
@@ -476,7 +476,7 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, and the local dashboard; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, the local dashboard, and cli-bridge; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
 
 Later product work (not required to operate v1 after merge):
 
