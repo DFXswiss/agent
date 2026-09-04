@@ -440,6 +440,8 @@ One product with the hub. The team reads every visible session; **this device wr
 
 A local file `$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` invocation for that session. A missing key means tmux runs on this device as today. The file is not a hub event and is not stored on the session row. One Runtime instance looks the prefix up per session id so mixed local and prefixed sessions can share knock, keep-working, and control.
 
+The daemon also serves `agent cli-bridge` on loopback (default `127.0.0.1:7846`). A remote process may send `{"argv":[…]}` and receive stdout/stderr/exit. The allowlist is store and spine only (`session register|heartbeat|list|close|skill`, `task`, `next`, `close-step`, `gate`, `check`, `status`, `skills`, …). Control (`session start|input|keep-working`), `run`, GitHub, mail, pair, and sync are refused. Git and `gh` stay in the process that owns the worktree. The bridge is not a hub event.
+
 Owned-row runtime fields (start/stop set control and tmux; `keep-working` may also update `keep_working`; not a new vendor):
 
 ```json

@@ -134,6 +134,8 @@ agent session stop --id <session-id>
 
 `$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` call for that session. A missing key is local tmux, as today. The file stays on this device; it is not a hub event.
 
+`agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client.
+
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
 
 ## Testing against another hub

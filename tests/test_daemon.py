@@ -70,6 +70,8 @@ def _child_name(argv: list[str]) -> str:
         return "knock"
     if "dashboard" in argv:
         return "dashboard"
+    if "cli-bridge" in argv:
+        return "cli-bridge"
     if "sync" in argv:
         return "sync"
     return "other"
@@ -472,7 +474,12 @@ def test_run_supervisor_paired_starts_sync(tmp_path: Path) -> None:
             sleep=fake_sleep,
         )
     specs = dict(child_specs(["agent"]))
-    assert started == [specs["knock"], specs["dashboard"], specs["sync"]]
+    assert started == [
+        specs["knock"],
+        specs["dashboard"],
+        specs["cli-bridge"],
+        specs["sync"],
+    ]
     assert any("sync" in argv and "--follow" in argv for argv in started)
 
 

@@ -1803,6 +1803,20 @@ def cmd_dashboard(args: list[str]) -> None:
 
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"dashboard http://127.0.0.1:{port}")
+
+
+def cmd_cli_bridge(args: list[str]) -> None:
+    from .cli_bridge import DEFAULT_HOST, DEFAULT_PORT, serve
+
+    port = DEFAULT_PORT
+    if args:
+        if args[0] != "--port" or len(args) != 2 or not args[1].isdigit():
+            die("Usage: agent cli-bridge [--port PORT]")
+        port = int(args[1])
+    host = os.environ.get("AGENT_CLI_BRIDGE_BIND", DEFAULT_HOST)
+    if host == "":
+        die("AGENT_CLI_BRIDGE_BIND is set but empty")
+    serve(host=host, port=port)
     try:
         httpd.serve_forever()
     finally:
@@ -3391,6 +3405,7 @@ COMMANDS = {
     "ping": cmd_ping,
     "status": cmd_status,
     "dashboard": cmd_dashboard,
+    "cli-bridge": cmd_cli_bridge,
     "daemon": cmd_daemon,
     "pg": cmd_pg,
     "knock": cmd_knock,
@@ -3409,7 +3424,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|daemon|pg|knock|lane|watch|"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|watch|"
             "github|query|subscribe|mail|supervise> …"
         )
     cmd = args[0]

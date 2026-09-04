@@ -91,6 +91,7 @@ def child_specs(prefix: list[str]) -> list[tuple[str, list[str]]]:
         ("knock", [*prefix, "knock"]),
         ("sync", [*prefix, "sync", "--follow"]),
         ("dashboard", [*prefix, "dashboard"]),
+        ("cli-bridge", [*prefix, "cli-bridge"]),
     ]
 
 
@@ -140,11 +141,11 @@ def run_supervisor(
     sleep: Callable[[float], None] | None = None,
 ) -> None:
     """
-    Hold the daemon lock and supervise knock, sync --follow, and dashboard.
+    Hold the daemon lock and supervise knock, sync --follow, dashboard, and cli-bridge.
 
     Sync starts only once device.json has hub_url and device_token. Sync deaths
     restart with a limit of SYNC_RESTART_LIMIT in SYNC_RESTART_WINDOW_S.
-    knock/dashboard deaths end the supervisor. SIGTERM/SIGINT terminate children and exit 0.
+    knock/dashboard/cli-bridge deaths end the supervisor. SIGTERM/SIGINT terminate children and exit 0.
     """
     start = popen or subprocess.Popen
     now_fn = monotonic or time.monotonic
@@ -172,6 +173,7 @@ def run_supervisor(
         try:
             children["knock"] = start(specs["knock"], start_new_session=True)
             children["dashboard"] = start(specs["dashboard"], start_new_session=True)
+            children["cli-bridge"] = start(specs["cli-bridge"], start_new_session=True)
             if hub_configured(home):
                 children["sync"] = start(specs["sync"], start_new_session=True)
         except SystemExit:
@@ -183,7 +185,7 @@ def run_supervisor(
             if stopping:
                 raise SystemExit(0)
             sleep_fn(0.2)
-            for name in ("knock", "dashboard"):
+            for name in ("knock", "dashboard", "cli-bridge"):
                 proc = children[name]
                 code = proc.poll()
                 if code is not None:
