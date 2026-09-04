@@ -338,7 +338,12 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     empty/skipped run would otherwise satisfy the sentinel-absence assertion
     vacuously, without ever exercising the redaction path. Also covers the
     env-pop step (key names absent), the finally-restore step (os.environ
-    values restored after the call), and the AGENT_PG_DSN exact-match branch.
+    values restored after the call), the AGENT_PG_DSN exact-match branch, and
+    the known-first-party-name branch (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID/
+    GH_TOKEN/GITHUB_TOKEN) -- this is the same shared is_credential_shaped_env_key
+    predicate the vendor-CLI launch path (tests/test_lane.py) exercises, so a
+    regression that broke only this call site's use of it would otherwise go
+    undetected here.
     """
     tid = _bootstrap_implement(tmp_path, capsys)
     _finish_implementer(tmp_path, tid, capsys)
@@ -356,8 +361,16 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     # still opens while the sentinel is still present in the env value.
     real_pg_dsn = os.environ["AGENT_PG_DSN"]
     pg_dsn_with_sentinel = f"{real_pg_dsn} application_name={pg_sentinel}"
+    known_name_sentinels = {
+        "TELEGRAM_BOT_TOKEN": "sentinel-telegram-bot-token-should-not-leak",
+        "TELEGRAM_CHAT_ID": "sentinel-telegram-chat-id-should-not-leak",
+        "GH_TOKEN": "sentinel-gh-token-should-not-leak",
+        "GITHUB_TOKEN": "sentinel-github-token-should-not-leak",
+    }
     monkeypatch.setenv("AGENT_ERROR_FIX_PASSWORD", sentinel)
     monkeypatch.setenv("AGENT_PG_DSN", pg_dsn_with_sentinel)
+    for key, value in known_name_sentinels.items():
+        monkeypatch.setenv(key, value)
     monkeypatch.setenv("AGENT_CHECK_COMMAND", "env")
     run(tmp_path, ["run", "--task", tid, "--cwd", str(tmp_path)])
     capsys.readouterr()
@@ -379,6 +392,10 @@ def test_run_local_check_strips_credential_env_from_persisted_output(
     assert pg_sentinel not in output
     assert os.environ.get("AGENT_ERROR_FIX_PASSWORD") == sentinel
     assert os.environ.get("AGENT_PG_DSN") == pg_dsn_with_sentinel
+    for key, value in known_name_sentinels.items():
+        assert f"{key}=" not in output
+        assert value not in output
+        assert os.environ.get(key) == value
 
 
 def test_run_local_check_redacts_secret_values_from_persisted_output(
