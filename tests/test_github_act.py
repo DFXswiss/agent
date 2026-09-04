@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -222,7 +223,10 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
 
     Uses two independent Store instances (separate RLocks, separate psycopg
     connections) so only pg_advisory_lock — not the in-process threading.RLock —
-    can explain the observed blocking.
+    can explain the observed blocking. Before the negative assertion, poll
+    pg_stat_activity on store_a's connection for a positive Lock wait on
+    store_b's backend PID — client-side "about to call" signals alone can
+    pass vacuously against a no-op lock.
     """
     store_a = Store(tmp_path)
     store_b = Store(tmp_path)
@@ -232,6 +236,7 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
     release = threading.Event()
     attempting = threading.Event()
     second_entered = threading.Event()
+    waiter_pid = store_b.conn.info.backend_pid
 
     def holder() -> None:
         with store_a.exclusive(lock_key):
@@ -245,11 +250,8 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
     real_execute = store_b.conn.execute
 
     def _execute_and_signal(query: str, *args: Any, **kwargs: Any) -> Any:
-        # Fire exactly when the advisory-lock SQL is issued, not one
-        # statement earlier -- a coarser signal (set before entering
-        # exclusive()) would leave a window where a descheduled waiter
-        # thread could make the negative assertion below pass vacuously
-        # even with a broken/no-op advisory lock.
+        # Fast local pre-check: fire when the advisory-lock SQL is issued.
+        # Positive proof of blocking still comes from pg_stat_activity below.
         if query.strip().startswith("SELECT pg_advisory_lock"):
             attempting.set()
         return real_execute(query, *args, **kwargs)
@@ -262,10 +264,22 @@ def test_store_exclusive_github_scan_key_blocks_second_thread(tmp_path: Path) ->
 
     t2 = threading.Thread(target=waiter)
     t2.start()
-    # Confirm the waiter has actually issued the advisory-lock call before
-    # asserting it hasn't entered -- otherwise a slow-to-schedule thread
-    # could make the negative assertion pass vacuously.
     assert attempting.wait(timeout=5)
+    # Positive external confirmation: store_b's backend is waiting on a Lock.
+    deadline = time.monotonic() + 5.0
+    saw_lock_wait = False
+    while time.monotonic() < deadline:
+        row = store_a.conn.execute(
+            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+            (waiter_pid,),
+        ).fetchone()
+        if row is not None and row.get("wait_event_type") == "Lock":
+            saw_lock_wait = True
+            break
+        time.sleep(0.05)
+    assert saw_lock_wait, (
+        f"waiter backend pid {waiter_pid} never reached wait_event_type=Lock"
+    )
     # While the first holder is still inside, the second must not enter.
     assert not second_entered.wait(timeout=0.3)
     release.set()
