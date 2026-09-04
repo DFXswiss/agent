@@ -50,6 +50,8 @@ def call(argv: list[str], *, endpoint: str | None = None) -> int:
             if b"\n" in piece:
                 break
         payload = json.loads(b"".join(chunks).split(b"\n", 1)[0].decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit("cli-bridge: invalid response") from exc
     finally:
         sock.close()
     if not isinstance(payload, dict):

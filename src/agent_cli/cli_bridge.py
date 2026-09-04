@@ -90,7 +90,10 @@ def serve(
     sock.bind((host, port))
     sock.listen(16)
     while True:
-        conn, addr = sock.accept()
+        try:
+            conn, addr = sock.accept()
+        except OSError:
+            continue
         try:
             conn.settimeout(30)
             peer = addr[0] if addr else ""
@@ -101,8 +104,28 @@ def serve(
             conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
         except OSError:
             continue
+        except Exception as exc:
+            try:
+                conn.sendall(
+                    (
+                        json.dumps(
+                            {
+                                "exit_code": 2,
+                                "stdout": "",
+                                "stderr": f"cli-bridge: {type(exc).__name__}",
+                            }
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                )
+            except OSError:
+                pass
+            continue
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except OSError:
+                pass
 
 
 def _read_request(conn: socket.socket) -> bytes:
