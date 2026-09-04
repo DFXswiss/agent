@@ -1430,7 +1430,7 @@ def test_template_pr_open_payload_base_field() -> None:
 
 
 def test_template_pr_open_payload_brief_first_sentence_only() -> None:
-    """Visible EN/DE summaries keep only the first brief sentence (CONTRIBUTING cap)."""
+    """Visible EN summary keeps only the first brief sentence; DE stays German-only."""
     brief = (
         "Fix the retry loop. Also harden the timeout path. And add a regression test."
     )
@@ -1450,6 +1450,7 @@ def test_template_pr_open_payload_brief_first_sentence_only() -> None:
     de_summary = body[de_start:de_end]
     assert "Fix the retry loop." in en_summary
     assert "Also harden the timeout path" not in en_summary
+    assert "Fix the retry loop." not in de_summary
     assert "Also harden the timeout path" not in de_summary
     assert "Also harden the timeout path" in body
     assert sum(en_summary.count(c) for c in ".!?") <= 4
@@ -1476,6 +1477,7 @@ def test_template_pr_open_payload_brief_summary_collapses_to_first_line() -> Non
     assert "Fix bug" in en_summary
     assert "DE:\nfake" not in en_summary
     assert "fake" not in en_summary
+    assert "Fix bug" not in de_summary
     assert "DE:\nfake" not in de_summary
     assert "fake" not in de_summary
     assert "fake" in body
@@ -1511,7 +1513,7 @@ def test_template_pr_open_payload_brief_has_single_trailing_period() -> None:
 
 
 def test_template_pr_open_payload_empty_brief_fallback_has_one_period() -> None:
-    """Empty brief uses the fallback literal with exactly one trailing period."""
+    """Empty brief uses the EN fallback literal; DE is a German pointer, not a Brief splice."""
     payload_en = template_pr_open_payload(
         session_id="sess-12345678",
         repo="org/app",
@@ -1521,9 +1523,15 @@ def test_template_pr_open_payload_empty_brief_fallback_has_one_period() -> None:
     )
     body = str(payload_en["body"])
     assert "Brief: see task spec." in body
-    assert "Brief: siehe Task-Spec." in body
     assert "Brief: see task spec.." not in body
-    assert "Brief: siehe Task-Spec.." not in body
+    de_start = body.index("DE:\n") + len("DE:\n")
+    de_end = body.index("\n\n<details>")
+    de_summary = body[de_start:de_end]
+    assert "Brief:" not in de_summary
+    assert "siehe Task-Spec." not in de_summary
+    assert "Einzelheiten siehe Anhang." in de_summary
+    assert de_summary.rstrip().endswith(".")
+    assert not de_summary.rstrip().endswith("..")
 
 
 def test_first_sentence_skips_common_abbreviations() -> None:
@@ -1804,13 +1812,9 @@ def test_ensure_done_readiness_summary_fallback_uses_distinct_german(
         assert de
         assert de != en
         assert de != brief
-        brief_marker = "Brief: "
-        assert brief_marker in de
-        german_sentence, _, rest = de.partition(brief_marker)
-        german_sentence = german_sentence.strip()
-        assert german_sentence.endswith(".")
-        assert "Automatischer" in german_sentence
-        assert rest == brief
+        assert brief not in de
+        assert "Automatischer" in de
+        assert de.endswith(".")
 
     finally:
         store.close()

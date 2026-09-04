@@ -184,7 +184,6 @@ def template_pr_open_payload(
     # back unchanged, with nothing added. The empty-fallback literal already
     # ends in a period regardless.
     brief_part = brief_summary[:200] if brief_summary else "see task spec."
-    brief_part_de = brief_summary[:200] if brief_summary else "siehe Task-Spec."
     en = (
         f"Automated error-fix for `{fingerprint or short}` in `{repo}`. "
         f"Draft only; a human merges. "
@@ -192,8 +191,7 @@ def template_pr_open_payload(
     )
     de = (
         f"Automatischer error-fix für `{fingerprint or short}` in `{repo}`. "
-        f"Nur Entwurf; ein Mensch merged. "
-        f"Brief: {brief_part_de}"
+        f"Nur Entwurf; ein Mensch merged. Einzelheiten siehe Anhang."
     )
     brief_text = brief or "(none)"
     brief_fence = _fence_marker(brief_text)
@@ -573,11 +571,7 @@ def _ensure_done_readiness(store: Store, tid: str, *, brief: str) -> None:
         one = (brief or task.get("title") or "error-fix").splitlines()[0].strip()
         if len(one) > 120:
             one = one[:117] + "..."
-        de_one = (
-            f"Automatischer error-fix-Patch. Brief: {one}"
-            if one
-            else "Automatischer error-fix Patch."
-        )
+        de_one = "Automatischer error-fix-Patch. Einzelheiten siehe PR."
         if len(de_one) > 120:
             de_one = de_one[:117] + "..."
         main_mod.cmd_task(
