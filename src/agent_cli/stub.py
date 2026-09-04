@@ -7,7 +7,9 @@ import os
 import socket
 import sys
 
-from .cli_bridge import DEFAULT_HOST, DEFAULT_PORT, MAX_REQUEST_BYTES
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 7846
+MAX_REQUEST_BYTES = 1_048_576
 
 
 def parse_endpoint(raw: str) -> tuple[str, int]:
@@ -34,8 +36,9 @@ def call(argv: list[str], *, endpoint: str | None = None) -> int:
         host, port = DEFAULT_HOST, DEFAULT_PORT
     else:
         host, port = parse_endpoint(raw)
-    sock = socket.create_connection((host, port), timeout=30)
+    sock = None
     try:
+        sock = socket.create_connection((host, port), timeout=30)
         sock.sendall((json.dumps({"argv": argv}) + "\n").encode("utf-8"))
         chunks: list[bytes] = []
         total = 0
@@ -53,7 +56,8 @@ def call(argv: list[str], *, endpoint: str | None = None) -> int:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit("cli-bridge: invalid response") from exc
     finally:
-        sock.close()
+        if sock is not None:
+            sock.close()
     if not isinstance(payload, dict):
         raise SystemExit("cli-bridge: invalid response")
     stdout = payload.get("stdout")

@@ -96,9 +96,7 @@ def serve(
             continue
         try:
             conn.settimeout(30)
-            peer = addr[0] if addr else ""
-            if peer not in ("127.0.0.1", "::1", ""):
-                continue
+            del addr
             raw = _read_request(conn)
             payload = handle_request(raw, runner=runner)
             conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))

@@ -120,6 +120,18 @@ def test_stub_call_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.no_pg
+def test_stub_connect_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli import stub
+
+    def boom(*_a, **_k):
+        raise ConnectionRefusedError("down")
+
+    monkeypatch.setattr(socket, "create_connection", boom)
+    with pytest.raises(SystemExit, match="invalid response"):
+        stub.call(["status"], endpoint="127.0.0.1:7846")
+
+
+@pytest.mark.no_pg
 def test_serve_rejects_non_loopback() -> None:
     with pytest.raises(StoreError, match="127.0.0.1"):
         serve(host="0.0.0.0", port=7846)

@@ -73,6 +73,7 @@ agent ping send --to some-login --kind review-request --task <uuid> --note "read
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard
+agent cli-bridge
 agent pg status
 agent pg stop
 ```
