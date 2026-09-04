@@ -28,15 +28,40 @@ def _insert_legacy_row(store: Store, table: str, row_id: str, payload: dict) -> 
         )
 
 
+def _insert_row_with_explicit_seq_and_physical_time(
+    store: Store, table: str, row_id: str, payload: dict, *, updated_at: str
+) -> None:
+    """Write a row bypassing the origin_seq auto-stamp, with a caller-chosen
+    physical updated_at independent of the payload's own timestamp field.
+
+    origin_seq order and physical write order are otherwise always identical
+    on a single Store (next_seq() is called in write order), so a test using
+    store.write() alone cannot distinguish "selection follows origin_seq"
+    from "selection follows rows()'s physical/insertion order" -- this lets a
+    test set them to CONTRADICT each other, so only a genuine origin_seq-based
+    sort picks the right row.
+    """
+    origin = store.device_id()
+    with store._lock, store.conn.transaction():
+        store._upsert_row(table, row_id, origin, dumps(payload), updated_at)
+
+
 def test_latest_gates_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Path) -> None:
-    """Same-second recorded_at must not hide a later write: higher origin_seq wins."""
+    """Same-second recorded_at must not hide a later write: higher origin_seq wins.
+
+    Physical updated_at is set to CONTRADICT origin_seq order (g-old physically
+    newer, g-new physically older) -- origin_seq and write order are otherwise
+    always identical on a single Store, so without this contradiction the test
+    could pass merely by coincidence of rows()'s own physical ordering rather
+    than by genuinely exercising the origin_seq tie-break.
+    """
     store = Store(tmp_path)
     try:
         same_ts = "2026-04-01T12:00:00Z"
         tid = "task-seq-order"
-        store.write(
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
             "review_gate",
-            "insert",
             "g-old",
             {
                 "id": "g-old",
@@ -51,10 +76,11 @@ def test_latest_gates_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Path
                 "recorded_at": same_ts,
                 "origin_seq": 10,
             },
+            updated_at="2026-04-01T13:00:00Z",  # physically newer despite lower origin_seq
         )
-        store.write(
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
             "review_gate",
-            "insert",
             "g-new",
             {
                 "id": "g-new",
@@ -69,6 +95,7 @@ def test_latest_gates_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Path
                 "recorded_at": same_ts,
                 "origin_seq": 11,
             },
+            updated_at="2026-04-01T11:00:00Z",  # physically older despite higher origin_seq
         )
         latest = _latest_gates(store, tid)
         got = latest[("grok-pr", "quality")]
@@ -85,13 +112,15 @@ def test_latest_gates_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Path
 
 
 def test_latest_checks_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Path) -> None:
+    """Physical updated_at contradicts origin_seq order -- see the sibling gate
+    test's docstring for why this is needed to genuinely exercise the tie-break."""
     store = Store(tmp_path)
     try:
         same_ts = "2026-04-01T12:00:00Z"
         tid = "task-check-seq"
-        store.write(
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
             "local_check",
-            "insert",
             "c-old",
             {
                 "id": "c-old",
@@ -104,10 +133,11 @@ def test_latest_checks_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Pat
                 "ran_at": same_ts,
                 "origin_seq": 3,
             },
+            updated_at="2026-04-01T13:00:00Z",  # physically newer despite lower origin_seq
         )
-        store.write(
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
             "local_check",
-            "insert",
             "c-new",
             {
                 "id": "c-new",
@@ -120,6 +150,7 @@ def test_latest_checks_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Pat
                 "ran_at": same_ts,
                 "origin_seq": 9,
             },
+            updated_at="2026-04-01T11:00:00Z",  # physically older despite higher origin_seq
         )
         latest = _latest_checks(store, tid)
         assert latest["pytest"]["id"] == "c-new"
@@ -129,7 +160,10 @@ def test_latest_checks_prefers_higher_origin_seq_at_same_timestamp(tmp_path: Pat
 
 
 def test_load_task_dict_gate_order_follows_origin_seq(tmp_path: Path) -> None:
-    """load_task_dict lists gates oldest→newest by origin_seq so last-wins is correct."""
+    """load_task_dict lists gates oldest→newest by origin_seq so last-wins is correct.
+
+    Physical updated_at contradicts origin_seq order -- see the first test's
+    docstring for why this is needed to genuinely exercise the tie-break."""
     store = Store(tmp_path)
     try:
         tid = "task-load-order"
@@ -149,9 +183,9 @@ def test_load_task_dict_gate_order_follows_origin_seq(tmp_path: Path) -> None:
                 "payload": {},
             },
         )
-        store.write(
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
             "review_gate",
-            "insert",
             "g1",
             {
                 "id": "g1",
@@ -164,10 +198,11 @@ def test_load_task_dict_gate_order_follows_origin_seq(tmp_path: Path) -> None:
                 "recorded_at": same_ts,
                 "origin_seq": 2,
             },
+            updated_at="2026-04-01T13:00:00Z",  # physically newer despite lower origin_seq
         )
-        store.write(
+        _insert_row_with_explicit_seq_and_physical_time(
+            store,
             "review_gate",
-            "insert",
             "g2",
             {
                 "id": "g2",
@@ -180,6 +215,7 @@ def test_load_task_dict_gate_order_follows_origin_seq(tmp_path: Path) -> None:
                 "recorded_at": same_ts,
                 "origin_seq": 8,
             },
+            updated_at="2026-04-01T11:00:00Z",  # physically older despite higher origin_seq
         )
         snap = load_task_dict(store, tid)
         logic = [g for g in snap["gates"] if g.get("dimension") == "logic"]
