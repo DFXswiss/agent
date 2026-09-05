@@ -965,10 +965,16 @@ def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
             continue
         login = review["user"].get("login")
         if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
-            raise GuardError("reviewer login invalid")
-        permission = api.get_json(
+            # Bot/app or malformed identities cannot authorize a human policy
+            # migration, and their reviews must not invalidate ordinary reports.
+            continue
+        permission_status, permission = api.get_optional(
             f"/repos/{pull.repo}/collaborators/{urllib.parse.quote(login)}/permission"
         )
+        if permission_status == 404:
+            continue  # Public-repository reviewer without collaborator access.
+        if not 200 <= permission_status < 300:
+            raise GuardError(f"reviewer permission lookup HTTP {permission_status}")
         if not isinstance(permission, Mapping):
             raise GuardError("reviewer permission response invalid")
         actor = permission.get("user")

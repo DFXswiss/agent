@@ -378,3 +378,30 @@ def test_new_approval_activating_stricter_policy_prevents_stale_success(approval
     assert result.approval_fingerprint
     assert any("command" in reason.lower() for reason in result.reasons)
     assert not any(status["state"] == "success" for status in fake.statuses)
+
+
+@pytest.mark.parametrize("reviewer", ["app[bot]", "community-user"])
+@pytest.mark.parametrize("review_state", ["CHANGES_REQUESTED", "APPROVED"])
+def test_ineligible_reviewer_does_not_invalidate_report(reviewer: str, review_state: str) -> None:
+    fake = FakeAPI()
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    fake.reviews = [{
+        "id": 100, "user": {"id": 9090, "login": reviewer},
+        "state": review_state, "commit_id": HEAD,
+        "submitted_at": "2026-09-05T13:00:00Z",
+        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+    }]
+    original = fake.request_fn
+
+    def request(method, url, body=None):
+        if method == "GET" and "/collaborators/" in url:
+            assert reviewer == "community-user", "bot must never reach permission lookup"
+            return 404, {"message": "Not Found"}, {}
+        return original(method, url, body)
+
+    result = guard.reconcile_pull(guard.GitHubApi("test", request_fn=request), REPO, 1)
+    assert result.ok
+    assert result.policy_sha == BASE
+    assert result.approval_fingerprint == ""
+    assert fake.statuses
+    assert all(status["state"] == "success" for status in fake.statuses)

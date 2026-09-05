@@ -46,15 +46,19 @@ runs:
 
     - name: Install trusted guard dependencies
       shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        PYTHONPATH: ${{ github.action_path }}/../../../src
       run: |
         set -euo pipefail
         # action_path = <repo>/.github/actions/a38-guard → three levels up is the trusted repo root.
         # The installed package declares PyYAML; the action pins its runtime version.
-        python -m pip install --disable-pip-version-check PyYAML==6.0.2
+        python -P -m pip install --disable-pip-version-check PyYAML==6.0.2
         # No pip install of the consumer checkout; only PYTHONPATH to trusted sources.
 
     - name: Run dfx pr guard
       shell: bash
+      working-directory: ${{ github.action_path }}
       env:
         GH_TOKEN: ${{ inputs.token }}
         GITHUB_TOKEN: ${{ inputs.token }}
@@ -88,4 +92,4 @@ runs:
         fi
         # Token stays in the environment for the guard module only.
         # No subprocess is started against pull-request code.
-        python -m agent_cli.a38_guard "${args[@]}"
+        python -P -m agent_cli.a38_guard "${args[@]}"
