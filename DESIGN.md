@@ -46,6 +46,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
 | Pull request done | A draft plus local tests is not done. CONTRIBUTING.md is the contract for this repository. When spine and pr-review are attached, grok then Codex on this head are the gates; `agent allow --action pr-ready` only checks task state. A human merges. |
 | Local CI report | Frozen comment schema `dfx-local-ci/v1` in [docs/local-ci-v1.md](docs/local-ci-v1.md). `agent local-ci verify` parses it and computes pass/fail. Private product repositories attach the block to the ready comment. This public client still uses GitHub Actions for its own PRs. |
+| A38 | Versioned process in [docs/a38.md](docs/a38.md), configured by each adopting repository's `.github/a38.json`. `agent a38` runs the complete local job list and validates the existing report format against trusted rules. `agent pr-guard` explains and checks author reports without executing PR code. A valid report is an author declaration, not cryptographic execution proof. Adoption does not remove this public client's GitHub Actions gate. |
 | Merge | The client never merges. A human merges. |
 | Repos | Public MIT: `DFXswiss/agent` (client), `DFXswiss/agent-core` (hub). |
 | Website host | `agent.dfx.swiss` (development: `dev.agent.dfx.swiss`). Singular product name. |
@@ -402,6 +403,11 @@ agent round start --task UUID                     # spine skill
 agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
 agent check record …                              # spine skill
 agent local-ci verify|parse|render [--file PATH] [--require-ids id,id] [--expect-head SHA] [--expect-private] [--json]
+agent a38 policy --file PATH                    # validate an A38 manifest
+agent a38 run --repo PATH --policy PATH --base-sha SHA --output PATH --logs-dir PATH
+agent a38 verify --policy PATH --file PATH --repo OWNER/NAME --head SHA --private
+agent pr-guard --repo OWNER/NAME --pr NUMBER [--dry-run]
+agent pr-guard --repo OWNER/NAME --all-open [--dry-run]
 agent gate record …                               # pr-review skill
 agent work add|set|list …                         # spine skill (open_work)
 agent allow|next|close-step|run …                 # spine skill; run: [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
