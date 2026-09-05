@@ -1078,12 +1078,10 @@ class JobRuntime:
             for base in fallbacks:
                 src = base / plug
                 try:
-                    if src.is_symlink() or not src.is_file():
-                        continue
-                    resolved = src.resolve()
+                    resolved = src.resolve(strict=True)
                     if not resolved.is_file() or not os.access(resolved, os.X_OK):
                         continue
-                except OSError:
+                except (OSError, RuntimeError):
                     continue
                 target = plugins / plug
                 if target.exists() or target.is_symlink():

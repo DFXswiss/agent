@@ -491,6 +491,10 @@ def test_docker_context_precedence_and_plugin_safety(tmp_path: Path) -> None:
     compose_plugin = _executable(plugins / "docker-compose", "raise SystemExit(0)\n")
     outside = _executable(tmp_path / "outside-buildx", "raise SystemExit(0)\n")
     (plugins / "docker-buildx").symlink_to(outside)
+    (old_config / "config.json").write_text(
+        '{"auths":{"registry.example.invalid":{"auth":"must-not-copy"}}}\n',
+        encoding="utf-8",
+    )
     log = tmp_path / "docker.log"
     runtime = JobRuntime(
         adapter="compose",
@@ -512,10 +516,187 @@ def test_docker_context_precedence_and_plugin_safety(tmp_path: Path) -> None:
         calls = _docker_calls(log)
         assert calls[0][:3] == ["context", "inspect", "chosen"]
         isolated = Path(runtime.env["DOCKER_CONFIG"])
-        assert (isolated / "cli-plugins" / "docker-compose").resolve() == compose_plugin
-        assert not (isolated / "cli-plugins" / "docker-buildx").exists()
+        isolated_plugins = isolated / "cli-plugins"
+        compose_link = isolated_plugins / "docker-compose"
+        buildx_link = isolated_plugins / "docker-buildx"
+        assert compose_link.is_symlink()
+        assert compose_link.readlink() == compose_plugin.resolve()
+        assert buildx_link.is_symlink()
+        assert buildx_link.readlink() == outside.resolve()
+        assert sorted(path.name for path in isolated.iterdir()) == ["cli-plugins"]
+        assert sorted(path.name for path in isolated_plugins.iterdir()) == [
+            "docker-buildx",
+            "docker-compose",
+        ]
+        assert all(path.is_symlink() for path in isolated_plugins.iterdir())
         assert not (isolated / "config.json").exists()
         assert "DOCKER_CONTEXT" not in runtime.env
+    finally:
+        runtime.cleanup(0)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def _stub_host_plugin_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    replacements: dict[Path, Path] | None = None,
+) -> list[Path]:
+    replacements = replacements or {}
+    original_resolve = Path.resolve
+    host_candidates = {
+        Path(prefix) / plugin
+        for prefix in (
+            "/opt/homebrew/lib/docker/cli-plugins",
+            "/usr/local/lib/docker/cli-plugins",
+        )
+        for plugin in ("docker-compose", "docker-buildx")
+    }
+    attempts: list[Path] = []
+
+    def controlled_resolve(path: Path, strict: bool = False) -> Path:
+        if path in host_candidates:
+            attempts.append(path)
+            replacement = replacements.get(path)
+            if replacement is None:
+                raise FileNotFoundError(path)
+            return original_resolve(replacement, strict=True)
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", controlled_resolve)
+    return attempts
+
+
+@pytest.mark.parametrize(
+    ("fixture_kind", "accepted"),
+    [
+        ("installed-symlink", True),
+        ("installed-symlink-chain", True),
+        ("dangling-symlink", False),
+        ("symlink-cycle", False),
+        ("directory-target", False),
+        ("nonexecutable-regular", False),
+        ("nonexecutable-target", False),
+    ],
+)
+def test_docker_plugin_candidates_resolve_only_to_executable_regular_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_kind: str,
+    accepted: bool,
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _repo(repo)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_docker(bin_dir / "docker")
+    old_config = tmp_path / "docker-config"
+    plugins = old_config / "cli-plugins"
+    plugins.mkdir(parents=True)
+    source = plugins / "docker-compose"
+    resolved_target: Path | None = None
+
+    if fixture_kind in {"installed-symlink", "installed-symlink-chain"}:
+        installed = tmp_path / "installed"
+        installed.mkdir()
+        resolved_target = _executable(
+            installed / "docker-compose-real",
+            "raise SystemExit(0)\n",
+        )
+        if fixture_kind == "installed-symlink-chain":
+            intermediate = installed / "docker-compose-current"
+            intermediate.symlink_to(resolved_target)
+            source.symlink_to(intermediate)
+        else:
+            source.symlink_to(resolved_target)
+    elif fixture_kind == "dangling-symlink":
+        source.symlink_to(tmp_path / "missing-compose")
+    elif fixture_kind == "symlink-cycle":
+        intermediate = tmp_path / "compose-cycle"
+        source.symlink_to(intermediate)
+        intermediate.symlink_to(source)
+    elif fixture_kind == "directory-target":
+        directory = tmp_path / "compose-directory"
+        directory.mkdir()
+        source.symlink_to(directory, target_is_directory=True)
+    elif fixture_kind == "nonexecutable-regular":
+        source.write_text("not executable\n", encoding="utf-8")
+        source.chmod(0o644)
+    else:
+        nonexecutable = tmp_path / "docker-compose-nonexecutable"
+        nonexecutable.write_text("not executable\n", encoding="utf-8")
+        nonexecutable.chmod(0o644)
+        source.symlink_to(nonexecutable)
+
+    log = tmp_path / "docker.log"
+    runtime = JobRuntime(
+        adapter="compose",
+        common=CommonConfig(),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_docker_env(
+            base,
+            head,
+            bin_dir,
+            log,
+            DOCKER_CONFIG=str(old_config),
+        ),
+    )
+    _stub_host_plugin_resolution(monkeypatch)
+    artifacts = runtime.artifacts
+    try:
+        runtime.isolate_docker_config()
+        isolated = Path(runtime.env["DOCKER_CONFIG"]) / "cli-plugins" / "docker-compose"
+        if accepted:
+            assert resolved_target is not None
+            assert isolated.is_symlink()
+            assert isolated.readlink() == resolved_target.resolve()
+        else:
+            assert not isolated.exists()
+            assert not isolated.is_symlink()
+    finally:
+        runtime.cleanup(0)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_docker_plugin_uses_next_candidate_after_invalid_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _repo(repo)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_docker(bin_dir / "docker")
+    old_config = tmp_path / "docker-config"
+    plugins = old_config / "cli-plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "docker-compose").symlink_to(tmp_path / "missing-compose")
+    fallback = _executable(tmp_path / "fallback-compose", "raise SystemExit(0)\n")
+    opt_candidate = Path("/opt/homebrew/lib/docker/cli-plugins/docker-compose")
+    usr_local_candidate = Path("/usr/local/lib/docker/cli-plugins/docker-compose")
+    log = tmp_path / "docker.log"
+    runtime = JobRuntime(
+        adapter="compose",
+        common=CommonConfig(),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_docker_env(
+            base,
+            head,
+            bin_dir,
+            log,
+            DOCKER_CONFIG=str(old_config),
+        ),
+    )
+    attempts = _stub_host_plugin_resolution(
+        monkeypatch,
+        replacements={usr_local_candidate: fallback},
+    )
+    artifacts = runtime.artifacts
+    try:
+        runtime.isolate_docker_config()
+        isolated = Path(runtime.env["DOCKER_CONFIG"]) / "cli-plugins" / "docker-compose"
+        assert isolated.is_symlink()
+        assert isolated.readlink() == fallback.resolve()
+        assert attempts[:2] == [opt_candidate, usr_local_candidate]
     finally:
         runtime.cleanup(0)
         shutil.rmtree(artifacts, ignore_errors=True)
@@ -565,6 +746,41 @@ def _companion_config(ref: str) -> dict[str, object]:
         "artifacts": [{"source": "/work/results", "destination": "results"}],
         "env": {"EXAMPLE_COMPANION": "{companion}", "EXAMPLE_APP_IMAGE": "{image:app}"},
     }
+
+
+@pytest.mark.parametrize(
+    ("stderr", "stdout", "detail"),
+    [
+        ("compose plugin failed\n", "ignored stdout\n", "compose plugin failed"),
+        (" \n", "compose fallback output\n", "compose fallback output"),
+    ],
+)
+def test_compose_version_failure_reports_exit_code_and_captured_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    stderr: str,
+    stdout: str,
+    detail: str,
+) -> None:
+    runtime = mock.Mock(spec=JobRuntime)
+    runtime.env = {"PATH": "/example/bin"}
+    runtime.run_argv.return_value = subprocess.CompletedProcess(
+        ["/example/bin/docker", "compose", "version"],
+        23,
+        stdout,
+        stderr,
+    )
+    monkeypatch.setattr(compose.shutil, "which", lambda *_args, **_kwargs: "/example/bin/docker")
+
+    with mock.patch.object(compose, "_verify_companion") as verify_companion:
+        with pytest.raises(JobError) as raised:
+            compose._body(runtime, {})
+        verify_companion.assert_not_called()
+
+    assert str(raised.value) == f"docker compose is unavailable (exit code 23): {detail}"
+    runtime.isolate_docker_config.assert_called_once_with()
+    runtime.run_argv.assert_called_once_with(
+        ["/example/bin/docker", "compose", "version"], check=False
+    )
 
 
 def _make_companion(path: Path) -> str:

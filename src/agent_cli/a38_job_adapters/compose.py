@@ -365,7 +365,11 @@ def _body(runtime: JobRuntime, cfg: Mapping[str, Any]) -> int:
         raise JobError("required command not found: docker")
     version = runtime.run_argv([docker, "compose", "version"], check=False)
     if version.returncode != 0:
-        raise JobError("docker compose is unavailable")
+        detail = (version.stderr or "").strip()
+        if not detail:
+            detail = (version.stdout or "").strip()
+        message = f"docker compose is unavailable (exit code {version.returncode})"
+        raise JobError(f"{message}: {detail}" if detail else message)
 
     source, services_sha = _verify_companion(runtime, cfg)
     companion = runtime.work / "companion"
