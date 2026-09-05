@@ -474,6 +474,43 @@ class RunnerTests(unittest.TestCase):
                     )
                 self.assertFalse(output.exists())
 
+    def test_cli_preflight_invalidates_stale_success(self) -> None:
+        for failure in ("missing", "malformed", "base", "repository", "visibility"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "repo"
+                head = _init_repo(repo)
+                source = root / "policy.json"
+                if failure != "missing":
+                    source.write_text("{" if failure == "malformed" else _policy_text())
+                output = root / "report.md"
+                output.write_text("stale-success")
+                args = ["run", "--repo", str(repo), "--policy", str(source),
+                        "--output", str(output), "--logs-dir", str(root / "logs"),
+                        "--base-sha", "missing" if failure == "base" else head, "--public"]
+                if failure == "repository":
+                    args += ["--repository", "invalid"]
+                if failure == "visibility":
+                    args += ["--private"]
+                self.assertEqual(main(args), 1)
+                self.assertFalse(output.exists())
+
+    def test_cli_unsafe_destination_preserves_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            source = root / "policy.json"
+            source.write_text("malformed policy, must survive")
+            for output in (source, repo / "tracked.txt"):
+                output.write_text("must survive")
+                self.assertEqual(main([
+                    "run", "--repo", str(repo), "--policy", str(source),
+                    "--output", str(output), "--logs-dir", str(root / "logs"),
+                    "--base-sha", head, "--public",
+                ]), 1)
+                self.assertEqual(output.read_text(), "must survive")
+
     def test_preserves_policy_and_rejects_unsafe_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

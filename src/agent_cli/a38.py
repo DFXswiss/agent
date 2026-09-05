@@ -714,19 +714,15 @@ def _force_fail_runs(runs: list[dict[str, Any]]) -> None:
             run["exit_code"] = 1
 
 
-def run_policy(
+def _prepare_run_output(
     repo_path: Path,
-    policy: dict,
-    *,
     output: Path,
     logs_dir: Path,
-    base_sha: str | None = None,
-    private: bool | None = None,
-    run: RunFn | None = None,
-    repository: str | None = None,
+    *,
     policy_path: Path | None = None,
-) -> dict:
-    """Execute policy jobs and write a complete ``dfx-local-ci/v1`` report."""
+    run: RunFn | None = None,
+) -> Path:
+    """Validate destinations, then remove prior evidence before run preflight."""
     runner = run or _default_run
     repo_path = Path(repo_path)
     output = Path(output)
@@ -757,6 +753,29 @@ def run_policy(
         if source == output.resolve() or same_output or source.is_relative_to(logs_dir.resolve()):
             raise A38Error("policy path must not collide with output or logs")
     output.unlink(missing_ok=True)
+
+    return root
+
+
+def run_policy(
+    repo_path: Path,
+    policy: dict,
+    *,
+    output: Path,
+    logs_dir: Path,
+    base_sha: str | None = None,
+    private: bool | None = None,
+    run: RunFn | None = None,
+    repository: str | None = None,
+    policy_path: Path | None = None,
+) -> dict:
+    """Execute policy jobs and write a complete ``dfx-local-ci/v1`` report."""
+    runner = run or _default_run
+    output = Path(output)
+    logs_dir = Path(logs_dir)
+    root = _prepare_run_output(
+        repo_path, output, logs_dir, policy_path=policy_path, run=runner,
+    )
 
     # Revalidate the complete manifest for programmatic callers too.
     try:
@@ -991,9 +1010,6 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    if args.private and args.public:
-        print("a38: --private and --public are mutually exclusive", file=sys.stderr)
-        return 1
     private: bool | None
     if args.private:
         private = True
@@ -1002,6 +1018,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         private = None
     try:
+        # Establish a safe output destination before any policy/value preflight.
+        # Unsafe/ambiguous paths and parser usage errors never delete files.
+        _prepare_run_output(
+            Path(args.repo), Path(args.output), Path(args.logs_dir),
+            policy_path=Path(args.policy),
+        )
+        if args.private and args.public:
+            raise A38Error("--private and --public are mutually exclusive")
         policy = load_policy(_read_text(Path(args.policy)))
         verdict = run_policy(
             Path(args.repo),
