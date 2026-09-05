@@ -902,6 +902,17 @@ def run_policy(
             drift = True
             reasons.append(f"post-run tree check failed: {exc}")
             _force_fail_runs(runs)
+        except KeyboardInterrupt:
+            interrupted = True
+            reasons.append("final tree check interrupted")
+
+    # Interruption can occur after the last job passed but before its checkout
+    # integrity check finished. Never serialize those rows as usable evidence.
+    if interrupted:
+        for run_item in runs:
+            if run_item["result"] == "pass":
+                run_item["result"] = "error"
+                run_item["exit_code"] = -1
 
     recorded_at = _utc_now_stamp()
     payload = _build_report_dict(

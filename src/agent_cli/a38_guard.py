@@ -1467,9 +1467,18 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                 results = []
                 exit_codes = []
                 for number in list_open_pulls(client, _validate_repo(args.repo)):
-                    assessment = reconcile_pull(
-                        client, args.repo, number, dry_run=dry, publish=publish
-                    )
+                    try:
+                        assessment = reconcile_pull(
+                            client, args.repo, number, dry_run=dry, publish=publish
+                        )
+                    except GuardError as exc:
+                        results.append({
+                            "ok": False, "status": "error", "repo": args.repo,
+                            "pr": number, "reasons": [str(exc)],
+                        })
+                        exit_codes.append(1)
+                        print(f"a38-guard: PR {number}: {exc}", file=sys.stderr)
+                        continue
                     results.append(assessment.to_json())
                     exit_codes.append(_assessment_exit_code(assessment))
                 print(json.dumps({"results": results}, indent=2, sort_keys=True))

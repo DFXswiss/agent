@@ -89,6 +89,8 @@ Before publication, the guard re-fetches head/base/branch/state, the latest auth
 
 API or assessment errors terminate with failure. If the head is known and status writes remain available, the guard posts an `error` status to invalidate prior success. If GitHub denies or cannot perform that write, the CLI explicitly reports that invalidation failed; an old remote status may remain until a successful reconcile. Treat the failed guard run as an operational failure and rerun before merging. No implementation can invalidate remote state during a complete API outage.
 
+An all-open scan isolates errors per PR, continues reconciling later PRs, and returns aggregate failure after the full scan. Its JSON includes an error entry for each failed PR, so one inaccessible PR cannot prevent other statuses from being refreshed.
+
 HTTP is restricted to `https://api.github.com`, redirects are refused, and safe GET retries are bounded. Comment/review pagination is complete up to its explicit 2000-item limit, with cycle/page limits; exceeding a bound fails instead of accepting partial evidence.
 
 ## CLI

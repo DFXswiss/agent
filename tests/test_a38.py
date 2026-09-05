@@ -561,6 +561,31 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(verdict["ok"])
             self.assertEqual(parse_comment(output.read_text()).runs[0].result, "timeout")
 
+    def test_interrupt_after_last_pass_invalidates_report(self) -> None:
+        # First clean-tree call is preflight, second follows the only job,
+        # third is the final integrity check immediately before serialization.
+        for interrupted_call in (2, 3):
+            with self.subTest(call=interrupted_call), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "repo"
+                head = _init_repo(repo)
+                output = root / "report.md"
+                policy = _policy_dict()
+                outcomes = [None] * (interrupted_call - 1) + [KeyboardInterrupt()]
+                with mock.patch("agent_cli.a38._require_clean_tree", side_effect=outcomes):
+                    verdict = run_policy(
+                        repo, policy, output=output, logs_dir=root / "logs",
+                        base_sha=head, private=True,
+                    )
+                self.assertFalse(verdict["ok"])
+                report = parse_comment(output.read_text())
+                self.assertEqual(len(report.runs), len(policy["jobs"]))
+                self.assertNotEqual(report.runs[0].result, "pass")
+                checked = verify_report(
+                    output.read_text(), policy, repo=report.repo, head=head, private=True,
+                )
+                self.assertFalse(checked["ok"], "an interrupted run produced acceptable evidence")
+
     @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
     def test_term_resistant_descendants_cleaned_after_timeout_and_success(self) -> None:
         for timeout in (True, False):

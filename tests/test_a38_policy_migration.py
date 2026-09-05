@@ -405,3 +405,18 @@ def test_ineligible_reviewer_does_not_invalidate_report(reviewer: str, review_st
     assert result.approval_fingerprint == ""
     assert fake.statuses
     assert all(status["state"] == "success" for status in fake.statuses)
+
+
+def test_all_open_continues_after_one_pr_api_failure(capsys) -> None:
+    fake = FakeAPI()
+    fake.open_pulls = [2, 1]
+    fake.denied_prefixes.append(f"/repos/{REPO}/pulls/2")
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    code = guard.main(["--repo", REPO, "--all-open"], env={}, api=fake.api())
+    output = capsys.readouterr()
+    results = json.loads(output.out)["results"]
+    assert code == 1
+    assert [(result["pr"], result["ok"]) for result in results] == [(2, False), (1, True)]
+    assert results[0]["status"] == "error"
+    assert "PR 2" in output.err
+    assert fake.statuses and fake.statuses[0]["state"] == "success"
