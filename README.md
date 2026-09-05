@@ -97,6 +97,7 @@ agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapsh
 agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
+agent watch error-decide  # one scan; one-shot decide session per unconcluded error.seen; not polled by the daemon yet
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 # agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```

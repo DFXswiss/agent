@@ -421,6 +421,7 @@ agent watch grok-usage                         # one scan; knock child (under th
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
+agent watch error-decide                      # one scan; one-shot decide session per unconcluded error.seen; not wired into agent daemon in this revision
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard [--port 7845]
@@ -584,7 +585,7 @@ Attach `error-fix` together with `spine`, `review-loop`, and `pr-review` on the 
 |---|---|
 | Log credentials and adapter config | `$AGENT_HOME` on this device, not git, not the hub |
 | Watcher process | This device. Script, not the model. |
-| Analysis and “fix or skip” | The attached runner session on this device |
+| Analysis and “fix or skip” | Any session on this device (same `_origin_device_id`; not the scanning session only) |
 | Isolated worktree, checks, draft pull request | This device |
 | Merge | A human |
 | Hub | Replica + fan-out of the rows this device already wrote |
@@ -641,20 +642,28 @@ Log lines, stack traces, and error messages are untrusted data (§19.2). They ar
 }
 ```
 
-`repo` may be omitted when the adapter cannot map the stream; the session then `error.skip`s with reason `unmapped-repo`. `line_fingerprint` is optional: `sha256(server + newline + container + newline + exact line)` as 64 lowercase hex, computed from the raw line before redaction. Omit it when `server` or `container` is missing. Host adapters may print the hex on `error.fix` stdout; it is not a mandate and not a log-host name.
+`repo` may be omitted when the adapter cannot map the stream; a session on this device then `error.skip`s with reason `unmapped-repo`. `line_fingerprint` is optional: `sha256(server + newline + container + newline + exact line)` as 64 lowercase hex, computed from the raw line before redaction. Omit it when `server` or `container` is missing. Host adapters may print the hex on `error.fix` stdout; it is not a mandate and not a log-host name.
 
 ### 21.4 Analysis and eligibility
 
-After the knock, the session reads the row and writes `investigate.step` immediately (hypothesis, check, ruled out — each a new row). Then it inserts **one** typed conclusion. Both conclusion payloads include `error_id` (the `error.seen` id) and `fingerprint`:
+After the knock, a session on **this device** reads the row and writes `investigate.step` immediately (hypothesis, check, ruled out — each a new row). Then it inserts **one** typed conclusion. Ownership is device-level: any session with the same `_origin_device_id` as the `error.seen` row may conclude it; the scanning session named in `error-fix.json` need not be the writer. Both conclusion payloads include `error_id` (the `error.seen` id) and `fingerprint`:
 
 - `error.skip` — not a code fix (infra, noisy duplicate, unmapped repo, forbidden path, already an open draft for this fingerprint). Also `reason` (short token plus optional note).
-- `error.fix` — `execution_status=pending`. Local intent only.
+- `error.fix` — `execution_status=pending`. Local intent only. Also `brief` (short text: what's broken, likely cause, where to look — written from this session's own investigation, never a placeholder).
+
+```json
+{
+  "error_id": "…",
+  "fingerprint": "service|class|stack-sig|env",
+  "brief": "TimeoutError in the payout worker; the retry loop never backs off; add exponential backoff before retrying."
+}
+```
 
 The model does not certify eligibility by saying “this is safe”. The typed row is the decision. Confidence scores are not stored as proof.
 
-`agent activity add` now enforces the error-fix skill, payload, fingerprint, one-conclusion, unmapped-repo, and already-open-draft guards.
+`agent activity add` now enforces the error-fix skill, payload (including required `brief` on `error.fix` / `reason` on `error.skip`), fingerprint, one-conclusion, unmapped-repo, and already-open-draft guards.
 
-The adapter decides open vs closed by that `error_id` / `fingerprint`, plus the spine task whose `payload.error_id` matches. A later `error.skip` or a terminal task (`done` / `failed`) for the same `error_id` closes the incident. `pr.merged` knocks as today; it is not a second close signal. `agent task create` for a given `error_id` is find-or-create; a second `error.fix` does not open a second task.
+The adapter decides open vs closed by that `error_id` / `fingerprint`, plus any spine task on this device whose `payload.error_id` matches (not only a task under the scanning session). A later `error.skip` or a terminal task (`done` / `failed`) for the same `error_id` closes the incident. `pr.merged` knocks as today; it is not a second close signal. `agent task create` for a given `error_id` is find-or-create across this device; a second `error.fix` does not open a second task.
 
 Same fingerprint while the incident is **open**: enrich `error.seen`. Do not create a second task or a second pull request. After close: the next match is a **new** `error.seen` (new id, first insert knocks).
 
@@ -662,7 +671,7 @@ Same fingerprint while the incident is **open**: enrich `error.seen`. Do not cre
 
 On `error.fix`:
 
-1. `agent task create --workflow implement --error-id <error.seen-id>` on this session (find-or-create). That copies `error_id` and `repo` from the `error.seen` row into the task payload.
+1. `agent task create --workflow implement --error-id <error.seen-id>` on this device (find-or-create; any session on the same `_origin_device_id`). That copies `error_id` and `repo` from the `error.seen` row into the task payload.
 2. Isolated worktree of that task `payload.repo` at the allowed base revision. Git operations are scripts. `payload.repo` is already on the task because analysis refused `error.fix` when `repo` was missing. Never fall back to the origin checkout.
 3. Spine implement: mandatory checks must `pass`, then `pr.open` opens a **draft** (spine `pushed`). Title/body may be model-drafted; the GitHub API call is a script. A retry finds an existing draft for this fingerprint instead of opening a second one.
 4. pr-review gates run on that head after `pushed`.
@@ -675,6 +684,18 @@ The model never receives production credentials. Analysis that only reads the ex
 ### 21.6 Not in this revision
 
 - A second hub state machine, leases, or autonomous merge
+
+### 21.7 One-shot decide dispatcher
+
+`agent watch error-decide` drains unconcluded `error.seen` rows on this device one at a time (oldest `payload.first_seen` first; `id` as tiebreaker). For each row it:
+
+1. Ensures a deterministic runner session `error-decide-<error_id>` with skills `error-fix`, `spine`, `review-loop`, and `pr-review` (`status: active`).
+2. Starts that session’s tmux pane (grok). Waits for the session to reach an idle prompt (bounded by a timeout), then knocks `da ist Post id <uuid>` directly into it (not via `knock.deliver`, which would target the scanning session on the `error.seen` row) and retries the Enter keypress (up to a bounded number of attempts) until the session shows as busy, confirming the knock was actually accepted; if either wait is never satisfied, that row is recorded as failed and the dispatcher moves on to the next one.
+3. Polls until this device writes `error.fix` or `error.skip` for that `error_id`, or until timeout (default 30 minutes).
+4. Stops the pane (`runtime.control: stopped`) and leaves the session `active` — it does not `session close`, so `agent watch error-fix` can still create the implement task under that session without racing the “open tasks” guard.
+5. Moves to the next unconcluded row. No auto-continue / keep-working wiring; each decide session handles one error. A row whose session setup or knock fails is recorded as an error line and does not block the rest of the backlog scan.
+
+Empty backlog prints `error.seen decide none`. The exclusive lock `error-decide-act:<device>` is held for the whole scan — the backlog read and the per-row start/knock/wait/stop sequence — so two overlapping invocations of this scan cannot both dispatch the same row. That key never collided with `error-fix-act:<device>`'s own lock in the first place (they are different `pg_advisory_lock(hashtext(...))` keys), so widening the scope does not block conclusion writes; the reason to hold it for the whole scan is purely to serialize overlapping dispatcher invocations against each other. Not wired into `agent daemon` in this revision.
 
 ## 22. Static supervise loop (v1)
 

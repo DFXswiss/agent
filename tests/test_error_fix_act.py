@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from agent_cli import error_fix_act as error_fix_act_mod
-from agent_cli.error_fix_act import find_or_create_implement_task, scan_error_fix
+from agent_cli.error_fix_act import (
+    find_or_create_implement_task,
+    scan_error_fix,
+    validate_conclusion,
+)
 from agent_cli.runtime import Completed
 from agent_cli.store import Store, StoreError, utcnow
 
@@ -62,6 +66,7 @@ def _fix(store: Store, activity_id: str = "fix-1") -> None:
             "payload": {
                 "error_id": "error-seen-12345678",
                 "fingerprint": "api|TimeoutError|abc|prod",
+                "brief": "Investigation summary: see error.seen payload for details.",
             },
             "execution_status": "pending",
         },
@@ -211,11 +216,11 @@ def test_scan_error_fix_prints_without_fingerprint_if_reload_fails(
     _fix(store)
     real = error_fix_act_mod._error_seen
 
-    def after_mark(store_inner: Store, session_id: str, error_id: str) -> dict:
+    def after_mark(store_inner: Store, error_id: str) -> dict:
         row = store_inner.row("activity", "fix-1")
         if row is not None and row.get("execution_status") == "done":
             raise StoreError("error.seen not found")
-        return real(store_inner, session_id, error_id)
+        return real(store_inner, error_id)
 
     monkeypatch.setattr(error_fix_act_mod, "_error_seen", after_mark)
     lines = scan_error_fix(store, _clone_runner([]))
@@ -249,6 +254,35 @@ def test_scan_error_fix_marks_ineligible_rows(tmp_path: Path) -> None:
     assert row is not None
     assert row["execution_status"] == "error"
     assert row["execution_error"] == "unmapped-repo"
+
+
+def test_scan_error_fix_requires_brief(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "activity",
+        "insert",
+        "fix-1",
+        {
+            "id": "fix-1",
+            "session_id": "runner-1",
+            "type": "error.fix",
+            "payload": {
+                "error_id": "error-seen-12345678",
+                "fingerprint": "api|TimeoutError|abc|prod",
+            },
+            "execution_status": "pending",
+        },
+    )
+
+    assert scan_error_fix(store, lambda _argv: Completed(0, "", "")) == [
+        "error.fix fix-1 error"
+    ]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["execution_error"] == "brief is required"
 
 
 def test_scan_error_fix_clone_failure_stays_pending_and_cleans_staging(
@@ -470,3 +504,193 @@ def test_scan_inactive_session_after_clone_stays_pending(tmp_path: Path) -> None
     assert row["execution_status"] == "pending"
     assert store.rows("task") == []
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
+
+
+def test_other_session_same_device_may_conclude_and_create_task(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "session",
+        "insert",
+        "decide-2",
+        {
+            "id": "decide-2",
+            "kind": "runner",
+            "status": "active",
+            "skills": ["error-fix"],
+        },
+    )
+    payload = {
+        "error_id": "error-seen-12345678",
+        "fingerprint": "api|TimeoutError|abc|prod",
+        "brief": "Investigation summary: see error.seen payload for details.",
+    }
+    validate_conclusion(store, "error.fix", payload)
+    tid, created = find_or_create_implement_task(
+        store,
+        "decide-2",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert created is True
+    task = store.row("task", tid)
+    assert task is not None
+    assert task["session_id"] == "decide-2"
+    assert task["payload"]["error_id"] == "error-seen-12345678"
+
+
+def test_error_fix_brief_is_stored_verbatim(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.write(
+        "session",
+        "insert",
+        "decide-2",
+        {
+            "id": "decide-2",
+            "kind": "runner",
+            "status": "active",
+            "skills": ["error-fix"],
+        },
+    )
+    brief = (
+        "TimeoutError in the payout worker; the retry loop in payout.ts "
+        "never backs off; add exponential backoff before retrying."
+    )
+    payload = {
+        "error_id": "error-seen-12345678",
+        "fingerprint": "api|TimeoutError|abc|prod",
+        "brief": brief,
+    }
+    validate_conclusion(store, "error.fix", payload)
+    activity_id = "fix-brief-1"
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": "decide-2",
+            "type": "error.fix",
+            "payload": payload,
+            "execution_status": "pending",
+        },
+    )
+    assert store.row("activity", activity_id)["payload"]["brief"] == brief
+
+
+def test_other_device_error_seen_is_rejected(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "session",
+        "insert",
+        "local-1",
+        {
+            "id": "local-1",
+            "kind": "runner",
+            "status": "active",
+            "skills": ["error-fix"],
+        },
+    )
+    store.apply_remote(
+        {
+            "origin_device_id": "other-device",
+            "origin_seq": 1,
+            "table": "activity",
+            "op": "insert",
+            "row_id": "foreign-seen-1",
+            "payload": {
+                "id": "foreign-seen-1",
+                "session_id": "foreign-session",
+                "type": "error.seen",
+                "payload": {
+                    "fingerprint": "api|TimeoutError|abc|prod",
+                    "repo": "org/app",
+                },
+                "execution_status": "done",
+            },
+            "occurred_at": "2026-08-23T16:00:00Z",
+        }
+    )
+    with pytest.raises(StoreError, match="error.seen not found"):
+        validate_conclusion(
+            store,
+            "error.fix",
+            {
+                "error_id": "foreign-seen-1",
+                "fingerprint": "api|TimeoutError|abc|prod",
+                "brief": "Investigation summary: see error.seen payload for details.",
+            },
+        )
+    with pytest.raises(StoreError, match="error.seen not found"):
+        find_or_create_implement_task(
+            store,
+            "local-1",
+            "foreign-seen-1",
+            "Fix observed error",
+        )
+
+
+def test_other_session_same_device_finds_existing_task(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    first_tid, created = find_or_create_implement_task(
+        store,
+        "runner-1",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert created is True
+    store.write(
+        "session",
+        "insert",
+        "decide-2",
+        {
+            "id": "decide-2",
+            "kind": "runner",
+            "status": "active",
+            "skills": ["error-fix"],
+        },
+    )
+    tid, created = find_or_create_implement_task(
+        store,
+        "decide-2",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert created is False
+    assert tid == first_tid
+
+
+def test_other_device_implement_task_is_ignored(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    store.apply_remote(
+        {
+            "origin_device_id": "other-device",
+            "origin_seq": 1,
+            "table": "task",
+            "op": "insert",
+            "row_id": "foreign-task-1",
+            "payload": {
+                "id": "foreign-task-1",
+                "session_id": "foreign-session",
+                "workflow": "implement",
+                "payload": {"error_id": "error-seen-12345678"},
+                "state": "open",
+            },
+            "occurred_at": "2026-08-23T16:00:00Z",
+        }
+    )
+    tid, created = find_or_create_implement_task(
+        store,
+        "runner-1",
+        "error-seen-12345678",
+        "Fix observed error",
+    )
+    assert created is True
+    assert tid != "foreign-task-1"

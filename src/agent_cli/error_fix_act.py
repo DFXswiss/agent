@@ -53,12 +53,11 @@ def _nonempty_str(raw: Any) -> str | None:
     return None
 
 
-def _error_seen(store: Store, session_id: str, error_id: str) -> dict[str, Any]:
+def _error_seen(store: Store, error_id: str) -> dict[str, Any]:
     row = store.row("activity", error_id)
     if (
         row is None
         or row.get("_origin_device_id") != store.device_id()
-        or row.get("session_id") != session_id
         or row.get("type") != "error.seen"
     ):
         raise StoreError("error.seen not found")
@@ -123,7 +122,6 @@ def _already_open_draft(store: Store, fingerprint: str) -> bool:
 
 def validate_conclusion(
     store: Store,
-    session_id: str,
     typ: str,
     payload: dict[str, Any],
 ) -> None:
@@ -135,7 +133,9 @@ def validate_conclusion(
         raise StoreError("fingerprint is required")
     if typ == "error.skip" and _nonempty_str(payload.get("reason")) is None:
         raise StoreError("reason is required")
-    seen = _error_seen(store, session_id, error_id)
+    if typ == "error.fix" and _nonempty_str(payload.get("brief")) is None:
+        raise StoreError("brief is required")
+    seen = _error_seen(store, error_id)
     seen_payload = seen.get("payload")
     if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
         raise StoreError("fingerprint mismatch")
@@ -166,12 +166,10 @@ def find_or_create_implement_task(
         return _find_or_create_implement_task(store, session_id, error_id, title, ref=ref)
 
 
-def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str | None:
+def _lookup_implement_task(store: Store, error_id: str) -> str | None:
     origin = store.device_id()
     for row in store.rows("task"):
         if row.get("_origin_device_id") != origin:
-            continue
-        if row.get("session_id") != session_id:
             continue
         if row.get("workflow") != "implement":
             continue
@@ -191,10 +189,10 @@ def _find_or_create_implement_task(
 ) -> tuple[str, bool]:
     if _nonempty_str(error_id) is None:
         raise StoreError("error_id is required")
-    existing = _lookup_implement_task(store, session_id, error_id)
+    existing = _lookup_implement_task(store, error_id)
     if existing is not None:
         return existing, False
-    seen = _error_seen(store, session_id, error_id)
+    seen = _error_seen(store, error_id)
     seen_payload = seen.get("payload")
     repo = _repo_ok(seen_payload.get("repo") if isinstance(seen_payload, dict) else None)
     if repo is None:
@@ -272,10 +270,12 @@ def _pending_fix(store: Store, row: dict[str, Any]) -> tuple[str, str, str]:
     fingerprint = _nonempty_str(payload.get("fingerprint"))
     if fingerprint is None:
         raise StoreError("fingerprint is required")
+    if _nonempty_str(payload.get("brief")) is None:
+        raise StoreError("brief is required")
     session_id = _nonempty_str(row.get("session_id"))
     if session_id is None:
         raise StoreError("session_id is required")
-    seen = _error_seen(store, session_id, error_id)
+    seen = _error_seen(store, error_id)
     seen_payload = seen.get("payload")
     if not isinstance(seen_payload, dict) or seen_payload.get("fingerprint") != fingerprint:
         raise StoreError("fingerprint mismatch")
@@ -323,7 +323,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
         parent = Path(store.home) / "error-fix-work"
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         head = f"error-fix-{error_id[:8]}"
-        existing = _lookup_implement_task(store, session_id, error_id)
+        existing = _lookup_implement_task(store, error_id)
         if existing is not None and (parent / existing / ".git").exists():
             path = parent / existing
             result = {
@@ -335,7 +335,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             _mark(store, row, status="done", result=result)
             extra = None
             try:
-                seen = _error_seen(store, session_id, error_id)
+                seen = _error_seen(store, error_id)
                 seen_inner = seen.get("payload")
                 extra = _line_fingerprint(seen_inner if isinstance(seen_inner, dict) else {})
             except StoreError:
@@ -355,7 +355,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 lines.append(f"error.fix {rid} error")
                 continue
         checkout = ["git", "-C", str(staging), "checkout", "-B", head]
-        existing_task = _lookup_implement_task(store, session_id, error_id)
+        existing_task = _lookup_implement_task(store, error_id)
         if existing_task is not None:
             existing_row = store.row("task", existing_task)
             existing_ref = None
@@ -418,7 +418,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
         _mark(store, row, status="done", result=result)
         extra = None
         try:
-            seen = _error_seen(store, session_id, error_id)
+            seen = _error_seen(store, error_id)
             seen_inner = seen.get("payload")
             extra = _line_fingerprint(seen_inner if isinstance(seen_inner, dict) else {})
         except StoreError:
