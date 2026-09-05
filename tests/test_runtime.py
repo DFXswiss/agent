@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
 from agent_cli.runtime import (
+    TARGETS_FILE,
     Completed,
     Runtime,
     grok_launch_argv,
     grok_model,
     grok_new_session_id,
     grok_tmux_command_argv,
+    load_tmux_targets,
     tmux_name,
 )
 from agent_cli.store import StoreError
@@ -242,3 +245,113 @@ def test_is_busy_false_on_idle_prompt() -> None:
 def test_grok_working_false_when_session_missing() -> None:
     rt = Runtime(runner=lambda argv: Completed(1, "", "no session"))
     assert rt.grok_working("missing") is False
+
+
+def _recording_runner(calls: list[list[str]]) -> object:
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[-2:] == ["tmux", "-V"] or argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if "has-session" in argv:
+            return Completed(1, "", "no server")
+        return Completed(0, "", "")
+
+    return runner
+
+
+def test_tmux_prefix_prepended_per_session() -> None:
+    calls: list[list[str]] = []
+    prefix = ["remote-exec", "-T", "worker-a"]
+    rt = Runtime(runner=_recording_runner(calls), tmux_targets={"worker-a": prefix})
+    assert rt.available("worker-a") is True
+    assert prefix + ["tmux", "-V"] in calls
+    calls.clear()
+    rt.start("worker-a", None, None, None)
+    assert prefix + ["tmux", "has-session", "-t", "agent-worker-a"] in calls
+    assert prefix + ["tmux", "new-session", "-d", "-s", "agent-worker-a"] in calls
+    calls.clear()
+    rt.input_text("worker-a", "hello")
+    assert prefix + ["tmux", "send-keys", "-t", "agent-worker-a", "-l", "--", "hello"] in calls
+    calls.clear()
+    rt.capture("worker-a")
+    assert prefix + ["tmux", "capture-pane", "-t", "agent-worker-a", "-p", "-e"] in calls
+    calls.clear()
+
+    def runner_alive(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if "has-session" in argv:
+            return Completed(0, "", "")
+        return Completed(0, "", "")
+
+    rt = Runtime(runner=runner_alive, tmux_targets={"worker-a": prefix})
+    rt.stop("worker-a")
+    assert prefix + ["tmux", "kill-session", "-t", "agent-worker-a"] in calls
+    calls.clear()
+    rt.resize("worker-a", 80, 24)
+    assert prefix + ["tmux", "resize-window", "-t", "agent-worker-a", "-x", "80", "-y", "24"] in calls
+
+
+def test_one_runtime_two_sessions_different_prefixes() -> None:
+    calls: list[list[str]] = []
+    rt = Runtime(
+        runner=_recording_runner(calls),
+        tmux_targets={
+            "worker-a": ["exec-a"],
+            "worker-b": ["exec-b", "-T"],
+        },
+    )
+    rt.available("worker-a")
+    rt.available("worker-b")
+    assert ["exec-a", "tmux", "-V"] in calls
+    assert ["exec-b", "-T", "tmux", "-V"] in calls
+    calls.clear()
+    rt.start("local-sess", None, None, None)
+    assert ["tmux", "new-session", "-d", "-s", "agent-local-sess"] in calls
+    assert not any(c[:1] == ["exec-a"] and "local-sess" in c[-1] for c in calls)
+
+
+def test_missing_target_key_stays_unprefixed() -> None:
+    calls: list[list[str]] = []
+    rt = Runtime(runner=_recording_runner(calls), tmux_targets={"other": ["nope"]})
+    rt.start("sess-1", None, None, None)
+    assert ["tmux", "new-session", "-d", "-s", "agent-sess-1"] in calls
+    assert all(c[:1] != ["nope"] for c in calls)
+
+
+def test_load_tmux_targets_missing_file_is_empty(tmp_path: Path) -> None:
+    assert load_tmux_targets(tmp_path) == {}
+
+
+def test_load_tmux_targets_rejects_invalid_json(tmp_path: Path) -> None:
+    (tmp_path / TARGETS_FILE).write_text("{", encoding="utf-8")
+    with pytest.raises(StoreError, match="not valid JSON"):
+        load_tmux_targets(tmp_path)
+
+
+def test_load_tmux_targets_rejects_non_object(tmp_path: Path) -> None:
+    (tmp_path / TARGETS_FILE).write_text("[]", encoding="utf-8")
+    with pytest.raises(StoreError, match="must be an object"):
+        load_tmux_targets(tmp_path)
+
+
+def test_load_tmux_targets_rejects_non_list_value(tmp_path: Path) -> None:
+    (tmp_path / TARGETS_FILE).write_text('{"worker-a": "exec"}', encoding="utf-8")
+    with pytest.raises(StoreError, match="array of strings"):
+        load_tmux_targets(tmp_path)
+
+
+def test_load_tmux_targets_rejects_empty_string_element(tmp_path: Path) -> None:
+    (tmp_path / TARGETS_FILE).write_text('{"worker-a": ["exec", ""]}', encoding="utf-8")
+    with pytest.raises(StoreError, match="array of strings"):
+        load_tmux_targets(tmp_path)
+
+
+def test_load_tmux_targets_accepts_empty_prefix_list(tmp_path: Path) -> None:
+    (tmp_path / TARGETS_FILE).write_text('{"worker-a": []}', encoding="utf-8")
+    assert load_tmux_targets(tmp_path) == {"worker-a": []}
+
+
+def test_load_tmux_targets_rejects_directory(tmp_path: Path) -> None:
+    (tmp_path / TARGETS_FILE).mkdir()
+    with pytest.raises(StoreError, match="is not a file"):
+        load_tmux_targets(tmp_path)

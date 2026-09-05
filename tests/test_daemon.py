@@ -70,6 +70,8 @@ def _child_name(argv: list[str]) -> str:
         return "knock"
     if "dashboard" in argv:
         return "dashboard"
+    if "cli-bridge" in argv:
+        return "cli-bridge"
     if "sync" in argv:
         return "sync"
     return "other"
@@ -361,8 +363,10 @@ def test_run_supervisor_sync_restart_limit(
         )
     knock_pid = procs["knock"].pid
     dash_pid = procs["dashboard"].pid
+    bridge_pid = procs["cli-bridge"].pid
     assert (knock_pid, signal.SIGTERM) in killpg_calls
     assert (dash_pid, signal.SIGTERM) in killpg_calls
+    assert (bridge_pid, signal.SIGTERM) in killpg_calls
     assert sync_starts["n"] == 10
 
 
@@ -396,8 +400,10 @@ def test_run_supervisor_knock_exit_terminates_others(
         )
     sync_pid = procs["sync"].pid
     dash_pid = procs["dashboard"].pid
+    bridge_pid = procs["cli-bridge"].pid
     assert (sync_pid, signal.SIGTERM) in killpg_calls
     assert (dash_pid, signal.SIGTERM) in killpg_calls
+    assert (bridge_pid, signal.SIGTERM) in killpg_calls
 
 
 @pytest.mark.no_pg
@@ -444,6 +450,7 @@ def test_run_supervisor_unpaired_starts_knock_dashboard_only(tmp_path: Path) -> 
     assert all("sync" not in argv for argv in started)
     assert procs["knock"].returncode is None
     assert procs["dashboard"].returncode is None
+    assert procs["cli-bridge"].returncode is None
     expected = [argv for name, argv in child_specs(["agent"]) if name != "sync"]
     assert started == expected
 
@@ -472,7 +479,12 @@ def test_run_supervisor_paired_starts_sync(tmp_path: Path) -> None:
             sleep=fake_sleep,
         )
     specs = dict(child_specs(["agent"]))
-    assert started == [specs["knock"], specs["dashboard"], specs["sync"]]
+    assert started == [
+        specs["knock"],
+        specs["dashboard"],
+        specs["cli-bridge"],
+        specs["sync"],
+    ]
     assert any("sync" in argv and "--follow" in argv for argv in started)
 
 

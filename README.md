@@ -15,7 +15,7 @@ pip install -e ".[test]"
 agent init
 ```
 
-`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock and the local dashboard immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Commands that open the store start it again if it is stopped and fail with `run agent init` when it does not exist; they never run `initdb`. `agent pg status` reports the cluster without starting it, `agent pg stop` stops it (refused while a device daemon installed for this `AGENT_HOME` exists, because that daemon would start it again), and `agent daemon --uninstall` stops it together with the user service. `agent daemon --uninstall` refuses to run under a different `AGENT_HOME` than the one the service was installed for. Both commands stop with an error when a service unit exists but cannot be read or records no `AGENT_HOME`. When `AGENT_PG_DSN` is set, `agent init` writes it into the user service so the daemon uses the same server.
+`agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock, the local dashboard, and cli-bridge immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Commands that open the store start it again if it is stopped and fail with `run agent init` when it does not exist; they never run `initdb`. `agent pg status` reports the cluster without starting it, `agent pg stop` stops it (refused while a device daemon installed for this `AGENT_HOME` exists, because that daemon would start it again), and `agent daemon --uninstall` stops it together with the user service. `agent daemon --uninstall` refuses to run under a different `AGENT_HOME` than the one the service was installed for. Both commands stop with an error when a service unit exists but cannot be read or records no `AGENT_HOME`. When `AGENT_PG_DSN` is set, `agent init` writes it into the user service so the daemon uses the same server.
 
 ## Pair and sync
 
@@ -73,6 +73,7 @@ agent ping send --to some-login --kind review-request --task <uuid> --note "read
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 agent status
 agent dashboard
+agent cli-bridge
 agent pg status
 agent pg stop
 ```
@@ -131,6 +132,10 @@ agent session stop --id <session-id>
 ```
 
 `agent session keep-working` is for a session whose standing job is already in the working directory. The Grok TUI stops after each turn; this command does not interrupt an in-flight turn. A tool-approval modal is cleared with Enter. The first idle composer tick (caret visible) sends one standing instruction to keep going until the assignment is complete. Later idle ticks send only `Continue.`. Bare `keep-working` and `--once` are one tick; `--follow` polls every 30s. A missing tmux session is reported and left alone. An unreadable pane is not typed into.
+
+`$AGENT_HOME/runtime-targets.json` may map a session id to an argv list prepended to every `tmux` call for that session. A missing key is local tmux, as today. The file stays on this device; it is not a hub event.
+
+`agent cli-bridge` (started by the device daemon) accepts allowlisted store/spine argv on loopback. It does not run `session start`, `run`, GitHub, or mail. `python -m agent_cli.stub` is the matching client. Set `AGENT_CLI_BRIDGE=127.0.0.1:7846` on the client. The server bind is `127.0.0.1` or `::1` (`AGENT_CLI_BRIDGE_BIND`).
 
 `agent sync --follow` announces `control-ready`, applies hub `control` frames on this device, acks them, and publishes `terminal` captures for owned sessions with `runtime.control=attached`. Terminal bytes are not store events.
 
