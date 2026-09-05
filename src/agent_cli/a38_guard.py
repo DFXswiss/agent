@@ -1112,7 +1112,7 @@ def publish_assessment(
     latest = pick_latest_author_report(comments, fresh.author_id)
     if _report_fingerprint(latest) != assessment.report_fingerprint:
         raise GuardError("author report changed before publish; retry assessment")
-    if assessment.approval_fingerprint and migration_approval(api, fresh) != assessment.approval_fingerprint:
+    if migration_approval(api, fresh) != assessment.approval_fingerprint:
         raise GuardError("maintainer approval changed before publish; retry assessment")
     existing = _find_own_guard_comment(comments, own_id)
     body = assessment.comment_body or build_comment_body(assessment)
@@ -1157,7 +1157,7 @@ def publish_assessment(
             current_report = pick_latest_author_report(current_comments, fresh.author_id)
             if _report_fingerprint(current_report) != assessment.report_fingerprint:
                 raise GuardError("author report changed before publish; retry assessment")
-            if assessment.approval_fingerprint and migration_approval(api, fresh) != assessment.approval_fingerprint:
+            if migration_approval(api, fresh) != assessment.approval_fingerprint:
                 raise GuardError("maintainer approval changed before publish; retry assessment")
         if (
             prev is not None

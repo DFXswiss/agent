@@ -347,3 +347,34 @@ def test_empty_all_open_cli_exits_successfully(capsys) -> None:
     assert code == 0
     assert json.loads(capsys.readouterr().out) == {"results": []}
     assert fake.writes == []
+
+
+@pytest.mark.parametrize("approval_read", [2, 3])
+def test_new_approval_activating_stricter_policy_prevents_stale_success(approval_read: int) -> None:
+    fake = migration()
+    # This policy-only PR initially passes under the base rules. Its head rules
+    # become authoritative only when a new explicit approval arrives.
+    fake.files[(HEAD, ".github/workflows/test.yml")] = fake.files[(BASE, ".github/workflows/test.yml")]
+    stricter = _policy()
+    stricter["jobs"][0]["command"] = "pytest --strict-markers"
+    fake.files[(HEAD, ".github/a38.json")] = json.dumps(stricter).encode()
+    approval = fake.reviews.pop()
+    original = fake.request_fn
+    review_reads = 0
+
+    def request(method, url, body=None):
+        nonlocal review_reads
+        if method == "GET" and urlparse(url).path.endswith("/reviews"):
+            review_reads += 1
+            # Read 2 is before the bot comment; read 3 is immediately before
+            # success status publication. Both empty-to-approved races matter.
+            if review_reads == approval_read:
+                fake.reviews.append(approval)
+        return original(method, url, body)
+
+    result = guard.reconcile_pull(guard.GitHubApi("test", request_fn=request), REPO, 1)
+    assert not result.ok
+    assert result.policy_sha == HEAD
+    assert result.approval_fingerprint
+    assert any("command" in reason.lower() for reason in result.reasons)
+    assert not any(status["state"] == "success" for status in fake.statuses)
