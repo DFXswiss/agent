@@ -641,11 +641,10 @@ def check_workflows_against_policy(
 ) -> list[str]:
     """Return maintainer-facing problems for head workflows vs trusted base policy."""
     problems: list[str] = []
-    try:
-        head_paths = list_workflow_paths(api, head_repo or repo, head_sha)
-        base_paths = list_workflow_paths(api, repo, base_sha)
-    except GuardError as exc:
-        return [f"workflow inventory failed: {exc}"]
+    # Inventory failures are operational errors, including in observe mode.
+    # Only an inventory successfully fetched and assessed can be advisory.
+    head_paths = list_workflow_paths(api, head_repo or repo, head_sha)
+    base_paths = list_workflow_paths(api, repo, base_sha)
 
     allowed = classified_pairs(policy)
     actual: set[tuple[str, str]] = set()
@@ -1076,10 +1075,7 @@ def _existing_status(
     api: GitHubApi, repo: str, sha: str, context: str
 ) -> Mapping[str, Any] | None:
     # Combined status statuses list; paginate carefully.
-    try:
-        items = api.paginate(f"/repos/{repo}/commits/{sha}/statuses")
-    except GuardError:
-        return None
+    items = api.paginate(f"/repos/{repo}/commits/{sha}/statuses")
     for item in items:
         if isinstance(item, dict) and item.get("context") == context:
             return item

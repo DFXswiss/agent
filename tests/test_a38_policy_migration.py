@@ -420,3 +420,30 @@ def test_all_open_continues_after_one_pr_api_failure(capsys) -> None:
     assert results[0]["status"] == "error"
     assert "PR 2" in output.err
     assert fake.statuses and fake.statuses[0]["state"] == "success"
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("status", [403, 503])
+@pytest.mark.parametrize("endpoint", ["/git/trees/", "/commits/"])
+def test_observe_api_error_fails_cli(batch, status, endpoint, capsys) -> None:
+    fake = FakeAPI()
+    fake.files[(BASE, ".github/a38.json")] = json.dumps(_policy(mode="observe")).encode()
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    original = fake.request_fn
+
+    def request(method, url, body=None):
+        if method == "GET" and endpoint in url:
+            return status, {"message": "inventory unavailable"}, {}
+        return original(method, url, body)
+
+    api = guard.GitHubApi("test", request_fn=request, sleep_fn=lambda _: None)
+    args = ["--repo", REPO] + (["--all-open"] if batch else ["--pr", "1"])
+    code = guard.main(args, env={}, api=api)
+    output = capsys.readouterr()
+    assert code == 1
+    assert "inventory unavailable" in output.err or str(status) in output.err
+    if batch:
+        assert json.loads(output.out)["results"][0]["status"] == "error"
+    assert fake.statuses and all(item["state"] == "error" for item in fake.statuses)
+    if endpoint == "/git/trees/":
+        assert not any("comment" in write for write in fake.writes)
