@@ -23,6 +23,7 @@ pytestmark = [
 
 _BRANCH = "a38-integration"
 _PROOF = "a38-real-compose-proof"
+_DEPENDENCY_TEXT = "a38-real-compose-dependency"
 _RUNTIME_LINE_RE = re.compile(
     r"^A38_RUNTIME_PROOF project=(a38-[a-f0-9]{24}) "
     r"image=(a38-integration:\1) token=([a-f0-9]{32}) "
@@ -99,18 +100,54 @@ def compose_repositories(tmp_path: Path) -> dict[str, object]:
     _init_repo(companion, hooks, "https://github.com/example/services.git")
     (companion / "compose.yml").write_text(
         "services:\n"
+        "  initialize:\n"
+        "    image: \"${A38_INTEGRATION_IMAGE}\"\n"
+        "    command: [sh, -ec, 'exit 0']\n"
+        "    labels:\n"
+        "      a38.integration.token: \"${A38_INTEGRATION_TOKEN}\"\n"
+        "    networks:\n"
+        "      - default\n"
+        "  dependency:\n"
+        "    image: \"${A38_INTEGRATION_IMAGE}\"\n"
+        "    command:\n"
+        "      - sh\n"
+        "      - -ec\n"
+        "      - |\n"
+        "        mkdir -p /www\n"
+        f"        printf '%s\\n' '{_DEPENDENCY_TEXT}' > /www/ready.txt\n"
+        "        sleep 2\n"
+        "        exec httpd -f -p 8080 -h /www\n"
+        "    healthcheck:\n"
+        "      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:8080/ready.txt >/dev/null']\n"
+        "      interval: 1s\n"
+        "      timeout: 1s\n"
+        "      retries: 10\n"
+        "    labels:\n"
+        "      a38.integration.token: \"${A38_INTEGRATION_TOKEN}\"\n"
+        "    networks:\n"
+        "      - default\n"
         "  tests:\n"
         "    image: \"${A38_INTEGRATION_IMAGE}\"\n"
         "    command:\n"
         "      - sh\n"
         "      - -ec\n"
         "      - |\n"
+        "        fetched=\"$$(wget -qO- http://dependency:8080/ready.txt)\"\n"
+        f"        test \"$$fetched\" = '{_DEPENDENCY_TEXT}'\n"
         "        mkdir -p /proof\n"
+        "        printf '%s\\n' \"$$fetched\" > /proof/fetched.txt\n"
         f"        printf '%s\\n' '{_PROOF}' > /proof/result.txt\n"
         "        printf 'A38_RUNTIME_PROOF project=%s image=%s token=%s value=%s\\n' \"$$A38_PROJECT\" \"$$A38_IMAGE\" \"$$A38_TOKEN\" \"$$(cat /proof/result.txt)\"\n"
+        "        exit \"$$A38_TEST_EXIT\"\n"
+        "    depends_on:\n"
+        "      initialize:\n"
+        "        condition: service_completed_successfully\n"
+        "      dependency:\n"
+        "        condition: service_healthy\n"
         "    environment:\n"
         "      A38_IMAGE: \"${A38_INTEGRATION_IMAGE}\"\n"
         "      A38_PROJECT: \"${A38_INTEGRATION_PROJECT}\"\n"
+        "      A38_TEST_EXIT: \"${A38_TEST_EXIT}\"\n"
         "      A38_TOKEN: \"${A38_INTEGRATION_TOKEN}\"\n"
         "    labels:\n"
         "      a38.integration.token: \"${A38_INTEGRATION_TOKEN}\"\n"
@@ -190,10 +227,12 @@ def _fallback_owned(
     return list(dict.fromkeys(value.strip() for value in found if value.strip()))
 
 
+@pytest.mark.parametrize("requested_exit", [0, 7])
 def test_real_compose_run_copies_proof_and_removes_owned_resources(
     compose_repositories: dict[str, object],
     tmp_path: Path,
     capfd: pytest.CaptureFixture[str],
+    requested_exit: int,
 ) -> None:
     consumer = compose_repositories["consumer"]
     companion = compose_repositories["companion"]
@@ -218,6 +257,7 @@ def test_real_compose_run_copies_proof_and_removes_owned_resources(
             "A38_INTEGRATION_IMAGE": "{image:integration}",
             "A38_INTEGRATION_PROJECT": "{project}",
             "A38_INTEGRATION_TOKEN": token,
+            "A38_TEST_EXIT": str(requested_exit),
         },
         "companion": {
             "directory_env": "A38_INTEGRATION_COMPANION_DIR",
@@ -243,7 +283,8 @@ def test_real_compose_run_copies_proof_and_removes_owned_resources(
         "test_service": "tests",
         "test_image": "{image:integration}",
         "artifacts": [
-            {"source": "/proof/result.txt", "destination": "proof/result.txt"}
+            {"source": "/proof/result.txt", "destination": "proof/result.txt"},
+            {"source": "/proof/fetched.txt", "destination": "proof/fetched.txt"},
         ],
     }
 
@@ -270,7 +311,7 @@ def test_real_compose_run_copies_proof_and_removes_owned_resources(
         if artifact_matches:
             artifacts = Path(artifact_matches[-1])
         assert len(artifact_matches) == 1, captured.out
-        assert status == 0, captured.err
+        assert status == requested_exit, captured.err
 
         runtime_matches = list(_RUNTIME_LINE_RE.finditer(captured.out))
         assert len(runtime_matches) == 1, captured.out
@@ -279,6 +320,9 @@ def test_real_compose_run_copies_proof_and_removes_owned_resources(
         assert (artifacts / "proof" / "result.txt").read_text(
             encoding="utf-8"
         ) == f"{_PROOF}\n"
+        assert (artifacts / "proof" / "fetched.txt").read_text(
+            encoding="utf-8"
+        ) == f"{_DEPENDENCY_TEXT}\n"
 
         project_label = f"label=com.docker.compose.project={project}"
         token_label = f"label=a38.integration.token={token}"

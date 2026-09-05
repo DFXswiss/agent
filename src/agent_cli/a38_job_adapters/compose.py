@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
@@ -57,6 +58,10 @@ BUILD_KEYS = frozenset({"argv", "image"})
 PORT_KEYS = frozenset({"service", "port", "env"})
 ARTIFACT_KEYS = frozenset({"source", "destination"})
 FULL_DOCKER_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+DOCKER_TIMESTAMP_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?P<fraction>\.\d{1,9})?(?P<zone>Z|[+-]\d{2}:\d{2})$"
+)
 
 
 def parse_compose_config(text: str) -> tuple[CommonConfig, dict[str, Any]]:
@@ -235,13 +240,13 @@ def _compose_test_id(output: str) -> str:
     return candidates[0]
 
 
-def _verified_compose_test_id(
+def _verified_compose_test_container(
     output: str,
     *,
     candidate: str,
     project: str,
     service: str,
-) -> str:
+) -> Mapping[str, Any]:
     inspected = loads_strict_json(output)
     if not isinstance(inspected, list) or len(inspected) != 1:
         raise JobError("docker inspect must return exactly one container object")
@@ -257,7 +262,78 @@ def _verified_compose_test_id(
         raise JobError("Compose test container has a foreign project label")
     if labels.get("com.docker.compose.service") != service:
         raise JobError("Compose test container has a foreign service label")
-    return canonical
+    return container
+
+
+def _verified_compose_test_id(
+    output: str,
+    *,
+    candidate: str,
+    project: str,
+    service: str,
+) -> str:
+    container = _verified_compose_test_container(
+        output,
+        candidate=candidate,
+        project=project,
+        service=service,
+    )
+    return container["Id"]
+
+
+def _require_nonzero_docker_timestamp(value: Any, label: str) -> None:
+    if not isinstance(value, str):
+        raise JobError(f"docker inspect {label} must be a Docker timestamp")
+    match = DOCKER_TIMESTAMP_RE.fullmatch(value)
+    if match is None:
+        raise JobError(f"docker inspect {label} must be a valid Docker timestamp")
+    fraction = (match.group("fraction") or ".0")[1:]
+    normalized = (
+        match.group("date")
+        + "."
+        + fraction[:6].ljust(6, "0")
+        + ("+00:00" if match.group("zone") == "Z" else match.group("zone"))
+    )
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise JobError(
+            f"docker inspect {label} must be a valid Docker timestamp"
+        ) from exc
+    if parsed.year == 1 and parsed.month == 1 and parsed.day == 1 and not any(
+        (parsed.hour, parsed.minute, parsed.second, parsed.microsecond)
+    ):
+        raise JobError(f"docker inspect {label} shows the test container never started")
+
+
+def _completed_compose_test_exit(
+    output: str,
+    *,
+    candidate: str,
+    project: str,
+    service: str,
+) -> int:
+    container = _verified_compose_test_container(
+        output,
+        candidate=candidate,
+        project=project,
+        service=service,
+    )
+    state = require_mapping(container.get("State"), "docker inspect[0].State")
+    if state.get("Status") != "exited":
+        raise JobError("Compose test container did not finish in exited state")
+    if state.get("Running") is not False:
+        raise JobError(
+            "Compose test container is still running or has unclear running state"
+        )
+    _require_nonzero_docker_timestamp(state.get("StartedAt"), "State.StartedAt")
+    _require_nonzero_docker_timestamp(state.get("FinishedAt"), "State.FinishedAt")
+    exit_code = state.get("ExitCode")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        raise JobError("docker inspect State.ExitCode must be an integer")
+    if exit_code < 0 or exit_code > 255:
+        raise JobError("docker inspect State.ExitCode must be in range 0..255")
+    return exit_code
 
 
 def _runtime_git(runtime: JobRuntime, args: list[str], *, cwd: Path) -> str:
@@ -666,13 +742,51 @@ def _body(runtime: JobRuntime, cfg: Mapping[str, Any]) -> int:
             state["test_volumes"].append(volume)
 
     completed = runtime.run_argv(
-        [docker, "start", "-a", test_id],
+        prefix
+        + [
+            "up",
+            "--no-build",
+            "--no-recreate",
+            "--no-color",
+            "--no-log-prefix",
+            "--exit-code-from",
+            cfg["test_service"],
+            "--attach",
+            cfg["test_service"],
+            cfg["test_service"],
+        ],
         stdout=sys.stdout,
         stderr=sys.stderr,
         check=False,
     )
-    if completed.returncode != 0:
-        return completed.returncode
+    primary_status = completed.returncode
+    try:
+        final_inspect = runtime.run_argv([docker, "inspect", test_id], check=False)
+        if final_inspect.returncode != 0:
+            detail = (final_inspect.stderr or final_inspect.stdout or "").strip()
+            message = (
+                "failed to inspect final Compose test container state "
+                f"(exit code {final_inspect.returncode})"
+            )
+            raise JobError(f"{message}: {detail}" if detail else message)
+        test_exit = _completed_compose_test_exit(
+            final_inspect.stdout,
+            candidate=test_id,
+            project=runtime.project,
+            service=cfg["test_service"],
+        )
+    except (JobError, OSError) as exc:
+        if primary_status != 0:
+            print(
+                f"a38: warning: could not verify final Compose test state: {exc}",
+                file=sys.stderr,
+            )
+            return primary_status
+        raise
+    if primary_status != 0:
+        return primary_status
+    if test_exit != 0:
+        return test_exit
     print("a38: compose test service passed", flush=True)
     return 0
 
