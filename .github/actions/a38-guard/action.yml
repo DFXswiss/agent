@@ -68,6 +68,9 @@ runs:
         A38_DRY_RUN: ${{ inputs.dry_run }}
         A38_EVENT_FILE: ${{ inputs.event_file }}
         A38_EVENT_NAME: ${{ inputs.event_name }}
+        # Composite actions must pass action_ref through env; it identifies the
+        # trusted action revision, while github.sha belongs to the consumer.
+        A38_RUNTIME_REVISION: ${{ github.action_ref }}
         # Trusted sources only (composite action tree), never the consumer work tree.
         PYTHONPATH: ${{ github.action_path }}/../../../src
       run: |

@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import shlex
 import signal
 import stat
 import subprocess
@@ -23,6 +24,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from .a38_job_adapters import ADAPTERS
+from .a38_job_adapters.commands import parse_commands_config
+from .a38_job_adapters.common import JobError
+from .a38_job_adapters.compose import parse_compose_config
+from .a38_job_adapters.http_smoke import parse_http_smoke_config
+from .a38_job_adapters.immutable import parse_immutable_config
+from .a38_jobs import add_job_parser
 from .local_ci import (
     BEGIN_MARK,
     END_MARK,
@@ -42,7 +50,9 @@ MODES = frozenset({"enforce", "observe"})
 POLICY_KEYS = frozenset(
     {"schema", "standard", "documentation", "mode", "jobs", "exclusions"}
 )
-JOB_KEYS = frozenset({"id", "name", "command", "timeout_s", "workflow", "job"})
+JOB_COMMON_KEYS = frozenset({"id", "name", "timeout_s", "workflow", "job"})
+JOB_INPUT_KEYS = JOB_COMMON_KEYS | frozenset({"command", "executor"})
+EXECUTOR_KEYS = frozenset({"adapter", "config"})
 EXCLUSION_KEYS = frozenset({"workflow", "job", "reason"})
 
 MAX_NAME_LEN = 200
@@ -68,6 +78,14 @@ ORIGIN_SSH_RE = re.compile(
 TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 
 RunFn = Callable[[list[str], Path | None, Mapping[str, str] | None], subprocess.CompletedProcess[str]]
+ConfigParser = Callable[[str], tuple[Any, dict[str, Any]]]
+
+_ADAPTER_CONFIG_PARSERS: dict[str, ConfigParser] = {
+    "commands": parse_commands_config,
+    "compose": parse_compose_config,
+    "http-smoke": parse_http_smoke_config,
+    "immutable": parse_immutable_config,
+}
 
 
 class A38Error(ValueError):
@@ -76,6 +94,13 @@ class A38Error(ValueError):
 
 def _reject_nonfinite_constant(name: str) -> None:
     raise A38Error(f"JSON contains non-finite number: {name}")
+
+
+def _parse_finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise A38Error(f"JSON contains non-finite number: {value}")
+    return number
 
 
 def _object_pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -92,12 +117,15 @@ def _loads_policy_json(text: str) -> Any:
         return json.loads(
             text,
             parse_constant=_reject_nonfinite_constant,
+            parse_float=_parse_finite_float,
             object_pairs_hook=_object_pairs_no_duplicates,
         )
     except A38Error:
         raise
     except json.JSONDecodeError as exc:
         raise A38Error(f"JSON is invalid: {exc.msg}") from exc
+    except (RecursionError, ValueError) as exc:
+        raise A38Error(f"JSON is invalid: {exc}") from exc
 
 
 def _require_keys(obj: Mapping[str, Any], allowed: frozenset[str], label: str) -> None:
@@ -182,6 +210,49 @@ def _validate_timeout(value: Any, label: str) -> float:
     return timeout
 
 
+def _require_job_keys(obj: Mapping[str, Any], label: str) -> str:
+    keys = set(obj)
+    extra = keys - JOB_INPUT_KEYS
+    missing = JOB_COMMON_KEYS - keys
+    if extra:
+        raise A38Error(f"{label} has unknown keys: {', '.join(sorted(extra))}")
+    if missing:
+        raise A38Error(f"{label} missing keys: {', '.join(sorted(missing))}")
+    inputs = keys & {"command", "executor"}
+    if len(inputs) != 1:
+        raise A38Error(f"{label} must contain exactly one of command or executor")
+    return inputs.pop()
+
+
+def _executor_command(value: Any, label: str) -> str:
+    if not isinstance(value, dict):
+        raise A38Error(f"{label} must be an object")
+    _require_keys(value, EXECUTOR_KEYS, label)
+    adapter = _as_str(value["adapter"], f"{label}.adapter")
+    if adapter not in ADAPTERS:
+        raise A38Error(f"{label}.adapter is unknown: {adapter}")
+    config = value["config"]
+    if not isinstance(config, dict):
+        raise A38Error(f"{label}.config must be an object")
+    try:
+        config_text = json.dumps(
+            config,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise A38Error(f"{label}.config cannot be serialized as JSON: {exc}") from exc
+    parser = _ADAPTER_CONFIG_PARSERS[adapter]
+    try:
+        parser(config_text)
+    except (JobError, OverflowError, RecursionError) as exc:
+        raise A38Error(f"{label}.config is invalid: {exc}") from exc
+    command = f"agent a38 job {adapter} --config {shlex.quote(config_text)}"
+    return _validate_command(command, f"{label} command")
+
+
 def load_policy(text: str) -> dict:
     """Validate an A38 manifest and return the normalized JSON dict."""
     payload = _loads_policy_json(text)
@@ -222,7 +293,7 @@ def load_policy(text: str) -> dict:
     for index, item in enumerate(jobs_raw):
         if not isinstance(item, dict):
             raise A38Error(f"jobs[{index}] must be an object")
-        _require_keys(item, JOB_KEYS, f"jobs[{index}]")
+        input_key = _require_job_keys(item, f"jobs[{index}]")
         ident = _validate_job_id(item["id"], f"jobs[{index}].id")
         if ident in job_ids:
             raise A38Error(f"duplicate job id: {ident}")
@@ -238,11 +309,16 @@ def load_policy(text: str) -> dict:
             timeout_out: int | float = int(item["timeout_s"])
         else:
             timeout_out = float(timeout_s)
+        name = _validate_name(item["name"], f"jobs[{index}].name")
+        if input_key == "command":
+            command = _validate_command(item["command"], f"jobs[{index}].command")
+        else:
+            command = _executor_command(item["executor"], f"jobs[{index}].executor")
         jobs.append(
             {
                 "id": ident,
-                "name": _validate_name(item["name"], f"jobs[{index}].name"),
-                "command": _validate_command(item["command"], f"jobs[{index}].command"),
+                "name": name,
+                "command": command,
                 "timeout_s": timeout_out,
                 "workflow": workflow,
                 "job": gh_job,
@@ -1077,6 +1153,8 @@ def build_parser() -> argparse.ArgumentParser:
     policy_p = sub.add_parser("policy", help="Validate and print a policy manifest")
     policy_p.add_argument("--file", required=True, help="Path to policy JSON")
     policy_p.set_defaults(func=_cmd_policy)
+
+    add_job_parser(sub)
 
     return parser
 

@@ -12,7 +12,9 @@ import base64
 import json
 import hashlib
 import os
+from pathlib import Path
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -29,6 +31,7 @@ POLICY_PATH = ".github/a38.json"
 GUARD_MARKER = "<!-- PR-GUARD:A38:v1 -->"
 GUARD_DOCS = "docs/a38-guard.md"
 POLICY_DOCS = "docs/a38.md"
+CENTRAL_REPO = "DFXswiss/agent"
 LOCAL_CI_BEGIN = "<!-- DFX-LOCAL-CI:v1 -->"
 LOCAL_CI_END = "<!-- /DFX-LOCAL-CI:v1 -->"
 LOCAL_CI_HINT_RE = re.compile(r"DFX-LOCAL-CI", re.IGNORECASE)
@@ -93,7 +96,8 @@ class Assessment:
     policy_sha: str = ""
     private: bool = False
     required_names: list[str] = field(default_factory=list)
-    policy_docs_url: str = ""
+    standard_url: str = ""
+    policy_url: str = ""
     guard_docs_url: str = ""
     report_status: str | None = None
     closed: bool = False
@@ -118,6 +122,9 @@ class Assessment:
             "base": self.base_sha,
             "base_ref": self.base_ref,
             "policy_revision": self.policy_sha,
+            "standard_url": self.standard_url,
+            "policy_url": self.policy_url,
+            "guard_docs_url": self.guard_docs_url,
             "private": self.private,
             "required_names": list(self.required_names),
             "context": self.context,
@@ -151,6 +158,96 @@ def _validate_sha(value: str, label: str) -> str:
     if not isinstance(value, str) or HEAD_SHA_RE.match(value.lower()) is None:
         raise GuardError(f"{label} must be a 40-character lowercase hex SHA")
     return value.lower()
+
+
+def _validate_runtime_revision(value: str) -> str:
+    if not isinstance(value, str) or HEAD_SHA_RE.fullmatch(value) is None:
+        raise GuardError(
+            "A38_RUNTIME_REVISION must be a 40-character lowercase hexadecimal "
+            "commit SHA; moving tags and branch refs are unsupported"
+        )
+    return value
+
+
+def resolve_runtime_revision(
+    env: Mapping[str, str] | None = None,
+    *,
+    module_file: str | os.PathLike[str] | None = None,
+) -> str:
+    """Return the immutable revision of the loaded guard implementation.
+
+    An explicit environment value is the packaged/composite contract. The only
+    fallback is this module at the exact source-tree path in its own Git worktree.
+    It never discovers a repository from the caller's current directory or by
+    walking parents of an installed package.
+    """
+    source_env = env if env is not None else os.environ
+    explicit = source_env.get("A38_RUNTIME_REVISION")
+    if explicit is not None:
+        return _validate_runtime_revision(explicit)
+
+    loaded_file = Path(module_file or __file__).resolve()
+    try:
+        root = loaded_file.parents[2]
+    except IndexError as exc:
+        raise GuardError(
+            "A38 runtime revision is unavailable; set A38_RUNTIME_REVISION to "
+            "the trusted 40-character runtime commit SHA"
+        ) from exc
+    expected_file = (root / "src" / "agent_cli" / "a38_guard.py").resolve()
+    git_dir = root / ".git"
+    if loaded_file != expected_file or not git_dir.is_dir():
+        raise GuardError(
+            "A38 runtime revision is unavailable for this installed runtime; "
+            "set A38_RUNTIME_REVISION to the trusted 40-character runtime commit SHA"
+        )
+
+    git_env = {
+        key: value
+        for key, value in source_env.items()
+        if not key.startswith("GIT_") and key not in {"GH_TOKEN", "GITHUB_TOKEN"}
+    }
+    prefix = [
+        "git",
+        "-C",
+        str(root),
+        f"--git-dir={git_dir}",
+        f"--work-tree={root}",
+    ]
+
+    def git_output(*args: str) -> str:
+        try:
+            completed = subprocess.run(
+                [*prefix, *args],
+                cwd=root,
+                env=git_env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GuardError(
+                "cannot determine the trusted A38 source runtime revision; "
+                "set A38_RUNTIME_REVISION explicitly"
+            ) from exc
+        if completed.returncode != 0:
+            raise GuardError(
+                "cannot determine the trusted A38 source runtime revision; "
+                "set A38_RUNTIME_REVISION explicitly"
+            )
+        return completed.stdout.strip()
+
+    top_level = git_output("rev-parse", "--show-toplevel")
+    if not top_level:
+        raise GuardError("A38 source runtime returned an empty Git top-level path")
+    try:
+        actual_root = Path(top_level).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise GuardError("A38 source runtime returned an invalid Git top-level path") from exc
+    if actual_root != root:
+        raise GuardError("A38 source runtime Git top-level does not match its module root")
+    return _validate_runtime_revision(git_output("rev-parse", "HEAD"))
 
 
 def _validate_base_for_context(base_ref: str) -> str:
@@ -718,7 +815,8 @@ def build_comment_body(assessment: Assessment) -> str:
     run_cmd = build_run_instructions(assessment.base_sha or "BASE_SHA")
     run_cmd += f" --repository {assessment.repo}"
     details = (
-        f"- Docs (active policy revision): {assessment.policy_docs_url or POLICY_DOCS}\n"
+        f"- A38 standard: {assessment.standard_url or POLICY_DOCS}\n"
+        f"- Active policy: {assessment.policy_url or POLICY_PATH}\n"
         f"- Base: `{assessment.base_sha}`; policy revision: `{assessment.policy_sha or assessment.base_sha}`.\n"
         "- Save the active revision of `.github/a38.json` as `/tmp/a38-policy.json` before running.\n"
         f"- Guard docs: {assessment.guard_docs_url or GUARD_DOCS}\n"
@@ -777,7 +875,18 @@ def assess_from_parts(
     workflow_problems: Sequence[str],
     author_comment: Mapping[str, Any] | None,
     dry_run: bool = False,
+    runtime_revision: str | None = None,
+    runtime_env: Mapping[str, str] | None = None,
+    policy_repo: str | None = None,
+    policy_sha: str | None = None,
 ) -> Assessment:
+    active_policy_repo = policy_repo or pull.repo
+    active_policy_sha = policy_sha or pull.base_sha
+    trusted_runtime_revision = (
+        _validate_runtime_revision(runtime_revision)
+        if runtime_revision is not None
+        else resolve_runtime_revision(runtime_env)
+    )
     assessment = Assessment(
         ok=False,
         status="fail",
@@ -788,11 +897,13 @@ def assess_from_parts(
         base_ref=pull.base_ref,
         head_repo=pull.head_repo or pull.repo,
         report_fingerprint=_report_fingerprint(author_comment),
+        policy_sha=active_policy_sha,
         private=pull.private,
         closed=pull.state != "open",
         dry_run=dry_run,
-        policy_docs_url=blob_url(pull.repo, pull.base_sha, POLICY_DOCS),
-        guard_docs_url=blob_url(pull.repo, pull.base_sha, GUARD_DOCS),
+        standard_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, POLICY_DOCS),
+        policy_url=blob_url(active_policy_repo, active_policy_sha, POLICY_PATH),
+        guard_docs_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, GUARD_DOCS),
     )
     if policy is None:
         if policy_error:
@@ -997,6 +1108,8 @@ def assess_pull(
     *,
     dry_run: bool = False,
     pull: PullSnapshot | None = None,
+    runtime_revision: str | None = None,
+    runtime_env: Mapping[str, str] | None = None,
 ) -> Assessment:
     snap = pull or fetch_pull(api, repo, number)
     if snap.state != "open":
@@ -1038,11 +1151,12 @@ def assess_pull(
         workflow_problems=workflow_problems,
         author_comment=author_comment,
         dry_run=dry_run,
+        runtime_revision=runtime_revision,
+        runtime_env=runtime_env,
+        policy_repo=policy_repo,
+        policy_sha=policy_sha,
     )
     assessment.approval_fingerprint = approval
-    assessment.policy_sha = policy_sha
-    assessment.policy_docs_url = blob_url(policy_repo, policy_sha, (policy or {}).get("documentation", POLICY_DOCS))
-    assessment.comment_body = build_comment_body(assessment)
     return assessment
 
 
@@ -1208,13 +1322,23 @@ def reconcile_pull(
     *,
     dry_run: bool = False,
     publish: bool = True,
+    runtime_revision: str | None = None,
+    runtime_env: Mapping[str, str] | None = None,
 ) -> Assessment:
     last_err: Exception | None = None
     snap: PullSnapshot | None = None
     for _ in range(ASSESS_RETRIES):
         try:
             snap = fetch_pull(api, repo, number)
-            assessment = assess_pull(api, repo, number, dry_run=dry_run, pull=snap)
+            assessment = assess_pull(
+                api,
+                repo,
+                number,
+                dry_run=dry_run,
+                pull=snap,
+                runtime_revision=runtime_revision,
+                runtime_env=runtime_env,
+            )
             if dry_run or not publish or assessment.closed:
                 if assessment.closed and not dry_run:
                     assessment.writes.append("skipped:closed")
@@ -1327,6 +1451,8 @@ def reconcile_event(
     pr: int | None = None,
     dry_run: bool = False,
     publish: bool = True,
+    runtime_revision: str | None = None,
+    runtime_env: Mapping[str, str] | None = None,
 ) -> Assessment | dict[str, Any]:
     own_id: int | None
     try:
@@ -1347,12 +1473,28 @@ def reconcile_event(
     if event_name == "workflow_dispatch":
         if not repo or pr is None:
             raise GuardError("workflow_dispatch requires --repo and --pr")
-        return reconcile_pull(api, repo, pr, dry_run=dry_run, publish=publish)
+        return reconcile_pull(
+            api,
+            repo,
+            pr,
+            dry_run=dry_run,
+            publish=publish,
+            runtime_revision=runtime_revision,
+            runtime_env=runtime_env,
+        )
 
     event_repo, event_pr = extract_repo_pr_from_event(event_name, payload)
     use_repo = repo or event_repo
     use_pr = pr if pr is not None else event_pr
-    return reconcile_pull(api, use_repo, use_pr, dry_run=dry_run, publish=publish)
+    return reconcile_pull(
+        api,
+        use_repo,
+        use_pr,
+        dry_run=dry_run,
+        publish=publish,
+        runtime_revision=runtime_revision,
+        runtime_env=runtime_env,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1465,7 +1607,12 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                 for number in list_open_pulls(client, _validate_repo(args.repo)):
                     try:
                         assessment = reconcile_pull(
-                            client, args.repo, number, dry_run=dry, publish=publish
+                            client,
+                            args.repo,
+                            number,
+                            dry_run=dry,
+                            publish=publish,
+                            runtime_env=environ,
                         )
                     except GuardError as exc:
                         results.append({
@@ -1493,6 +1640,7 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                     pr=args.pr,
                     dry_run=dry,
                     publish=publish,
+                    runtime_env=environ,
                 )
                 out = result.to_json() if isinstance(result, Assessment) else result
                 print(json.dumps(out, indent=2, sort_keys=True))
@@ -1503,7 +1651,12 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
             if not args.repo or args.pr is None:
                 raise GuardError("reconcile requires --repo and --pr, or an event file")
             assessment = reconcile_pull(
-                client, args.repo, args.pr, dry_run=dry, publish=publish
+                client,
+                args.repo,
+                args.pr,
+                dry_run=dry,
+                publish=publish,
+                runtime_env=environ,
             )
             print(json.dumps(assessment.to_json(), indent=2, sort_keys=True))
             return _assessment_exit_code(assessment)
@@ -1516,7 +1669,12 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                 raise GuardError("assessment file must be a JSON object")
             # Re-assess live (never trust stale dry-run ok for enforce publish).
             assessment = reconcile_pull(
-                client, args.repo, args.pr, dry_run=False, publish=True
+                client,
+                args.repo,
+                args.pr,
+                dry_run=False,
+                publish=True,
+                runtime_env=environ,
             )
             print(json.dumps(assessment.to_json(), indent=2, sort_keys=True))
             return _assessment_exit_code(assessment)

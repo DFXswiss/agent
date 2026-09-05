@@ -4,8 +4,22 @@ This is the frozen comment payload that records a **full local CI run**
 (`ci:full` equivalent) for a pull request. `agent local-ci verify` parses it
 and decides pass or fail. Do not invent a second format.
 
-Private GitHub repositories must attach this block to the ready comment.
-Public repositories keep GitHub Actions as the CI gate and omit the block.
+This document defines the report format and legacy verifier behavior only; it
+does not define process adoption or CI applicability. Adoption must be claimed
+by the target repository's written rules. A38 adopters follow the central
+[A38 standard](a38.md) and [guard guide](a38-guard.md): private visibility alone
+is not opt-in or permission to skip GitHub CI, and private local code-gate
+equivalence requires trusted-base opt-in through a valid A38 manifest,
+assessment against the canonical active policy, and a separate live join against
+the actual latest report-like GitHub comment by the PR author. Public A38 adopters
+must publish and validate this author report in addition to their cumulative
+GitHub CI. Repositories that do not adopt A38 retain their existing written
+rules; A38 also retains independent
+GitHub-only checks, technical merge restrictions, review gates, and human merge.
+
+The wire verifier's `private: false` result remains `not_applicable` as specified
+below. That legacy result is not A38 public-report validation; use the canonical
+A38 policy verification and guard process for that assessment.
 
 ## Markers
 

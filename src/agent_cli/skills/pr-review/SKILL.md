@@ -95,13 +95,21 @@ The agent does not merge. Open pull requests as drafts; a human merges.
 A draft plus local tests is not done. Quality and logic of one vendor stage
 run in parallel on **this** head. The session that authored the diff does not
 sit those reviews. Inner `review-loop` rounds are not these gates. Stay draft
-until four lane verdicts on this head are approved (grok quality and grok logic, then Codex quality and Codex logic) and CI on this head is green.
-On a **private** GitHub repository that CI is a full local `ci:full`
-equivalent, recorded in the ready comment as `dfx-local-ci/v1` and checked
-with `agent local-ci verify` (see `docs/local-ci-v1.md` in this repository).
-GitHub Actions is not the ready gate there. On a **public** repository,
-GitHub Actions on this head remains the gate (`skipped` and `cancelled` are
-not green unless the workflow documents that skip). `agent allow --action pr-ready` only checks task state; do
+until four lane verdicts on this head are approved (grok quality and grok logic,
+then Codex quality and Codex logic) and the target repository's written CI rules
+hold on this head. The frozen `dfx-local-ci/v1` format and legacy verifier do not
+themselves determine applicability. Private visibility alone is not A38 opt-in or
+permission to skip GitHub CI. Under the central [A38 standard](../../../../docs/a38.md)
+and [guard guide](../../../../docs/a38-guard.md), private local code-gate equivalence
+requires trusted-base opt-in through a valid A38 manifest, assessment against the
+canonical active policy, and a separate live join against the actual latest
+report-like GitHub comment by the PR author; public A38 adopters require the
+author report in addition to cumulative GitHub CI.
+Private repositories without that opt-in and non-A38 repositories retain their
+existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. Independently
+required GitHub-only checks, technical merge restrictions, review gates, and
+human merge remain required.
+`agent allow --action pr-ready` only checks task state; do
 not mark ready if it denies. Then one comment whose review-pass count
 is those four `approved` verdicts on this head, then mark the GitHub
 pull request ready.

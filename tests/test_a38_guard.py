@@ -347,6 +347,13 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(any(w.startswith("comment:") for w in result.writes))
         self.assertTrue(any(w.startswith("status:") for w in result.writes))
         self.assertEqual(result.state_for_status, "failure")
+        self.assertIn("github.com/DFXswiss/agent/blob/", result.standard_url)
+        self.assertIn("/docs/a38.md", result.standard_url)
+        self.assertIn("github.com/DFXswiss/agent/blob/", result.guard_docs_url)
+        self.assertEqual(
+            result.policy_url,
+            f"https://github.com/{REPO}/blob/{BASE}/.github/a38.json",
+        )
 
     def test_author_valid_report(self) -> None:
         fake = FakeAPI()

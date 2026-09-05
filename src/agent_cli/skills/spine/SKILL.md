@@ -62,4 +62,6 @@ Do not invent keys. Chains:
 not pull-request done. A draft plus local tests is not done. See pr-review
 and CONTRIBUTING.md.
 
+For A38 work, follow the central [A38 standard](../../../../docs/a38.md) and [guard guide](../../../../docs/a38-guard.md); this skill is only a pointer.
+
 Locate these files with `agent skills path`.

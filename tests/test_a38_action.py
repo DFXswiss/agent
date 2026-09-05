@@ -52,6 +52,7 @@ def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: in
     inputs["token"] = "test-only"
     for key, value in step.get("env", {}).items():
         value = str(value).replace("${{ github.action_path }}", str(action_path))
+        value = value.replace("${{ github.action_ref }}", "a" * 40)
         for name, replacement in inputs.items():
             value = value.replace("${{ inputs." + name + " }}", replacement)
         assert "${{" not in value
@@ -65,3 +66,10 @@ def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: in
     expected = "trusted installer" if step_index == 1 else "trusted guard"
     assert expected in result.stdout
     assert not marker.exists(), "the composite executed consumer-controlled Python"
+
+
+def test_composite_passes_immutable_action_revision_via_environment() -> None:
+    action = yaml.safe_load((ROOT / ".github/actions/a38-guard/action.yml").read_text())
+    guard_step = action["runs"]["steps"][2]
+    assert guard_step["env"]["A38_RUNTIME_REVISION"] == "${{ github.action_ref }}"
+    assert "github.sha" not in str(guard_step)
