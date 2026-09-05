@@ -23,6 +23,7 @@ jobs:
           --health-retries 10
     env:
       AGENT_TEST_PG: host=127.0.0.1 port=5432 user=agent dbname=postgres
+      A38_TEST_DOCKER: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

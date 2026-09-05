@@ -8,6 +8,7 @@ script never trusts a ``verdict`` field in the payload; it computes pass/fail.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -27,6 +28,33 @@ RUN_KEYS = frozenset({"id", "name", "command", "result", "exit_code", "duration_
 
 class LocalCiError(ValueError):
     """The comment is not a valid v1 local-CI report."""
+
+
+def _reject_nonfinite_constant(name: str) -> None:
+    raise LocalCiError(f"JSON contains non-finite number: {name}")
+
+
+def _object_pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise LocalCiError(f"JSON contains duplicate key: {key}")
+        out[key] = value
+    return out
+
+
+def loads_strict(text: str) -> Any:
+    """Parse JSON rejecting duplicate keys and NaN/Infinity constants."""
+    try:
+        return json.loads(
+            text,
+            parse_constant=_reject_nonfinite_constant,
+            object_pairs_hook=_object_pairs_no_duplicates,
+        )
+    except LocalCiError:
+        raise
+    except json.JSONDecodeError as exc:
+        raise LocalCiError(f"JSON is invalid: {exc.msg}") from exc
 
 
 @dataclass(frozen=True)
@@ -124,7 +152,11 @@ def _as_int(value: Any, label: str) -> int:
 def _as_number(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise LocalCiError(f"{label} must be a number")
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number):
+        raise LocalCiError(f"{label} must be finite")
+    return number
+
 
 
 def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
@@ -210,10 +242,7 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
 
 def parse_comment(comment: str) -> LocalCiReport:
     text = extract_json_text(comment)
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise LocalCiError(f"JSON is invalid: {exc.msg}") from exc
+    payload = loads_strict(text)
     if not isinstance(payload, dict):
         raise LocalCiError("payload must be a JSON object")
     return parse_payload(payload)
