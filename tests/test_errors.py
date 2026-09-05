@@ -12,11 +12,15 @@ from agent_cli.errors import (
     error_class,
     fingerprint,
     is_incident_line,
+    known_asset_in,
+    known_chain_in,
     line_fingerprint,
     load_config,
     redact,
     scan_errors,
     stack_sig,
+    template_fingerprint,
+    template_signature,
 )
 from agent_cli.store import Store, StoreError
 
@@ -35,9 +39,16 @@ def _runner_session(store: Store, sid: str = "runner-1") -> None:
     )
 
 
-def _write_config(home: Path, session_id: str = "runner-1") -> None:
+def _write_config(home: Path, session_id: str = "runner-1", service: str = "api") -> None:
     config_path(home).write_text(
-        json.dumps({"session_id": session_id, "service": "api", "environment": "prod", "repo": "org/app"}),
+        json.dumps(
+            {
+                "session_id": session_id,
+                "service": service,
+                "environment": "prod",
+                "repo": "org/app",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -170,6 +181,64 @@ def test_redact_and_fingerprint() -> None:
     assert fp.endswith("|prod")
 
 
+def test_template_signature_masks_known_chains() -> None:
+    ethereum = "Timeout updating balances for Ethereum: Error: Timeout"
+    polygon = "Timeout updating balances for Polygon: Error: Timeout"
+    assert template_signature(ethereum) == template_signature(polygon)
+    # stack_sig stays fine-grained: chain name is not masked there, so the two
+    # lines keep separate error.seen identity even though they share a template.
+    assert stack_sig(ethereum) != stack_sig(polygon)
+
+
+def test_template_signature_masks_known_assets() -> None:
+    usdc = "Balance for Arbitrum/USDC went low"
+    wbtc = "Balance for Arbitrum/WBTC went low"
+    assert template_signature(usdc) == template_signature(wbtc)
+    assert stack_sig(usdc) != stack_sig(wbtc)
+
+
+def test_asset_token_regex_masks_longest_match_first() -> None:
+    from agent_cli.errors import _ASSET_TOKEN
+
+    # "USD" is a literal prefix of "USDC" — an unsorted alternation would match
+    # "USD" first and leave "C" dangling in the masked output.
+    assert _ASSET_TOKEN.sub("<ASSET>", "balance in USDC today") == "balance in <ASSET> today"
+    assert _ASSET_TOKEN.sub("<ASSET>", "balance in USD today") == "balance in <ASSET> today"
+
+
+def test_known_asset_in_finds_and_omits() -> None:
+    assert known_asset_in("Balance for Arbitrum/USDC went low") == "USDC"
+    assert known_asset_in("Failed to get price for token tether -> usd") is None
+
+
+def test_chain_token_regex_masks_longest_match_first() -> None:
+    from agent_cli.errors import _CHAIN_TOKEN
+
+    # "Bitcoin" is a prefix of "BitcoinTestnet4" — an unsorted alternation would
+    # match "Bitcoin" first and leave "Testnet4" dangling in the masked output.
+    assert _CHAIN_TOKEN.sub("<CHAIN>", "check failed for BitcoinTestnet4 today") == (
+        "check failed for <CHAIN> today"
+    )
+    assert _CHAIN_TOKEN.sub("<CHAIN>", "check failed for Bitcoin today") == (
+        "check failed for <CHAIN> today"
+    )
+
+
+def test_known_chain_in_finds_and_omits() -> None:
+    assert known_chain_in("Timeout updating balances for Ethereum") == "Ethereum"
+    assert known_chain_in("balance check failed for BitcoinTestnet4") == "BitcoinTestnet4"
+    assert known_chain_in("Failed to check Bank Frick order status") == "Frick"
+    assert known_chain_in("Failed to get price for token tether -> usd") is None
+
+
+def test_template_fingerprint_format() -> None:
+    sig = template_signature("Timeout updating balances for Ethereum")
+    tfp = template_fingerprint(
+        service="api", error_class="error", template_sig=sig, environment="prod"
+    )
+    assert tfp == f"api|error|{sig}|prod"
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
@@ -195,6 +264,7 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert payload["evidence"] is None
     assert "SECRETTOKENVALUE0123456789" not in payload["excerpt"]
     assert "fingerprint" in payload
+    assert "template_fingerprint" in payload
     wakes = store.pending_wakes()
     assert any(w["activity_id"] == created[0] for w in wakes)
 
@@ -204,6 +274,7 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     again = store.row("activity", created[0])
     assert again is not None
     assert again["payload"]["count"] == 2
+    assert again["payload"]["template_fingerprint"] == payload["template_fingerprint"]
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
     assert "line_fingerprint" not in payload
 
@@ -876,3 +947,122 @@ def test_line_must_match_keeps_and_drops(tmp_path: Path) -> None:
     assert enriched == []
     assert len(created) == 1
     assert "keep" in store.row("activity", created[0])["payload"]["excerpt"]
+
+
+def test_token_masking_only_matches_whole_tokens() -> None:
+    """Without boundary anchors "Base" matches inside "Based", "SOL" inside
+    "RESOLVE" and "COMP" inside "COMPLETE" — unrelated errors would then be
+    masked as chain/asset variants and labelled with a token that has nothing to
+    do with them."""
+    for line in (
+        "Based on the previous failure the job aborted",
+        "RESOLVE failed for host",
+        "COMPLETE checkout failed",
+        "DAILY reconciliation failed",
+        "UNIQUE constraint violated on table users",
+        "POLICY denied the request",
+        "BATCH job failed",
+        "MANAGEMENT api unreachable",
+        "LINKING accounts failed",
+        "SANDBOX unavailable",
+    ):
+        assert known_chain_in(line) is None, line
+        assert known_asset_in(line) is None, line
+
+
+def test_token_masking_still_matches_real_names_next_to_punctuation() -> None:
+    assert known_chain_in("Balance for Arbitrum/USDC went low") == "Arbitrum"
+    assert known_asset_in("Balance for Arbitrum/USDC went low") == "USDC"
+    # Tickers that are not word-character-only, or start with a digit, still match.
+    assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
+    assert known_asset_in("low balance 1INCH on Ethereum") == "1INCH"
+
+
+def test_template_signature_does_not_group_unrelated_words_with_assets() -> None:
+    # "UNIQUE" must not collapse onto the same template as a real ticker just
+    # because "UNI" is a prefix of it.
+    assert template_signature("UNIQUE constraint failed") != template_signature(
+        "UNI constraint failed"
+    )
+
+
+def test_template_fingerprint_fields_cannot_collide() -> None:
+    """service, error_class and environment are free text from the log source.
+    An unescaped join would let two different field tuples produce one
+    fingerprint and group unrelated errors under a single template."""
+    first = template_fingerprint(
+        service="a", error_class="b|c", template_sig="sig", environment="e"
+    )
+    second = template_fingerprint(
+        service="a|b", error_class="c", template_sig="sig", environment="e"
+    )
+    assert first != second
+
+    # The escape itself must not become a new collision route.
+    assert template_fingerprint(
+        service="a%7Cb", error_class="c", template_sig="sig", environment="e"
+    ) != second
+
+
+def test_asset_alternation_must_try_the_longest_name_first() -> None:
+    """The boundary anchors settle word-character names on their own, but not a
+    ticker containing punctuation: "." is not a word character, so "USDC" would
+    match inside "USDC.e" and strip it down to the wrong asset."""
+    assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
+    assert known_asset_in("USDC drift on Arbitrum") == "USDC"
+
+
+def test_token_boundaries_are_unicode_aware() -> None:
+    """An ASCII-only boundary class would let a ticker glued to non-Latin letters
+    or to an underscore still count as a whole token."""
+    assert known_asset_in("ЖUSDCб drift") is None
+    assert known_asset_in("USDC_balance drift") is None
+    assert known_chain_in("Ethereumб handler") is None
+    # Real names next to ordinary punctuation still match.
+    assert known_asset_in("balance for USDC, low") == "USDC"
+
+
+def test_a_prefix_name_does_not_survive_its_longer_form_losing_the_boundary() -> None:
+    """"USDC.e" glued to a word character fails its own trailing boundary. Without
+    blocking the continuation the engine falls back to "USDC", whose boundary
+    passes because "." is not a word character — so the same glued text would
+    yield a ticker here but None in "USDC_balance"."""
+    assert known_asset_in("USDC_balance") is None
+    assert known_asset_in("USDC.e_balance") is None
+    assert known_asset_in("USDC.eб") is None
+    # The longer name still matches on its own, and a sentence-final period is
+    # not a continuation.
+    assert known_asset_in("USDC.e drift on Arbitrum") == "USDC.e"
+    assert known_asset_in("balance in USDC.") == "USDC"
+
+
+def test_the_template_fingerprint_keeps_services_apart(tmp_path: Path) -> None:
+    """Grouping must stay injective: two tenants whose service labels differ are
+    two templates, even where a coarse redaction would render both the same.
+    Keeping the raw value here matters because redacting the grouping key
+    instead would merge two tenants' distinct errors into one template."""
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path, service="api-alice@example.com")
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return ([{"ts": "2026-08-23T16:00:00Z", "line": "TimeoutError boom"}], None)
+
+    created, _ = scan_errors(store, fetch)
+    alice = store.row("activity", created[0])
+    assert alice is not None
+
+    bob = template_fingerprint(
+        service="api-bob@example.com",
+        error_class="TimeoutError",
+        template_sig="sig",
+        environment="prod",
+    )
+    alice_fp = template_fingerprint(
+        service="api-alice@example.com",
+        error_class="TimeoutError",
+        template_sig="sig",
+        environment="prod",
+    )
+    assert alice_fp != bob
+    assert alice["payload"]["template_fingerprint"].startswith("api-alice@example.com|")
