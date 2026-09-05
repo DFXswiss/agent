@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import stat
 import subprocess
@@ -29,7 +30,6 @@ from .common import (
     require_finite_number,
     require_mapping,
     require_argv,
-    require_docker_id,
     require_rel_path,
     require_str,
     require_str_list,
@@ -56,6 +56,7 @@ COMPANION_KEYS = frozenset({"directory_env", "ref_env", "ref", "repository"})
 BUILD_KEYS = frozenset({"argv", "image"})
 PORT_KEYS = frozenset({"service", "port", "env"})
 ARTIFACT_KEYS = frozenset({"source", "destination"})
+FULL_DOCKER_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def parse_compose_config(text: str) -> tuple[CommonConfig, dict[str, Any]]:
@@ -227,6 +228,38 @@ def _env_get(runtime: JobRuntime, name: str) -> str:
     return runtime.env.get(name, "")
 
 
+def _compose_test_id(output: str) -> str:
+    candidates = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(candidates) != 1 or FULL_DOCKER_ID_RE.fullmatch(candidates[0]) is None:
+        raise JobError("docker compose ps did not return exactly one full container id")
+    return candidates[0]
+
+
+def _verified_compose_test_id(
+    output: str,
+    *,
+    candidate: str,
+    project: str,
+    service: str,
+) -> str:
+    inspected = loads_strict_json(output)
+    if not isinstance(inspected, list) or len(inspected) != 1:
+        raise JobError("docker inspect must return exactly one container object")
+    container = require_mapping(inspected[0], "docker inspect[0]")
+    canonical = container.get("Id")
+    if not isinstance(canonical, str) or FULL_DOCKER_ID_RE.fullmatch(canonical) is None:
+        raise JobError("docker inspect returned an invalid canonical container id")
+    if canonical != candidate:
+        raise JobError("docker inspect canonical container id does not match Compose")
+    config = require_mapping(container.get("Config"), "docker inspect[0].Config")
+    labels = require_mapping(config.get("Labels"), "docker inspect[0].Config.Labels")
+    if labels.get("com.docker.compose.project") != project:
+        raise JobError("Compose test container has a foreign project label")
+    if labels.get("com.docker.compose.service") != service:
+        raise JobError("Compose test container has a foreign service label")
+    return canonical
+
+
 def _runtime_git(runtime: JobRuntime, args: list[str], *, cwd: Path) -> str:
     completed = runtime.run_argv(
         ["git", *args],
@@ -386,7 +419,6 @@ def _body(runtime: JobRuntime, cfg: Mapping[str, Any]) -> int:
         "test_id": None,
         "test_volumes": [],
     }
-    test_container = f"{runtime.project}-tests"
 
     def compose_argv(*extra: str) -> list[str]:
         return _compose_prefix(
@@ -573,10 +605,9 @@ def _body(runtime: JobRuntime, cfg: Mapping[str, Any]) -> int:
     )
 
     create_argv = prefix + [
-        "run",
-        "--no-start",
-        "--name",
-        test_container,
+        "create",
+        "--no-build",
+        "--no-recreate",
         cfg["test_service"],
     ]
     created = runtime.run_argv(
@@ -584,12 +615,28 @@ def _body(runtime: JobRuntime, cfg: Mapping[str, Any]) -> int:
     )
     if created.returncode != 0:
         raise JobError("failed to create Compose test container")
-    inspect = runtime.run_argv(
-        [docker, "inspect", "--format", "{{.Id}}", test_container], check=False
-    )
+    ps_argv = prefix + [
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        cfg["test_service"],
+    ]
+    selected = runtime.run_argv(ps_argv, check=False)
+    if selected.returncode != 0:
+        raise JobError("failed to select Compose test container")
+    candidate_id = _compose_test_id(selected.stdout)
+    # Do not adopt the ps result until Docker canonicalizes it and its Compose
+    # ownership labels match this exact project and configured service.
+    inspect = runtime.run_argv([docker, "inspect", candidate_id], check=False)
     if inspect.returncode != 0:
         raise JobError("failed to record Compose test container ownership")
-    test_id = require_docker_id(inspect.stdout.strip(), "docker inspect")
+    test_id = _verified_compose_test_id(
+        inspect.stdout,
+        candidate=candidate_id,
+        project=runtime.project,
+        service=cfg["test_service"],
+    )
     state["test_id"] = test_id
     mounts = runtime.run_argv(
         [

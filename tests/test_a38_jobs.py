@@ -393,9 +393,41 @@ if args and args[0] == 'port':
     print('127.0.0.1:'+os.environ.get('FAKE_DOCKER_PORT','49152')); raise SystemExit(0)
 if args and args[0] == 'exec': raise SystemExit(0)
 if args and args[0] == 'inspect':
-    fmt=args[args.index('--format')+1]
-    if fmt == '{{.Id}}': print('c'*64)
-    elif '.Mounts' in fmt: print('a38-example-volume')
+    if '--format' in args:
+        fmt=args[args.index('--format')+1]
+        if fmt == '{{.Id}}': print('c'*64)
+        elif '.Mounts' in fmt:
+            if os.environ.get('FAKE_COMPOSE_MOUNTS_EXIT'):
+                raise SystemExit(int(os.environ['FAKE_COMPOSE_MOUNTS_EXIT']))
+            print('a38-example-volume')
+        else: raise SystemExit(97)
+    else:
+        if os.environ.get('FAKE_COMPOSE_INSPECT_EXIT'):
+            raise SystemExit(int(os.environ['FAKE_COMPOSE_INSPECT_EXIT']))
+        if 'FAKE_COMPOSE_INSPECT_OUTPUT' in os.environ:
+            sys.stdout.write(os.environ['FAKE_COMPOSE_INSPECT_OUTPUT'])
+            raise SystemExit(0)
+        project=service=None
+        for line in reversed(log.read_text(encoding='utf-8').splitlines()):
+            call=json.loads(line)
+            if call and call[0] == 'compose' and 'create' in call:
+                project=call[call.index('-p')+1]
+                service=call[-1]
+                break
+        if project is None or service is None: raise SystemExit(97)
+        candidate=args[-1]
+        payload=[{
+            'Id': os.environ.get('FAKE_COMPOSE_INSPECT_ID',candidate),
+            'Config': {'Labels': {
+                'com.docker.compose.project': os.environ.get(
+                    'FAKE_COMPOSE_INSPECT_PROJECT', project
+                ),
+                'com.docker.compose.service': os.environ.get(
+                    'FAKE_COMPOSE_INSPECT_SERVICE', service
+                ),
+            }},
+        }]
+        print(json.dumps(payload))
     raise SystemExit(0)
 if args and args[0] == 'cp':
     dest=Path(args[-1]); dest.parent.mkdir(parents=True,exist_ok=True)
@@ -413,13 +445,21 @@ if args[:2] == ['image','rm']: raise SystemExit(0)
 if args and args[0] == 'compose':
     if 'version' in args: print('Docker Compose version v2'); raise SystemExit(0)
     if 'port' in args: print('127.0.0.1:49153'); raise SystemExit(0)
-    if 'run' in args: raise SystemExit(0)
+    if 'run' in args and '--no-start' in args: raise SystemExit(96)
+    if 'create' in args:
+        raise SystemExit(int(os.environ.get('FAKE_COMPOSE_CREATE_EXIT','0')))
+    if 'ps' in args:
+        if os.environ.get('FAKE_COMPOSE_PS_EXIT'):
+            raise SystemExit(int(os.environ['FAKE_COMPOSE_PS_EXIT']))
+        sys.stdout.write(os.environ.get('FAKE_COMPOSE_PS_OUTPUT','c'*64+'\\n'))
+        raise SystemExit(0)
     if 'build' in args:
         image=os.environ.get('FAKE_COMPOSE_BUILD_IMAGE','')
         if image and os.environ.get('FAKE_FAIL_TAG') in image: raise SystemExit(8)
         raise SystemExit(0)
-    raise SystemExit(0)
-raise SystemExit(0)
+    if any(command in args for command in ('up','down','logs')): raise SystemExit(0)
+    raise SystemExit(97)
+raise SystemExit(97)
 """,
     )
 
@@ -932,14 +972,170 @@ def test_compose_copies_artifacts_before_down_on_success_and_failure(
         down = calls[down_index]
         assert "--env-file" in down
         assert (artifacts / "results" / "result.txt").read_text(encoding="utf-8") == "ok"
-        create_index = next(i for i, call in enumerate(calls) if "--no-start" in call)
+        create_index = next(i for i, call in enumerate(calls) if "create" in call)
+        create = calls[create_index]
+        prefix = create[: create.index("create")]
+        assert create[create.index("create") :] == [
+            "create",
+            "--no-build",
+            "--no-recreate",
+            "tests",
+        ]
+        ps_index = next(i for i, call in enumerate(calls) if "ps" in call)
+        assert calls[ps_index] == prefix + [
+            "ps",
+            "--all",
+            "--quiet",
+            "--no-trunc",
+            "tests",
+        ]
         inspect_index = next(
-            i for i, call in enumerate(calls) if call[:3] == ["inspect", "--format", "{{.Id}}"]
+            i for i, call in enumerate(calls) if call == ["inspect", "c" * 64]
         )
         start_index = next(i for i, call in enumerate(calls) if call[:2] == ["start", "-a"])
-        assert create_index < inspect_index < start_index
+        assert create_index < ps_index < inspect_index < start_index
+        assert calls[start_index] == ["start", "-a", "c" * 64]
+        assert not any("--name" in call or "--no-start" in call for call in calls)
         volume_rm = next(i for i, call in enumerate(calls) if call[:2] == ["volume", "rm"])
         assert down_index < volume_rm
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    ("case", "docker_env"),
+    [
+        ("create-failure", {"FAKE_COMPOSE_CREATE_EXIT": "31"}),
+        ("ps-failure", {"FAKE_COMPOSE_PS_EXIT": "32"}),
+        ("empty", {"FAKE_COMPOSE_PS_OUTPUT": ""}),
+        ("multiple", {"FAKE_COMPOSE_PS_OUTPUT": "c" * 64 + "\n" + "d" * 64 + "\n"}),
+        ("truncated", {"FAKE_COMPOSE_PS_OUTPUT": "c" * 12 + "\n"}),
+        ("name", {"FAKE_COMPOSE_PS_OUTPUT": "example-tests-1\n"}),
+        ("malformed", {"FAKE_COMPOSE_PS_OUTPUT": "C" * 64 + "\n"}),
+        ("inspect-failure", {"FAKE_COMPOSE_INSPECT_EXIT": "33"}),
+        ("inspect-malformed", {"FAKE_COMPOSE_INSPECT_OUTPUT": "{"}),
+        (
+            "missing-labels",
+            {
+                "FAKE_COMPOSE_INSPECT_OUTPUT": json.dumps(
+                    [{"Id": "c" * 64, "Config": {"Labels": {}}}]
+                )
+            },
+        ),
+        ("foreign-project", {"FAKE_COMPOSE_INSPECT_PROJECT": "foreign-project"}),
+        ("foreign-service", {"FAKE_COMPOSE_INSPECT_SERVICE": "foreign-service"}),
+        ("canonical-mismatch", {"FAKE_COMPOSE_INSPECT_ID": "d" * 64}),
+    ],
+)
+def test_compose_rejects_unverified_container_without_adopting_it(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+    case: str,
+    docker_env: dict[str, str],
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _repo(repo)
+    source = tmp_path / "services"
+    companion_head = _make_companion(source)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_docker(bin_dir / "docker")
+    log = tmp_path / f"docker-{case}.log"
+    status = compose.run_compose(
+        json.dumps(_companion_config(companion_head)),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_docker_env(
+            base,
+            head,
+            bin_dir,
+            log,
+            EXAMPLE_SERVICES_DIR=str(source),
+            EXAMPLE_SERVICES_REF=companion_head,
+            **docker_env,
+        ),
+    )
+    captured = capfd.readouterr()
+    artifacts = _artifacts_from(captured.out)
+    try:
+        assert status == 1, captured.err
+        calls = _docker_calls(log)
+        create_index = next(i for i, call in enumerate(calls) if "create" in call)
+        create = calls[create_index]
+        prefix = create[: create.index("create")]
+        assert create[create.index("create") :] == [
+            "create",
+            "--no-build",
+            "--no-recreate",
+            "tests",
+        ]
+        down_indexes = [i for i, call in enumerate(calls) if "down" in call]
+        assert len(down_indexes) == 1
+        assert calls[down_indexes[0]] == prefix + ["down", "-v", "--remove-orphans"]
+        assert create_index < down_indexes[0]
+        assert not any(call[:2] == ["start", "-a"] for call in calls)
+        assert not any(call and call[0] == "cp" for call in calls)
+        assert not any(call[:2] == ["rm", "-f"] for call in calls)
+        assert not any("--name" in call or "--no-start" in call for call in calls)
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    ("failure_env", "expected"),
+    [
+        ({"FAKE_COMPOSE_MOUNTS_EXIT": "34"}, 1),
+        ({"FAKE_TEST_EXIT": "35"}, 35),
+    ],
+)
+def test_compose_retains_verified_id_for_later_failure_cleanup(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+    failure_env: dict[str, str],
+    expected: int,
+) -> None:
+    repo = tmp_path / "repo"
+    base, head = _repo(repo)
+    source = tmp_path / "services"
+    companion_head = _make_companion(source)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_docker(bin_dir / "docker")
+    log = tmp_path / "docker-later-failure.log"
+    status = compose.run_compose(
+        json.dumps(_companion_config(companion_head)),
+        cwd=repo,
+        lock_root=tmp_path / "locks",
+        environ=_docker_env(
+            base,
+            head,
+            bin_dir,
+            log,
+            EXAMPLE_SERVICES_DIR=str(source),
+            EXAMPLE_SERVICES_REF=companion_head,
+            **failure_env,
+        ),
+    )
+    captured = capfd.readouterr()
+    artifacts = _artifacts_from(captured.out)
+    try:
+        assert status == expected, captured.err
+        calls = _docker_calls(log)
+        ownership_inspect = calls.index(["inspect", "c" * 64])
+        mount_inspect = next(
+            i
+            for i, call in enumerate(calls)
+            if call[:2] == ["inspect", "--format"] and ".Mounts" in call[2]
+        )
+        cp_index = next(i for i, call in enumerate(calls) if call and call[0] == "cp")
+        rm_index = calls.index(["rm", "-f", "c" * 64])
+        down_index = next(i for i, call in enumerate(calls) if "down" in call)
+        assert ownership_inspect < mount_inspect < cp_index < rm_index < down_index
+        assert calls[cp_index][1].startswith("c" * 64 + ":")
+        if "FAKE_COMPOSE_MOUNTS_EXIT" in failure_env:
+            assert ["start", "-a", "c" * 64] not in calls
+        else:
+            assert calls.index(["start", "-a", "c" * 64]) < cp_index
     finally:
         shutil.rmtree(artifacts, ignore_errors=True)
 
