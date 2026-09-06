@@ -751,9 +751,11 @@ def test_all_real_git_remote_urls_must_identify_one_repository(tmp_path, monkeyp
         if 'gh' in argv:
             return Completed(0, 'WorkerOne', '')
         command = _git_payload(argv)
-        if command[3] in {'fetch', 'push'}:
+        operation = command[command.index('-C') + 2:]
+        if operation == ['push', '--', 'origin', 'HEAD:refs/heads/feature']:
             transfers.append(command)
             return Completed(0, '', '')
+        assert operation[:2] == ['remote', 'get-url'], 'Only Git metadata may execute in this test'
         result = subprocess.run(argv, text=True, capture_output=True)
         return Completed(result.returncode, result.stdout, result.stderr)
     scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
