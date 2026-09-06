@@ -1,8 +1,13 @@
 """dfx pr guard: trusted-base policy plus author local-CI reports.
 
-Stateless bot. Reads policy from the immutable pull-request base and author
-reports from pull-request comments. Never checks out or executes pull-request
-code. Invoked event-driven (GitHub Actions) or via explicit reconcile.
+Stateless bot. Resolves optional `.github/pr-guard.json` from an immutable
+default-branch revision to decide target-branch scope, then reads A38 policy
+from the immutable pull-request base and author reports from pull-request
+comments. Immutable PR-head trees/files (workflows, approved head policy,
+proposed pr-guard config) are read through the base/target repository at the
+exact validated head SHA so private-fork heads remain reachable. Never checks
+out or executes pull-request code. Invoked event-driven (GitHub Actions) or
+via explicit reconcile.
 """
 
 from __future__ import annotations
@@ -24,6 +29,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 from .a38 import load_policy, verify_report
+from .pr_guard_config import (
+    CONFIG_PATH as PR_GUARD_CONFIG_PATH,
+    PrGuardConfigError,
+    evaluate_a38_scope,
+    load_pr_guard_config,
+)
 
 API_ORIGIN = "https://api.github.com"
 API_HOST = "api.github.com"
@@ -47,6 +58,9 @@ MAX_COMMENT_BODY = 12000
 MAX_FILE_BYTES = 1024 * 1024
 MAX_API_BYTES = 16 * 1024 * 1024
 POLICY_APPROVAL_PREFIX = "A38-POLICY-APPROVAL:v1"
+NOT_APPLICABLE_DESCRIPTION = (
+    "Not applicable: target branch excluded by pr-guard configuration."
+)
 HTTP_TIMEOUT_S = 30.0
 GET_RETRIES = 3
 RETRY_BACKOFF_S = 0.4
@@ -77,6 +91,28 @@ class PullSnapshot:
     author_id: int
     author_login: str
     head_repo: str = ""
+    # Trusted repository default branch from base.repo.default_branch only.
+    # Used to locate configuration; never a built-in scope rule by itself.
+    # Empty is allowed for closed no-ops; open assessments fail closed without it.
+    default_branch: str = ""
+
+
+@dataclass(frozen=True)
+class TrustedGuardConfig:
+    """Resolved `.github/pr-guard.json` from an immutable default-branch revision."""
+
+    trusted_default_branch: str
+    config_revision: str
+    config: Mapping[str, Any] | None
+    raw_bytes: bytes | None
+    decision: str
+    reason: str
+
+    @property
+    def fingerprint(self) -> str:
+        if self.raw_bytes is None:
+            return "missing"
+        return hashlib.sha256(self.raw_bytes).hexdigest()
 
 
 @dataclass
@@ -91,6 +127,13 @@ class Assessment:
     base_sha: str = ""
     base_ref: str = ""
     head_repo: str = ""
+    default_branch: str = ""
+    trusted_default_branch: str = ""
+    config_revision: str = ""
+    config_fingerprint: str = ""
+    scope_decision: str = ""
+    # Trusted scope evaluation reason (audit). Kept separate from report failure reasons.
+    scope_reason: str = ""
     report_fingerprint: str = ""
     approval_fingerprint: str = ""
     policy_sha: str = ""
@@ -111,6 +154,7 @@ class Assessment:
     writes: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
+        trusted = self.trusted_default_branch or self.default_branch
         return {
             "ok": self.ok,
             "status": self.status,
@@ -121,6 +165,11 @@ class Assessment:
             "head": self.head_sha,
             "base": self.base_sha,
             "base_ref": self.base_ref,
+            "default_branch": self.default_branch,
+            "trusted_default_branch": trusted,
+            "config_revision": self.config_revision,
+            "scope_decision": self.scope_decision,
+            "scope_reason": self.scope_reason,
             "policy_revision": self.policy_sha,
             "standard_url": self.standard_url,
             "policy_url": self.policy_url,
@@ -580,6 +629,11 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
     state = data.get("state")
     if state not in {"open", "closed"}:
         raise GuardError("pull state missing")
+    # Trusted default branch comes only from the PR base repository metadata.
+    # Never use head.repo, PR text, or branch-name heuristics.
+    default_branch = _parse_default_branch(
+        base_repo.get("default_branch"), required=(state == "open")
+    )
     return PullSnapshot(
         repo=repo,
         number=number,
@@ -591,7 +645,24 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         author_id=author_id,
         author_login=author_login,
         head_repo=head_repository,
+        default_branch=default_branch,
     )
+
+
+def _parse_default_branch(raw: Any, *, required: bool) -> str:
+    """Validate repository default_branch; open PRs fail closed when missing."""
+    if isinstance(raw, str) and raw:
+        try:
+            return _validate_base_for_context(raw)
+        except GuardError as exc:
+            if required:
+                raise GuardError(
+                    "pull repository default_branch missing or invalid"
+                ) from exc
+            return ""
+    if required:
+        raise GuardError("pull repository default_branch missing or invalid")
+    return ""
 
 
 def _decode_contents_file(data: Mapping[str, Any]) -> bytes:
@@ -633,6 +704,115 @@ def fetch_policy_text(api: GitHubApi, repo: str, base_sha: str) -> str | None:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise GuardError(f"{POLICY_PATH} is not valid UTF-8: {exc}") from exc
+
+
+def resolve_default_branch_commit(api: GitHubApi, repo: str, default_branch: str) -> str:
+    """Resolve the trusted default branch name to an immutable lowercase commit SHA.
+
+    Uses live PR ``base.repo.default_branch`` metadata only to locate configuration.
+    The branch name itself never decides A38 scope.
+    """
+    branch = _validate_base_for_context(default_branch)
+    path = (
+        f"/repos/{repo}/commits/"
+        f"{urllib.parse.quote(branch, safe='')}"
+    )
+    data = api.get_json(path)
+    if not isinstance(data, dict):
+        raise GuardError("default-branch commit response is not an object")
+    sha = data.get("sha")
+    return _validate_sha(sha if isinstance(sha, str) else "", "default-branch commit")
+
+
+def resolve_trusted_guard_config(
+    api: GitHubApi, snap: PullSnapshot
+) -> TrustedGuardConfig:
+    """Load and evaluate `.github/pr-guard.json` from the trusted default revision.
+
+    Always reads the base repository. PR-head configuration can never self-exempt.
+    A missing file retains legacy enforce-all. API denial, non-404 errors and
+    malformed JSON fail closed.
+    """
+    if not snap.default_branch:
+        raise GuardError("pull repository default_branch missing or invalid")
+    revision = resolve_default_branch_commit(api, snap.repo, snap.default_branch)
+    raw = fetch_file_at_ref(api, snap.repo, PR_GUARD_CONFIG_PATH, revision)
+    if raw is None:
+        decision, reason = evaluate_a38_scope(None, snap.base_ref)
+        return TrustedGuardConfig(
+            trusted_default_branch=snap.default_branch,
+            config_revision=revision,
+            config=None,
+            raw_bytes=None,
+            decision=decision,
+            reason=reason,
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise GuardError(
+            f"maintainer config error: {PR_GUARD_CONFIG_PATH} is not valid UTF-8: {exc}"
+        ) from exc
+    try:
+        config = load_pr_guard_config(text)
+        decision, reason = evaluate_a38_scope(config, snap.base_ref)
+    except PrGuardConfigError as exc:
+        raise GuardError(
+            f"maintainer config error: invalid {PR_GUARD_CONFIG_PATH} on "
+            f"trusted revision {revision}: {exc}"
+        ) from exc
+    return TrustedGuardConfig(
+        trusted_default_branch=snap.default_branch,
+        config_revision=revision,
+        config=config,
+        raw_bytes=raw,
+        decision=decision,
+        reason=reason,
+    )
+
+
+def check_pr_guard_config_migration(
+    api: GitHubApi,
+    snap: PullSnapshot,
+    *,
+    allow_changes: bool,
+) -> list[str]:
+    """Require migration approval when `.github/pr-guard.json` bytes change.
+
+    Proposed head configuration is never activated for this PR, even after
+    approval; approval only permits the bytes to differ until merge. When the
+    head file exists, UTF-8 and strict ``load_pr_guard_config`` schema are
+    validated before approval can clear the gate, so a malformed proposal
+    cannot merge and break later trusted-config reads. A missing head file
+    (removal) remains governed only by exact approval.
+
+    Head bytes are read through the base/target repository at the exact
+    validated head SHA so private-fork heads remain reachable with a
+    repository-scoped token.
+    """
+    head_bytes = fetch_file_at_ref(api, snap.repo, PR_GUARD_CONFIG_PATH, snap.head_sha)
+    base_bytes = fetch_file_at_ref(api, snap.repo, PR_GUARD_CONFIG_PATH, snap.base_sha)
+    if head_bytes == base_bytes:
+        return []
+    if head_bytes is not None:
+        try:
+            text = head_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return [
+                f"{PR_GUARD_CONFIG_PATH} proposed at head is not valid UTF-8: {exc}"
+            ]
+        try:
+            load_pr_guard_config(text)
+        except PrGuardConfigError as exc:
+            return [
+                f"{PR_GUARD_CONFIG_PATH} proposed at head is invalid: {exc}"
+            ]
+    if allow_changes:
+        return []
+    return [
+        f"{PR_GUARD_CONFIG_PATH} bytes changed vs base; explicit current-head/base "
+        "maintainer A38 policy approval is required"
+    ]
 
 
 def list_workflow_paths(api: GitHubApi, repo: str, sha: str) -> list[str]:
@@ -733,21 +913,27 @@ def check_workflows_against_policy(
     head_sha: str,
     base_sha: str,
     policy: Mapping[str, Any],
-    head_repo: str | None = None,
     allow_changes: bool = False,
 ) -> list[str]:
-    """Return maintainer-facing problems for head workflows vs trusted base policy."""
+    """Return maintainer-facing problems for head workflows vs trusted base policy.
+
+    Head workflow trees and blobs are always read through ``repo`` (the PR base
+    / target repository) at the exact validated head SHA. Repository-scoped
+    tokens cannot list private fork trees; the PR head commit is reachable via
+    the base repository Git object network. Never substitute merge refs or
+    treat fork 404 as success.
+    """
     problems: list[str] = []
     # Inventory failures are operational errors, including in observe mode.
     # Only an inventory successfully fetched and assessed can be advisory.
-    head_paths = list_workflow_paths(api, head_repo or repo, head_sha)
+    head_paths = list_workflow_paths(api, repo, head_sha)
     base_paths = list_workflow_paths(api, repo, base_sha)
 
     allowed = classified_pairs(policy)
     actual: set[tuple[str, str]] = set()
     all_paths = sorted(set(head_paths) | set(base_paths))
     for path in all_paths:
-        head_bytes = fetch_file_at_ref(api, head_repo or repo, path, head_sha)
+        head_bytes = fetch_file_at_ref(api, repo, path, head_sha)
         base_bytes = fetch_file_at_ref(api, repo, path, base_sha)
         if head_bytes is None and base_bytes is None:
             continue
@@ -896,6 +1082,7 @@ def assess_from_parts(
         base_sha=pull.base_sha,
         base_ref=pull.base_ref,
         head_repo=pull.head_repo or pull.repo,
+        default_branch=pull.default_branch,
         report_fingerprint=_report_fingerprint(author_comment),
         policy_sha=active_policy_sha,
         private=pull.private,
@@ -1110,6 +1297,79 @@ def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
     return hashlib.sha256(json.dumps(sorted(approved)).encode()).hexdigest()
 
 
+def _attach_trusted_config(assessment: Assessment, trusted: TrustedGuardConfig) -> None:
+    assessment.default_branch = trusted.trusted_default_branch
+    assessment.trusted_default_branch = trusted.trusted_default_branch
+    assessment.config_revision = trusted.config_revision
+    assessment.config_fingerprint = trusted.fingerprint
+    assessment.scope_decision = trusted.decision
+    assessment.scope_reason = trusted.reason
+
+
+def _out_of_scope_assessment(
+    snap: PullSnapshot, trusted: TrustedGuardConfig, *, dry_run: bool
+) -> Assessment:
+    """Configured exclusion: clear target status only; no report/policy/approval work."""
+    assessment = Assessment(
+        ok=True,
+        status="not_applicable",
+        closed=False,
+        reasons=[trusted.reason],
+        repo=snap.repo,
+        pr=snap.number,
+        head_sha=snap.head_sha,
+        base_sha=snap.base_sha,
+        base_ref=snap.base_ref,
+        default_branch=trusted.trusted_default_branch,
+        trusted_default_branch=trusted.trusted_default_branch,
+        config_revision=trusted.config_revision,
+        config_fingerprint=trusted.fingerprint,
+        scope_decision=trusted.decision,
+        scope_reason=trusted.reason,
+        head_repo=snap.head_repo,
+        private=snap.private,
+        required_names=[],
+        mode="enforce",
+        context=status_context_enforce(snap.base_ref),
+        state_for_status="success",
+        description=truncate_desc(NOT_APPLICABLE_DESCRIPTION),
+        comment_body="",
+        skip_publish=False,
+        dry_run=dry_run,
+    )
+    return assessment
+
+
+def _snapshot_matches_assessment(fresh: PullSnapshot, assessment: Assessment) -> bool:
+    expected_state = "closed" if assessment.closed else "open"
+    trusted = assessment.trusted_default_branch or assessment.default_branch
+    return (
+        fresh.head_sha == assessment.head_sha
+        and fresh.base_sha == assessment.base_sha
+        and fresh.base_ref == assessment.base_ref
+        and fresh.default_branch == trusted
+        and fresh.head_repo == assessment.head_repo
+        and fresh.private == assessment.private
+        and fresh.state == expected_state
+    )
+
+
+def _trusted_config_matches(
+    api: GitHubApi, snap: PullSnapshot, assessment: Assessment
+) -> bool:
+    """Re-resolve trusted config; reject changed revision, content or scope decision."""
+    if not assessment.config_revision and not assessment.scope_decision:
+        return True
+    trusted = resolve_trusted_guard_config(api, snap)
+    return (
+        trusted.trusted_default_branch
+        == (assessment.trusted_default_branch or assessment.default_branch)
+        and trusted.config_revision == assessment.config_revision
+        and trusted.fingerprint == assessment.config_fingerprint
+        and trusted.decision == assessment.scope_decision
+    )
+
+
 def assess_pull(
     api: GitHubApi,
     repo: str,
@@ -1121,21 +1381,32 @@ def assess_pull(
     runtime_env: Mapping[str, str] | None = None,
 ) -> Assessment:
     snap = pull or fetch_pull(api, repo, number)
+    # Closed no-op happens before trusted config lookup.
     if snap.state != "open":
         return Assessment(
             ok=True, status="closed", closed=True, skip_publish=True,
             reasons=["pull request is closed; nothing to reconcile"],
             repo=snap.repo, pr=snap.number, head_sha=snap.head_sha,
             base_sha=snap.base_sha, base_ref=snap.base_ref,
+            default_branch=snap.default_branch,
+            trusted_default_branch=snap.default_branch,
             head_repo=snap.head_repo, private=snap.private,
             state_for_status="", dry_run=dry_run,
         )
+    # Open PRs require trusted default_branch metadata to locate configuration.
+    if not snap.default_branch:
+        raise GuardError("pull repository default_branch missing or invalid")
+    trusted = resolve_trusted_guard_config(api, snap)
+    if trusted.decision == "exclude":
+        return _out_of_scope_assessment(snap, trusted, dry_run=dry_run)
     policy, policy_error = load_base_policy(api, snap.repo, snap.base_sha)
     base_mode = policy.get("mode") if policy else "enforce"
     approval = migration_approval(api, snap)
+    # Displayed policy_repo keeps head provenance for approved migrations.
+    # Source access for head objects always uses the base/target repository.
     policy_repo, policy_sha = snap.repo, snap.base_sha
     if approval:
-        head_policy, head_error = load_base_policy(api, snap.head_repo or snap.repo, snap.head_sha)
+        head_policy, head_error = load_base_policy(api, snap.repo, snap.head_sha)
         policy, policy_error = head_policy, head_error
         if policy is not None:
             policy = dict(policy, mode=base_mode)
@@ -1148,9 +1419,13 @@ def assess_pull(
             head_sha=snap.head_sha,
             base_sha=snap.base_sha,
             policy=policy,
-            head_repo=snap.head_repo or snap.repo,
             allow_changes=bool(approval),
         )
+    workflow_problems.extend(
+        check_pr_guard_config_migration(
+            api, snap, allow_changes=bool(approval)
+        )
+    )
     comments = collect_comments(api, snap.repo, snap.number)
     author_comment = pick_latest_author_report(comments, snap.author_id)
     assessment = assess_from_parts(
@@ -1166,6 +1441,7 @@ def assess_pull(
         policy_sha=policy_sha,
     )
     assessment.approval_fingerprint = approval
+    _attach_trusted_config(assessment, trusted)
     return assessment
 
 
@@ -1220,17 +1496,89 @@ def publish_assessment(
         assessment.writes.append("dry-run")
         return assessment
 
-    # Re-read PR before any successful publication.
+    # Re-read PR and trusted config before any successful publication.
     fresh = fetch_pull(api, assessment.repo, assessment.pr)
-    if (
-        fresh.head_sha != assessment.head_sha
-        or fresh.base_sha != assessment.base_sha
-        or fresh.base_ref != assessment.base_ref
-        or fresh.head_repo != assessment.head_repo
-        or fresh.private != assessment.private
-        or fresh.state != ("closed" if assessment.closed else "open")
-    ):
+    if not _snapshot_matches_assessment(fresh, assessment):
         raise GuardError("pull head/base/state changed before publish; retry assessment")
+    if not _trusted_config_matches(api, fresh, assessment):
+        raise GuardError(
+            "trusted pr-guard configuration changed before publish; retry assessment"
+        )
+
+    def _post_status(
+        context: str,
+        state: str,
+        description: str,
+        *,
+        require_report: bool,
+    ) -> None:
+        prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
+        if state == "success":
+            latest_pull = fetch_pull(api, assessment.repo, assessment.pr)
+            if not _snapshot_matches_assessment(latest_pull, assessment):
+                raise GuardError("pull changed before publish; retry assessment")
+            if not _trusted_config_matches(api, latest_pull, assessment):
+                raise GuardError(
+                    "trusted pr-guard configuration changed before publish; "
+                    "retry assessment"
+                )
+            if assessment.status == "not_applicable":
+                if assessment.scope_decision != "exclude":
+                    raise GuardError(
+                        "pull head/base/state changed before publish; retry assessment"
+                    )
+            elif require_report:
+                current_comments = collect_comments(api, assessment.repo, assessment.pr)
+                current_report = pick_latest_author_report(
+                    current_comments, fresh.author_id
+                )
+                if _report_fingerprint(current_report) != assessment.report_fingerprint:
+                    raise GuardError(
+                        "author report changed before publish; retry assessment"
+                    )
+                if migration_approval(api, fresh) != assessment.approval_fingerprint:
+                    raise GuardError(
+                        "maintainer approval changed before publish; retry assessment"
+                    )
+        if (
+            prev is not None
+            and prev.get("state") == state
+            and (prev.get("description") or "") == description
+            and not force
+        ):
+            assessment.writes.append(f"status:unchanged:{context}")
+            return
+        payload = {
+            "state": state,
+            "description": description,
+            "context": context,
+        }
+        status, _data, _ = api.request(
+            "POST",
+            f"/repos/{assessment.repo}/statuses/{assessment.head_sha}",
+            body=payload,
+            retry=False,
+        )
+        if status in {401, 403}:
+            raise GuardError(f"GitHub API denied ({status}) creating status")
+        if status < 200 or status >= 300:
+            raise GuardError(f"status create HTTP {status}")
+        assessment.writes.append(f"status:create:{context}")
+
+    # Configured exclusions: clear the target-branch status only. Do not look up
+    # or write comments, reports, or approvals, and do not touch another context.
+    if assessment.status == "not_applicable":
+        if assessment.scope_decision != "exclude":
+            raise GuardError(
+                "pull head/base/state changed before publish; retry assessment"
+            )
+        _post_status(
+            assessment.context or status_context_enforce(assessment.base_ref),
+            "success",
+            assessment.description or truncate_desc(NOT_APPLICABLE_DESCRIPTION),
+            require_report=False,
+        )
+        return assessment
 
     own_id, _own_login = api.resolve_own_user()
     comments = collect_comments(api, assessment.repo, assessment.pr)
@@ -1272,54 +1620,19 @@ def publish_assessment(
         new_id = data.get("id") if isinstance(data, dict) else None
         assessment.writes.append(f"comment:create:{new_id}")
 
-    def _post_status(context: str, state: str, description: str) -> None:
-        prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
-        if state == "success":
-            latest_pull = fetch_pull(api, assessment.repo, assessment.pr)
-            if latest_pull != fresh:
-                raise GuardError("pull changed before publish; retry assessment")
-            current_comments = collect_comments(api, assessment.repo, assessment.pr)
-            current_report = pick_latest_author_report(current_comments, fresh.author_id)
-            if _report_fingerprint(current_report) != assessment.report_fingerprint:
-                raise GuardError("author report changed before publish; retry assessment")
-            if migration_approval(api, fresh) != assessment.approval_fingerprint:
-                raise GuardError("maintainer approval changed before publish; retry assessment")
-        if (
-            prev is not None
-            and prev.get("state") == state
-            and (prev.get("description") or "") == description
-            and not force
-        ):
-            assessment.writes.append(f"status:unchanged:{context}")
-            return
-        payload = {
-            "state": state,
-            "description": description,
-            "context": context,
-        }
-        status, _data, _ = api.request(
-            "POST",
-            f"/repos/{assessment.repo}/statuses/{assessment.head_sha}",
-            body=payload,
-            retry=False,
-        )
-        if status in {401, 403}:
-            raise GuardError(f"GitHub API denied ({status}) creating status")
-        if status < 200 or status >= 300:
-            raise GuardError(f"status create HTTP {status}")
-        assessment.writes.append(f"status:create:{context}")
-
     if assessment.mode == "observe":
         _post_status(
             assessment.observe_context or status_context_observe(assessment.base_ref),
             "success",
             assessment.description,
+            require_report=True,
         )
     else:
         _post_status(
             assessment.context or status_context_enforce(assessment.base_ref),
             assessment.state_for_status,
             assessment.description,
+            require_report=True,
         )
     return assessment
 

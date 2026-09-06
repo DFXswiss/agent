@@ -45,10 +45,28 @@ from agent_cli.a38_guard import (  # noqa: E402
 HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 BASE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 BASE2 = "cccccccccccccccccccccccccccccccccccccccc"
+# Immutable tip of the trusted default branch used to locate pr-guard.json.
+DEFAULT_TIP = "dddddddddddddddddddddddddddddddddddddddd"
 REPO = "example/public-app"
 AUTHOR_ID = 1001
 BOT_ID = GITHUB_ACTIONS_BOT_ID
 OUTSIDER_ID = 2002
+
+
+def _pr_guard_config(
+    *,
+    enforce: list[str] | None = None,
+    exclude: list[str] | None = None,
+    default: str = "enforce",
+) -> dict:
+    return {
+        "schema": "pr-guard/v1",
+        "a38": {
+            "enforce": list(enforce or []),
+            "exclude": list(exclude or []),
+            "default": default,
+        },
+    }
 
 
 def _policy(*, mode: str = "enforce", jobs: list | None = None, exclusions: list | None = None) -> dict:
@@ -145,21 +163,40 @@ class FakeAPI:
         self.open_pulls: list[int] = [1]
         self.reviews: list[dict[str, Any]] = []
         self.permissions: dict[str, dict[str, Any]] = {}
+        # Branch/tag ref → immutable commit SHA for GET /commits/{ref}.
+        self.ref_commits: dict[str, str] = {
+            "develop": DEFAULT_TIP,
+            "main": DEFAULT_TIP,
+            "integration": DEFAULT_TIP,
+            "release": DEFAULT_TIP,
+        }
         wf = _workflow_yaml(["pytest"])
         self.files[(BASE, ".github/a38.json")] = json.dumps(_policy()).encode()
         self.files[(BASE, ".github/workflows/test.yml")] = wf
         self.files[(HEAD, ".github/workflows/test.yml")] = wf
+
+    def set_pr_guard_config(self, config: dict | None, *, revision: str = DEFAULT_TIP) -> None:
+        key = (revision, ".github/pr-guard.json")
+        if config is None:
+            self.files.pop(key, None)
+            return
+        self.files[key] = json.dumps(config).encode()
 
     def _pull(self, head: str, base: str, *, state: str = "open") -> dict[str, Any]:
         return {
             "number": 1,
             "state": state,
             "user": {"id": AUTHOR_ID, "login": "author"},
-            "head": {"sha": head, "repo": {"full_name": REPO}},
+            "head": {"sha": head, "repo": {"full_name": REPO, "default_branch": "feature"}},
             "base": {
                 "sha": base,
                 "ref": "develop",
-                "repo": {"private": False, "full_name": REPO},
+                "repo": {
+                    "private": False,
+                    "full_name": REPO,
+                    # Trusted default branch locates configuration only.
+                    "default_branch": "develop",
+                },
             },
         }
 
@@ -192,6 +229,20 @@ class FakeAPI:
         if method_u == "GET" and "/collaborators/" in path_only:
             login = path_only.split("/collaborators/")[1].split("/")[0]
             return 200, self.permissions.get(login, {"permission": "read", "user": {"id": OUTSIDER_ID}}), {}
+
+        if (
+            method_u == "GET"
+            and path_only.startswith(f"/repos/{REPO}/commits/")
+            and not path_only.endswith("/statuses")
+        ):
+            from urllib.parse import unquote
+
+            ref = unquote(path_only[len(f"/repos/{REPO}/commits/") :])
+            if ref in self.ref_commits:
+                return 200, {"sha": self.ref_commits[ref]}, {}
+            if a38_guard.HEAD_SHA_RE.fullmatch(ref.lower() if isinstance(ref, str) else ""):
+                return 200, {"sha": ref.lower()}, {}
+            return 404, {"message": "Not Found"}, {}
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls":
             items = [{"number": n} for n in self.open_pulls]
@@ -542,6 +593,8 @@ class A38GuardE2ETests(unittest.TestCase):
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE2)
         fake.pull["base"]["ref"] = "main"
+        # In-scope only when the target equals the trusted repository default.
+        fake.pull["base"]["repo"]["default_branch"] = "main"
         fake.tree_paths[BASE2] = [".github/workflows/test.yml"]
         fake.files[(BASE2, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]
         fake.files[(BASE2, ".github/workflows/test.yml")] = fake.files[
@@ -552,6 +605,7 @@ class A38GuardE2ETests(unittest.TestCase):
         )
         result = reconcile_pull(fake.api(), REPO, 1, publish=True)
         self.assertTrue(result.ok)
+        self.assertEqual(result.status, "pass")
         self.assertEqual(result.context, status_context_enforce("main"))
         self.assertTrue(any("(main)" in (s.get("context") or "") for s in fake.statuses))
 
@@ -699,6 +753,377 @@ class A38GuardYamlTests(unittest.TestCase):
         self.assertTrue(any("unchanged" in w for w in second.writes))
         # No additional create/update mutations beyond the first publish.
         self.assertEqual(fake.writes, writes_after_first)
+
+
+class A38PrGuardConfigScopeTests(unittest.TestCase):
+    def _exclude_release_config(self, fake: FakeAPI) -> None:
+        fake.set_pr_guard_config(
+            _pr_guard_config(enforce=["integration"], exclude=["release", "main"], default="enforce")
+        )
+
+    def _release_pull(self, fake: FakeAPI) -> None:
+        fake.pull["base"]["ref"] = "main"
+        fake.pull["base"]["repo"]["default_branch"] = "develop"
+        self._exclude_release_config(fake)
+
+    def test_excluded_target_is_not_applicable_without_policy_or_report(self) -> None:
+        fake = FakeAPI()
+        self._release_pull(fake)
+        del fake.files[(BASE, ".github/a38.json")]
+        fake.statuses.insert(
+            0,
+            {
+                "id": 1,
+                "sha": HEAD,
+                "state": "failure",
+                "description": "fail: no author local-CI report comment on this pull request",
+                "context": status_context_enforce("main"),
+            },
+        )
+        human = {
+            "id": 77,
+            "body": "release notes from a maintainer",
+            "user": {"id": AUTHOR_ID, "login": "author"},
+            "updated_at": "2026-09-05T11:00:00Z",
+            "created_at": "2026-09-05T11:00:00Z",
+        }
+        fake.comments.append(human)
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "not_applicable")
+        self.assertFalse(result.closed)
+        self.assertEqual(result.required_names, [])
+        self.assertEqual(result.comment_body, "")
+        self.assertFalse(result.skip_publish)
+        self.assertEqual(result.trusted_default_branch, "develop")
+        self.assertEqual(result.config_revision, DEFAULT_TIP)
+        self.assertEqual(result.scope_decision, "exclude")
+        self.assertEqual(result.base_ref, "main")
+        self.assertEqual(result.context, status_context_enforce("main"))
+        self.assertEqual(result.state_for_status, "success")
+        self.assertEqual(result.description, a38_guard.NOT_APPLICABLE_DESCRIPTION)
+        self.assertTrue(any("a38.exclude" in reason for reason in result.reasons))
+        self.assertFalse(any(w.startswith("comment:") for w in result.writes))
+        self.assertTrue(
+            any(
+                s["context"] == status_context_enforce("main") and s["state"] == "success"
+                for s in fake.statuses
+            )
+        )
+        self.assertEqual(
+            next(s for s in fake.statuses if s["context"] == status_context_enforce("main"))[
+                "description"
+            ],
+            a38_guard.NOT_APPLICABLE_DESCRIPTION,
+        )
+        self.assertFalse(any(s["context"] == status_context_enforce("develop") for s in fake.statuses))
+        self.assertEqual([c["id"] for c in fake.comments], [77])
+        self.assertEqual(fake.comments[0]["body"], human["body"])
+        payload = result.to_json()
+        self.assertEqual(payload["trusted_default_branch"], "develop")
+        self.assertEqual(payload["config_revision"], DEFAULT_TIP)
+        self.assertEqual(payload["scope_decision"], "exclude")
+
+    def test_configurable_enforce_exclude_default_and_exact_match(self) -> None:
+        fake = FakeAPI()
+        fake.set_pr_guard_config(
+            _pr_guard_config(
+                enforce=["integration"],
+                exclude=["release"],
+                default="exclude",
+            )
+        )
+        # Unlisted target follows default=exclude.
+        fake.pull["base"]["ref"] = "hotfix"
+        fake.ref_commits["hotfix"] = DEFAULT_TIP
+        out = assess_pull(fake.api(), REPO, 1)
+        self.assertEqual(out.status, "not_applicable")
+        self.assertEqual(out.scope_decision, "exclude")
+        self.assertTrue(any("a38.default" in reason for reason in out.reasons))
+
+        # Exact case-sensitive enforce match.
+        fake.pull["base"]["ref"] = "integration"
+        blocked = assess_pull(fake.api(), REPO, 1)
+        self.assertEqual(blocked.scope_decision, "enforce")
+        self.assertFalse(blocked.ok)
+        self.assertTrue(any("no author" in reason for reason in blocked.reasons))
+
+        # Case differs from listed exclude name → default exclude, not the list entry.
+        fake.set_pr_guard_config(
+            _pr_guard_config(enforce=[], exclude=["Release"], default="enforce")
+        )
+        fake.pull["base"]["ref"] = "release"
+        enforced = assess_pull(fake.api(), REPO, 1)
+        self.assertEqual(enforced.scope_decision, "enforce")
+        self.assertFalse(enforced.ok)
+
+    def test_absent_config_legacy_enforce_all(self) -> None:
+        fake = FakeAPI()
+        # No .github/pr-guard.json at trusted tip: legacy enforce-all.
+        fake.pull["base"]["ref"] = "main"
+        blocked = assess_pull(fake.api(), REPO, 1)
+        self.assertEqual(blocked.scope_decision, "enforce")
+        self.assertFalse(blocked.ok)
+        # Scope audit evidence stays separate from report failure reasons.
+        self.assertIn("legacy enforce-all", blocked.scope_reason)
+        self.assertEqual(
+            blocked.to_json().get("scope_reason"),
+            blocked.scope_reason,
+        )
+        self.assertEqual(blocked.config_revision, DEFAULT_TIP)
+        self.assertEqual(blocked.config_fingerprint, "missing")
+
+    def test_invalid_or_denied_config_cannot_exempt(self) -> None:
+        fake = FakeAPI()
+        fake.pull["base"]["ref"] = "main"
+        fake.set_pr_guard_config({"schema": "pr-guard/v1", "a38": {"default": "exclude"}})
+        with self.assertRaisesRegex(GuardError, "pr-guard"):
+            assess_pull(fake.api(), REPO, 1)
+
+        fake = FakeAPI()
+        fake.pull["base"]["ref"] = "main"
+        fake.set_pr_guard_config(
+            _pr_guard_config(enforce=["main"], exclude=["main"], default="enforce")
+        )
+        with self.assertRaisesRegex(GuardError, "overlap"):
+            assess_pull(fake.api(), REPO, 1)
+
+        fake = FakeAPI()
+        fake.pull["base"]["ref"] = "main"
+        fake.set_pr_guard_config(_pr_guard_config(exclude=["main"]))
+        fake.denied_prefixes.append(f"/repos/{REPO}/contents/.github/pr-guard.json")
+        with self.assertRaisesRegex(GuardError, "denied"):
+            assess_pull(fake.api(), REPO, 1)
+
+        fake = FakeAPI()
+        fake.pull["base"]["ref"] = "main"
+        fake.denied_prefixes.append(f"/repos/{REPO}/commits/")
+        with self.assertRaisesRegex(GuardError, "denied"):
+            assess_pull(fake.api(), REPO, 1)
+
+    def test_head_config_cannot_self_exempt(self) -> None:
+        fake = FakeAPI()
+        # Trusted tip has no config (legacy enforce). Head proposes exclude-all.
+        fake.files[(HEAD, ".github/pr-guard.json")] = json.dumps(
+            _pr_guard_config(exclude=["develop"], default="exclude")
+        ).encode()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=202
+        )
+        # Changing the file vs absent base requires migration approval.
+        result = assess_pull(fake.api(), REPO, 1)
+        self.assertEqual(result.scope_decision, "enforce")
+        self.assertFalse(result.ok)
+        self.assertTrue(any("pr-guard.json" in reason for reason in result.reasons))
+
+        # Even with approval, proposed head config is not activated for scope.
+        fake.permissions["maintainer"] = {
+            "permission": "write",
+            "user": {"id": 3030},
+        }
+        fake.reviews = [
+            {
+                "id": 100,
+                "user": {"id": 3030, "login": "maintainer"},
+                "state": "APPROVED",
+                "commit_id": HEAD,
+                "submitted_at": "2026-09-05T13:00:00Z",
+                "body": f"{a38_guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+            }
+        ]
+        fake.files[(HEAD, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]
+        passed = assess_pull(fake.api(), REPO, 1)
+        self.assertTrue(passed.ok)
+        self.assertEqual(passed.status, "pass")
+        self.assertEqual(passed.scope_decision, "enforce")
+
+    def test_enforced_target_still_requires_report_and_accepts_evidence(self) -> None:
+        fake = FakeAPI()
+        fake.set_pr_guard_config(
+            _pr_guard_config(enforce=["develop"], exclude=["main"], default="enforce")
+        )
+        blocked = assess_pull(fake.api(), REPO, 1)
+        self.assertFalse(blocked.ok)
+        self.assertEqual(blocked.status, "fail")
+        self.assertEqual(blocked.scope_decision, "enforce")
+        self.assertEqual(blocked.trusted_default_branch, "develop")
+        self.assertTrue(any("no author" in reason for reason in blocked.reasons))
+
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=201
+        )
+        passed = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(passed.ok)
+        self.assertEqual(passed.status, "pass")
+        self.assertEqual(passed.config_revision, DEFAULT_TIP)
+        self.assertTrue(any(w.startswith("comment:") for w in passed.writes))
+        self.assertIn(status_context_enforce("develop"), [s["context"] for s in fake.statuses])
+
+    def test_open_missing_or_invalid_default_branch_fails_closed(self) -> None:
+        for raw in (None, "", 0, "..", "main.lock", "a" * 76):
+            fake = FakeAPI()
+            fake.pull["base"]["repo"]["default_branch"] = raw
+            with self.assertRaisesRegex(GuardError, "default_branch"):
+                assess_pull(fake.api(), REPO, 1)
+
+    def test_closed_missing_default_branch_remains_noop_before_config_lookup(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, state="closed")
+        del fake.pull["base"]["repo"]["default_branch"]
+        # Commits lookup would fail; closed path must not reach it.
+        fake.ref_commits.clear()
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "closed")
+        self.assertTrue(result.closed)
+        self.assertIn("skipped:closed", result.writes)
+        self.assertEqual(fake.writes, [])
+
+    def test_head_fork_metadata_cannot_affect_trusted_config_source(self) -> None:
+        fake = FakeAPI()
+        self._exclude_release_config(fake)
+        fork = "contributor/fork"
+        fake.pull["head"]["repo"] = {
+            "full_name": fork,
+            "default_branch": "main",
+        }
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=203
+        )
+        result = assess_pull(fake.api(), REPO, 1)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "pass")
+        self.assertEqual(result.trusted_default_branch, "develop")
+        self.assertEqual(result.head_repo, fork)
+
+        fake.pull["base"]["ref"] = "main"
+        out = assess_pull(fake.api(), REPO, 1)
+        self.assertTrue(out.ok)
+        self.assertEqual(out.status, "not_applicable")
+        self.assertEqual(out.trusted_default_branch, "develop")
+
+    def test_retarget_default_or_config_change_rejects_stale_publish(self) -> None:
+        fake = FakeAPI()
+        self._release_pull(fake)
+        api = fake.api()
+        assessment = assess_pull(api, REPO, 1)
+        self.assertEqual(assessment.status, "not_applicable")
+
+        fake.pull["base"]["ref"] = "develop"
+        with self.assertRaisesRegex(GuardError, "changed before publish"):
+            publish_assessment(api, assessment)
+
+        fake.pull["base"]["ref"] = "main"
+        assessment = assess_pull(api, REPO, 1)
+        fake.pull["base"]["repo"]["default_branch"] = "main"
+        with self.assertRaisesRegex(GuardError, "changed before publish"):
+            publish_assessment(api, assessment)
+
+        fake.pull["base"]["repo"]["default_branch"] = "develop"
+        assessment = assess_pull(api, REPO, 1)
+        # Config revision moves before success status.
+        fake.ref_commits["develop"] = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        fake.files[
+            ("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", ".github/pr-guard.json")
+        ] = fake.files[(DEFAULT_TIP, ".github/pr-guard.json")]
+        with self.assertRaisesRegex(GuardError, "configuration changed before publish"):
+            publish_assessment(api, assessment)
+
+        fake.ref_commits["develop"] = DEFAULT_TIP
+        assessment = assess_pull(api, REPO, 1)
+        # Adversarial inconsistent API response: same immutable SHA, different
+        # bytes, via a fresh client. GitHub commit content cannot mutate; the
+        # existing immutable cache on `api` correctly returns prior bytes and
+        # must not be disabled to satisfy an impossible same-client fixture.
+        fake.set_pr_guard_config(
+            _pr_guard_config(enforce=["main"], exclude=[], default="enforce")
+        )
+        adversarial_api = fake.api()
+        with self.assertRaisesRegex(GuardError, "configuration changed before publish"):
+            publish_assessment(adversarial_api, assessment)
+
+    def test_not_applicable_dry_run_all_open_and_event_routes(self) -> None:
+        fake = FakeAPI()
+        self._release_pull(fake)
+        dry = reconcile_pull(fake.api(), REPO, 1, dry_run=True, publish=True)
+        self.assertEqual(dry.status, "not_applicable")
+        self.assertIn("dry-run", dry.writes)
+        self.assertEqual(fake.writes, [])
+        self.assertEqual(fake.statuses, [])
+
+        fake.open_pulls = [1]
+        code = main(
+            ["reconcile", "--repo", REPO, "--all-open", "--json"],
+            env={"GH_TOKEN": "fake"},
+            api=fake.api(),
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(
+            any(
+                s["context"] == status_context_enforce("main") and s["state"] == "success"
+                for s in fake.statuses
+            )
+        )
+        self.assertFalse(any(w.startswith("comment:") for w in fake.writes))
+
+        fake2 = FakeAPI()
+        self._release_pull(fake2)
+        payload = {
+            "action": "synchronize",
+            "pull_request": {"number": 1},
+            "repository": {"full_name": REPO},
+        }
+        event = reconcile_event(
+            fake2.api(),
+            event_name="pull_request_target",
+            payload=payload,
+            dry_run=False,
+            publish=True,
+        )
+        assert isinstance(event, a38_guard.Assessment)
+        self.assertEqual(event.status, "not_applicable")
+        self.assertTrue(
+            any(
+                s["context"] == status_context_enforce("main") and s["state"] == "success"
+                for s in fake2.statuses
+            )
+        )
+        self.assertFalse(any(w.startswith("comment:") for w in fake2.writes))
+
+    def test_not_applicable_status_is_deduplicated(self) -> None:
+        fake = FakeAPI()
+        self._release_pull(fake)
+        first = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertEqual(first.status, "not_applicable")
+        writes_after_first = list(fake.writes)
+        second = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertEqual(second.status, "not_applicable")
+        self.assertTrue(any("unchanged" in w for w in second.writes))
+        self.assertEqual(fake.writes, writes_after_first)
+
+    def test_schema_rejects_unknown_keys_duplicates_and_globs(self) -> None:
+        from agent_cli.pr_guard_config import PrGuardConfigError, load_pr_guard_config
+
+        with self.assertRaises(PrGuardConfigError):
+            load_pr_guard_config(
+                '{"schema":"pr-guard/v1","a38":{"enforce":[],"exclude":[],'
+                '"default":"enforce","extra":1}}'
+            )
+        with self.assertRaises(PrGuardConfigError):
+            load_pr_guard_config(
+                '{"schema":"pr-guard/v1","schema":"pr-guard/v1",'
+                '"a38":{"enforce":[],"exclude":[],"default":"enforce"}}'
+            )
+        with self.assertRaises(PrGuardConfigError):
+            load_pr_guard_config(
+                '{"schema":"pr-guard/v1","a38":{"enforce":["feat/*"],'
+                '"exclude":[],"default":"enforce"}}'
+            )
+        with self.assertRaises(PrGuardConfigError):
+            load_pr_guard_config(
+                '{"schema":"pr-guard/v1","a38":{"enforce":["develop","develop"],'
+                '"exclude":[],"default":"enforce"}}'
+            )
 
 
 if __name__ == "__main__":
