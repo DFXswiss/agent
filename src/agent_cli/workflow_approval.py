@@ -12,6 +12,14 @@ from urllib.parse import urlencode
 MAX_RUNS = 1000
 
 
+def _field(value: Any, *keys: str) -> Any:
+    for key in keys:
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    return value
+
+
 def _timestamp(value: Any) -> datetime:
     from .a38_guard import GuardError
     if not isinstance(value, str):
@@ -25,12 +33,15 @@ def _timestamp(value: Any) -> datetime:
     return result.astimezone(timezone.utc)
 
 
-def _runs(api: Any, repo: str, head: str) -> list[Mapping[str, Any]]:
+def _runs(api: Any, repo: str, head: str, *, event: str | None = "pull_request") -> list[Mapping[str, Any]]:
     from .a38_guard import GuardError
     items: list[Mapping[str, Any]] = []
     total = None
     for page in range(1, 11):
-        query = urlencode(dict(event="pull_request", head_sha=head, per_page=100, page=page))
+        params = dict(head_sha=head, per_page=100, page=page)
+        if event is not None:
+            params["event"] = event
+        query = urlencode(params)
         data = api.get_json(f"/repos/{repo}/actions/runs?{query}")
         if not isinstance(data, Mapping) or type(data.get("total_count")) is not int:
             raise GuardError("workflow run inventory missing total_count")
@@ -99,8 +110,8 @@ def _belongs_to_pull(api: Any, run: Mapping[str, Any], pull: Mapping[str, Any]) 
             raise GuardError("workflow run pull request association is ambiguous")
         linked = links[0]
         if (linked.get("number") != pull["number"]
-                or linked.get("head", {}).get("sha") != head["sha"]
-                or linked.get("base", {}).get("sha") != pull["base"]["sha"]):
+                or _field(linked, "head", "sha") != head["sha"]
+                or _field(linked, "base", "sha") != pull["base"]["sha"]):
             raise GuardError("workflow run targets another pull request head or base")
         return
     # GitHub returns an empty associations array for private forks. Prove the
@@ -108,12 +119,12 @@ def _belongs_to_pull(api: Any, run: Mapping[str, Any], pull: Mapping[str, Any]) 
     # the current base (an older-base merge cannot change the measured tree).
     pulls = api.paginate(f"/repos/{repo}/pulls?state=open")
     matches = [p for p in pulls if isinstance(p, Mapping) and p.get("state") == "open"
-               and p.get("head", {}).get("ref") == head["ref"]
-               and p.get("head", {}).get("repo", {}).get("full_name") == head["repo"]["full_name"]]
+               and _field(p, "head", "ref") == head["ref"]
+               and _field(p, "head", "repo", "full_name") == head["repo"]["full_name"]]
     if len(matches) != 1 or matches[0].get("number") != pull["number"]:
         raise GuardError("fork workflow run cannot be uniquely associated with this pull request")
     match = matches[0]
-    if match.get("head", {}).get("sha") != head["sha"] or match.get("base", {}).get("sha") != pull["base"]["sha"]:
+    if _field(match, "head", "sha") != head["sha"] or _field(match, "base", "sha") != pull["base"]["sha"]:
         raise GuardError("fork pull request changed during workflow approval")
     comparison = api.get_json(f"/repos/{repo}/compare/{pull['base']['sha']}...{head['sha']}")
     if not isinstance(comparison, Mapping) or comparison.get("status") not in {"ahead", "identical"}:
@@ -152,11 +163,11 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             raise GuardError("A38 evidence or trusted configuration changed before workflow approval")
         pull = api.get_json(f"/repos/{assessment.repo}/pulls/{assessment.pr}")
         if (not isinstance(pull, Mapping) or pull.get("state") != "open"
-                or pull.get("head", {}).get("sha") != assessment.head_sha
-                or pull.get("base", {}).get("sha") != assessment.base_sha
-                or pull.get("base", {}).get("ref") != assessment.base_ref
-                or pull.get("head", {}).get("repo", {}).get("full_name") != assessment.head_repo
-                or not isinstance(pull.get("head", {}).get("ref"), str)):
+                or _field(pull, "head", "sha") != assessment.head_sha
+                or _field(pull, "base", "sha") != assessment.base_sha
+                or _field(pull, "base", "ref") != assessment.base_ref
+                or _field(pull, "head", "repo", "full_name") != assessment.head_repo
+                or not isinstance(_field(pull, "head", "ref"), str)):
             raise GuardError("pull request changed before workflow approval")
         return pull
 
@@ -192,6 +203,9 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             if status != 201:
                 raise GuardError(f"workflow approval HTTP {status}; Actions write permission is required")
             assessment.writes.append(f"workflow:approve:{run['id']}")
+            if assessment.lifecycle_enabled:
+                from .pr_lifecycle import record_workflow_approval
+                record_workflow_approval(api, assessment, run)
         result.append({"run_id": run["id"], "workflow": path, "head": assessment.head_sha,
                        "status": "planned" if dry_run else "approved"})
     return result

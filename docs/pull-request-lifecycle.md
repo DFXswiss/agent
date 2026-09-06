@@ -49,6 +49,14 @@ Hosted CI and other applicable checks may fail. There is no promise that CI neve
 
 Pending checks must be labeled **pending**. Do not fabricate a pass.
 
+Repositories can enable the [guard's continuous readiness reconciliation](a38-guard.md#optional-continuous-readiness).
+An open Ready PR returns to Draft with an explanatory comment when required CI
+is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts.
+After the CI authorized by the bot succeeds, it can restore Ready only with
+current A38 evidence and confirmed mergeability. Required workflows, conditional
+CI scope, control-workflow exclusions and the polling schedule belong to the
+adopting repository. This does not rerun tests, submit review approvals or merge.
+
 If the repository's guard integration is known to be defective, require a **verified** rollout of the fixed integration before Ready for review. Do not instruct merging through red statuses.
 
 ## Ready for review
