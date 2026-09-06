@@ -208,8 +208,9 @@ def resolve_effective_github_https_url(
         urls = _explicit_url_get_urls(run, cwd, remote, push=push)
     else:
         urls = _remote_get_urls(run, cwd, remote, push=push)
-    for raw in urls:
-        ensure_github_https_remote(raw)
+    repositories = {ensure_github_https_remote(raw).casefold() for raw in urls}
+    if len(repositories) != 1:
+        raise GitHubHttpsRemoteError("remote URLs resolve to different GitHub repositories")
     return urls[0]
 
 

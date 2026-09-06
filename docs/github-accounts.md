@@ -107,3 +107,7 @@ working directory; validation and execution use that same directory. Automatic
 submodule transfers are disabled so a validated parent remote does not authorize
 another remote. Other Git commands are not a sandboxed command interface; only
 trusted static scripts may supply executor argv.
+
+Every effective URL returned for a named remote must identify the same GitHub
+owner/repository, case-insensitively, including every additional push URL.
+Fetch and push URL lists must also agree before a transfer is allowed.

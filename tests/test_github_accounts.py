@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -726,3 +727,41 @@ def test_transfer_cwd_is_mapped_once_and_submodule_transfers_are_disabled():
     assert 'fetch.recurseSubmodules=false' in pushed
     assert 'push.recurseSubmodules=no' in pushed
     assert 'submodule.recurse=false' in pushed
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('remote_field', ['url', 'pushurl'])
+@pytest.mark.parametrize('same_repository', [False, True])
+def test_all_real_git_remote_urls_must_identify_one_repository(tmp_path, monkeypatch, remote_field, same_repository):
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    repo = tmp_path / 'repo'
+    subprocess.run(['git', 'init', str(repo)], check=True, capture_output=True)
+    def git(*args):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+    first = 'https://github.com/Owner/Repo.git'
+    git('remote', 'add', 'origin', first)
+    if remote_field == 'pushurl':
+        git('config', '--add', 'remote.origin.pushurl', first)
+    second = 'https://github.com/owner/repo' if same_repository else 'https://github.com/other/unrequested.git'
+    git('config', '--add', f'remote.origin.{remote_field}', second)
+    transfers = []
+    def runner(argv):
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        command = _git_payload(argv)
+        if command[3] in {'fetch', 'push'}:
+            transfers.append(command)
+            return Completed(0, '', '')
+        result = subprocess.run(argv, text=True, capture_output=True)
+        return Completed(result.returncode, result.stdout, result.stderr)
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
+    command = ['git', '-C', str(repo), 'push', '--', 'origin', 'HEAD:refs/heads/feature']
+    if same_repository:
+        scoped(command)
+        assert len(transfers) == 1
+    else:
+        with pytest.raises(GitHubHttpsRemoteError, match='different GitHub repositories'):
+            scoped(command)
+        assert transfers == []
