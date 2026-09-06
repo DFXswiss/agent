@@ -2668,11 +2668,26 @@ def cmd_run(args: list[str]) -> None:
             try:
                 expected = str(snap.get("head_sha") or head or "").strip() or None
                 account = load_accounts(store.home).for_session(str(snap.get("session_id") or ""))
-                evidence = measure_mergeable(
-                    cwd=cwd,
-                    runner=account.runner(lambda argv: _exec_argv(argv, cwd=cwd)),
-                    expected_head=expected,
-                )
+                pull_request = _task_pull_request(_need(store, "task", tid))
+                if pull_request is not None:
+                    pr_repo, pr_number = pull_request
+                    evidence = measure_mergeable(
+                        cwd=cwd,
+                        runner=account.runner(
+                            lambda argv: _exec_argv(argv, cwd=cwd), require_git=False
+                        ),
+                        expected_head=expected,
+                        repo=pr_repo,
+                        number=pr_number,
+                    )
+                else:
+                    evidence = measure_mergeable(
+                        cwd=cwd,
+                        runner=account.runner(
+                            lambda argv: _exec_argv(argv, cwd=cwd), require_git=True
+                        ),
+                        expected_head=expected,
+                    )
             except GitActError as exc:
                 die(str(exc))
         if step.key in NO_AUTO_CLOSE:

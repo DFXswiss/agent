@@ -18,7 +18,8 @@ monitoring and informs a model when an observed event provides useful work.
 Installation defaults for GitHub accounts, AI accounts, roles, and selections
 are unconfigured (`NULL`). Add them explicitly through configuration, with no
 fixed count. See DESIGN.md §19.8 and docs/github-accounts.md for the implemented
-GitHub configuration and remaining AI/role configuration gap.
+GitHub configuration, remaining ambient-`gh` gaps (such as `agent a38`
+visibility lookup), and the AI/role configuration gap.
 
 Draft publication is immediate after the first signed task commit; see the
 lifecycle. A draft plus local tests is not done. Ready for review is signed

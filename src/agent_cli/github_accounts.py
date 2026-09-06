@@ -1,17 +1,21 @@
 """Device-local GitHub account bindings for static executors.
 
-No configured account means no GitHub execution. Credentials stay in each
-account's gh configuration directory, never in activities or this manifest.
+Covered executors load this manifest and refuse to run when it is absent or
+empty. Credentials stay in each account's gh configuration directory, never in
+activities or this manifest. Legacy ambient `gh` paths that do not load this
+file are outside this module's enforcement; see docs/github-accounts.md.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .runtime import Completed
 from .store import StoreError
@@ -19,20 +23,331 @@ from .store import StoreError
 Runner = Callable[[list[str]], Completed]
 CONFIG_FILE = "github-accounts.json"
 _LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
+_OWNER_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _TOKEN_ENV = (
     "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
     "GIT_ASKPASS", "SSH_ASKPASS",
 )
+_NETWORK_GIT = frozenset({"fetch", "push", "pull", "clone"})
+_GIT_OPTS_WITH_ARG = frozenset({
+    "-C", "-c", "-o",
+    "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
+    "--buffered-output-size",
+})
+_FETCH_PUSH_OPTS_WITH_ARG = frozenset({
+    "-o", "--upload-pack", "--exec", "--depth", "--shallow-since", "--shallow-exclude",
+    "--deepen", "--negotiation-tip", "--jobs", "--server-option", "--recv-pack",
+    "--push-option", "--repo",
+})
 
 
 class AccountError(StoreError):
     """Configuration or authentication does not authorize this execution."""
 
 
+class GitHubHttpsRemoteError(AccountError):
+    """A Git remote is not a safe HTTPS github.com URL.
+
+    Messages must never include remote URL values (they may embed credentials).
+    """
+
+
 def _text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip() or "\x00" in value or "\n" in value:
         raise AccountError(f"{field} must be a non-empty single-line string")
     return value
+
+
+def ensure_github_https_remote(url: str) -> str:
+    """Return ``owner/name`` for a credential-free HTTPS github.com remote.
+
+    Rejects SSH, non-GitHub hosts, non-HTTPS schemes, embedded userinfo, and
+    malformed paths. Error text never includes the URL value.
+    """
+    if not isinstance(url, str) or not url.strip() or "\x00" in url or "\n" in url or "\r" in url:
+        raise GitHubHttpsRemoteError("remote URL is unsafe")
+    text = url.strip()
+    parsed = urlparse(text)
+    if parsed.scheme != "https":
+        raise GitHubHttpsRemoteError("remote must be HTTPS GitHub")
+    if parsed.username is not None or parsed.password is not None:
+        raise GitHubHttpsRemoteError("remote URL must not contain credentials")
+    if "@" in (parsed.netloc or ""):
+        # urlparse missed userinfo; still refuse without echoing the value.
+        raise GitHubHttpsRemoteError("remote URL must not contain credentials")
+    try:
+        host = (parsed.hostname or "").casefold()
+        port = parsed.port
+    except ValueError:
+        # Malformed ports and some bad netlocs raise ValueError; never echo URL.
+        raise GitHubHttpsRemoteError("remote URL is unsafe") from None
+    if host != "github.com" or port not in {None, 443}:
+        raise GitHubHttpsRemoteError("remote must be HTTPS GitHub")
+    if parsed.query or parsed.fragment:
+        raise GitHubHttpsRemoteError("remote must be HTTPS GitHub owner/name")
+    path = parsed.path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    parts = path.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise GitHubHttpsRemoteError("remote must be HTTPS GitHub owner/name")
+    owner, name = parts
+    if _OWNER_NAME.fullmatch(owner) is None or _OWNER_NAME.fullmatch(name) is None:
+        raise GitHubHttpsRemoteError("remote must be HTTPS GitHub owner/name")
+    return f"{owner}/{name}"
+
+
+def _looks_like_refspec(value: str) -> bool:
+    if value.startswith("+") or value == "HEAD" or value.startswith("refs/"):
+        return True
+    if "://" in value or value.startswith("git@"):
+        return False
+    if ":" in value:
+        source, _, dest = value.partition(":")
+        if source in {"", "HEAD"} or source.startswith("refs/") or dest.startswith("refs/"):
+            return True
+    return False
+
+
+def _looks_like_url(value: str) -> bool:
+    if "://" in value or value.startswith("git@") or value.startswith("file:"):
+        return True
+    # scp-like host:path — not a Git refspec and not an absolute path
+    if ":" in value and not value.startswith("/") and not _looks_like_refspec(value):
+        host, _, rest = value.partition(":")
+        if host and "/" not in host and rest and not rest.startswith(":"):
+            return True
+    return False
+
+
+def _git_cwd_argv(cwd: str | None, *parts: str) -> list[str]:
+    if cwd is None:
+        return ["git", *parts]
+    return ["git", "-C", cwd, *parts]
+
+
+def _temp_remote_name() -> str:
+    return f"_agent_url_{secrets.token_hex(8)}"
+
+
+def _parse_get_url_stdout(stdout: str) -> list[str]:
+    urls = [line.strip() for line in stdout.splitlines() if line.strip()]
+    if not urls:
+        raise GitHubHttpsRemoteError("remote URL is not configured")
+    return urls
+
+
+def _remote_get_urls(run: Runner, cwd: str | None, remote: str, *, push: bool) -> list[str]:
+    """Return effective URLs from ``git remote get-url`` (rewrites already applied)."""
+    if not isinstance(remote, str) or not remote.strip() or "\x00" in remote or "\n" in remote or "\r" in remote:
+        raise GitHubHttpsRemoteError("remote name is unsafe")
+    name = remote.strip()
+    if _looks_like_url(name):
+        raise GitHubHttpsRemoteError("remote name is unsafe")
+    argv = _git_cwd_argv(cwd, "remote", "get-url")
+    if push:
+        argv.append("--push")
+    argv.extend(["--all", "--", name])
+    completed = run(argv)
+    if completed.returncode != 0:
+        # Distinct push URL absent: fall back to fetch URLs (Git's usual behavior).
+        if push:
+            return _remote_get_urls(run, cwd, name, push=False)
+        raise GitHubHttpsRemoteError("remote URL is not configured")
+    return _parse_get_url_stdout(completed.stdout)
+
+
+def _explicit_url_get_urls(run: Runner, cwd: str | None, url: str, *, push: bool) -> list[str]:
+    """Resolve rewrite effects for an explicit URL via a command-scoped temporary remote."""
+    if not isinstance(url, str) or not url.strip() or "\x00" in url or "\n" in url or "\r" in url:
+        raise GitHubHttpsRemoteError("remote URL is unsafe")
+    text = url.strip()
+    token = _temp_remote_name()
+    # Never print text; pass it only as a command-scoped git config value.
+    argv = _git_cwd_argv(cwd, "-c", f"remote.{token}.url={text}", "remote", "get-url")
+    if push:
+        argv.append("--push")
+    argv.extend(["--all", "--", token])
+    completed = run(argv)
+    if completed.returncode != 0:
+        if push:
+            return _explicit_url_get_urls(run, cwd, text, push=False)
+        raise GitHubHttpsRemoteError("remote URL is not configured")
+    return _parse_get_url_stdout(completed.stdout)
+
+
+def resolve_effective_github_https_url(
+    run: Runner,
+    cwd: str | None,
+    remote: str,
+    *,
+    push: bool = False,
+) -> str:
+    """Resolve one effective remote URL after pushurl and rewrite effects.
+
+    Relies on ``git remote get-url [--push] --all``, which already applies
+    ``insteadOf`` / ``pushInsteadOf``. Explicit URLs are resolved through a
+    temporary command-scoped remote so the same Git rewrite path runs. Every
+    resulting URL is validated; the first accepted URL string is returned.
+    Callers that need ``owner/name`` should use ``validate_repo_remote``.
+    """
+    if _looks_like_url(remote):
+        urls = _explicit_url_get_urls(run, cwd, remote, push=push)
+    else:
+        urls = _remote_get_urls(run, cwd, remote, push=push)
+    for raw in urls:
+        ensure_github_https_remote(raw)
+    return urls[0]
+
+
+def validate_repo_remote(run: Runner, cwd: str | None, remote: str) -> str:
+    """Validate fetch and push effective URLs for ``remote``; return ``owner/name``."""
+    fetch_url = resolve_effective_github_https_url(run, cwd, remote, push=False)
+    push_url = resolve_effective_github_https_url(run, cwd, remote, push=True)
+    fetch_repo = ensure_github_https_remote(fetch_url)
+    push_repo = ensure_github_https_remote(push_url)
+    if fetch_repo.casefold() != push_repo.casefold():
+        raise GitHubHttpsRemoteError("fetch and push remotes resolve to different GitHub repositories")
+    return fetch_repo
+
+
+def _skip_git_option(args: list[str], index: int) -> int:
+    arg = args[index]
+    name = arg.split("=", 1)[0]
+    if arg.startswith("--") and "=" in arg:
+        return index + 1
+    if arg in _GIT_OPTS_WITH_ARG or name in _GIT_OPTS_WITH_ARG:
+        return index + 2
+    return index + 1
+
+
+def _split_git_command(git_args: list[str]) -> tuple[str | None, list[str]]:
+    index = 0
+    while index < len(git_args):
+        arg = git_args[index]
+        if arg == "--":
+            index += 1
+            break
+        if arg.startswith("-"):
+            index = _skip_git_option(git_args, index)
+            continue
+        return arg, git_args[index + 1 :]
+    if index < len(git_args):
+        return git_args[index], git_args[index + 1 :]
+    return None, []
+
+
+def _positionals(rest: list[str], *, opts_with_arg: frozenset[str]) -> list[str]:
+    if "--" in rest:
+        return [item for item in rest[rest.index("--") + 1 :] if item]
+    index = 0
+    out: list[str] = []
+    while index < len(rest):
+        arg = rest[index]
+        if arg.startswith("-"):
+            name = arg.split("=", 1)[0]
+            if arg.startswith("--") and "=" in arg:
+                index += 1
+                continue
+            if arg in opts_with_arg or name in opts_with_arg:
+                index += 2
+                continue
+            index += 1
+            continue
+        out.append(arg)
+        index += 1
+    return out
+
+
+def _git_c_path(git_args: list[str]) -> str | None:
+    if "-C" not in git_args:
+        return None
+    index = git_args.index("-C") + 1
+    if index >= len(git_args):
+        raise AccountError("git -C requires a worktree path")
+    return git_args[index]
+
+
+def _args_before_double_dash(rest: list[str]) -> list[str]:
+    if "--" in rest:
+        return rest[: rest.index("--")]
+    return rest
+
+
+def _has_flag(rest: list[str], name: str) -> bool:
+    for arg in _args_before_double_dash(rest):
+        if arg == name or arg.startswith(name + "="):
+            return True
+    return False
+
+
+def _option_value(rest: list[str], name: str) -> str | None:
+    args = _args_before_double_dash(rest)
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+        if arg == name:
+            if index + 1 >= len(args):
+                raise GitHubHttpsRemoteError("unsupported git network command form")
+            return args[index + 1]
+        index += 1
+    return None
+
+
+def _network_remote_targets(git_args: list[str]) -> list[str] | None:
+    """Return the single explicit remote/URL to validate, or None if not network.
+
+    Supported transfer forms (explicit single repository argument):
+    - ``git fetch -- origin`` / ``git fetch origin [<refspec>...]``
+    - ``git push -- origin HEAD:refs/heads/feature``
+    - ``git push --set-upstream origin feature`` / ``git push -u origin feature``
+    - ``git pull`` with an explicit remote
+    - ``git clone <url>``
+
+    Implicit default-remote forms, ``fetch --all`` / ``--multiple``, and
+    ``--repo`` combined with a different positional repository are rejected.
+    Local metadata commands are not treated as network transfers.
+    """
+    verb, rest = _split_git_command(git_args)
+    if verb is None or verb not in _NETWORK_GIT:
+        return None
+    if verb == "clone":
+        positionals = _positionals(rest, opts_with_arg=_FETCH_PUSH_OPTS_WITH_ARG | _GIT_OPTS_WITH_ARG)
+        if not positionals:
+            raise GitHubHttpsRemoteError("git clone requires a repository URL")
+        return [positionals[0]]
+    if verb == "fetch" and (_has_flag(rest, "--all") or _has_flag(rest, "--multiple")):
+        raise GitHubHttpsRemoteError("unsupported git fetch form")
+    if verb == "pull" and (_has_flag(rest, "--all") or _has_flag(rest, "--multiple")):
+        raise GitHubHttpsRemoteError("unsupported git pull form")
+    repo_opt = _option_value(rest, "--repo")
+    positionals = _positionals(rest, opts_with_arg=_FETCH_PUSH_OPTS_WITH_ARG)
+    if repo_opt is not None:
+        if positionals:
+            raise GitHubHttpsRemoteError("unsupported git network command form")
+        if not repo_opt.strip():
+            raise GitHubHttpsRemoteError("unsupported git network command form")
+        return [repo_opt]
+    if not positionals:
+        raise GitHubHttpsRemoteError(f"git {verb} requires an explicit remote")
+    first = positionals[0]
+    # Refspec without a repository uses branch.remote / remote.pushDefault — unsupported.
+    if _looks_like_refspec(first) and not _looks_like_url(first):
+        raise GitHubHttpsRemoteError(f"git {verb} requires an explicit remote")
+    return [first]
+
+
+def _map_worktree_path(path: Path, mappings: tuple[tuple[str, str], ...]) -> str:
+    if not path.is_absolute() or ".." in path.parts:
+        raise AccountError("Git worktree path must be absolute without parent traversal")
+    mapped = str(path)
+    for source, target in sorted(mappings, key=lambda pair: len(pair[0]), reverse=True):
+        if path.is_relative_to(source):
+            mapped = str(Path(target) / path.relative_to(source))
+            break
+    return mapped
 
 
 @dataclass(frozen=True)
@@ -75,13 +390,12 @@ class Account:
                     index = git_args.index("-C") + 1
                     if index >= len(git_args):
                         raise AccountError("git -C requires a worktree path")
-                    path = Path(git_args[index])
-                    if not path.is_absolute() or ".." in path.parts:
-                        raise AccountError("Git worktree path must be absolute without parent traversal")
-                    for source, target in sorted(self.worktree_paths, key=lambda pair: len(pair[0]), reverse=True):
-                        if path.is_relative_to(source):
-                            git_args[index] = str(Path(target) / path.relative_to(source))
-                            break
+                    git_args[index] = _map_worktree_path(Path(git_args[index]), self.worktree_paths)
+                targets = _network_remote_targets(git_args)
+                if targets is not None:
+                    cwd = _git_c_path(git_args)
+                    for target in targets:
+                        validate_repo_remote(scoped, cwd, target)
                 command = [
                     "git", "-c", "core.askPass=", "-c", "http.extraHeader=",
                     "-c", "http.https://github.com/.extraHeader=", "-c", "credential.helper=",

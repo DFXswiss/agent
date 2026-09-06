@@ -24,9 +24,12 @@ model when an observed event provides useful work; see DESIGN.md §19.1.
 Accounts and roles must start unconfigured (`NULL`); see
 [DESIGN.md §19.8](DESIGN.md#198-configuration-starts-empty). Configure GitHub
 execution accounts and session bindings explicitly in
-[`github-accounts.json`](docs/github-accounts.md). There is no default GitHub
-account or fallback to the host login. AI-account and role configuration remain
-separate implementation work, as recorded in the design.
+[`github-accounts.json`](docs/github-accounts.md) for the executors that load
+it. There is no default GitHub account or fallback to the host login on those
+paths. Some legacy CLI paths still use ambient host `gh` (for example
+`agent a38` visibility lookup when `--private` is omitted); that gap is named
+in the design and the accounts document. AI-account and role configuration
+remain separate implementation work, as recorded in the design.
 
 ## Install
 

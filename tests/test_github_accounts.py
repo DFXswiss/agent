@@ -7,11 +7,97 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.github_accounts import Account, AccountError, load_accounts
+from agent_cli.git_act import measure_mergeable
+from agent_cli.github_accounts import (
+    Account,
+    AccountError,
+    GitHubHttpsRemoteError,
+    ensure_github_https_remote,
+    load_accounts,
+    resolve_effective_github_https_url,
+    validate_repo_remote,
+)
 from agent_cli.github_act import scan_github
 from agent_cli.runtime import Completed, run_argv
 from agent_cli.store import Store
 from agent_cli.watch import scan_assigned, scan_merged
+
+IDENTITY = {
+    'name': 'Worker One',
+    'email': 'one@example.com',
+    'signing_key': '/keys/one',
+    'signing_format': 'ssh',
+}
+SAFE_ORIGIN = 'https://github.com/owner/repo.git'
+
+
+def _git_payload(argv: list[str]) -> list[str]:
+    """Strip account runner env/prefix wrappers down to the git argv."""
+    if 'git' not in argv:
+        return argv
+    return argv[argv.index('git'):]
+
+
+def _apply_url_rules(url: str, rules: list[tuple[str, str]]) -> str:
+    best: tuple[str, str] | None = None
+    for base, old in rules:
+        if url.startswith(old) and (best is None or len(old) > len(best[1])):
+            best = (base, old)
+    if best is None:
+        return url
+    return best[0] + url[len(best[1]):]
+
+
+def _remote_script(
+    *,
+    fetch_url: str = SAFE_ORIGIN,
+    push_url: str | None = None,
+    instead_of: list[tuple[str, str]] | None = None,
+    push_instead_of: list[tuple[str, str]] | None = None,
+):
+    """Fake git remote get-url the way real Git does: rewrites already applied."""
+    push_url = fetch_url if push_url is None else push_url
+    instead_of = instead_of or []
+    push_instead_of = push_instead_of or []
+
+    def handle(argv: list[str]) -> Completed | None:
+        git = _git_payload(argv)
+        if not git or git[0] != 'git':
+            return None
+        if 'remote' not in git or 'get-url' not in git:
+            return None
+        explicit_url = None
+        explicit_name = None
+        index = 1
+        while index < len(git):
+            arg = git[index]
+            if arg == '-c' and index + 1 < len(git):
+                cfg = git[index + 1]
+                if cfg.startswith('remote.') and '.url=' in cfg:
+                    key, _, value = cfg.partition('=')
+                    parts = key.split('.')
+                    if len(parts) >= 3 and parts[0] == 'remote' and parts[-1] == 'url':
+                        explicit_name = '.'.join(parts[1:-1])
+                        explicit_url = value
+                index += 2
+                continue
+            if arg in {'-C'} and index + 1 < len(git):
+                index += 2
+                continue
+            index += 1
+        name = git[-1]
+        if explicit_url is not None and name == explicit_name:
+            url = explicit_url
+        elif name == 'origin':
+            url = push_url if '--push' in git else fetch_url
+        else:
+            return Completed(1, '', 'unknown remote')
+        url = _apply_url_rules(url, instead_of)
+        if '--push' in git:
+            url = _apply_url_rules(url, push_instead_of)
+        return Completed(0, url + '\n', '')
+
+    return handle
 
 
 def configure(home: Path, *, sessions=None) -> None:
@@ -159,12 +245,17 @@ def test_git_requires_explicit_identity_and_uses_scoped_helper():
     account = Account('one', 'WorkerOne', '/accounts/one')
     with pytest.raises(AccountError, match='Git identity is not configured'):
         account.runner(lambda argv: pytest.fail('No auth before missing identity is reported'), require_git=True)
-    identity = {'name': 'Worker One', 'email': 'one@example.com', 'signing_key': '/keys/one', 'signing_format': 'ssh'}
+    remotes = _remote_script()
     calls = []
     def runner(argv):
         calls.append(argv)
-        return Completed(0, 'WorkerOne', '')
-    scoped = Account('one', 'WorkerOne', '/accounts/one', identity).runner(runner, require_git=True)
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        return Completed(0, '', '')
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner, require_git=True)
     scoped(['git', '-C', '/work', 'push', 'origin', 'feature'])
     command = calls[-1]
     assert 'GIT_AUTHOR_EMAIL=one@example.com' in command
@@ -221,11 +312,17 @@ def test_container_account_keeps_credentials_and_signing_in_its_executor(tmp_pat
         'sessions': {'s1': 'container'},
     }
     (tmp_path / 'github-accounts.json').write_text(json.dumps(data))
+    remotes = _remote_script()
     calls = []
     def runner(argv):
         calls.append(argv)
         assert argv[:5] == ['docker', 'exec', '-i', 'worker-container', 'env']
-        return Completed(0, 'ContainerWorker', '')
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        if 'gh' in argv:
+            return Completed(0, 'ContainerWorker', '')
+        return Completed(0, '', '')
     scoped = load_accounts(tmp_path).for_session('s1').runner(runner, require_git=True)
     scoped(['git', '-C', '/srv/worker/data/repo', 'push', 'origin', 'feature'])
     command = calls[-1]
@@ -236,6 +333,281 @@ def test_container_account_keeps_credentials_and_signing_in_its_executor(tmp_pat
     assert calls[-1][calls[-1].index('-C') + 1] == '/srv/worker/database/repo'
     with pytest.raises(AccountError, match='parent traversal'):
         scoped(['git', '-C', '/srv/worker/data/../other', 'status'])
+
+
+@pytest.mark.no_pg
+def test_ensure_github_https_remote_accepts_safe_urls():
+    assert ensure_github_https_remote('https://github.com/Owner/Repo.git') == 'Owner/Repo'
+    assert ensure_github_https_remote('https://github.com/Owner/Repo') == 'Owner/Repo'
+    assert ensure_github_https_remote('https://github.com:443/Owner/Repo.git') == 'Owner/Repo'
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('url', [
+    'https://x-access-token:ghs_secret@github.com/owner/repo.git',
+    'https://user:pass@github.com/owner/repo',
+    'git@github.com:owner/repo.git',
+    'ssh://git@github.com/owner/repo.git',
+    'https://gitlab.com/owner/repo.git',
+    'https://github.com/owner/repo/extra',
+    'http://github.com/owner/repo.git',
+    '/absolute/local/path',
+    'https://github.com:abc/owner/repo.git',
+    'https://token:port-secret@github.com:notaport/owner/repo.git',
+])
+def test_ensure_github_https_remote_rejects_unsafe_without_leaking(url):
+    with pytest.raises(GitHubHttpsRemoteError) as excinfo:
+        ensure_github_https_remote(url)
+    message = str(excinfo.value)
+    assert 'ghs_secret' not in message
+    assert 'pass' not in message
+    assert 'x-access-token' not in message
+    assert 'port-secret' not in message
+    if '://' in url or url.startswith('git@'):
+        assert url not in message
+
+
+@pytest.mark.no_pg
+def test_resolve_effective_url_applies_pushurl_and_rewrites():
+    remotes = _remote_script(
+        fetch_url='https://github.com/owner/repo.git',
+        push_url='ssh://git@github.com/owner/repo.git',
+        instead_of=[('https://github.com/', 'ssh://git@github.com/')],
+    )
+    def run(argv):
+        handled = remotes(argv)
+        assert handled is not None
+        return handled
+    # Fake get-url already applies insteadOf, matching real Git.
+    assert resolve_effective_github_https_url(run, '/work', 'origin', push=False).startswith('https://')
+    assert resolve_effective_github_https_url(run, '/work', 'origin', push=True) == 'https://github.com/owner/repo.git'
+    assert validate_repo_remote(run, '/work', 'origin') == 'owner/repo'
+
+
+@pytest.mark.no_pg
+def test_explicit_url_uses_temporary_remote_get_url():
+    remotes = _remote_script(
+        instead_of=[('https://github.com/', 'ssh://git@github.com/')],
+    )
+    seen = []
+    def run(argv):
+        seen.append(list(argv))
+        handled = remotes(argv)
+        assert handled is not None
+        return handled
+    url = resolve_effective_github_https_url(
+        run, '/work', 'ssh://git@github.com/owner/repo.git', push=False,
+    )
+    assert url == 'https://github.com/owner/repo.git'
+    assert any(
+        '-c' in cmd and any(
+            isinstance(part, str) and part.startswith('remote.') and '.url=' in part
+            for part in cmd
+        )
+        for cmd in seen
+    )
+
+
+@pytest.mark.no_pg
+def test_pushurl_with_embedded_credentials_is_rejected_without_leaking():
+    secret = 'leak-me-not'
+    remotes = _remote_script(
+        fetch_url=SAFE_ORIGIN,
+        push_url=f'https://token:{secret}@github.com/owner/repo.git',
+    )
+    def run(argv):
+        handled = remotes(argv)
+        assert handled is not None
+        return handled
+    with pytest.raises(GitHubHttpsRemoteError, match='must not contain credentials') as excinfo:
+        validate_repo_remote(run, '/work', 'origin')
+    assert secret not in str(excinfo.value)
+
+
+@pytest.mark.no_pg
+def test_push_instead_of_rewrite_to_credential_url_is_rejected():
+    secret = 'push-rewrite-secret'
+    remotes = _remote_script(
+        fetch_url=SAFE_ORIGIN,
+        push_url=SAFE_ORIGIN,
+        push_instead_of=[(f'https://bot:{secret}@github.com/', 'https://github.com/')],
+    )
+    def run(argv):
+        handled = remotes(argv)
+        assert handled is not None
+        return handled
+    with pytest.raises(GitHubHttpsRemoteError, match='must not contain credentials') as excinfo:
+        resolve_effective_github_https_url(run, '/work', 'origin', push=True)
+    assert secret not in str(excinfo.value)
+
+
+@pytest.mark.no_pg
+def test_account_runner_rejects_unsafe_remote_before_network_git():
+    secret = 'before-network'
+    remotes = _remote_script(fetch_url=f'https://user:{secret}@github.com/owner/repo.git')
+    network = []
+    def runner(argv):
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        git = _git_payload(argv)
+        if git and git[0] == 'git' and any(v in git for v in ('fetch', 'push')):
+            network.append(git)
+        return Completed(0, '', '')
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner, require_git=True)
+    with pytest.raises(GitHubHttpsRemoteError) as excinfo:
+        scoped(['git', '-C', '/work', 'fetch', '--', 'origin'])
+    assert network == []
+    assert secret not in str(excinfo.value)
+    # Local metadata still works without remote validation.
+    scoped(['git', '-C', '/work', 'rev-parse', 'HEAD'])
+    scoped(['git', '-C', '/work', 'status', '--porcelain'])
+
+
+@pytest.mark.no_pg
+def test_account_runner_allows_safe_fetch_and_blocks_ssh_transport_url():
+    remotes = _remote_script()
+    seen = []
+    def runner(argv):
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        seen.append(_git_payload(argv))
+        return Completed(0, '', '')
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner, require_git=True)
+    scoped(['git', '-C', '/work', 'fetch', '--', 'origin'])
+    assert any('fetch' in cmd for cmd in seen)
+    with pytest.raises(GitHubHttpsRemoteError, match='HTTPS GitHub'):
+        scoped(['git', '-C', '/work', 'fetch', '--', 'git@github.com:owner/repo.git'])
+    scoped(['git', '-C', '/work', 'push', '--', 'origin', 'HEAD:refs/heads/feature'])
+    scoped(['git', '-C', '/work', 'push', '--set-upstream', 'origin', 'feature'])
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('argv', [
+    ['git', '-C', '/work', 'fetch'],
+    ['git', '-C', '/work', 'fetch', '--all'],
+    ['git', '-C', '/work', 'fetch', '--multiple', 'origin', 'other'],
+    ['git', '-C', '/work', 'fetch', '--repo=https://github.com/other/repo.git', 'origin'],
+    ['git', '-C', '/work', 'push'],
+    ['git', '-C', '/work', 'push', 'HEAD:refs/heads/feature'],
+    ['git', '-C', '/work', 'pull'],
+])
+def test_account_runner_refuses_implicit_or_multi_target_network_forms(argv):
+    remotes = _remote_script()
+    network = []
+    def runner(cmd):
+        handled = remotes(cmd)
+        if handled is not None:
+            return handled
+        if 'gh' in cmd:
+            return Completed(0, 'WorkerOne', '')
+        git = _git_payload(cmd)
+        if git and git[0] == 'git' and any(v in git for v in ('fetch', 'push', 'pull')):
+            network.append(git)
+        return Completed(0, '', '')
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner, require_git=True)
+    with pytest.raises(GitHubHttpsRemoteError):
+        scoped(argv)
+    assert network == []
+
+
+@pytest.mark.no_pg
+def test_container_mergeable_uses_explicit_fork_target_without_git_identity(tmp_path):
+    data = {
+        'accounts': {'container': {
+            'login': 'ContainerWorker', 'gh_config_dir': '/home/worker/.config/gh',
+            'command_prefix': ['docker', 'exec', '-i', 'worker-container'],
+            'worktree_paths': {'/srv/worker/data': '/data'},
+        }},
+        'sessions': {'s1': 'container'},
+    }
+    (tmp_path / 'github-accounts.json').write_text(json.dumps(data))
+    gh_calls = []
+    def runner(argv):
+        assert argv[:5] == ['docker', 'exec', '-i', 'worker-container', 'env']
+        if 'git' in argv:
+            raise AssertionError('explicit fork PR must not require git')
+        idx = argv.index('gh')
+        command = argv[idx:]
+        if command[:3] == ['gh', 'api', 'user']:
+            return Completed(0, 'ContainerWorker', '')
+        gh_calls.append(command)
+        if command[:3] == ['gh', 'pr', 'view']:
+            assert command[:6] == ['gh', 'pr', 'view', '7', '--repo', 'upstream/product']
+            return Completed(0, json.dumps({
+                'mergeable': 'MERGEABLE', 'state': 'OPEN',
+                'url': 'https://example.invalid/p/7', 'number': 7,
+                'headRefOid': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            }), '')
+        if command[:3] == ['gh', 'pr', 'checks']:
+            assert command[command.index('--repo') + 1] == 'upstream/product'
+            return Completed(0, '[]', '')
+        raise AssertionError(f'unexpected argv: {argv}')
+    scoped = load_accounts(tmp_path).for_session('s1').runner(runner, require_git=False)
+    evidence = measure_mergeable(
+        cwd='/srv/worker/data/repo',
+        runner=scoped,
+        repo='upstream/product',
+        number=7,
+    )
+    assert 'mergeable' in evidence
+    assert gh_calls
+    for call in gh_calls:
+        assert '--repo' in call
+        assert call[call.index('--repo') + 1] == 'upstream/product'
+
+
+@pytest.mark.no_pg
+def test_container_mergeable_derives_branch_with_mapped_git_c(tmp_path):
+    data = {
+        'accounts': {'container': {
+            'login': 'ContainerWorker', 'gh_config_dir': '/home/worker/.config/gh',
+            'git': {'name': 'Worker', 'email': 'worker@example.com', 'signing_format': 'ssh', 'signing_key': '/home/worker/.ssh/key'},
+            'command_prefix': ['docker', 'exec', '-i', 'worker-container'],
+            'worktree_paths': {'/srv/worker/data': '/data'},
+        }},
+        'sessions': {'s1': 'container'},
+    }
+    (tmp_path / 'github-accounts.json').write_text(json.dumps(data))
+    remotes = _remote_script()
+    gh_calls = []
+    def runner(argv):
+        assert argv[:5] == ['docker', 'exec', '-i', 'worker-container', 'env']
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        git = _git_payload(argv)
+        if git and git[0] == 'git' and 'rev-parse' in git and '--abbrev-ref' in git:
+            assert git[git.index('-C') + 1] == '/data/repo'
+            return Completed(0, 'feature\n', '')
+        idx = argv.index('gh')
+        command = argv[idx:]
+        if command[:3] == ['gh', 'api', 'user']:
+            return Completed(0, 'ContainerWorker', '')
+        gh_calls.append(command)
+        if command[:3] == ['gh', 'pr', 'view']:
+            assert command[:6] == ['gh', 'pr', 'view', 'feature', '--repo', 'owner/repo']
+            return Completed(0, json.dumps({
+                'mergeable': 'MERGEABLE', 'state': 'OPEN',
+                'url': 'https://example.invalid/p/1', 'number': 1,
+                'headRefOid': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            }), '')
+        if command[:3] == ['gh', 'pr', 'checks']:
+            assert command[command.index('--repo') + 1] == 'owner/repo'
+            return Completed(0, '[]', '')
+        return Completed(0, '', '')
+    scoped = load_accounts(tmp_path).for_session('s1').runner(runner, require_git=True)
+    evidence = measure_mergeable(cwd='/srv/worker/data/repo', runner=scoped)
+    assert 'mergeable' in evidence
+    assert gh_calls
+    for call in gh_calls:
+        assert '--repo' in call
+        assert call[call.index('--repo') + 1] == 'owner/repo'
 
 
 @pytest.mark.no_pg

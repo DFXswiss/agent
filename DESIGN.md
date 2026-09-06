@@ -650,17 +650,22 @@ limit on their number. A missing setting is unconfigured, not permission to
 select a built-in identity, provider account, or role.
 
 The device-local [GitHub account configuration](docs/github-accounts.md) implements
-explicit GitHub accounts and session bindings. An absent or empty configuration
-does not authorize GitHub execution. The executor verifies the selected login
-and never falls back to an ambient login or a different configured account.
-GitHub execution identities do not change the device's hub identity or transfer
-ownership of store rows.
+explicit GitHub accounts and session bindings for the static executors that load
+it: `agent github pending`, assignment and PR-merge scans, supervised issue
+reads, and the `pushed` / `mergeable` steps of `agent run`. An absent or empty
+configuration does not authorize those covered paths. On those paths the
+executor verifies the selected login and never falls back to an ambient login
+or a different configured account. GitHub execution identities do not change the
+device's hub identity or transfer ownership of store rows.
 
-**Remaining implementation boundary:** this GitHub configuration does not yet
-implement configurable AI accounts or user-defined roles. The role/vendor lists
-and model choices in `lane.py`, and the Grok default in `runtime.py`, still
-contain fixed values. They must not be presented as satisfying the complete
-empty-default configuration requirement.
+**Remaining implementation boundary:** this GitHub configuration does not cover
+every CLI path that may invoke `gh`. In particular, `agent a38` visibility
+lookup still runs ambient host `gh repo view` when `--private` is omitted
+(`src/agent_cli/a38.py`), without loading `github-accounts.json` or a session
+binding. This manifest also does not yet implement configurable AI accounts or
+user-defined roles. The role/vendor lists and model choices in `lane.py`, and
+the Grok default in `runtime.py`, still contain fixed values. They must not be
+presented as satisfying the complete empty-default configuration requirement.
 
 ## 20. Refused: hub as a coding control plane
 
