@@ -1,8 +1,20 @@
 # Pull request lifecycle
 
-This document is the **canonical** central rule for when a draft pull request is published, what may wait until after publication, and what Ready / completion still requires. Entrypoints in this repository link here. Tool plugins add only a short pointer; they do not redefine the standard.
+This document is the **canonical** central rule for when a draft pull request is published, what may wait until after publication, and what Ready for review / completion still requires. Entrypoints in this repository link here. Tool plugins add only a short pointer; they do not redefine the standard.
 
-A draft plus local tests is still **not** done. Human merge stays required. Session-specific review waivers are not a global default.
+Session-specific review waivers are not a global default.
+
+## Status terms (canonical)
+
+Use these terms only. Do not call an earlier stage finished, done, or completed.
+
+| Term | Meaning |
+|---|---|
+| **Draft** | Open GitHub pull request with `isDraft=true`. Never finished, done, or completed — even when tests pass. |
+| **Ready for review** | Leave-draft transition (`gh pr ready` / `isDraft=false`) after all required checks and reviews on the exact clean signed final head. Still not merged and still not completed. |
+| **Merged / completed** | Only after a **verified human merge**. Ledger `task-done`, checklist closes, spine states, and Ready for review are **not** proof of pull-request completion. |
+
+A draft plus local tests is still **not** Ready for review and **not** completed.
 
 ## Draft publication
 
@@ -21,7 +33,7 @@ The spine checklist key `pushed` remains **final validated push bookkeeping** af
 
 Work continues on the same draft. Proposal measurement for A38 migrations or bootstrap may follow publication; it is not a precondition for opening the draft.
 
-Applicable full tests, A38 author evidence, current-base policy checks, and the live join remain required for **Ready** and completion on the exact clean signed final head. Independently required GitHub checks and repository review gates also remain required unless a separately granted deviation says otherwise. Do not encode a one-off session waiver as the standing rule.
+Applicable full tests, A38 author evidence, current-base policy checks, and the live join remain required for **Ready for review** on the exact clean signed final head. Independently required GitHub checks and repository review gates also remain required unless a separately granted deviation says otherwise. Do not encode a one-off session waiver as the standing rule. Completion still requires human merge.
 
 ## CI while the draft is open
 
@@ -37,23 +49,23 @@ Hosted CI and other applicable checks may fail. There is no promise that CI neve
 
 Pending checks must be labeled **pending**. Do not fabricate a pass.
 
-If the repository's guard integration is known to be defective, require a **verified** rollout of the fixed integration before Ready. Do not instruct merging through red statuses.
+If the repository's guard integration is known to be defective, require a **verified** rollout of the fixed integration before Ready for review. Do not instruct merging through red statuses.
 
-## Ready and completion
+## Ready for review
 
-Stay draft until Ready is earned on the **exact clean signed final head**:
+Stay draft until Ready for review is earned on the **exact clean signed final head**:
 
 1. Full applicable tests for that head (repository rules and, when adopted, the complete A38 policy run and local verification).
 2. For A38 adopters: author report publication, current-base (or exact approved head) policy checks, and the live join required by [a38.md](a38.md) and [a38-guard.md](a38-guard.md).
 3. Independently required GitHub checks on this head (`skipped` and `cancelled` are not green unless the workflow documents that skip).
 4. Independent required reviews and approvals per the attached skills and the target repository's written rules.
-5. Then the Ready comment / leave-draft steps those rules define.
+5. Then the Ready comment / leave-draft steps those rules define (`isDraft=false`).
 
-`agent allow --action pr-ready` only checks task state when spine is attached; it is not itself the leave-draft verdict.
+`agent allow --action pr-ready` only checks task state when spine is attached; it is not itself the leave-draft verdict. Leaving draft is **Ready for review**, not pull-request completion.
 
-## Merge
+## Merge / completion
 
-A human merges. The client never merges.
+A human merges. The client never merges. Report the pull request as completed only after that merge is verified.
 
 ## Related documents
 

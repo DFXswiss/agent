@@ -58,9 +58,10 @@ Do not invent keys. Chains:
 `grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`, `mergeable`
 
 `done` still requires the workflow checklist and both summary sentences
-(`agent task summary`). `local_check_pass` and inner `reviewer_approved` are
-not pull-request done. A draft plus local tests is not done. See pr-review
-and CONTRIBUTING.md.
+(`agent task summary`). That ledger `task-done` / checklist close is not
+Ready for review and not pull-request completion. `local_check_pass` and
+inner `reviewer_approved` are not Ready for review. A draft plus local
+tests is not done. See pr-review and CONTRIBUTING.md.
 
 Draft publication timing is the central
 [pull request lifecycle](../../../../docs/pull-request-lifecycle.md): as soon

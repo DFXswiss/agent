@@ -2,19 +2,19 @@
 
 - Branch from `develop`. Never push to `develop` or `main`.
 - Push the branch to this repository. Do not open the pull request from a personal fork.
-- As soon as the first signed task commit exists, push and open a **draft** pull request immediately ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). Stay draft until the pull request is **done** (below). A human merges.
+- As soon as the first signed task commit exists, push and open a **draft** pull request immediately ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). Stay draft until **Ready for review** (below). A human merges; only then is the pull request completed.
 - Sign commits with the GitHub identity that owns the commits.
 - Public repository: English for commits and comments. The visible pull-request summary is an `EN:` block, optionally followed by a labeled `DE:` block.
 - Do not name private repositories, internal hostnames, or internal infrastructure.
 - Add or update tests in the same change.
-- Run `pytest` on the exact clean signed final head before Ready. Tests need PostgreSQL (`AGENT_TEST_PG` or a local `initdb`). Full pytest is not a gate for the first draft publication.
-- Pytest (or any green local suite) is a **check**, not done.
+- Run `pytest` on the exact clean signed final head before Ready for review. Tests need PostgreSQL (`AGENT_TEST_PG` or a local `initdb`). Full pytest is not a gate for the first draft publication.
+- Pytest (or any green local suite) is a **check**, not Ready for review and not completion.
 
-## Pull request done
+## Ready for review
 
-A draft plus local tests is not done. Do not claim the pull request is finished at that point. Draft timing and CI ownership while the draft is open are defined in [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md).
+A draft plus local tests is not done. Do not claim the pull request is finished, done, or completed at that point — including after leave-draft. Draft timing and CI ownership while the draft is open are defined in [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md).
 
-Done is all of:
+Ready for review requires all of:
 
 1. Signed commits on a branch in this repository, based on `develop`.
 2. Four lane verdicts on **this** head, two vendor stages: grok quality and grok logic in parallel, then Codex quality and Codex logic. Quality/conformance reads this file first. The session that authored the diff does not sit those reviews.
@@ -22,8 +22,8 @@ Done is all of:
 4. Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings. Iterate until all four lane verdicts on this head are approved.
 5. Inner implement/review rounds (`review-loop`) are not the PR reviews (`pr-review`).
 6. CI green on **this** head. This public repository uses GitHub Actions. `skipped` and `cancelled` are not green unless the workflow documents that skip. The local-CI comment schema for **private** product repositories is defined in [docs/local-ci-v1.md](docs/local-ci-v1.md) and verified by `agent local-ci verify`.
-7. Stay draft until the reviews and CI above hold on this head. Then one comment whose review-pass count is those four `approved` verdicts on this head, then mark the GitHub pull request ready. When spine and pr-review are attached, `agent allow --action pr-ready` only checks task state (`pushing` or `pr-review`); it is not the leave-draft verdict. Do not mark ready if it denies.
-8. A human merges. When spine is attached, `agent allow --action task-done` still needs the workflow checklist and both summary sentences.
+7. Stay draft until the reviews and CI above hold on this head. Then one comment whose review-pass count is those four `approved` verdicts on this head, then mark the GitHub pull request ready for review (`isDraft=false`). When spine and pr-review are attached, `agent allow --action pr-ready` only checks task state (`pushing` or `pr-review`); it is not the leave-draft verdict. Do not mark ready if it denies. Ready for review is still not merge and not completion.
+8. A human merges. Claim pull-request completion only after that merge is verified. When spine is attached, `agent allow --action task-done` still needs the workflow checklist and both summary sentences; that ledger state is not proof of pull-request completion.
 
 The AI inserts `pr.open` / `comment.post`; a rejected review gate inserts `review.post`. `agent github pending` performs GitHub HTTP. A retry reuses the existing draft.
 
