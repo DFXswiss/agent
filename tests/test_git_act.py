@@ -262,7 +262,7 @@ def test_mergeable_open_empty_checks() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             assert argv[argv.index("--repo") + 1] == REPO
             return Completed(
                 0,
@@ -293,7 +293,7 @@ def test_mergeable_all_success() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
@@ -330,7 +330,7 @@ def test_mergeable_conflicting() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
@@ -355,7 +355,7 @@ def test_mergeable_check_failure() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
@@ -386,7 +386,7 @@ def test_mergeable_check_pending() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
@@ -417,7 +417,7 @@ def test_mergeable_check_skipped() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
@@ -448,7 +448,7 @@ def test_mergeable_head_mismatch() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
@@ -473,7 +473,7 @@ def test_mergeable_missing_number() -> None:
         origin = _origin_resolution(argv)
         if origin is not None:
             return origin
-        if argv[:5] == _mergeable_view_argv():
+        if argv == [*_mergeable_view_argv(), "--json", "mergeable,state,url,number,headRefOid"]:
             return Completed(
                 0,
                 json.dumps(
