@@ -33,7 +33,48 @@ Schedule that command externally when Actions are unavailable; no daemon is inst
 
 ## Trust and policy
 
-The authoritative PR API supplies the target repository, exact head SHA, exact base SHA, target branch, actual boolean visibility and numeric author ID. For forks, head workflow files come from the head repository; base policy comes from the target repository. Missing repository identity or visibility fails closed.
+The authoritative PR API supplies the target repository, exact head SHA, exact base SHA, target branch, actual boolean visibility and numeric author ID. Immutable PR-head workflow trees and files, approved head policy, and proposed `.github/pr-guard.json` bytes are read through the base/target repository at the exact validated head SHA (Git object network). Repository-scoped tokens cannot list private fork trees directly; `head_repo` remains provenance only and is never replaced by a merge ref or other mutable tip. Base policy at the base SHA still comes from the target repository. Missing repository identity or visibility fails closed.
+
+### Target-branch scope (`.github/pr-guard.json`)
+
+A38 applicability is **repository configuration**, not a built-in default-branch rule. Optional [`.github/pr-guard.json`](../examples/pr-guard.json) on the trusted default-branch revision selects which PR **target** branches enforce A38:
+
+```json
+{
+  "schema": "pr-guard/v1",
+  "a38": {
+    "enforce": ["integration"],
+    "exclude": ["release"],
+    "default": "enforce"
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | Exactly `pr-guard/v1`. |
+| `a38.enforce` | Bounded array of exact target branch names that require A38. |
+| `a38.exclude` | Bounded array of exact target branch names that skip A38. |
+| `a38.default` | `enforce` or `exclude` for every target branch not listed above. |
+
+Rules enforced centrally by the Agent:
+
+- Branch entries are exact, case-sensitive names (same 1–75 character limits as status contexts). There is no glob DSL.
+- No duplicates within a list, and no overlap between `enforce` and `exclude`.
+- Unknown JSON keys and duplicate JSON keys fail closed. The schema string must match exactly.
+- There are **no** built-in branch-name rules. The repository default branch is used only to **locate** this file, never as an implicit enforce or exclude decision.
+- Evaluation order: exact `enforce` match, else exact `exclude` match, else `a38.default`.
+- When the entire file is missing on the trusted revision, legacy **enforce-all** applies (every target branch stays in scope). Malformed configuration, HTTP 403, or any non-404 configuration API error fails closed and cannot exempt a PR.
+- The live PR's `base.repo.default_branch` metadata (never the head repository) is validated, resolved to an immutable commit via `GET /repos/{repo}/commits/{urlencoded_default_branch}` (lowercase 40-hex SHA), then the file is read from that revision in the **base** repository. Configuration from the PR head can never self-exempt.
+- Assessment JSON records `trusted_default_branch` and `config_revision` for audit. Closed PRs remain successful no-ops **before** any configuration lookup.
+
+Excluded targets return `ok: true`, `status: not_applicable`, `closed: false`, with a reason from the configuration. The guard does not load A38 policy, author reports, migration approvals or provenance for those PRs, and does not publish comments. It publishes only the stable `A38 / report (<target>)` success status with an explicit not-applicable description (to clear prior erroneous red statuses), deduplicated; that success is not a test-pass claim and does not touch another target context. `--dry-run` writes nothing. In-scope targets keep the full original report, policy and migration behaviour.
+
+Edits to `.github/pr-guard.json` on an enforced PR (add, remove or change bytes versus the immutable base) are policy migrations: they require the same exact head/base maintainer `A38-POLICY-APPROVAL:v1` declaration as workflow or manifest changes. Even after approval, the proposed head configuration is **not** activated for the current PR; scope continues to come from the trusted default-branch revision until merge. Base A38 mode, security rules and the pinned executable remain unchanged.
+
+Before any publication and again immediately before a success status, the guard re-fetches the PR snapshot and the trusted configuration revision/content. Changed target branch, default branch, config revision, config bytes, head, base or state reject the stale verdict and retry assessment. Event, explicit PR and all-open routes share this same central resolver.
+
+### A38 manifest and workflows
 
 By default, policy is `.github/a38.json` from the immutable **base SHA**. Every workflow job at the head must be classified exactly once as required or explicitly excluded; classifications for absent jobs fail as well. Matrix profiles must run every required variant. The guard does not infer or execute matrix expressions. Added, removed or changed workflow bytes require the explicit policy migration described below.
 
@@ -55,7 +96,7 @@ Bot/app identities and non-collaborators are ineligible: their reviews neither a
 
 For each reviewer, the latest substantive submitted state controls authorization. Dismissed or superseded approvals do not count; ordinary comments and pending drafts do not change an approval. A current-head changes request from an eligible maintainer blocks the migration exception. New head or base SHAs require renewed explicit approval.
 
-An authorized migration may introduce, remove or change workflows, but the complete current head inventory and author report still must satisfy the approved head policy. The executable guard remains pinned and never runs head commands. The **base policy's enforcement mode stays active** for this PR, even if the proposed mode is `observe`. If no valid base policy exists, explicit approval permits bootstrap under `enforce`; initial adoption cannot silently bypass reporting.
+An authorized migration may introduce, remove or change workflows, and may also add, remove or change `.github/pr-guard.json`, but the complete current head inventory and author report still must satisfy the approved head policy. Proposed pr-guard configuration is never used for scope until it is merged to the trusted default-branch revision. The executable guard remains pinned and never runs head commands. The **base policy's enforcement mode stays active** for this PR, even if the proposed mode is `observe`. If no valid base policy exists, explicit approval permits bootstrap under `enforce`; initial adoption cannot silently bypass reporting.
 
 An unpublished migration proposal is first measured and verified against the still-active base policy and pushed at that same commit; that run is proposal publication evidence, not Ready evidence. Once the exact current head/base approval exists, rerun the full approved head policy and local verification, publish that newly generated report, and perform the live join. Bootstrap with a missing or invalid base policy instead follows the repository's existing pre-push checks to publish the proposal, then requires explicit approval and `enforce`; it must not invent a report or waive approval.
 
@@ -105,11 +146,11 @@ Issue-only events and the bot's own comments are ignored. The installed workflow
 
 ## Publication and failures
 
-Closed PRs return `status: closed` and process exit zero without reading policy or publishing comments/statuses, including when a PR closes during an all-open scan. Ignored events and empty all-open scans are also successful no-ops.
+Closed PRs return `status: closed` and process exit zero without reading policy, pr-guard configuration or publishing comments/statuses, including when a PR closes during an all-open scan. Ignored events and empty all-open scans are also successful no-ops.
 
 The bot marker is `<!-- PR-GUARD:A38:v1 -->`. Only comments owned by the numeric acting user may be updated. `/user` resolves normal tokens; fallback to the verified official Actions bot is allowed only when `GITHUB_ACTIONS=true`. Failed authentication outside Actions does not impersonate that bot. Existing identical comments/statuses are not reposted.
 
-Before publication, the guard re-fetches head/base/branch/state, the latest author report and any active migration approval. It checks again immediately before a success status and reassesses if evidence changed. GitHub offers no atomic transaction across comments, reviews and statuses: an edit after the final read is corrected by the next event or scheduled reconciliation.
+Before publication, the guard re-fetches head/base/branch/state, the trusted pr-guard configuration revision and bytes, the latest author report and any active migration approval. It checks again immediately before a success status and reassesses if evidence changed. GitHub offers no atomic transaction across comments, reviews and statuses: an edit after the final read is corrected by the next event or scheduled reconciliation.
 
 API or assessment errors terminate with failure. If the head is known and status writes remain available, the guard posts an `error` status to invalidate prior success. If GitHub denies or cannot perform that write, the CLI explicitly reports that invalidation failed; an old remote status may remain until a successful reconcile. Treat the failed guard run as an operational failure and rerun before merging. No implementation can invalidate remote state during a complete API outage.
 

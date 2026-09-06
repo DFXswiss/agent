@@ -26,6 +26,10 @@ from agent_cli.a38_guard import (  # noqa: E402
     PullSnapshot,
     assess_from_parts,
 )
+from agent_cli.pr_guard_config import (  # noqa: E402
+    evaluate_a38_scope,
+    load_pr_guard_config,
+)
 from agent_cli.local_ci import (  # noqa: E402
     BEGIN_MARK,
     END_MARK,
@@ -137,6 +141,29 @@ def _assess(pull: PullSnapshot, policy: dict, body: str | None):
         workflow_problems=[],
         author_comment=comment,
     )
+
+
+class PrGuardConfigEvaluationTests(unittest.TestCase):
+    def test_example_config_evaluation_matches_central_rules(self) -> None:
+        config = load_pr_guard_config(
+            json.dumps(
+                {
+                    "schema": "pr-guard/v1",
+                    "a38": {
+                        "enforce": ["integration"],
+                        "exclude": ["release"],
+                        "default": "enforce",
+                    },
+                }
+            )
+        )
+        self.assertEqual(evaluate_a38_scope(config, "integration")[0], "enforce")
+        self.assertEqual(evaluate_a38_scope(config, "release")[0], "exclude")
+        self.assertEqual(evaluate_a38_scope(config, "feature/x")[0], "enforce")
+        self.assertEqual(evaluate_a38_scope(None, "release")[0], "enforce")
+        decision, reason = evaluate_a38_scope(config, "Release")
+        self.assertEqual(decision, "enforce")
+        self.assertIn("a38.default", reason)
 
 
 class RunnerGuardEndToEndTests(unittest.TestCase):

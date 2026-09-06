@@ -1,0 +1,8 @@
+{
+  "schema": "pr-guard/v1",
+  "a38": {
+    "enforce": ["integration"],
+    "exclude": ["release"],
+    "default": "enforce"
+  }
+}

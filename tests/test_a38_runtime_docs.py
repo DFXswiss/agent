@@ -171,6 +171,65 @@ def test_closed_pull_does_not_resolve_runtime_provenance() -> None:
     assert assessment.comment_body == ""
 
 
+def test_docs_describe_pr_guard_repository_configuration() -> None:
+    root = Path(__file__).resolve().parents[1]
+    guard_docs = (root / "docs" / "a38-guard.md").read_text(encoding="utf-8")
+    standard = (root / "docs" / "a38.md").read_text(encoding="utf-8")
+    example = (root / "examples" / "pr-guard.json").read_text(encoding="utf-8")
+    assert ".github/pr-guard.json" in guard_docs
+    assert "pr-guard/v1" in guard_docs
+    assert "legacy" in guard_docs.lower() and "enforce-all" in guard_docs
+    assert "trusted_default_branch" in guard_docs or "trusted default" in guard_docs.lower()
+    assert "config_revision" in guard_docs
+    assert "not_applicable" in guard_docs
+    assert ".github/pr-guard.json" in standard
+    assert '"schema": "pr-guard/v1"' in example
+    assert "integration" in example and "release" in example
+
+
+def test_excluded_scope_skips_runtime_provenance_and_policy_loading() -> None:
+    snap = _pull()
+    snap = guard.PullSnapshot(
+        repo=snap.repo,
+        number=snap.number,
+        state="open",
+        head_sha=snap.head_sha,
+        base_sha=snap.base_sha,
+        base_ref="release",
+        private=snap.private,
+        author_id=snap.author_id,
+        author_login=snap.author_login,
+        head_repo=snap.head_repo,
+        default_branch="develop",
+    )
+    trusted = guard.TrustedGuardConfig(
+        trusted_default_branch="develop",
+        config_revision=BASE,
+        config={
+            "schema": "pr-guard/v1",
+            "a38": {"enforce": [], "exclude": ["release"], "default": "enforce"},
+        },
+        raw_bytes=b'{"schema":"pr-guard/v1"}',
+        decision="exclude",
+        reason="target branch 'release' is listed in .github/pr-guard.json a38.exclude",
+    )
+    with mock.patch.object(
+        guard, "resolve_runtime_revision", side_effect=AssertionError("must not resolve")
+    ), mock.patch.object(
+        guard, "resolve_trusted_guard_config", return_value=trusted
+    ), mock.patch.object(
+        guard, "load_base_policy", side_effect=AssertionError("must not load policy")
+    ), mock.patch.object(
+        guard, "collect_comments", side_effect=AssertionError("must not load comments")
+    ):
+        assessment = guard.assess_pull(mock.Mock(), TARGET, 7, pull=snap)
+    assert assessment.ok is True
+    assert assessment.status == "not_applicable"
+    assert assessment.comment_body == ""
+    assert assessment.config_revision == BASE
+    assert assessment.scope_decision == "exclude"
+
+
 def test_ignored_event_does_not_resolve_runtime_provenance() -> None:
     api = mock.Mock()
     api.resolve_own_user.return_value = (999, "guard")

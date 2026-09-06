@@ -11,7 +11,17 @@ import pytest
 
 from agent_cli import a38_guard as guard
 from test_a38_guard import (
-    AUTHOR_ID, BASE, BASE2, HEAD, REPO, FakeAPI, _policy, _report_comment,
+    AUTHOR_ID,
+    BASE,
+    BASE2,
+    DEFAULT_TIP,
+    HEAD,
+    REPO,
+    FakeAPI,
+    _policy,
+    _pr_guard_config,
+    _report_comment,
+    _workflow_yaml,
 )
 
 pytestmark = pytest.mark.no_pg
@@ -165,6 +175,109 @@ def test_approval_does_not_waive_workflow_coverage_or_report() -> None:
     assert not guard.assess_pull(fake.api(), REPO, 1).ok
 
 
+def test_pr_guard_config_change_requires_migration_approval_and_does_not_activate() -> None:
+    """Changing `.github/pr-guard.json` needs approval; proposed config stays inactive."""
+    fake = FakeAPI()
+    trusted = _pr_guard_config(enforce=["develop"], exclude=["main"], default="enforce")
+    fake.set_pr_guard_config(trusted)
+    # Base already carries the trusted file; head proposes excluding develop.
+    fake.files[(BASE, ".github/pr-guard.json")] = json.dumps(trusted).encode()
+    proposed = _pr_guard_config(enforce=[], exclude=["develop"], default="exclude")
+    fake.files[(HEAD, ".github/pr-guard.json")] = json.dumps(proposed).encode()
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=81)
+    blocked = guard.assess_pull(fake.api(), REPO, 1)
+    assert not blocked.ok
+    assert blocked.scope_decision == "enforce"
+    assert any("pr-guard.json" in reason for reason in blocked.reasons)
+
+    fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}
+    fake.reviews = [{
+        "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
+        "state": "APPROVED", "commit_id": HEAD,
+        "submitted_at": "2026-09-05T13:00:00Z",
+        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+    }]
+    fake.files[(HEAD, ".github/a38.json")] = json.dumps(_policy()).encode()
+    passed = guard.assess_pull(fake.api(), REPO, 1)
+    assert passed.ok
+    assert passed.scope_decision == "enforce"
+    assert passed.config_revision == DEFAULT_TIP
+    # Proposed head exclude must not self-exempt even after approval.
+    assert passed.status == "pass"
+
+
+@pytest.mark.parametrize(
+    ("head_bytes", "needle"),
+    [
+        (b"{not-json", "invalid"),
+        (
+            json.dumps({"schema": "pr-guard/v1", "a38": {"default": "exclude"}}).encode(),
+            "invalid",
+        ),
+        (
+            json.dumps(
+                _pr_guard_config(enforce=["main"], exclude=["main"], default="enforce")
+            ).encode(),
+            "overlap",
+        ),
+        (b"\xff\xfe{" + b'"schema":"pr-guard/v1"}', "UTF-8"),
+    ],
+    ids=["invalid-json", "invalid-schema", "overlap", "invalid-utf8"],
+)
+def test_approved_malformed_pr_guard_config_remains_blocked(
+    head_bytes: bytes, needle: str
+) -> None:
+    """Valid migration approval cannot accept malformed proposed head config."""
+    fake = FakeAPI()
+    trusted = _pr_guard_config(enforce=["develop"], exclude=["main"], default="enforce")
+    fake.set_pr_guard_config(trusted)
+    fake.files[(BASE, ".github/pr-guard.json")] = json.dumps(trusted).encode()
+    fake.files[(HEAD, ".github/pr-guard.json")] = head_bytes
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=82)
+    fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}
+    fake.reviews = [{
+        "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
+        "state": "APPROVED", "commit_id": HEAD,
+        "submitted_at": "2026-09-05T13:00:00Z",
+        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+    }]
+    fake.files[(HEAD, ".github/a38.json")] = json.dumps(_policy()).encode()
+    result = guard.assess_pull(fake.api(), REPO, 1)
+    assert not result.ok
+    # Head config still never controls current scope.
+    assert result.scope_decision == "enforce"
+    assert any("pr-guard.json" in reason for reason in result.reasons)
+    assert any(needle.lower() in reason.lower() for reason in result.reasons)
+
+
+def test_approved_pr_guard_config_removal_remains_approval_gated() -> None:
+    """Removing `.github/pr-guard.json` at head needs approval; no schema to validate."""
+    fake = FakeAPI()
+    trusted = _pr_guard_config(enforce=["develop"], exclude=["main"], default="enforce")
+    fake.set_pr_guard_config(trusted)
+    fake.files[(BASE, ".github/pr-guard.json")] = json.dumps(trusted).encode()
+    fake.files.pop((HEAD, ".github/pr-guard.json"), None)
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=83)
+    blocked = guard.assess_pull(fake.api(), REPO, 1)
+    assert not blocked.ok
+    assert blocked.scope_decision == "enforce"
+    assert any("pr-guard.json" in reason for reason in blocked.reasons)
+    assert any("approval" in reason for reason in blocked.reasons)
+
+    fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}
+    fake.reviews = [{
+        "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
+        "state": "APPROVED", "commit_id": HEAD,
+        "submitted_at": "2026-09-05T13:00:00Z",
+        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+    }]
+    fake.files[(HEAD, ".github/a38.json")] = json.dumps(_policy()).encode()
+    passed = guard.assess_pull(fake.api(), REPO, 1)
+    assert passed.ok
+    assert passed.scope_decision == "enforce"
+    assert passed.status == "pass"
+
+
 def test_report_edit_before_publication_is_reassessed() -> None:
     fake = migration()
     original = fake.request_fn
@@ -217,7 +330,22 @@ def test_review_dismissal_before_publication_is_reassessed() -> None:
     assert not any(s["state"] == "success" for s in fake.statuses)
 
 
-def test_fork_files_are_fetched_from_head_repository_only() -> None:
+def _deny_fork_repo(fake: FakeAPI, fork: str):
+    """Return a request_fn that 404s every fork-repo path (private-fork token)."""
+    original = fake.request_fn
+
+    def request(method, url, body=None):
+        path = url
+        if path.startswith("https://api.github.com"):
+            path = path[len("https://api.github.com") :]
+        if f"/repos/{fork}/" in path:
+            return 404, {"message": "Not Found"}, {}
+        return original(method, url, body)
+
+    return request
+
+
+def test_fork_head_objects_are_fetched_via_base_repository() -> None:
     fake = migration()
     fork = "contributor/fork"
     fake.pull["head"]["repo"]["full_name"] = fork
@@ -231,8 +359,160 @@ def test_fork_files_are_fetched_from_head_repository_only() -> None:
 
     result = guard.assess_pull(guard.GitHubApi("test", request_fn=request), REPO, 1)
     assert result.ok
-    assert all(f"/repos/{fork}/" in url for url in reads if HEAD in url)
+    assert result.head_repo == fork
+    head_reads = [url for url in reads if HEAD in url]
+    assert head_reads
+    assert all(f"/repos/{REPO}/" in url for url in head_reads)
+    assert not any(f"/repos/{fork}/" in url for url in head_reads)
     assert all(f"/repos/{REPO}/" in url for url in reads if BASE in url)
+
+
+def test_private_fork_valid_report_succeeds_without_fork_repo_access() -> None:
+    fake = FakeAPI()
+    fork = "contributor/fork"
+    fake.pull["head"]["repo"]["full_name"] = fork
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=90)
+    reads = []
+    base = _deny_fork_repo(fake, fork)
+
+    def request(method, url, body=None):
+        if method == "GET" and ("/contents/" in url or "/git/trees/" in url):
+            reads.append(url)
+        return base(method, url, body)
+
+    result = guard.assess_pull(
+        guard.GitHubApi("test", request_fn=request, sleep_fn=lambda _s: None), REPO, 1
+    )
+    assert result.ok
+    assert result.status == "pass"
+    assert result.head_repo == fork
+    assert reads
+    assert all(f"/repos/{REPO}/" in url for url in reads)
+    assert not any(f"/repos/{fork}/" in url for url in reads)
+
+
+def test_private_fork_changed_or_unclassified_workflow_remains_blocked() -> None:
+    fake = FakeAPI()
+    fork = "contributor/fork"
+    fake.pull["head"]["repo"]["full_name"] = fork
+    fake.files[(HEAD, ".github/workflows/test.yml")] += b"\n# unreviewed change\n"
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=91)
+    blocked = guard.assess_pull(
+        guard.GitHubApi(
+            "test", request_fn=_deny_fork_repo(fake, fork), sleep_fn=lambda _s: None
+        ),
+        REPO,
+        1,
+    )
+    assert not blocked.ok
+    assert any("bytes changed" in reason for reason in blocked.reasons)
+
+    fake2 = FakeAPI()
+    fake2.pull["head"]["repo"]["full_name"] = fork
+    fake2.files[(HEAD, ".github/workflows/test.yml")] = _workflow_yaml(
+        ["pytest", "mystery"]
+    )
+    fake2.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=92)
+    unclassified = guard.assess_pull(
+        guard.GitHubApi(
+            "test", request_fn=_deny_fork_repo(fake2, fork), sleep_fn=lambda _s: None
+        ),
+        REPO,
+        1,
+    )
+    assert not unclassified.ok
+    assert any("unclassified" in reason for reason in unclassified.reasons)
+
+
+def test_private_fork_approved_head_policy_and_config_read_exact_head_via_base() -> None:
+    fake = migration()
+    fork = "contributor/fork"
+    fake.pull["head"]["repo"]["full_name"] = fork
+    # Head policy/config differ from base by path+SHA; bytes stay report-compatible.
+    # URL evidence must show exact head SHA through the base repository only.
+    proposed = _pr_guard_config(exclude=["develop"], default="enforce")
+    fake.files[(HEAD, ".github/pr-guard.json")] = json.dumps(proposed).encode()
+    # Absent on base SHA so head vs base config bytes differ.
+    fake.files.pop((BASE, ".github/pr-guard.json"), None)
+    reads = []
+    base = _deny_fork_repo(fake, fork)
+
+    def request(method, url, body=None):
+        if method == "GET" and ("/contents/" in url or "/git/trees/" in url):
+            reads.append(url)
+        return base(method, url, body)
+
+    result = guard.assess_pull(
+        guard.GitHubApi("test", request_fn=request, sleep_fn=lambda _s: None), REPO, 1
+    )
+    assert result.ok
+    assert result.policy_sha == HEAD
+    assert result.policy_url == (
+        f"https://github.com/{fork}/blob/{HEAD}/.github/a38.json"
+    )
+    # Proposed head config is readable for migration compare, never activated.
+    assert result.scope_decision == "enforce"
+    head_policy_reads = [
+        url
+        for url in reads
+        if f"/repos/{REPO}/contents/" in url
+        and "a38.json" in url
+        and f"ref={HEAD}" in url
+    ]
+    head_config_reads = [
+        url
+        for url in reads
+        if f"/repos/{REPO}/contents/" in url
+        and "pr-guard.json" in url
+        and f"ref={HEAD}" in url
+    ]
+    assert head_policy_reads
+    assert head_config_reads
+    assert not any(f"/repos/{fork}/" in url for url in reads)
+
+
+def test_private_fork_api_unavailable_or_truncated_tree_fails_closed() -> None:
+    fork = "contributor/fork"
+
+    fake = FakeAPI()
+    fake.pull["head"]["repo"]["full_name"] = fork
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=93)
+    denied = _deny_fork_repo(fake, fork)
+
+    def deny_base_tree(method, url, body=None):
+        path = url
+        if path.startswith("https://api.github.com"):
+            path = path[len("https://api.github.com") :]
+        if method == "GET" and f"/repos/{REPO}/git/trees/{HEAD}" in path:
+            return 403, {"message": "denied"}, {}
+        return denied(method, url, body)
+
+    with pytest.raises(guard.GuardError, match="denied"):
+        guard.assess_pull(
+            guard.GitHubApi("test", request_fn=deny_base_tree, sleep_fn=lambda _s: None),
+            REPO,
+            1,
+        )
+
+    fake2 = FakeAPI()
+    fake2.pull["head"]["repo"]["full_name"] = fork
+    fake2.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=94)
+    denied2 = _deny_fork_repo(fake2, fork)
+
+    def truncated_tree(method, url, body=None):
+        path = url
+        if path.startswith("https://api.github.com"):
+            path = path[len("https://api.github.com") :]
+        if method == "GET" and f"/repos/{REPO}/git/trees/{HEAD}" in path:
+            return 200, {"tree": [], "truncated": True}, {}
+        return denied2(method, url, body)
+
+    with pytest.raises(guard.GuardError, match="truncated"):
+        guard.assess_pull(
+            guard.GitHubApi("test", request_fn=truncated_tree, sleep_fn=lambda _s: None),
+            REPO,
+            1,
+        )
 
 
 @pytest.mark.parametrize("visibility", [None, 0, "false"])
