@@ -651,3 +651,78 @@ def test_merge_watch_refuses_an_account_change(tmp_path):
     store.write('activity', 'update', 'a1', row)
     def forbidden(argv): pytest.fail('Changed binding must not reach GitHub')
     assert scan_merged(store, forbidden) == ([], 1)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('verb,option', [
+    ('push', '--receive-pack'), ('push', '--receive-pack=decoy'),
+    ('push', '--repo'), ('fetch', '--refmap'), ('pull', '--strategy'),
+    ('pull', '--onto'), ('clone', '--upload-pack'), ('fetch', '--recurse-submodules'),
+])
+def test_unknown_transfer_option_never_reaches_git(verb, option):
+    calls = []
+    def runner(argv):
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        calls.append(argv)
+        return Completed(0, '', '')
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
+    with pytest.raises(GitHubHttpsRemoteError, match='unsupported'):
+        scoped(['git', '-C', '/work', verb, option, 'decoy', 'origin'])
+    assert calls == []
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('prefix', [
+    ['-C', '/work', '-c', 'remote.origin.url=https://probe:synthetic@github.com/owner/repo'],
+    ['-C', '/work', '-C', '/different'],
+    ['--git-dir', '/different/.git'],
+])
+def test_transfer_context_overrides_are_refused_before_validation(prefix):
+    calls = []
+    def runner(argv):
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        calls.append(argv)
+        return Completed(0, '', '')
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
+    with pytest.raises(GitHubHttpsRemoteError, match='unsupported') as exc:
+        scoped(['git', *prefix, 'push', 'origin', 'feature'])
+    assert 'synthetic' not in str(exc.value)
+    assert calls == []
+
+
+@pytest.mark.no_pg
+def test_malformed_unicode_netloc_does_not_disclose_credentials():
+    secret = 'synthetic-redaction-probe'
+    with pytest.raises(GitHubHttpsRemoteError, match='unsafe') as exc:
+        ensure_github_https_remote(f'https://user:{secret}@github.com\uff1a443/owner/repo')
+    assert secret not in str(exc.value)
+
+
+@pytest.mark.no_pg
+def test_transfer_cwd_is_mapped_once_and_submodule_transfers_are_disabled():
+    remotes = _remote_script()
+    calls = []
+    raw_calls = []
+    def runner(argv):
+        raw_calls.append(argv)
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        command = _git_payload(argv)
+        calls.append(command)
+        handled = remotes(argv)
+        if handled is not None:
+            return handled
+        return Completed(0, '', '')
+    account = Account('one', 'WorkerOne', '/accounts/one', IDENTITY,
+                      worktree_paths=(('/srv', '/data'), ('/data', '/wrong')))
+    scoped = account.runner(runner)
+    scoped(['git', '-C', '/srv/repo', 'fetch', '--depth', '1', 'origin'])
+    scoped(['git', '-C', '/srv/repo', 'push', '--', 'origin', 'HEAD:refs/heads/feature'])
+    assert calls
+    assert all(c[c.index('-C') + 1] == '/data/repo' for c in calls)
+    pushed = raw_calls[-1]
+    assert 'fetch.recurseSubmodules=false' in pushed
+    assert 'push.recurseSubmodules=no' in pushed
+    assert 'submodule.recurse=false' in pushed

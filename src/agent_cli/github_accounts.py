@@ -34,11 +34,21 @@ _GIT_OPTS_WITH_ARG = frozenset({
     "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
     "--buffered-output-size",
 })
-_FETCH_PUSH_OPTS_WITH_ARG = frozenset({
-    "-o", "--upload-pack", "--exec", "--depth", "--shallow-since", "--shallow-exclude",
-    "--deepen", "--negotiation-tip", "--jobs", "--server-option", "--recv-pack",
-    "--push-option", "--repo",
-})
+_TRANSFER_FLAGS = {
+    "fetch": frozenset({"--prune", "-p", "--tags", "-t", "--no-tags", "-n",
+                        "--quiet", "-q", "--verbose", "-v", "--dry-run", "--no-recurse-submodules"}),
+    "push": frozenset({"--set-upstream", "-u", "--dry-run", "-n", "--porcelain",
+                       "--quiet", "-q", "--verbose", "-v", "--atomic"}),
+    "pull": frozenset({"--ff-only", "--no-rebase", "--quiet", "-q", "--verbose", "-v"}),
+    "clone": frozenset({"--no-checkout", "-n", "--bare", "--single-branch",
+                        "--no-single-branch", "--quiet", "-q", "--verbose", "-v"}),
+}
+_TRANSFER_VALUE_FLAGS = {
+    "fetch": frozenset({"--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--filter"}),
+    "push": frozenset(),
+    "pull": frozenset({"--depth"}),
+    "clone": frozenset({"--depth", "--branch", "-b", "--filter"}),
+}
 
 
 class AccountError(StoreError):
@@ -67,7 +77,10 @@ def ensure_github_https_remote(url: str) -> str:
     if not isinstance(url, str) or not url.strip() or "\x00" in url or "\n" in url or "\r" in url:
         raise GitHubHttpsRemoteError("remote URL is unsafe")
     text = url.strip()
-    parsed = urlparse(text)
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        raise GitHubHttpsRemoteError("remote URL is unsafe") from None
     if parsed.scheme != "https":
         raise GitHubHttpsRemoteError("remote must be HTTPS GitHub")
     if parsed.username is not None or parsed.password is not None:
@@ -237,28 +250,6 @@ def _split_git_command(git_args: list[str]) -> tuple[str | None, list[str]]:
     return None, []
 
 
-def _positionals(rest: list[str], *, opts_with_arg: frozenset[str]) -> list[str]:
-    if "--" in rest:
-        return [item for item in rest[rest.index("--") + 1 :] if item]
-    index = 0
-    out: list[str] = []
-    while index < len(rest):
-        arg = rest[index]
-        if arg.startswith("-"):
-            name = arg.split("=", 1)[0]
-            if arg.startswith("--") and "=" in arg:
-                index += 1
-                continue
-            if arg in opts_with_arg or name in opts_with_arg:
-                index += 2
-                continue
-            index += 1
-            continue
-        out.append(arg)
-        index += 1
-    return out
-
-
 def _git_c_path(git_args: list[str]) -> str | None:
     if "-C" not in git_args:
         return None
@@ -268,72 +259,50 @@ def _git_c_path(git_args: list[str]) -> str | None:
     return git_args[index]
 
 
-def _args_before_double_dash(rest: list[str]) -> list[str]:
-    if "--" in rest:
-        return rest[: rest.index("--")]
-    return rest
-
-
-def _has_flag(rest: list[str], name: str) -> bool:
-    for arg in _args_before_double_dash(rest):
-        if arg == name or arg.startswith(name + "="):
-            return True
-    return False
-
-
-def _option_value(rest: list[str], name: str) -> str | None:
-    args = _args_before_double_dash(rest)
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg.startswith(name + "="):
-            return arg.split("=", 1)[1]
-        if arg == name:
-            if index + 1 >= len(args):
-                raise GitHubHttpsRemoteError("unsupported git network command form")
-            return args[index + 1]
-        index += 1
-    return None
-
-
 def _network_remote_targets(git_args: list[str]) -> list[str] | None:
-    """Return the single explicit remote/URL to validate, or None if not network.
+    """Accept only explicitly supported single-remote transfers.
 
-    Supported transfer forms (explicit single repository argument):
-    - ``git fetch -- origin`` / ``git fetch origin [<refspec>...]``
-    - ``git push -- origin HEAD:refs/heads/feature``
-    - ``git push --set-upstream origin feature`` / ``git push -u origin feature``
-    - ``git pull`` with an explicit remote
-    - ``git clone <url>``
-
-    Implicit default-remote forms, ``fetch --all`` / ``--multiple``, and
-    ``--repo`` combined with a different positional repository are rejected.
-    Local metadata commands are not treated as network transfers.
+    Unknown options fail closed rather than guessing whether the next token is
+    their value or a repository. Network calls permit only an optional single
+    global -C; configuration/context overrides cannot differ between validation
+    and execution. Other local Git commands remain available.
     """
     verb, rest = _split_git_command(git_args)
-    if verb is None or verb not in _NETWORK_GIT:
+    if verb not in _NETWORK_GIT:
         return None
-    if verb == "clone":
-        positionals = _positionals(rest, opts_with_arg=_FETCH_PUSH_OPTS_WITH_ARG | _GIT_OPTS_WITH_ARG)
-        if not positionals:
-            raise GitHubHttpsRemoteError("git clone requires a repository URL")
-        return [positionals[0]]
-    if verb == "fetch" and (_has_flag(rest, "--all") or _has_flag(rest, "--multiple")):
-        raise GitHubHttpsRemoteError("unsupported git fetch form")
-    if verb == "pull" and (_has_flag(rest, "--all") or _has_flag(rest, "--multiple")):
-        raise GitHubHttpsRemoteError("unsupported git pull form")
-    repo_opt = _option_value(rest, "--repo")
-    positionals = _positionals(rest, opts_with_arg=_FETCH_PUSH_OPTS_WITH_ARG)
-    if repo_opt is not None:
-        if positionals:
-            raise GitHubHttpsRemoteError("unsupported git network command form")
-        if not repo_opt.strip():
-            raise GitHubHttpsRemoteError("unsupported git network command form")
-        return [repo_opt]
-    if not positionals:
+    leading = git_args[:len(git_args) - len(rest) - 1]
+    if leading and (len(leading) != 2 or leading[0] != "-C"):
+        raise GitHubHttpsRemoteError("unsupported git network configuration")
+    operands: list[str] = []
+    index = 0
+    while index < len(rest):
+        arg = rest[index]
+        if arg == "--":
+            operands.extend(rest[index + 1:])
+            break
+        if not arg.startswith("-"):
+            operands.append(arg)
+            index += 1
+            continue
+        if arg in _TRANSFER_FLAGS[verb]:
+            index += 1
+            continue
+        name, equal, value = arg.partition("=")
+        if name not in _TRANSFER_VALUE_FLAGS[verb]:
+            raise GitHubHttpsRemoteError("unsupported git network option")
+        if not equal:
+            index += 1
+            if index >= len(rest):
+                raise GitHubHttpsRemoteError("missing git network option value")
+            value = rest[index]
+        if not value or value.startswith("-"):
+            raise GitHubHttpsRemoteError("invalid git network option value")
+        index += 1
+    if not operands or not operands[0] or operands[0].startswith("-"):
         raise GitHubHttpsRemoteError(f"git {verb} requires an explicit remote")
-    first = positionals[0]
-    # Refspec without a repository uses branch.remote / remote.pushDefault — unsupported.
+    if verb == "clone" and len(operands) > 2:
+        raise GitHubHttpsRemoteError("unsupported git clone form")
+    first = operands[0]
     if _looks_like_refspec(first) and not _looks_like_url(first):
         raise GitHubHttpsRemoteError(f"git {verb} requires an explicit remote")
     return [first]
@@ -386,23 +355,28 @@ class Account:
                     f"GIT_COMMITTER_EMAIL={identity['email']}",
                 ])
                 git_args = list(argv[1:])
+                targets = _network_remote_targets(git_args)
+                if targets is not None:
+                    # Keep host cwd until each nested call maps it exactly once.
+                    cwd = _git_c_path(git_args)
+                    for target in targets:
+                        validate_repo_remote(scoped, cwd, target)
                 if "-C" in git_args:
                     index = git_args.index("-C") + 1
                     if index >= len(git_args):
                         raise AccountError("git -C requires a worktree path")
                     git_args[index] = _map_worktree_path(Path(git_args[index]), self.worktree_paths)
-                targets = _network_remote_targets(git_args)
-                if targets is not None:
-                    cwd = _git_c_path(git_args)
-                    for target in targets:
-                        validate_repo_remote(scoped, cwd, target)
+                network_config = (
+                    ["-c", "fetch.recurseSubmodules=false", "-c", "push.recurseSubmodules=no",
+                     "-c", "submodule.recurse=false"] if targets is not None else []
+                )
                 command = [
                     "git", "-c", "core.askPass=", "-c", "http.extraHeader=",
                     "-c", "http.https://github.com/.extraHeader=", "-c", "credential.helper=",
                     "-c", "credential.helper=!gh auth git-credential",
                     "-c", f"user.name={identity['name']}", "-c", f"user.email={identity['email']}",
                     "-c", "commit.gpgsign=true", "-c", f"gpg.format={identity['signing_format']}",
-                    "-c", f"user.signingkey={identity['signing_key']}", *git_args,
+                    "-c", f"user.signingkey={identity['signing_key']}", *network_config, *git_args,
                 ]
             return base([*self.command_prefix, *prefix, *command])
 

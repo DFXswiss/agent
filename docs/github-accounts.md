@@ -98,3 +98,12 @@ never load it. One reachable example is `agent a38` visibility lookup
 login. Configurable AI accounts and roles are part of the
 [empty-default requirement](../DESIGN.md#198-configuration-starts-empty) and are
 not implemented by this manifest.
+
+Transfer options are deliberately limited to the explicit allowlists in
+`github_accounts.py`. Unknown options (including custom receive/upload programs),
+implicit or multiple repositories, and per-command global configuration/context
+overrides are rejected rather than guessed. A transfer may use one mapped `-C`
+working directory; validation and execution use that same directory. Automatic
+submodule transfers are disabled so a validated parent remote does not authorize
+another remote. Other Git commands are not a sandboxed command interface; only
+trusted static scripts may supply executor argv.
