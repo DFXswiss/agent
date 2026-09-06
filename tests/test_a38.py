@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import signal
 import sys
@@ -23,13 +24,14 @@ except ImportError:
 from agent_cli.a38 import (
     A38Error,
     TERMINATION_GRACE_S,
+    _write_report,
     load_policy,
     main,
     parse_github_origin,
     run_policy,
     verify_report,
 )
-from agent_cli.local_ci import BEGIN_MARK, END_MARK, parse_comment
+from agent_cli.local_ci import BEGIN_MARK, END_MARK, parse_comment, render_block
 
 HEAD_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 HEAD_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -402,6 +404,30 @@ class VerifyTests(unittest.TestCase):
         self.assertTrue(any("duration_s exceeds" in r for r in verdict["reasons"]))
 
 
+class ReportPresentationTests(unittest.TestCase):
+    def test_presentation_preserves_evidence_and_validation_for_all_outcomes(self) -> None:
+        for result, code in (("pass", 0), ("fail", 1), ("error", 127), ("timeout", 124)):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
+                original = _report_comment(runs=[_run_payload(result=result, exit_code=code)])
+                payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+                output = Path(tmp) / "report.md"
+                _write_report(output, payload)
+                comment = output.read_text()
+                visible, details = comment.split("<details>\n<summary>Details</summary>\n\n")
+                self.assertEqual(visible, (
+                    "EN:\nThe A38 report below records the checks, results and durations.\n\n"
+                    "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
+                ))
+                # Only the presentation changes; the entire original evidence remains intact.
+                self.assertEqual(details, render_block(parse_comment(original)) + "\n</details>\n")
+                self.assertNotIn("<details open", comment)
+                self.assertEqual(parse_comment(comment), parse_comment(original))
+                self.assertEqual(comment.count(BEGIN_MARK), 1)
+                self.assertEqual(comment.count(END_MARK), 1)
+                verdict = verify_report(comment, _policy_dict(), repo="example/app", head=HEAD_A, private=True)
+                self.assertEqual(verdict["ok"], result == "pass")
+
+
 class OriginTests(unittest.TestCase):
     def test_https_and_ssh(self) -> None:
         self.assertEqual(
@@ -443,6 +469,8 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertTrue(verdict["ok"])
             self.assertEqual(calls, [["gh", "repo", "view", "example/app", "--json", "isPrivate"]])
+            self.assertTrue(output.read_text().startswith("EN:\n"))
+            self.assertIn("<details>\n<summary>Details</summary>\n\n", output.read_text())
             report = parse_comment(output.read_text())
             self.assertEqual(report.repo, "example/app")
             self.assertTrue(report.private)
@@ -556,6 +584,8 @@ class RunnerTests(unittest.TestCase):
                     base_sha=head, private=True,
                 )
             self.assertFalse(verdict["ok"])
+            self.assertTrue(output.read_text().startswith("EN:\n"))
+            self.assertTrue(output.read_text().endswith("\n</details>\n"))
             report = parse_comment(output.read_text())
             self.assertEqual(report.runs[0].result, "error")
             self.assertGreater(report.runs[0].duration_s, 0)
