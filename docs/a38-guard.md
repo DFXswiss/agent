@@ -41,11 +41,13 @@ Policy JSON uses the strict `a38/v1` schema. Workflow YAML is safely loaded with
 
 ## Approving a policy migration
 
-A policy update must not authorize itself. A maintainer can explicitly authorize using the proposed **head manifest as data** by submitting an APPROVED GitHub review with this exact line, replacing both SHAs:
+A policy update must not authorize itself. A maintainer can explicitly authorize using the proposed **head manifest as data** by submitting an APPROVED GitHub review with this declaration, replacing both SHAs:
 
 ```text
 A38-POLICY-APPROVAL:v1 head=<HEAD_SHA> base=<BASE_SHA>
 ```
+
+The canonical form stays one line. For usability, the three exact tokens may instead be separated by spaces or tabs, or wrapped at token boundaries onto immediately adjacent CRLF/LF lines with horizontal indentation; leading and trailing horizontal whitespace on the declaration lines is ignored. The declaration remains bounded to its own line or adjacent lines: surrounding prose is allowed only on separate lines, while prefix prose, suffix garbage, substring matches, changed key names or SHAs, missing or duplicate keys, split SHAs and fragments from separate declarations are rejected.
 
 The review's GitHub `commit_id` must equal the current head. The reviewer must differ from the PR author by numeric account ID and currently have write, maintain or admin permission on the target repository. The permission response must confirm the same numeric identity. A normal approval without the line does not authorize migration.
 

@@ -1063,14 +1063,23 @@ def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
         key = (review["submitted_at"], review["id"])
         if previous is None or key > (previous["submitted_at"], previous["id"]):
             latest[uid] = review
-    marker = f"{POLICY_APPROVAL_PREFIX} head={pull.head_sha} base={pull.base_sha}"
+    token_separator = r"(?:[ \t]+|[ \t]*\r?\n[ \t]*)"
+    approval_declaration = re.compile(
+        rf"^[ \t]*{re.escape(POLICY_APPROVAL_PREFIX)}"
+        rf"{token_separator}head={re.escape(pull.head_sha)}"
+        rf"{token_separator}base={re.escape(pull.base_sha)}[ \t]*\r?$",
+        re.MULTILINE,
+    )
     approved: list[tuple[int, int, str]] = []
     for uid, review in latest.items():
         if review.get("commit_id") != pull.head_sha:
             continue
         state = review["state"]
         body = review.get("body")
-        explicit = isinstance(body, str) and marker in [line.strip() for line in body.splitlines()]
+        explicit = (
+            isinstance(body, str)
+            and approval_declaration.search(body) is not None
+        )
         if state != "CHANGES_REQUESTED" and not (state == "APPROVED" and explicit):
             continue
         login = review["user"].get("login")

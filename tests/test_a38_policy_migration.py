@@ -41,6 +41,66 @@ def test_explicit_maintainer_approval_allows_changed_workflows() -> None:
     assert result.context == "A38 / report (develop)"
 
 
+@pytest.mark.parametrize("body", [
+    f"{guard.POLICY_APPROVAL_PREFIX}   head={HEAD}\t\tbase={BASE}",
+    f" \t{guard.POLICY_APPROVAL_PREFIX}\thead={HEAD}  base={BASE}\t ",
+    (
+        "Reviewed against the proposed policy.\n"
+        f"{guard.POLICY_APPROVAL_PREFIX}\n"
+        f"  head={HEAD}\n"
+        f"\tbase={BASE}\n"
+        "Approval rationale is above."
+    ),
+    (
+        "Reviewed against the proposed policy.\r\n\r\n"
+        f"  {guard.POLICY_APPROVAL_PREFIX}\r\n"
+        f"  head={HEAD}\r\n"
+        f"  base={BASE}  \r\n\r\n"
+        "Approved after review."
+    ),
+])
+def test_explicit_approval_accepts_benign_whitespace(body: str) -> None:
+    fake = migration()
+    fake.reviews[0]["body"] = body
+    result = guard.assess_pull(fake.api(), REPO, 1)
+    assert result.ok
+    assert result.policy_sha == HEAD
+    assert result.approval_fingerprint
+
+
+@pytest.mark.parametrize("body", [
+    f"{guard.POLICY_APPROVAL_PREFIX} head={BASE2} base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE2}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD[:-1]}g base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD}0 base={BASE}",
+    f"x{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+    f"Approval: {guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE} approved",
+    f"{guard.POLICY_APPROVAL_PREFIX} base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} head={HEAD} base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE} base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} HEAD={HEAD} base={BASE}",
+    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD.upper()} base={BASE}",
+    (
+        f"{guard.POLICY_APPROVAL_PREFIX}\n"
+        f"head={HEAD[:20]}\n{HEAD[20:]}\n"
+        f"base={BASE}"
+    ),
+    (
+        f"{guard.POLICY_APPROVAL_PREFIX}\nhead={HEAD}\n"
+        f"{guard.POLICY_APPROVAL_PREFIX}\nbase={BASE}"
+    ),
+])
+def test_explicit_approval_rejects_non_exact_declarations(body: str) -> None:
+    fake = migration()
+    fake.reviews[0]["body"] = body
+    result = guard.assess_pull(fake.api(), REPO, 1)
+    assert not result.ok
+    assert result.policy_sha == BASE
+    assert result.approval_fingerprint == ""
+
+
 @pytest.mark.parametrize("change", ["ordinary", "stale-head", "stale-base", "author", "read", "dismissed"])
 def test_invalid_approval_cannot_adopt_head_policy(change: str) -> None:
     fake = migration()
