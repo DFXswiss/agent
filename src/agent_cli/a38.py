@@ -8,6 +8,7 @@ of execution. Guard and backend integration live elsewhere.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import math
 import os
@@ -695,13 +696,34 @@ def _report_from_dict(payload: Mapping[str, Any]) -> LocalCiReport:
     return parse_comment(block)
 
 
+def _report_table_cell(value: str) -> str:
+    # Keep policy-supplied names inside one literal Markdown/HTML table cell.
+    escaped = html.escape(" ".join(value.split()))
+    return "".join(f"&#{ord(char)};" if char in "\\|`*_[]{}" else char for char in escaped)
+
+
+def _report_table(report: LocalCiReport) -> str:
+    rows = [
+        "| Check / Prüfung | Duration / Laufzeit | Result / Ergebnis | Exit code |",
+        "| --- | ---: | --- | ---: |",
+    ]
+    for run in report.runs:
+        label = _report_table_cell(f"{run.id}: {run.name}")
+        rows.append(f"| {label} | {math.ceil(run.duration_s)} s | {run.result} | {run.exit_code} |")
+    return "\n".join(rows) + "\n"
+
+
 def _write_report(output: Path, payload: Mapping[str, Any]) -> None:
     report = _report_from_dict(payload)
     text = (
         "EN:\nThe A38 report below records the checks, results and durations.\n\n"
         "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
         "<details>\n<summary>Details</summary>\n\n"
+        f"{_report_table(report)}\n"
+        "Durations rounded up to whole seconds / Laufzeiten auf ganze Sekunden aufgerundet.\n\n"
+        "<details>\n<summary>Original report / Originalbericht</summary>\n\n"
         f"{render_block(report)}\n"
+        "</details>\n\n"
         "</details>\n"
     )
     _write_bytes_atomic(output, text.encode("utf-8"))

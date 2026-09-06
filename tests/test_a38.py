@@ -419,13 +419,56 @@ class ReportPresentationTests(unittest.TestCase):
                     "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
                 ))
                 # Only the presentation changes; the entire original evidence remains intact.
-                self.assertEqual(details, render_block(parse_comment(original)) + "\n</details>\n")
+                table, original_details = details.split("<details>\n<summary>Original report / Originalbericht</summary>\n\n")
+                self.assertIn(f"| unit: Unit | 1 s | {result} | {code} |", table)
+                self.assertEqual(original_details, render_block(parse_comment(original)) + "\n</details>\n\n</details>\n")
                 self.assertNotIn("<details open", comment)
                 self.assertEqual(parse_comment(comment), parse_comment(original))
                 self.assertEqual(comment.count(BEGIN_MARK), 1)
                 self.assertEqual(comment.count(END_MARK), 1)
                 verdict = verify_report(comment, _policy_dict(), repo="example/app", head=HEAD_A, private=True)
                 self.assertEqual(verdict["ok"], result == "pass")
+
+    def test_table_lists_every_job_in_order_with_ceiling_seconds(self) -> None:
+        runs = [
+            _run_payload(ident="zero", name="Zero", duration_s=0),
+            _run_payload(ident="whole", name="Whole", duration_s=84, result="fail", exit_code=1),
+            _run_payload(ident="fraction", name="Fraction", duration_s=84.467, result="error", exit_code=127),
+            _run_payload(ident="tiny", name="Tiny", duration_s=0.001, result="timeout", exit_code=124),
+        ]
+        original = _report_comment(required=[r["id"] for r in runs], runs=runs)
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(output, payload)
+            comment = output.read_text()
+        rows = [line for line in comment.splitlines() if line.startswith("| ")][2:]
+        self.assertEqual(rows, [
+            "| zero: Zero | 0 s | pass | 0 |",
+            "| whole: Whole | 84 s | fail | 1 |",
+            "| fraction: Fraction | 85 s | error | 127 |",
+            "| tiny: Tiny | 1 s | timeout | 124 |",
+        ])
+        self.assertEqual(parse_comment(comment), parse_comment(original))
+        self.assertIn(render_block(parse_comment(original)), comment)
+
+    def test_policy_name_cannot_inject_table_rows_or_html(self) -> None:
+        name = "Checks | `code`\n</details><script>x</script> [link](url) *bold* \\"
+        original = _report_comment(runs=[_run_payload(name=name)])
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(output, payload)
+            comment = output.read_text()
+        table = comment.split("<summary>Details</summary>\n\n", 1)[1].split("<details>", 1)[0]
+        rows = [line for line in table.splitlines() if line.startswith("| ")]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[2].count("|"), 5)
+        for fragment in ("</details>", "<script>", "`", "[link]", "*bold*", "\\"):
+            self.assertNotIn(fragment, table)
+        self.assertIn("&#124;", table)
+        self.assertIn("&lt;/details&gt;", table)
+        self.assertEqual(parse_comment(comment).runs[0].name, name)
 
 
 class OriginTests(unittest.TestCase):
