@@ -5,29 +5,64 @@ on:
   push:
     branches: [develop, main]
 
+permissions:
+  contents: read
+
 jobs:
   pytest:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: agent
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U agent"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    runs-on: [self-hosted]
     env:
-      AGENT_TEST_PG: host=127.0.0.1 port=5432 user=agent dbname=postgres
       A38_TEST_DOCKER: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[test]"
-      - run: pytest
+      - name: Preflight runner tools
+        run: |
+          set -euo pipefail
+          # Functional Homebrew toolpaths when present (macOS). Not private hosts.
+          if [ -d /opt/homebrew/bin ]; then
+            echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+            export PATH="/opt/homebrew/bin:$PATH"
+          fi
+          if [ -d /opt/homebrew/opt/postgresql@17/bin ]; then
+            echo "/opt/homebrew/opt/postgresql@17/bin" >> "$GITHUB_PATH"
+            export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+          elif [ -d /opt/homebrew/opt/postgresql@16/bin ]; then
+            echo "/opt/homebrew/opt/postgresql@16/bin" >> "$GITHUB_PATH"
+            export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
+          fi
+          # Linux runners use already-installed system PostgreSQL/Docker paths.
+          if ! command -v initdb >/dev/null; then
+            echo "PostgreSQL binaries (initdb) must already be on PATH on this self-hosted runner." >&2
+            echo "Install them outside CI; this workflow does not run apt or brew." >&2
+            exit 1
+          fi
+          if ! command -v pg_ctl >/dev/null; then
+            echo "PostgreSQL binaries (pg_ctl) must already be on PATH on this self-hosted runner." >&2
+            echo "Install them outside CI; this workflow does not run apt or brew." >&2
+            exit 1
+          fi
+          if ! command -v docker >/dev/null; then
+            echo "Working Docker must already be installed on this self-hosted runner." >&2
+            echo "Install and start it outside CI; this workflow does not run apt or brew." >&2
+            exit 1
+          fi
+          if ! docker info >/dev/null 2>&1; then
+            echo "Docker is installed but the daemon is not reachable on this self-hosted runner." >&2
+            exit 1
+          fi
+      - name: Install and test in isolated venv
+        run: |
+          set -euo pipefail
+          VENV="${RUNNER_TEMP}/agent-test-venv-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python -m venv "$VENV"
+          # shellcheck disable=SC1091
+          source "$VENV/bin/activate"
+          python -m pip install --disable-pip-version-check -e ".[test]"
+          # Use tests/conftest.py ensure_cluster (temporary local PostgreSQL).
+          unset AGENT_TEST_PG
+          pytest

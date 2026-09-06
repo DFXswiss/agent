@@ -6,6 +6,8 @@ dfx pr guard explains a repository's centrally defined [A38 rules](a38.md), chec
 
 Install the [example workflow](../examples/a38-guard.yml) on the target repository's default branch. Replace `USES_REF_PIN_ME` with a reviewed, published **full commit SHA** of this repository. The example is not deployable until that placeholder is replaced. Keep the guard's executable action pinned even when approving policy migrations.
 
+The example job uses `runs-on: [self-hosted]` so the guard process runs on an adopter-operated machine. GitHub still orchestrates the workflow and displays check statuses; it must not be the execution host. Adopters may append their own runner labels or groups after `self-hosted`. That routing belongs in the adopter's workflow configuration only — the guard runtime never hardcodes runner labels, hostnames, or private repository names. Do not put private infrastructure names into public documentation or the shared example.
+
 The [composite action](../.github/actions/a38-guard/action.yml) uses pinned setup-python and PyYAML 6.0.2, and imports only the trusted action's sources through `github.action_path/../../../src`. Both Python steps run from the trusted action directory with safe-path mode (`python -P`), and replace inherited `PYTHONPATH` with the trusted source path, preventing consumer modules from shadowing the guard or its installer. It does not install dependencies or run scripts from the consumer checkout. Install the package's declared dependencies for standalone use; there is no fallback YAML parser.
 
 The guard's comment and JSON expose three different immutable links:
@@ -22,14 +24,14 @@ Standalone execution accepts the same explicit trusted `A38_RUNTIME_REVISION`. W
 
 The token requires contents read, pull requests write, issues write and statuses write. Publishing the guard comment on a pull request needs `pull-requests: write` for `GITHUB_TOKEN`; `issues: write` alone is not enough and yields 403. Policy migrations also require permission to read collaborators' effective repository permissions. If that API is unavailable, the migration fails closed. Use a dedicated GitHub App or service account with the necessary repository access for external operation. Tokens are taken from `GH_TOKEN` or `GITHUB_TOKEN` and never printed.
 
-Actions must actually be available for event-driven operation. When Actions are blocked or unavailable, run the same reconciler on a trusted external host:
+Actions must actually be available for event-driven operation, with jobs scheduled onto the adopter's self-hosted runners. When Actions are blocked or no suitable self-hosted runner is registered, run the same reconciler on a trusted machine the adopter controls:
 
 ```sh
 agent pr-guard --repo OWNER/NAME --all-open --dry-run
 agent pr-guard --repo OWNER/NAME --all-open
 ```
 
-Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and serializes all bot runs for the repository. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
+Schedule that command externally when Actions are unavailable; no daemon is installed and this package does not ship a production runner installer. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and serializes all bot runs for the repository. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
 
 ## Trust and policy
 

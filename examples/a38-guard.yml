@@ -1,6 +1,8 @@
 # Example consumer workflow for dfx pr guard.
 # Before rollout: replace USES_REF_PIN_ME with a pinned commit SHA of DFXswiss/agent.
 # Do not check out the pull-request head for this job.
+# runs-on starts at [self-hosted]. Adopters may append their own runner labels or
+# groups; routing is adopter configuration, not hardcoded in the guard runtime.
 
 name: dfx pr guard
 
@@ -35,7 +37,7 @@ permissions:
 
 jobs:
   guard:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted]
     steps:
       - name: dfx pr guard
         uses: DFXswiss/agent/.github/actions/a38-guard@USES_REF_PIN_ME
