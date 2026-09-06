@@ -102,6 +102,113 @@ Publish the migration proposal draft first per the [pull request lifecycle](pull
 
 The bot identifies the active policy revision in its comment. Download `.github/a38.json` from that exact revision before generating the report. For ordinary PRs, this is the base; for explicitly approved migrations, it is the head.
 
+## Optional fork workflow approval
+
+A repository may opt in to bot-owned CI authorization in its trusted default-branch `.github/pr-guard.json`:
+
+```json
+"workflow_approval": {
+  "enabled": true,
+  "workflows": [".github/workflows/ci.yml", ".github/workflows/security.yml"]
+}
+```
+
+This is an optional top-level object alongside `schema` and `a38`. Omission disables the feature. Both fields are required when present; `enabled` is a boolean, and `workflows` is a duplicate-free list of at most 64 exact workflow YAML paths (nonempty when enabled). Globs and unknown fields fail closed. The proposed PR-head config cannot activate approval. Workflow selection and the token's `actions: write` permission belong to the adopting repository, not to a global runner policy.
+
+The bot approves only an **initial** `pull_request` run waiting in `completed` / `action_required`, with `run_attempt: 1`, for an allowlisted workflow on the exact current head, fork repository and branch. A fresh A38 `pass` under `enforce` is required. Failed or incomplete evidence, observe mode, excluded targets, closed PRs and same-repository PRs cannot trigger approval. Existing migration authorization remains required for policy/workflow/config changes.
+
+For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The bot never calls a rerun, dispatch, cancel, merge, review-approval or environment-approval endpoint. Approval authorizes execution; it is not a test result or a Ready verdict.
+
+The run's PR association must match the current PR/head/base. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, its head must include the current base, and the run must not predate the PR or a later recorded target/lifecycle change. Ambiguous association, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, latest author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
+
+Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes. Assessment JSON includes `workflow_approvals`; completed authorization also records `workflow:approve:<run-id>` in `writes`.
+
+The trusted default-branch workflow and config must be installed before this feature is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
+
+
+## Optional continuous readiness
+
+The same trusted repository configuration can enable CI and conflict monitoring:
+
+```json
+"lifecycle": {
+  "enabled": true,
+  "auto_ready": true,
+  "required_workflows": [".github/workflows/ci.yml"],
+  "ignored_workflows": [".github/workflows/pr-guard.yml"],
+  "required_checks": {".github/workflows/ci.yml": ["Test"]},
+  "conditional_workflows": [
+    {
+      "workflow": ".github/workflows/security.yml",
+      "base_branches": ["release"],
+      "labels_any": ["full-ci"]
+    }
+  ]
+}
+```
+
+All fields except `conditional_workflows` and `required_checks` are required when `lifecycle` is
+present. Omission disables lifecycle writes. `auto_ready` requires enabled
+workflow approval and a nonempty required-workflow list. Workflow paths are
+exact, bounded and unique across these lists. A conditional workflow is required
+when its target branch **or** any listed PR label matches; branches and labels
+are exact, case-sensitive strings. Its condition must not be empty. This is
+repository configuration, including which CI is expected for release PRs.
+`required_checks` maps required or conditional workflow paths to exact job check
+names (including expanded matrix names). When that workflow is required, each
+listed check must actually finish successfully in its latest check suite.
+Use this for workflows whose setup job can succeed while the test jobs skip;
+an overall workflow success must not hide a missing or skipped required test.
+
+For **every open Ready PR**, confirmed merge conflicts or CI that is missing,
+queued, waiting, running, blocked, cancelled or failed cause a Draft transition.
+This applies even when the target is excluded from A38. Missing required
+workflows are not an empty green result. Only completed, successful required
+workflows satisfy CI. Optional workflows that intentionally skip are not counted
+as successful required tests. Pending or failed independent check runs and commit
+statuses also block Ready. The newest workflow run supersedes historical results;
+both workflow inventories and checks are inspected, including approval-blocked
+runs absent from GitHub's rollup.
+
+Ignore only repository control workflows that are not product CI, particularly
+the guard itself: otherwise its in-progress check would always prevent Ready.
+Required, conditional and ignored workflow paths cannot overlap. Conditional
+jobs skipped inside a successful workflow do not make that workflow fail.
+
+Automatic Ready requires all required CI green, GitHub `mergeable: true`, a
+fresh enforced A38 pass, and an authenticated bot-owned record of CI this bot
+actually authorized on the current head/base. The recorded runs must still be
+the latest matching runs. A manually started green suite alone does not authorize
+promotion. An unknown merge status neither invents a conflict nor permits Ready.
+This feature changes readiness only; it creates no review approvals and never
+bypasses review requirements, branch protection or human merge.
+
+Each transition gets an EN/DE comment with the concrete reasons in collapsed
+details. A durable intent is written before the mutation and updated after
+success; the next scan repairs the comment if that update was interrupted.
+Unchanged readiness creates no duplicate comment. Authorization records use
+`PR-GUARD:CI-AUTH:v1`; transition records use `PR-GUARD:LIFECYCLE:v1`. Only the
+authenticated bot's numeric user ID can supply these records. Dry run performs
+no writes, including audit comments.
+
+The adopting workflow owns runner routing, `actions` and `checks` read access,
+`pull-requests`/`issues`/`statuses` write access, and `actions: write` for initial
+workflow approval. Serialize **all** event and scheduled invocations with one
+repository-wide concurrency group and `cancel-in-progress: false`. Run trusted
+`--all-open` reconciliation on a repository-configured schedule (for example every
+five minutes). GitHub may delay scheduled execution; this is not a real-time SLA.
+Privileged runs must never check out PR code. Bot readiness must not be wired to
+automatic test retries; with `GITHUB_TOKEN`, the bot's own readiness/comment
+events do not trigger new workflow runs. Other token integrations must ensure
+their Ready handlers do not repeat already-requested CI.
+
+Head/base, configuration, evidence and CI are refreshed before promotion.
+GitHub does not offer an atomic CI-and-readiness transaction; subsequent changes
+are corrected by the next reconciliation. A head/base change returned by the
+Ready mutation immediately restores Draft. API denial fails explicitly and is
+not a successful transition. Neither this code nor its configuration is active
+until the trusted installation is deployed.
+
 ## Author report
 
 The author runs the full local job list from a clean checkout of the exact head. Keep the policy copy, report and logs outside the checkout:
@@ -139,7 +246,7 @@ Supported events:
 
 - `pull_request_target`: opened, reopened, synchronize, edited, ready_for_review.
 - `issue_comment`: created, edited, deleted, for PRs only.
-- Scheduled all-open reconciliation every 30 minutes on the trusted default branch.
+- Scheduled all-open reconciliation on the trusted default branch; cadence is repository configuration.
 - `workflow_dispatch`: an explicit repository and PR number.
 
 Issue-only events and the bot's own comments are ignored. The installed workflow deliberately has no `pull_request_review` trigger because that event loads workflow code from PR context. After approving or dismissing a policy review, post a normal PR comment such as `A38 recheck` for immediate reassessment, or dispatch the default-branch workflow. Scheduled reconciliation catches other review/base changes. The CLI can consume submitted/edited/dismissed review events supplied by an external trusted event handler, but never grant elevated credentials to PR-context workflow code. Never check out the PR head in a privileged bot job.

@@ -49,6 +49,14 @@ Hosted CI and other applicable checks may fail. There is no promise that CI neve
 
 Pending checks must be labeled **pending**. Do not fabricate a pass.
 
+Repositories can enable the [guard's continuous readiness reconciliation](a38-guard.md#optional-continuous-readiness).
+An open Ready PR returns to Draft with an explanatory comment when required CI
+is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts.
+After the CI authorized by the bot succeeds, it can restore Ready only with
+current A38 evidence and confirmed mergeability. Required workflows, conditional
+CI scope, control-workflow exclusions and the polling schedule belong to the
+adopting repository. This does not rerun tests, submit review approvals or merge.
+
 If the repository's guard integration is known to be defective, require a **verified** rollout of the fixed integration before Ready for review. Do not instruct merging through red statuses.
 
 ## Ready for review
@@ -57,7 +65,7 @@ Stay draft until Ready for review is earned on the **exact clean signed final he
 
 1. Full applicable tests for that head (repository rules and, when adopted, the complete A38 policy run and local verification).
 2. For A38 adopters: author report publication, current-base (or exact approved head) policy checks, and the live join required by [a38.md](a38.md) and [a38-guard.md](a38-guard.md).
-3. Independently required GitHub checks on this head (`skipped` and `cancelled` are not green unless the workflow documents that skip).
+3. Independently required GitHub checks on this head (`skipped` and `cancelled` are not green unless the workflow documents that skip). Inspect both the PR check rollup and the current-head workflow-run inventory: `action_required` runs may be absent from the check rollup. A38 equivalence covers only the jobs in its active policy; it does not replace independently required security or other GitHub-only checks. Bot authorization to start a run is not a successful run.
 4. Independent required reviews and approvals per the attached skills and the target repository's written rules.
 5. Then the Ready comment / leave-draft steps those rules define (`isDraft=false`).
 
