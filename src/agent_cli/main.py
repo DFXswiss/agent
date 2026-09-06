@@ -3384,6 +3384,18 @@ def cmd_supervise(args: list[str]) -> None:
         store.close()
 
 
+def cmd_a38(args: list[str]) -> None:
+    from .a38 import main as a38_main
+
+    raise SystemExit(a38_main(args))
+
+
+def cmd_pr_guard(args: list[str]) -> None:
+    from .a38_guard import main as guard_main
+
+    raise SystemExit(guard_main(args))
+
+
 COMMANDS = {
     "init": cmd_init,
     "session": cmd_session,
@@ -3395,6 +3407,8 @@ COMMANDS = {
     "agent": cmd_agent,
     "check": cmd_check,
     "local-ci": cmd_local_ci,
+    "a38": cmd_a38,
+    "pr-guard": cmd_pr_guard,
     "gate": cmd_gate,
     "work": cmd_work,
     "allow": cmd_allow,
@@ -3425,7 +3439,7 @@ def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("-h", "--help"):
         die(
-            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|gate|work|"
+            "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|watch|"
             "github|query|subscribe|mail|supervise> …"
         )

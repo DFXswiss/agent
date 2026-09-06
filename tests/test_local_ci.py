@@ -164,5 +164,65 @@ class LocalCiTests(unittest.TestCase):
         self.assertFalse(verdict.ok)
         self.assertTrue(any("exit_code is 1" in r for r in verdict.reasons))
 
+    def test_rejects_nan_in_duration(self) -> None:
+        body = (
+            f"{BEGIN_MARK}\n```json\n"
+            "{"
+            f'"schema":"dfx-local-ci/v1","repo":"example/private-app","head":"{HEAD}",'
+            '"private":true,"recorded_at":"2026-09-02T15:00:00Z",'
+            '"required":["format"],'
+            '"runs":[{"id":"format","name":"Format","command":"true",'
+            '"result":"pass","exit_code":0,"duration_s":NaN,"timeout_s":900}]'
+            "}\n```\n"
+            f"{END_MARK}\n"
+        )
+        with self.assertRaisesRegex(LocalCiError, "non-finite"):
+            parse_comment(body)
+
+    def test_rejects_infinity_in_timeout(self) -> None:
+        body = (
+            f"{BEGIN_MARK}\n```json\n"
+            "{"
+            f'"schema":"dfx-local-ci/v1","repo":"example/private-app","head":"{HEAD}",'
+            '"private":true,"recorded_at":"2026-09-02T15:00:00Z",'
+            '"required":["format"],'
+            '"runs":[{"id":"format","name":"Format","command":"true",'
+            '"result":"pass","exit_code":0,"duration_s":1,"timeout_s":Infinity}]'
+            "}\n```\n"
+            f"{END_MARK}\n"
+        )
+        with self.assertRaisesRegex(LocalCiError, "non-finite"):
+            parse_comment(body)
+
+    def test_rejects_duplicate_json_keys(self) -> None:
+        body = (
+            f"{BEGIN_MARK}\n```json\n"
+            "{"
+            f'"schema":"dfx-local-ci/v1","repo":"example/private-app","head":"{HEAD}",'
+            '"private":true,"private":false,"recorded_at":"2026-09-02T15:00:00Z",'
+            '"required":[],"runs":[]'
+            "}\n```\n"
+            f"{END_MARK}\n"
+        )
+        with self.assertRaisesRegex(LocalCiError, "duplicate key"):
+            parse_comment(body)
+
+    def test_rejects_duplicate_nested_json_keys(self) -> None:
+        body = (
+            f"{BEGIN_MARK}\n```json\n"
+            "{"
+            f'"schema":"dfx-local-ci/v1","repo":"example/private-app","head":"{HEAD}",'
+            '"private":true,"recorded_at":"2026-09-02T15:00:00Z",'
+            '"required":["format"],'
+            '"runs":[{"id":"format","name":"Format","command":"true",'
+            '"result":"pass","exit_code":0,"duration_s":1,"timeout_s":900,'
+            '"result":"fail"}]'
+            "}\n```\n"
+            f"{END_MARK}\n"
+        )
+        with self.assertRaisesRegex(LocalCiError, "duplicate key"):
+            parse_comment(body)
+
+
 if __name__ == "__main__":
     unittest.main()

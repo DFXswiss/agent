@@ -1,0 +1,23 @@
+{
+  "schema": "a38/v1",
+  "standard": "A38",
+  "documentation": "docs/a38.md",
+  "mode": "observe",
+  "jobs": [
+    {
+      "id": "tests",
+      "name": "Unit tests",
+      "command": "python -m pytest",
+      "timeout_s": 900,
+      "workflow": ".github/workflows/ci.yml",
+      "job": "tests"
+    }
+  ],
+  "exclusions": [
+    {
+      "workflow": ".github/workflows/release.yml",
+      "job": "publish",
+      "reason": "Publishes a release after approval; not a pull-request test."
+    }
+  ]
+}

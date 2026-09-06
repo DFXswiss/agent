@@ -1,0 +1,98 @@
+name: dfx pr guard
+description: >
+  Assess author local-CI reports against the trusted base A38 manifest.
+  Never checks out or executes pull-request code.
+
+inputs:
+  token:
+    description: GitHub token (contents read, issues write, pull-requests read, statuses write)
+    required: true
+  repository:
+    description: owner/name override (workflow_dispatch / standalone)
+    required: false
+    default: ""
+  pr:
+    description: Pull request number override
+    required: false
+    default: ""
+  all_open:
+    description: Reconcile all open PRs in repository (scheduled trusted workflow)
+    required: false
+    default: "false"
+  dry_run:
+    description: If true, print prospective JSON and perform no writes
+    required: false
+    default: "false"
+  event_file:
+    description: Event payload path (defaults to GITHUB_EVENT_PATH)
+    required: false
+    default: ""
+  event_name:
+    description: Event name (defaults to GITHUB_EVENT_NAME)
+    required: false
+    default: ""
+  python_version:
+    description: Python version for the trusted interpreter
+    required: false
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install trusted guard dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+      run: |
+        set -euo pipefail
+        # action_path = <repo>/.github/actions/a38-guard → three levels up is the trusted repo root.
+        # The installed package declares PyYAML; the action pins its runtime version.
+        python -P -m pip install --disable-pip-version-check PyYAML==6.0.2
+        # No pip install of the consumer checkout; only PYTHONPATH to trusted sources.
+
+    - name: Run dfx pr guard
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+        A38_REPOSITORY: ${{ inputs.repository }}
+        A38_PR: ${{ inputs.pr }}
+        A38_ALL_OPEN: ${{ inputs.all_open }}
+        A38_DRY_RUN: ${{ inputs.dry_run }}
+        A38_EVENT_FILE: ${{ inputs.event_file }}
+        A38_EVENT_NAME: ${{ inputs.event_name }}
+        # Composite actions must pass action_ref through env; it identifies the
+        # trusted action revision, while github.sha belongs to the consumer.
+        A38_RUNTIME_REVISION: ${{ github.action_ref }}
+        # Trusted sources only (composite action tree), never the consumer work tree.
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+      run: |
+        set -euo pipefail
+        args=(reconcile --json)
+        if [ -n "${A38_EVENT_FILE}" ]; then
+          args+=(--event-file "${A38_EVENT_FILE}")
+        fi
+        if [ -n "${A38_EVENT_NAME}" ]; then
+          args+=(--event-name "${A38_EVENT_NAME}")
+        fi
+        if [ -n "${A38_REPOSITORY}" ]; then
+          args+=(--repo "${A38_REPOSITORY}")
+        fi
+        if [ "${A38_ALL_OPEN}" = "true" ]; then
+          args+=(--all-open)
+        elif [ -n "${A38_PR}" ]; then
+          args+=(--pr "${A38_PR}")
+        fi
+        if [ "${A38_DRY_RUN}" = "true" ]; then
+          args+=(--dry-run)
+        fi
+        # Token stays in the environment for the guard module only.
+        # No subprocess is started against pull-request code.
+        python -P -m agent_cli.a38_guard "${args[@]}"

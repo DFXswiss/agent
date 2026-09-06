@@ -1,0 +1,46 @@
+# Example consumer workflow for dfx pr guard.
+# Before rollout: replace USES_REF_PIN_ME with a pinned commit SHA of DFXswiss/agent.
+# Do not check out the pull-request head for this job.
+
+name: dfx pr guard
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: false
+        type: string
+      all_open:
+        description: Reconcile every open pull request
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: a38-pr-guard-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  statuses: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dfx pr guard
+        uses: DFXswiss/agent/.github/actions/a38-guard@USES_REF_PIN_ME
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          pr: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pr || '' }}
+          all_open: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open) }}
