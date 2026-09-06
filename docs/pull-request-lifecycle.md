@@ -57,7 +57,7 @@ Stay draft until Ready for review is earned on the **exact clean signed final he
 
 1. Full applicable tests for that head (repository rules and, when adopted, the complete A38 policy run and local verification).
 2. For A38 adopters: author report publication, current-base (or exact approved head) policy checks, and the live join required by [a38.md](a38.md) and [a38-guard.md](a38-guard.md).
-3. Independently required GitHub checks on this head (`skipped` and `cancelled` are not green unless the workflow documents that skip).
+3. Independently required GitHub checks on this head (`skipped` and `cancelled` are not green unless the workflow documents that skip). Inspect both the PR check rollup and the current-head workflow-run inventory: `action_required` runs may be absent from the check rollup. A38 equivalence covers only the jobs in its active policy; it does not replace independently required security or other GitHub-only checks. Bot authorization to start a run is not a successful run.
 4. Independent required reviews and approvals per the attached skills and the target repository's written rules.
 5. Then the Ready comment / leave-draft steps those rules define (`isDraft=false`).
 

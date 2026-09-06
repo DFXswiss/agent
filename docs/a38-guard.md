@@ -102,6 +102,30 @@ Publish the migration proposal draft first per the [pull request lifecycle](pull
 
 The bot identifies the active policy revision in its comment. Download `.github/a38.json` from that exact revision before generating the report. For ordinary PRs, this is the base; for explicitly approved migrations, it is the head.
 
+## Optional fork workflow approval
+
+A repository may opt in to bot-owned CI authorization in its trusted default-branch `.github/pr-guard.json`:
+
+```json
+"workflow_approval": {
+  "enabled": true,
+  "workflows": [".github/workflows/ci.yml", ".github/workflows/security.yml"]
+}
+```
+
+This is an optional top-level object alongside `schema` and `a38`. Omission disables the feature. Both fields are required when present; `enabled` is a boolean, and `workflows` is a duplicate-free list of at most 64 exact workflow YAML paths (nonempty when enabled). Globs and unknown fields fail closed. The proposed PR-head config cannot activate approval. Workflow selection and the token's `actions: write` permission belong to the adopting repository, not to a global runner policy.
+
+The bot approves only an **initial** `pull_request` run waiting in `completed` / `action_required`, with `run_attempt: 1`, for an allowlisted workflow on the exact current head, fork repository and branch. A fresh A38 `pass` under `enforce` is required. Failed or incomplete evidence, observe mode, excluded targets, closed PRs and same-repository PRs cannot trigger approval. Existing migration authorization remains required for policy/workflow/config changes.
+
+For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The bot never calls a rerun, dispatch, cancel, merge, review-approval or environment-approval endpoint. Approval authorizes execution; it is not a test result or a Ready verdict.
+
+The run's PR association must match the current PR/head/base. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, its head must include the current base, and the run must not predate the PR or a later recorded target/lifecycle change. Ambiguous association, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, latest author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
+
+Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes. Assessment JSON includes `workflow_approvals`; completed authorization also records `workflow:approve:<run-id>` in `writes`.
+
+The trusted default-branch workflow and config must be installed before this feature is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
+
+
 ## Author report
 
 The author runs the full local job list from a clean checkout of the exact head. Keep the policy copy, report and logs outside the checkout:

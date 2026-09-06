@@ -16,6 +16,8 @@ from typing import Any, Mapping
 SCHEMA_ID = "pr-guard/v1"
 CONFIG_PATH = ".github/pr-guard.json"
 TOP_KEYS = frozenset({"schema", "a38"})
+WORKFLOW_APPROVAL_KEYS = frozenset({"enabled", "workflows"})
+WORKFLOW_PATH_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:yml|yaml)$")
 A38_KEYS = frozenset({"enforce", "exclude", "default"})
 SCOPE_MODES = frozenset({"enforce", "exclude"})
 MAX_BRANCH_LIST = 256
@@ -108,7 +110,7 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
     payload = _loads_json(text)
     if not isinstance(payload, dict):
         raise PrGuardConfigError("pr-guard config must be a JSON object")
-    _require_keys(payload, TOP_KEYS, "pr-guard config")
+    _require_keys({k: v for k, v in payload.items() if k != "workflow_approval"}, TOP_KEYS, "pr-guard config")
     schema = payload["schema"]
     if not isinstance(schema, str) or schema != SCHEMA_ID:
         raise PrGuardConfigError(f"schema must be {SCHEMA_ID}")
@@ -127,7 +129,7 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
             "a38.enforce and a38.exclude overlap: "
             + ", ".join(repr(name) for name in overlap)
         )
-    return {
+    normalized = {
         "schema": SCHEMA_ID,
         "a38": {
             "enforce": enforce,
@@ -135,6 +137,23 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
             "default": default,
         },
     }
+    if "workflow_approval" in payload:
+        approval = payload["workflow_approval"]
+        if not isinstance(approval, dict):
+            raise PrGuardConfigError("workflow_approval must be an object")
+        _require_keys(approval, WORKFLOW_APPROVAL_KEYS, "workflow_approval")
+        enabled = approval["enabled"]
+        paths = approval["workflows"]
+        if type(enabled) is not bool:
+            raise PrGuardConfigError("workflow_approval.enabled must be boolean")
+        if not isinstance(paths, list) or len(paths) > 64:
+            raise PrGuardConfigError("workflow_approval.workflows must be an array of at most 64 paths")
+        if any(not isinstance(p, str) or len(p) > 255 or WORKFLOW_PATH_RE.fullmatch(p) is None for p in paths):
+            raise PrGuardConfigError("workflow_approval.workflows must contain exact workflow YAML paths")
+        if len(set(paths)) != len(paths) or (enabled and not paths):
+            raise PrGuardConfigError("workflow approval needs a nonempty, duplicate-free allowlist when enabled")
+        normalized["workflow_approval"] = {"enabled": enabled, "workflows": list(paths)}
+    return normalized
 
 
 def evaluate_a38_scope(

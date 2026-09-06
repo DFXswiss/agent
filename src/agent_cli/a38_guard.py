@@ -152,6 +152,8 @@ class Assessment:
     skip_publish: bool = False
     dry_run: bool = False
     writes: list[str] = field(default_factory=list)
+    workflow_approval_enabled: bool = False
+    workflow_approvals: list[dict[str, Any]] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -184,6 +186,7 @@ class Assessment:
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
             "writes": list(self.writes),
+            "workflow_approvals": list(self.workflow_approvals),
             "comment_body": self.comment_body,
         }
 
@@ -1304,6 +1307,7 @@ def _attach_trusted_config(assessment: Assessment, trusted: TrustedGuardConfig) 
     assessment.config_fingerprint = trusted.fingerprint
     assessment.scope_decision = trusted.decision
     assessment.scope_reason = trusted.reason
+    assessment.workflow_approval_enabled = bool((trusted.config or {}).get("workflow_approval", {}).get("enabled", False))
 
 
 def _out_of_scope_assessment(
@@ -1666,8 +1670,14 @@ def reconcile_pull(
                     assessment.writes.append("skipped:closed")
                 elif dry_run:
                     assessment.writes.append("dry-run")
+                if not assessment.closed:
+                    from .workflow_approval import approve_workflow_runs
+                    assessment.workflow_approvals = approve_workflow_runs(api, assessment, dry_run=True)
                 return assessment
-            return publish_assessment(api, assessment)
+            published = publish_assessment(api, assessment)
+            from .workflow_approval import approve_workflow_runs
+            published.workflow_approvals = approve_workflow_runs(api, published)
+            return published
         except GuardError as exc:
             if "changed before publish" in str(exc):
                 last_err = exc
