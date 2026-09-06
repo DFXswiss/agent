@@ -65,6 +65,8 @@ def _remote_script(
         git = _git_payload(argv)
         if not git or git[0] != 'git':
             return None
+        if 'config' in git and '--name-only' in git:
+            return Completed(1, '', '')
         if 'remote' not in git or 'get-url' not in git:
             return None
         explicit_url = None
@@ -755,7 +757,7 @@ def test_all_real_git_remote_urls_must_identify_one_repository(tmp_path, monkeyp
         if operation == ['push', '--', 'origin', 'HEAD:refs/heads/feature']:
             transfers.append(command)
             return Completed(0, '', '')
-        assert operation[:2] == ['remote', 'get-url'], 'Only Git metadata may execute in this test'
+        assert operation[:2] in (['remote', 'get-url'], ['config', '--null']), 'Only Git metadata may execute in this test'
         result = subprocess.run(argv, text=True, capture_output=True)
         return Completed(result.returncode, result.stdout, result.stderr)
     scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
@@ -767,3 +769,87 @@ def test_all_real_git_remote_urls_must_identify_one_repository(tmp_path, monkeyp
         with pytest.raises(GitHubHttpsRemoteError, match='different GitHub repositories'):
             scoped(command)
         assert transfers == []
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('effective_url', [SAFE_ORIGIN, 'https://other.example/owner/repo'])
+def test_clone_from_non_repository_resolves_rewrites_without_network(tmp_path, monkeypatch, effective_url):
+    config = tmp_path / 'global-config'
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(config))
+    monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    source = 'https://clone.example/owner/repo'
+    subprocess.run(['git', 'config', '--file', str(config), f'url.{effective_url}.insteadOf', source],
+                   check=True, capture_output=True)
+    assert not (tmp_path / '.git').exists()
+    transfers = []
+    def runner(argv):
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        command = _git_payload(argv)
+        operation = command[command.index('-C') + 2:]
+        if operation == ['clone', '--', source, 'checkout']:
+            transfers.append(command)
+            return Completed(0, '', '')
+        assert operation[:2] in (['ls-remote', '--get-url'], ['config', '--null'])
+        result = subprocess.run(argv, text=True, capture_output=True)
+        return Completed(result.returncode, result.stdout, result.stderr)
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
+    command = ['git', '-C', str(tmp_path), 'clone', '--', source, 'checkout']
+    if effective_url == SAFE_ORIGIN:
+        assert scoped(command).returncode == 0
+        assert len(transfers) == 1
+    else:
+        with pytest.raises(GitHubHttpsRemoteError, match='HTTPS GitHub'):
+            scoped(command)
+        assert transfers == []
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize('scope', ['https://github.com/owner/', SAFE_ORIGIN, 'https://github.com:443/owner/'])
+def test_repository_specific_http_headers_are_cleared_before_transfer(tmp_path, monkeypatch, scope):
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_SYSTEM', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    subprocess.run(['git', 'init', str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(['git', '-C', str(tmp_path), 'remote', 'add', 'origin', SAFE_ORIGIN], check=True, capture_output=True)
+    subprocess.run(['git', '-C', str(tmp_path), 'config', f'http.{scope}.extraHeader',
+                    'Authorization: synthetic-other-account'], check=True, capture_output=True)
+    observed = []
+    def runner(argv):
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        start = argv.index('-C') + 2
+        operation = argv[start:]
+        if operation == ['push', '--', 'origin', 'HEAD:refs/heads/feature']:
+            # Measure Git's actual URL-match result using the transfer's exact
+            # configuration, while never executing its network operation.
+            result = subprocess.run([*argv[:start], 'config', '--get-urlmatch', 'http.extraheader', SAFE_ORIGIN],
+                                    text=True, capture_output=True)
+            assert result.returncode == 0
+            observed.append(result.stdout)
+            return Completed(0, '', '')
+        assert operation[:2] in (['remote', 'get-url'], ['config', '--null'])
+        result = subprocess.run(argv, text=True, capture_output=True)
+        return Completed(result.returncode, result.stdout, result.stderr)
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
+    scoped(['git', '-C', str(tmp_path), 'push', '--', 'origin', 'HEAD:refs/heads/feature'])
+    assert len(observed) == 1
+    assert observed[0].strip() == ''
+
+
+@pytest.mark.no_pg
+def test_failed_header_inventory_blocks_transfer_without_exposing_error():
+    remotes = _remote_script()
+    def runner(argv):
+        if 'gh' in argv:
+            return Completed(0, 'WorkerOne', '')
+        if '--name-only' in argv:
+            return Completed(128, '', 'synthetic-private-config-error')
+        result = remotes(argv)
+        assert result is not None, 'No transfer may execute after inventory failure'
+        return result
+    scoped = Account('one', 'WorkerOne', '/accounts/one', IDENTITY).runner(runner)
+    with pytest.raises(AccountError, match='Cannot isolate Git HTTP headers') as exc:
+        scoped(['git', '-C', '/work', 'push', '--', 'origin', 'HEAD:refs/heads/feature'])
+    assert 'synthetic-private-config-error' not in str(exc.value)

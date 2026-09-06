@@ -225,6 +225,32 @@ def validate_repo_remote(run: Runner, cwd: str | None, remote: str) -> str:
     return fetch_repo
 
 
+def _validate_clone_url(run: Runner, cwd: str | None, url: str) -> None:
+    """Resolve clone rewrites without requiring a repository or contacting it."""
+    if not _looks_like_url(url):
+        raise GitHubHttpsRemoteError("git clone requires an explicit HTTPS GitHub URL")
+    result = run(_git_cwd_argv(cwd, "ls-remote", "--get-url", "--", url))
+    if result.returncode != 0:
+        raise GitHubHttpsRemoteError("cannot resolve clone URL")
+    urls = _parse_get_url_stdout(result.stdout)
+    if len(urls) != 1:
+        raise GitHubHttpsRemoteError("clone URL is unsafe")
+    ensure_github_https_remote(urls[0])
+
+
+def _clear_http_headers(run: Runner, cwd: str | None) -> list[str]:
+    """Reset every configured header key, including more-specific URL matches."""
+    result = run(_git_cwd_argv(
+        cwd, "config", "--null", "--name-only", "--get-regexp", r"^http\..*extraheader$",
+    ))
+    if result.returncode not in {0, 1}:
+        raise AccountError("Cannot isolate Git HTTP headers")
+    args: list[str] = []
+    for key in sorted(set(result.stdout.split("\x00")) - {""}):
+        args.extend(["-c", f"{key}="])
+    return args
+
+
 def _skip_git_option(args: list[str], index: int) -> int:
     arg = args[index]
     name = arg.split("=", 1)[0]
@@ -357,11 +383,16 @@ class Account:
                 ])
                 git_args = list(argv[1:])
                 targets = _network_remote_targets(git_args)
+                header_config: list[str] = []
                 if targets is not None:
                     # Keep host cwd until each nested call maps it exactly once.
                     cwd = _git_c_path(git_args)
                     for target in targets:
-                        validate_repo_remote(scoped, cwd, target)
+                        if _split_git_command(git_args)[0] == "clone":
+                            _validate_clone_url(scoped, cwd, target)
+                        else:
+                            validate_repo_remote(scoped, cwd, target)
+                    header_config = _clear_http_headers(scoped, cwd)
                 if "-C" in git_args:
                     index = git_args.index("-C") + 1
                     if index >= len(git_args):
@@ -377,7 +408,8 @@ class Account:
                     "-c", "credential.helper=!gh auth git-credential",
                     "-c", f"user.name={identity['name']}", "-c", f"user.email={identity['email']}",
                     "-c", "commit.gpgsign=true", "-c", f"gpg.format={identity['signing_format']}",
-                    "-c", f"user.signingkey={identity['signing_key']}", *network_config, *git_args,
+                    "-c", f"user.signingkey={identity['signing_key']}",
+                    *network_config, *header_config, *git_args,
                 ]
             return base([*self.command_prefix, *prefix, *command])
 

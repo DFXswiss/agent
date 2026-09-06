@@ -63,7 +63,13 @@ forms, the runner asks Git for the effective remote URL via
 and `insteadOf` / `pushInsteadOf` rewrite effects) and rejects
 credential-bearing, non-HTTPS, or non-`github.com` network remotes. Explicit
 URL arguments are resolved the same way through a temporary command-scoped
-remote. Only transfer forms with one explicit repository argument are accepted
+remote for fetch, push, and pull. Clone uses the metadata-only
+`git ls-remote --get-url` resolution, which applies clone URL rewrites without
+requiring an existing local repository or contacting the remote. Before each
+supported transfer, all configured `http.*extraHeader` keys, including
+repository-specific URL matches, are reset for that invocation so ambient
+Authorization headers cannot override the selected account.
+Only transfer forms with one explicit repository argument are accepted
 (for example `git fetch -- origin`, `git push -- origin HEAD:refs/heads/feature`,
 and `git push --set-upstream origin feature`); implicit default-remote forms,
 `fetch --all` / `--multiple`, and `--repo` combined with a different positional
