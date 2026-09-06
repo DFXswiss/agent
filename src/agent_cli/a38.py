@@ -697,7 +697,13 @@ def _report_from_dict(payload: Mapping[str, Any]) -> LocalCiReport:
 
 def _write_report(output: Path, payload: Mapping[str, Any]) -> None:
     report = _report_from_dict(payload)
-    text = render_block(report)
+    text = (
+        "EN:\nThe A38 report below records the checks, results and durations.\n\n"
+        "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        f"{render_block(report)}\n"
+        "</details>\n"
+    )
     _write_bytes_atomic(output, text.encode("utf-8"))
 
 
