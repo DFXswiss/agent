@@ -62,6 +62,14 @@ Do not invent keys. Chains:
 not pull-request done. A draft plus local tests is not done. See pr-review
 and CONTRIBUTING.md.
 
+Draft publication timing is the central
+[pull request lifecycle](../../../../docs/pull-request-lifecycle.md): as soon
+as the first signed task commit exists, open the draft via `pr.open` (executor
+flow; `allow pr-create` already permits draft). That early publication does
+**not** close `local_check_pass`, `pushed`, or any test/review checklist key.
+The checklist key `pushed` is final validated push bookkeeping after the
+applicable measured checks for that step.
+
 For A38 work, follow the central [A38 standard](../../../../docs/a38.md) and [guard guide](../../../../docs/a38-guard.md); this skill is only a pointer.
 
 Locate these files with `agent skills path`.

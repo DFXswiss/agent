@@ -2,17 +2,17 @@
 
 - Branch from `develop`. Never push to `develop` or `main`.
 - Push the branch to this repository. Do not open the pull request from a personal fork.
-- Open a draft pull request. Stay draft until the pull request is **done** (below). A human merges.
+- As soon as the first signed task commit exists, push and open a **draft** pull request immediately ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). Stay draft until the pull request is **done** (below). A human merges.
 - Sign commits with the GitHub identity that owns the commits.
 - Public repository: English for commits and comments. The visible pull-request summary is an `EN:` block, optionally followed by a labeled `DE:` block.
 - Do not name private repositories, internal hostnames, or internal infrastructure.
 - Add or update tests in the same change.
-- Run `pytest` before you push. Tests need PostgreSQL (`AGENT_TEST_PG` or a local `initdb`).
+- Run `pytest` on the exact clean signed final head before Ready. Tests need PostgreSQL (`AGENT_TEST_PG` or a local `initdb`). Full pytest is not a gate for the first draft publication.
 - Pytest (or any green local suite) is a **check**, not done.
 
 ## Pull request done
 
-A draft plus local tests is not done. Do not claim the pull request is finished at that point.
+A draft plus local tests is not done. Do not claim the pull request is finished at that point. Draft timing and CI ownership while the draft is open are defined in [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md).
 
 Done is all of:
 
