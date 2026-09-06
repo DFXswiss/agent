@@ -17,6 +17,12 @@ replace it with a second store or a side process.
 
 ## Gates
 
+The static script starts every review lane and any implementation pass needed
+to address findings. Reviewers return findings to that script; they never start
+subagents or interact with GitHub. Gate recording and GitHub publication below
+are script operations. See
+[DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+
 Two dimensions (quality, logic) and two vendor stages (`grok-pr`, then
 `codex-pr`). Codex stages run only if both grok dimensions are `approved`.
 

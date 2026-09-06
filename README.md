@@ -8,6 +8,15 @@ This device is the write owner of its own rows. The local store is PostgreSQL on
 
 The [A38 standard](docs/a38.md) defines repository-owned local test requirements and author reports using the existing local-CI format. `agent a38` measures and validates reports; the [dfx pr guard](docs/a38-guard.md) explains repository rules and checks author comments without executing pull-request code.
 
+The required GitHub issue-to-PR workflow is defined in
+[DESIGN.md §19.7](DESIGN.md#197-issue-assignment-to-human-merge), together with the
+current implementation boundaries. A static script accepts the assignment and
+confirms it in the issue before starting the implementation lane. Scripts own
+all lane starts, tests, and GitHub communication; model lanes do not start
+subagents, run tests, or access GitHub. The user works in GitHub and merges the
+reviewed PR there. This is a workflow requirement, not a claim of a complete
+deployed integration.
+
 ## Install
 
 ```bash
