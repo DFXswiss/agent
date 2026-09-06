@@ -9,6 +9,7 @@ from typing import Any
 
 from .runtime import Completed
 from .store import Store
+from .github_accounts import AccountError, load_accounts
 
 Runner = Callable[[list[str]], Completed]
 
@@ -174,7 +175,7 @@ def _flatten_comment_pages(data: Any) -> list[Any]:
     raise _GhError("comments api has unexpected shape")
 
 
-def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
+def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any], *, expected_login: str | None = None) -> str:
     rid = str(row["id"])
     payload = row.get("payload")
     if not isinstance(payload, dict):
@@ -202,7 +203,7 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             "--repo",
             repo,
             "--json",
-            "number,url,state,isDraft",
+            "number,url,state,isDraft" + (",author" if expected_login else ""),
         ]
         try:
             completed = runner(view_argv)
@@ -228,6 +229,11 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 raise _GhError("gh output is not a JSON object or array")
             viewed = data
         if isinstance(viewed, dict):
+            if expected_login:
+                author = viewed.get("author")
+                login = author.get("login") if isinstance(author, dict) else None
+                if not isinstance(login, str) or login.casefold() != expected_login.casefold():
+                    raise _GhError("Existing pull request author differs from the configured account")
             state = str(viewed.get("state") or "").upper()
             number = _as_int(viewed.get("number"))
             url = viewed.get("url")
@@ -563,16 +569,25 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
     lines: list[str] = []
     for row in store.pending_work():
         typ = row.get("type")
+        if typ not in {"pr.open", "issue.write", "comment.post", "review.post"}:
+            continue
         try:
+            account = load_accounts(store.home).for_session(str(row.get("session_id") or ""))
+            binding = {"account": account.name, "login": account.login.casefold()}
+            if row.get("execution_account") is not None and row["execution_account"] != binding:
+                raise AccountError("Activity account binding changed; refusing account switch")
+            row = dict(row, execution_account=binding)
+            store.write("activity", "update", row["id"], _strip(row))
+            scoped_runner = account.runner(runner)
             if typ == "pr.open":
-                lines.append(_run_pr_open(store, runner, row))
+                lines.append(_run_pr_open(store, scoped_runner, row, expected_login=account.login))
             elif typ == "issue.write":
-                lines.append(_run_issue_write(store, runner, row))
+                lines.append(_run_issue_write(store, scoped_runner, row))
             elif typ == "comment.post":
-                lines.append(_run_comment_post(store, runner, row))
+                lines.append(_run_comment_post(store, scoped_runner, row))
             elif typ == "review.post":
-                lines.append(_run_review_post(store, runner, row))
-        except Exception as exc:  # noqa: BLE001 — per-row isolation
+                lines.append(_run_review_post(store, scoped_runner, row))
+        except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation
             rid = str(row.get("id") or "?")
             _mark(store, row, status="error", error=str(exc))
             label = typ if isinstance(typ, str) else "activity"

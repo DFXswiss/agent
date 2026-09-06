@@ -20,6 +20,16 @@ Without spine, `task`, `checklist`, `round`, `check`, `work`, `allow`, `next`,
 
 ## One open step
 
+The static script owns execution and progression. A model lane must not invoke
+`agent run` to launch another lane, run tests, or perform GitHub operations.
+Tests and lane starts in the workflow below are script responsibilities; models
+return their implementation or review results. See
+[DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+
+Model lanes never start monitors or wait/poll for checks, reviews, or CI. Return
+the current result or blocker to the script; it observes events and informs a
+lane when further work is useful.
+
 `agent next`, `agent close-step`, and `agent run` are the spine. Do not skip
 keys. Quality and logic of the same vendor stage may be open together.
 `close-step` applies chain guards, then writes via `checklist set`.

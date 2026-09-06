@@ -116,6 +116,13 @@ def scan_merged(
         if _already_merged(store, session_id, repo, number):
             continue
         try:
+            from .github_accounts import AccountError, load_accounts
+
+            account = load_accounts(store.home).for_session(session_id)
+            binding = {"account": account.name, "login": account.login.casefold()}
+            if row.get("execution_account") is not None and row["execution_account"] != binding:
+                raise AccountError("Activity account binding changed; refusing account switch")
+            scoped_runner = account.runner(runner)
             info = _gh(
                 [
                     "gh",
@@ -127,7 +134,7 @@ def scan_merged(
                     "--json",
                     "state,mergedAt,mergeCommit,url,number",
                 ],
-                runner,
+                scoped_runner,
             )
         except (StoreError, json.JSONDecodeError):
             skipped += 1
@@ -229,19 +236,6 @@ def _parse_gh_time(raw: str) -> datetime:
     return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
-def _paired_login(store: Store, runner: Callable[[list[str]], Completed]) -> str:
-    paired = store.meta("github_login")
-    if not isinstance(paired, str) or paired == "":
-        raise StoreError("paired github_login is missing")
-    user = _gh(["gh", "api", "user"], runner)
-    login = user.get("login")
-    if not isinstance(login, str) or login == "":
-        raise StoreError("gh api user did not return a string login")
-    if login.lower() != paired.lower():
-        raise StoreError(f"gh login {login} does not match paired github_login {paired}")
-    return paired.lower()
-
-
 def _latest_assigned_at(store: Store, repo: str, number: int) -> datetime | None:
     repo_key = repo.lower()
     latest: datetime | None = None
@@ -330,7 +324,11 @@ def scan_assigned(
 ) -> tuple[list[str], int]:
     """Insert issue.assigned for allowlisted open issues newly assigned to this login."""
     repos, sid = load_watch_config(store.home)
-    login = _paired_login(store, runner)
+    from .github_accounts import load_accounts
+
+    account = load_accounts(store.home).for_session(sid)
+    runner = account.runner(runner)
+    login = account.login.casefold()
     cursor = store.sync_get("assigned_watch_since")
     if cursor is None:
         store.sync_set("assigned_session_id", sid)

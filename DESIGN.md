@@ -37,6 +37,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Store engine | Local PostgreSQL on loopback / Unix socket under `$AGENT_HOME`. Not world-reachable. |
 | Catalog | Generic `activity` rows (`type` + payload). Session tags are the types present. |
 | Skills | Optional, requested. `spine`, `review-loop`, `pr-review`, and `error-fix` exist as skills. They are **not** on by default. |
+| Initial configuration | GitHub accounts, AI accounts, roles, and their selections start unconfigured (`NULL`). Add them explicitly through configuration; no fixed account or role count. See §19.8. |
 | Runtime | This public client. Team-specific rules live elsewhere and must not ship a second store binary. |
 | Session mail | Addressed to a **session id**. Delivery does not require a subscription. |
 | TUI knock | Script wakes the session with only `da ist Post id <uuid>`. The agent reads that row from local Postgres. |
@@ -342,7 +343,7 @@ v1 types (mechanism only):
 
 The agent never learns a merge from a human prompt and never calls GitHub to ask “is it merged?”.
 
-When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The device daemon’s knock child and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and decides what to do.
+When this device has a `pr.open` row whose script result includes the PR number/url, a **script** watches that PR. On merge it inserts `pr.merged` on the **same session** (`payload`: repo, number, url, merge SHA, merged_at). That insert `NOTIFY`s `agent_inbox` (and enqueues `wake` if needed) with the new activity id. The device daemon’s knock child and §10 state machine emit `da ist Post id <uuid>`. The watcher does not `tmux send-keys` itself. The agent `SELECT`s the row and supplies any analysis or implementation result; the script owns workflow progression (§19.1).
 
 The watcher runs on this device (write owner). It is a script, not the model. The model’s next turn is the knock plus the row — not a `gh` command.
 
@@ -350,11 +351,14 @@ The watcher runs on this device (write owner). It is a script, not the model. Th
 
 ### Outside facts (example: issue assigned)
 
-The script reads GitHub; the model does not.
+The script reads GitHub; the model does not. The following describes the existing
+assignment watcher. The required end-to-end workflow and its script-only
+responsibilities are in [§19.7](#197-issue-assignment-to-human-merge); implementation
+boundaries are recorded there separately.
 
 Allowlist file `$AGENT_HOME/watch.json` key `assigned_repos` (non-empty list of `Owner/repo` strings). Missing or empty is an error; there is no default list.
 
-The first successful scan records `assigned_watch_since` and the assigned `session_id` and dispatches nothing. Later scans consider assignments whose latest matching `assigned` event is at or after that cursor, skipping `assigned_at` values already stored. Changing `session_id` after that pin is an error. The scan uses this device’s paired GitHub login; a missing pair or a `gh api user` mismatch is an error. The queue head is the already-knocked inflight item if any, then remaining items oldest first.
+The first successful scan records `assigned_watch_since` and the assigned `session_id` and dispatches nothing. Later scans consider assignments whose latest matching `assigned` event is at or after that cursor, skipping `assigned_at` values already stored. Changing `session_id` after that pin is an error. The scan uses the session's explicitly configured GitHub execution account; a missing account or a `gh api user` mismatch is an error. This account is independent of hub pairing. The queue head is the already-knocked inflight item if any, then remaining items oldest first.
 
 The writer is this device. All assignments share **one** runner session (`watch.json` `session_id`, default `assigned`, characters `A-Za-z0-9_-` only). That auto-created session attaches `spine`, `review-loop`, and `pr-review`; an existing row under the same id must already be `kind=runner`. Other sessions still attach skills themselves. There is one tmux/Grok terminal, not one per issue. Working files go to `$AGENT_HOME/sessions/<id>` or `$AGENT_SESSION_ROOT/<id>`. New `issue.assigned` rows enqueue on that session (`payload`: repo, number, url, title, body, assigned_at, assignee, mandate). The insert does not notify the knock daemon. The script pushes own events, writes `MANDATE.md` / `QUEUE.md` (no issue body), starts Grok only if that session is not already attached, then knocks at most the head of the queue (`da ist Post id <uuid>`). A knock of `issue.assigned` rewrites those files immediately before send. Further knocks stay queued until the **supervise script** records `issue.assigned.ack` with `payload.assigned_id`. The model must not insert that ack. The scan watermark `assigned_watch_since` is the scan clock, not the last seen GitHub event time — that is the no-backfill rule.
 
@@ -435,7 +439,7 @@ agent cli-bridge [--port 7846]
 
 Local dashboard binds `127.0.0.1` only.
 
-The AI is not expected to type hub HTTP, `gh`, or himalaya. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
+The AI must not call hub HTTP, `gh`, or himalaya; scripts perform these operations. It inserts `activity` (and `query.request` / `subscription.set` / `mail.reply` / `mail.seen`). Scripts watch the store. `agent github pending` is the GitHub executor for owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows. `agent mail pending` is the mailbox executor for owned pending `mail.reply` and `mail.seen` rows. The knock poll (device daemon knock child) also runs `scan_github` and `scan_mail`. `agent run` git-pushes (no force) when `pushed` is open and measures GitHub mergeability and checks when `mergeable` is open.
 
 ## 17. Control
 
@@ -503,6 +507,10 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 |---|---|---|
 | Semantic diagnosis, hypothesis, patch text, review findings, PR title/body draft | AI | `activity` intent (`investigate.step`, …); implementer/reviewer rows when those skills are on |
 | Auth, Git, GitHub HTTP, CI status, mail, hub HTTP, tmux knock, retries | Script | Result columns on the intent row; `pr.merged` and other watch types; `LISTEN agent_work` |
+| Assignment acceptance and its confirmation in the GitHub issue, before starting the implementation lane | Static script on the execution device | Required ordering; see §19.7 |
+| Start implementation and review lanes, restart the implementer for improvements, and start any other agents | Static script on the execution device | The model never orchestrates another model |
+| Execute tests, builds, and checks, including local tests | Static script on the execution device | Script-produced results supplied to the lanes |
+| Monitor or wait for CI, reviews, merges, and other external events; notify a lane when there is useful work | Static script on the execution device | Script-observed facts, not a waiting or polling model |
 | Spine task state | Spine CLI + local constraints | `task` state, checklist keys, `close-step` / `run` |
 | Whether a head is reviewed | Gate after the two vendor stages | `agent gate record` |
 | Whether a command ran and what it returned | The process that ran it | `agent check record` (name, command, `pass`/`fail`/`skip`, output) |
@@ -511,6 +519,26 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 A worker report such as “analysis complete” or “tests passed” is **input**. It is not the transition. Opening a draft is not done. Leaving draft is Ready for review, not completion.
 
 No transition that needs deterministic evidence may be satisfied by model text alone. Malformed structured output is rejected (unknown `activity.type` → `execution_status=error`; empty, partial, timeout, or unavailable review output is not zero findings). A patch that does not apply is a failed check, not a debate.
+
+These responsibilities apply to implementers as well as reviewers. A model must
+not start subagents, implementation lanes, review lanes, tests, builds, or checks.
+It must not interact with GitHub at all, including reads: GitHub communication
+always goes through the script. Calling an executor from inside a model lane to
+start another lane or run tests does not transfer orchestration to the script.
+The static script owns those decisions and invocations; the lane supplies its
+implementation or review result.
+
+A model never starts a monitor, polls for status, or waits for a CI run or other
+external event. Model lanes are used exclusively for work. When a lane has no
+more work to perform, it returns its result or blocker to the script. Monitoring
+and waiting remain entirely with the script. When the script detects an event,
+it informs the model only when that event provides useful work for the model.
+An idle model is not the supervisor, and a model must not start a watcher or a
+background monitoring process on the script's behalf.
+
+Reports and documentation must stay with verified facts. Distinguish a user
+requirement, an implemented behavior, and an observed result. Do not invent
+requirements, implementation status, test results, or review evidence.
 
 ### 19.2 Untrusted inputs
 
@@ -556,6 +584,83 @@ Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-l
 Quality and logic of one vendor stage run together. Vendors are `grok`, then `codex`. Codex runs only after both grok dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the actual latest report-like GitHub comment by the PR author. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. One comment whose review-pass count is those four `approved` verdicts on this head, then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
+
+### 19.7 Issue assignment to human merge
+
+**Required workflow.** The user creates an issue on GitHub, assigns it to an
+agent account, and receives a pull request ready for human review and merge on
+GitHub. The static script runs on the configured execution device. Deployment
+hostnames belong in the deployment configuration, not this public repository.
+
+1. The script detects and accepts the assignment and confirms acceptance in the
+   GitHub issue. This acceptance and confirmation are script work, never model
+   work, and happen before the script starts the implementation lane.
+2. The script starts the implementation lane with the assigned work. The model
+   implements the change and returns its result to the script.
+3. The script starts the review lane. When improvements are needed, the script
+   starts the implementer again with the findings. The script owns every lane
+   start in the implementation/review loop; no model starts another model.
+4. The script executes the required tests and checks and supplies the results to
+   the lanes. The implementer may change tests as part of the implementation but
+   may not execute them. Local test execution and any additional agents are
+   exclusively script responsibilities.
+5. The script performs all GitHub communication, including issue and PR reads,
+   comments, PR publication, and status updates. A lane may provide content for
+   the script, but never communicates with GitHub itself. User-facing questions
+   and blockers, when needed, are communicated through GitHub by the script;
+   GitHub replies return through the script. The user need not operate a terminal
+   or a separate dashboard to manage the assigned issue.
+   When the lane has no further work, it returns to the script; it does not
+   monitor GitHub or wait for CI. The script observes subsequent events and
+   informs a lane when further work is useful.
+6. Publication and readiness follow the existing
+   [pull-request lifecycle](docs/pull-request-lifecycle.md): the script publishes
+   a draft immediately after the first signed task commit, while tests and
+   reviews may still be pending. The script marks Ready for review only after
+   the required checks and reviews hold on the final head. These steps do not
+   wait for this numbered list to finish before publishing the first draft.
+7. The human reviews and merges on GitHub. Completion requires verification of
+   that human merge, as defined in the lifecycle.
+
+**Existing implementation boundaries.** This requirement is not a claim that
+the complete workflow is already implemented or enabled on a deployment:
+
+- [`watch.py`](src/agent_cli/watch.py) implements assignment scanning, a queue,
+  workspace files, and session dispatch. `dispatch_assigned` does not publish an
+  acceptance comment before starting the session.
+- [`daemon.py`](src/agent_cli/daemon.py) starts knock, dashboard, CLI bridge, and
+  paired sync. It does not start `agent watch assigned --follow`.
+- The shipped `ask=False` path in
+  [`supervise.py`](src/agent_cli/supervise.py) does not acknowledge completion of
+  an assignment from verified PR results. Its optional closed-question path is
+  not that verification.
+- [`github_act.py`](src/agent_cli/github_act.py) provides the GitHub activity
+  executor. Its existence alone does not establish that model lanes cannot
+  access GitHub or execute tests or other agents.
+
+This section defines the required responsibility boundary. It does not claim
+that a sandbox or other technical enforcement has been implemented.
+
+### 19.8 Configuration starts empty
+
+**Required default: `NULL`.** Installing Agent must not preconfigure or select
+GitHub accounts, AI accounts, roles, or account/role assignments. Operators add
+accounts and define roles explicitly through configuration, with no hard-coded
+limit on their number. A missing setting is unconfigured, not permission to
+select a built-in identity, provider account, or role.
+
+The device-local [GitHub account configuration](docs/github-accounts.md) implements
+explicit GitHub accounts and session bindings. An absent or empty configuration
+does not authorize GitHub execution. The executor verifies the selected login
+and never falls back to an ambient login or a different configured account.
+GitHub execution identities do not change the device's hub identity or transfer
+ownership of store rows.
+
+**Remaining implementation boundary:** this GitHub configuration does not yet
+implement configurable AI accounts or user-defined roles. The role/vendor lists
+and model choices in `lane.py`, and the Grok default in `runtime.py`, still
+contain fixed values. They must not be presented as satisfying the complete
+empty-default configuration requirement.
 
 ## 20. Refused: hub as a coding control plane
 

@@ -11,10 +11,19 @@ from agent_cli.supervise import (
     ANSWER_NO,
     ANSWER_YES,
     QUESTION_DONE,
-    enqueue_assigned,
+    enqueue_assigned as account_enqueue_assigned,
     parse_closed_answer,
     tick,
 )
+
+
+
+from github_support import configure_accounts, transport
+
+
+def enqueue_assigned(store, session_id, repo, number, runner):
+    configure_accounts(store.home, [session_id])
+    return account_enqueue_assigned(store, session_id, repo, number, transport(runner))
 
 
 class FakeRuntime(Runtime):
