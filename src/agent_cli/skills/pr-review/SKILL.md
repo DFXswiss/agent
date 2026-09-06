@@ -90,7 +90,11 @@ does not have the requirement.
 
 ## Pull requests
 
-The agent does not merge. Open pull requests as drafts; a human merges.
+The agent does not merge. Open pull requests as drafts as soon as the first
+signed task commit exists
+([pull request lifecycle](../../../../docs/pull-request-lifecycle.md)); a human
+merges. Full tests and these review gates are Ready requirements, not draft
+publication gates.
 
 A draft plus local tests is not done. Quality and logic of one vendor stage
 run in parallel on **this** head. The session that authored the diff does not
@@ -112,14 +116,16 @@ human merge remain required.
 `agent allow --action pr-ready` only checks task state; do
 not mark ready if it denies. Then one comment whose review-pass count
 is those four `approved` verdicts on this head, then mark the GitHub
-pull request ready.
+pull request Ready for review (`isDraft=false`). That leave-draft step is
+not merge and not pull-request completion.
 
 ## Approving
 
 Once all four lane verdicts on **this** head are `approved` and CI on this head is
 green, insert a `review.post` with `event: APPROVE` alongside the pass-count comment.
-That is a review this account submits on the pull request, not a merge: the agent
-still does not merge, and a human still does.
+That is a review this account submits on the pull request, not a merge and not
+completion: the agent still does not merge, and a human still does. Claim
+completion only after that human merge is verified.
 
 `APPROVE` is only for that state. A rejected gate publishes `COMMENT`, never
 `APPROVE` and never `REQUEST_CHANGES` — the executor refuses the last one, because an
