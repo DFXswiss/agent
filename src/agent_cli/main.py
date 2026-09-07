@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -1931,8 +1932,6 @@ def _session_start(
     _require_owned(store, row, "session")
     if row.get("status") != "active":
         die(f"session {sid} is not active")
-    if not runtime.available(sid):
-        die("tmux is not installed")
     if provider is not None and provider != "grok":
         die("provider must be grok")
     if provider == "grok" and command:
@@ -1945,18 +1944,40 @@ def _session_start(
     command_argv: list[str] | None = None
     start_command = command
     if provider == "grok":
+        from .ai_accounts import load_ai_accounts
+        selected = load_ai_accounts(store.home).for_session(sid)
+        if selected.account.provider != provider:
+            die("configured interactive role does not match the requested provider")
+        if model is not None and model != selected.model:
+            die("--model does not match the configured interactive role")
+        binding = {
+            "role": selected.name, "account": selected.account.name,
+            "provider": selected.account.provider, "model": selected.model,
+            "access": selected.access,
+            "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
+        }
         existing = meta.get("grok_session_id")
         existing_s = existing if isinstance(existing, str) and existing else ""
+        if existing_s and meta.get("ai_binding") != binding:
+            die("interactive AI binding changed or is missing; configure a new session instead of resuming")
+        if not runtime.available(sid):
+            die("tmux is not installed")
         if runtime.exists(sid) and not existing_s:
             runtime.stop(sid)
         new_id = grok_new_session_id() if not existing_s else ""
-        resolved = grok_model(model)
-        command_argv = grok_tmux_command_argv(existing=existing_s, model=resolved, new_id=new_id)
+        resolved = grok_model(selected.model)
+        command_argv = [*selected.env_prefix(), *grok_tmux_command_argv(
+            existing=existing_s, model=resolved, new_id=new_id,
+        )]
+        if selected.access == "read-only":
+            command_argv.extend(["--deny", "Write", "--deny", "Edit"])
+        command_argv.extend(["--deny", "Bash", "--no-subagents", "--disable-web-search"])
         start_command = None
         if not existing_s:
             meta["grok_session_id"] = new_id
         meta["provider"] = "grok"
         meta["model"] = resolved
+        meta["ai_binding"] = binding
     runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
     meta["tmux_session"] = name
     meta["control"] = "attached"
@@ -2762,6 +2783,11 @@ def cmd_run(args: list[str]) -> None:
                 round_num: int | None = None
                 if role in ("implementer", "reviewer"):
                     round_num = current_round
+                # Fail closed on AI lane binding before creating a working agent.
+                # launch() still resolves the same binding; no ambient fallback.
+                from .ai_accounts import load_ai_accounts
+
+                load_ai_accounts(store.home).for_lane(session_id, role, vendor)
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )
@@ -2786,6 +2812,8 @@ def cmd_run(args: list[str]) -> None:
                     spec_file=spec_file,
                     cwd=cwd,
                     tmux=tmux,
+                    config_home=store.home,
+                    session_id=session_id,
                 )
                 _print_lane_result(result)
                 if role == "implementer" and result.status == "complete":
@@ -2999,11 +3027,12 @@ def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
             "Usage: agent lane run --role ROLE --vendor grok|codex "
-            "--spec-file PATH [--cwd PATH] [--dry-run] [--no-tmux]"
+            "--session ID --spec-file PATH [--cwd PATH] [--dry-run] [--no-tmux]"
         )
     rest = args[1:]
     role = require_flag(rest, "--role")
     vendor = require_flag(rest, "--vendor")
+    session_id = require_flag(rest, "--session")
     spec_file = require_flag(rest, "--spec-file")
     cwd = flag(rest, "--cwd") or os.getcwd()
     dry_run = "--dry-run" in rest
@@ -3019,6 +3048,8 @@ def cmd_lane(args: list[str]) -> None:
         cwd=cwd,
         dry_run=dry_run,
         tmux=tmux,
+        config_home=home(),
+        session_id=session_id,
     )
     if dry_run:
         print(" ".join(result.argv))

@@ -463,14 +463,23 @@ Owned-row runtime fields (start/stop set control and tmux; `keep-working` may al
   "rows": 24,
   "provider": "grok",
   "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  "model": "grok-4.6",
+  "model": "operator-selected-model",
   "keep_working": { "standing_sent": true }
 }
 ```
 
 Start sets `control=attached` and the tmux name. Stop sets `control=stopped` and keeps the name. `agent session keep-working` updates `runtime.keep_working.standing_sent` on idle ticks so the standing instruction is sent once. Session `status` (`active` / `closed`) is separate; `session close` stays as it is.
 
-**Grok Build launch** (`--provider grok` or control `{provider: "grok"}`) is not the store session id. The Grok CLI `--session-id` flag accepts only a UUID (`8-4-4-4-12`). A caller-chosen session id (including a ULID) is never passed through. First start mints `runtime.grok_session_id` and runs `grok --always-approve --session-id <uuid> --model grok-4.6`. Later starts, if that field is set, run `grok --always-approve --resume <uuid> --model grok-4.6`. An empty model becomes `grok-4.6`; it must not inherit a Claude default. The pane is started with `env -u ANTHROPIC_API_KEY -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT` so Claude credentials do not leak into the Grok process. `--provider` and `--cmd` cannot be combined.
+**Grok Build launch** (`--provider grok` or control `{provider: "grok"}`) resolves
+an explicit interactive role from `ai-accounts.json`. The model and provider
+profile directory are required configuration; there is no built-in model.
+The CLI accepts only a UUID, so first start creates `runtime.grok_session_id`.
+A later start may resume that ID only with the same recorded AI binding
+(role, account, provider, model, access and configuration-directory hash).
+Changing that binding, or adopting an old unbound ID, requires a new session.
+Provider credential environment variables are cleared in the child process,
+and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot
+be combined; `--model`, when supplied, must match the configured role.
 
 **Vendors remain `grok` | `codex`.** A process running inside a tmux pane is not a store vendor. There is no `vendor=claude` and no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
@@ -658,14 +667,18 @@ executor verifies the selected login and never falls back to an ambient login
 or a different configured account. GitHub execution identities do not change the
 device's hub identity or transfer ownership of store rows.
 
-**Remaining implementation boundary:** this GitHub configuration does not cover
-every CLI path that may invoke `gh`. In particular, `agent a38` visibility
-lookup still runs ambient host `gh repo view` when `--private` is omitted
-(`src/agent_cli/a38.py`), without loading `github-accounts.json` or a session
-binding. This manifest also does not yet implement configurable AI accounts or
-user-defined roles. The role/vendor lists and model choices in `lane.py`, and
-the Grok default in `runtime.py`, still contain fixed values. They must not be
-presented as satisfying the complete empty-default configuration requirement.
+[AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
+profiles and roles, explicit models/access and session-to-role bindings. It is
+used by lane launches, interactive Grok starts and optional Grok usage reads.
+Absent configuration authorizes no AI launch. Fixed workflow kinds and the
+Grok/Codex provider adapters are protocol capabilities, not installed account
+or role selections. A38 visibility lookup uses an explicitly bound GitHub
+session, or operator-supplied visibility without a GitHub lookup.
+
+The standalone PR guard retains its explicit workflow-token configuration.
+Trusted script APIs and raw terminal commands are not a sandbox. Complete
+issue-to-PR orchestration and technical restrictions on model tools remain
+separate work as documented in §19.7.
 
 ## 20. Refused: hub as a coding control plane
 
@@ -808,7 +821,7 @@ Phase 1 is this loop plus a backlog. Smarter questions are later.
 
 ## 23. Document history
 
-Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, default model `grok-4.6`, no Claude environment in the pane.
+Recorded from the design thread that specified realtime team visibility, rejected a central write database and a mesh, rejected embedding the hub in the existing public API, chose GitHub login + git teams, and split the work into `agent` + `agent-core`. Control: local tmux ownership, hub control frames, ephemeral terminal bytes. Grok launch: own UUID in `runtime.grok_session_id`, `--resume` on later starts, the historical default model (now replaced by explicit AI configuration), no Claude environment in the pane.
 
 This revision replaces default complete pull with own events + inbox/subscription snapshots, moves the local engine to PostgreSQL, requires a session row, adds the `activity` catalog and opt-in skills, and adds session-addressed mail with a TUI knock of `da ist Post id <uuid>` only.
 

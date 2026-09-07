@@ -585,19 +585,27 @@ def _resolve_private(
     *,
     run: RunFn,
     repository: str,
+    github_session: str | None = None,
+    config_home: Path | None = None,
 ) -> bool:
     if private is not None:
         if not isinstance(private, bool):
             raise A38Error("private must be a boolean")
         return private
-    completed = run(
-        ["gh", "repo", "view", repository, "--json", "isPrivate"],
-        repo_path,
-        None,
-    )
+    if not github_session:
+        raise A38Error("visibility lookup requires an explicitly configured --github-session, or --private/--public")
+    from .github_accounts import AccountError, load_accounts
+    try:
+        if config_home is None:
+            from .main import home
+            config_home = home()
+        account = load_accounts(config_home).for_session(github_session)
+        scoped = account.runner(lambda argv: run(argv, repo_path, None))
+        completed = scoped(["gh", "repo", "view", repository, "--json", "isPrivate"])
+    except AccountError as exc:
+        raise A38Error(str(exc)) from None
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "gh repo view failed").strip()
-        raise A38Error(detail or "gh repo view failed")
+        raise A38Error("configured GitHub account could not resolve repository visibility")
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
@@ -872,6 +880,8 @@ def run_policy(
     run: RunFn | None = None,
     repository: str | None = None,
     policy_path: Path | None = None,
+    github_session: str | None = None,
+    config_home: Path | None = None,
 ) -> dict:
     """Execute policy jobs and write a complete ``dfx-local-ci/v1`` report."""
     runner = run or _default_run
@@ -906,7 +916,10 @@ def run_policy(
     head = _head_sha(root, run=runner)
     base = _ensure_commit_exists(root, base_sha, run=runner)
     repo = repository if repository is not None else _origin_repo(root, run=runner)
-    is_private = _resolve_private(root, private, run=runner, repository=repo)
+    is_private = _resolve_private(
+        root, private, run=runner, repository=repo,
+        github_session=github_session, config_home=config_home,
+    )
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     env = _job_env(head, base)
@@ -1140,6 +1153,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             private=private,
             repository=args.repository,
             policy_path=Path(args.policy),
+            github_session=args.github_session,
         )
     except (A38Error, OSError) as exc:
         print(f"a38: {exc}", file=sys.stderr)
@@ -1167,6 +1181,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--base-sha", required=True, dest="base_sha", help="Base commit SHA")
     run_p.add_argument("--private", action="store_true", help="Mark report private=true")
     run_p.add_argument("--public", action="store_true", help="Mark report private=false")
+    run_p.add_argument("--github-session", help="Explicit GitHub account session for visibility lookup")
     run_p.set_defaults(func=_cmd_run)
 
     verify_p = sub.add_parser("verify", help="Verify an author report against a trusted policy")

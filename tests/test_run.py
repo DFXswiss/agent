@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -10,6 +11,54 @@ from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_cli import _last_agent_id, _last_task_id, run
 from github_support import configure_accounts
+
+OPERATOR_GROK_MODEL = "operator-run-grok-model"
+OPERATOR_GROK_HOME = "/operator/path/grok-run-a"
+OPERATOR_CODEX_HOME = "/operator/path/codex-run-a"
+DEFAULT_SESSION = "sess-1"
+
+
+def write_operator_ai_accounts(home: Path, *, sessions: dict | None = None) -> None:
+    """Write an explicit operator ai-accounts.json for positive cmd_run lane starts.
+
+    Installation defaults stay empty. Call this only for configured success
+    paths; negative tests must leave the home unconfigured or deliberately
+    malformed/mismatched.
+    """
+    data = {
+        "accounts": {
+            "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
+            "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
+        },
+        "roles": {
+            "run-builder": {
+                "account": "grok-a",
+                "model": OPERATOR_GROK_MODEL,
+                "access": "workspace-write",
+            },
+            "run-reader": {
+                "account": "grok-a",
+                "model": OPERATOR_GROK_MODEL,
+                "access": "read-only",
+            },
+            "codex-builder": {
+                "account": "codex-a",
+                "model": "operator-run-codex-model",
+                "access": "workspace-write",
+            },
+        },
+        "sessions": sessions
+        or {
+            DEFAULT_SESSION: {
+                "interactive": "run-builder",
+                "lanes": {
+                    "grok:implementer": "run-builder",
+                    "grok:reviewer": "run-reader",
+                },
+            },
+        },
+    }
+    (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 def _store(home: Path) -> Store:
@@ -292,10 +341,13 @@ def test_run_prints_vendor_stdout(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
+    seen: dict = {}
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
         return LaneResult(
             role="implementer",
             vendor="grok",
@@ -324,16 +376,24 @@ def test_run_prints_vendor_stdout(
     marker_at = out.index("distinctive-marker-run456")
     summary_at = out.index("STATUS=complete")
     assert marker_at < summary_at
+    assert seen.get("session_id") == "sess-1"
+    assert seen.get("config_home") == tmp_path
+    assert seen.get("role") == "implementer"
+    assert seen.get("vendor") == "grok"
+    assert seen.get("tmux") is False
 
 
 def test_run_spec_file_implementer_complete(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
+    seen: dict = {}
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
         return LaneResult(
             role="implementer",
             vendor="grok",
@@ -364,6 +424,9 @@ def test_run_spec_file_implementer_complete(
         a.get("role") == "implementer" and a.get("status") == "done"
         for a in _agents(tmp_path, tid)
     )
+    assert seen.get("session_id") == "sess-1"
+    assert seen.get("config_home") == tmp_path
+    assert seen.get("spec_file") == str(spec)
 
 
 def test_run_missing_spec_file_does_not_leave_working_agent(
@@ -388,6 +451,120 @@ def test_run_missing_spec_file_does_not_leave_working_agent(
     assert not any(a.get("status") == "working" for a in _agents(tmp_path, tid))
 
 
+def _assert_run_config_failure_leaves_no_working_agent(
+    home: Path,
+    tid: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    spec: Path,
+    match: str,
+) -> None:
+    called = {"n": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        called["n"] += 1
+        raise AssertionError("model must not launch when AI lane binding fails")
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    with pytest.raises(SystemExit, match=match):
+        run(
+            home,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(home),
+            ],
+        )
+    capsys.readouterr()
+    assert called["n"] == 0
+    assert not any(a.get("status") == "working" for a in _agents(home, tid))
+
+
+def test_run_unconfigured_ai_leaves_no_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty installation default: cmd_run must not persist a working lane."""
+    tid = _bootstrap_implement(tmp_path, capsys)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    _assert_run_config_failure_leaves_no_working_agent(
+        tmp_path,
+        tid,
+        capsys,
+        monkeypatch,
+        spec=spec,
+        match="No AI session configured",
+    )
+
+
+def test_run_malformed_ai_accounts_leaves_no_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    (tmp_path / "ai-accounts.json").write_text("{", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    _assert_run_config_failure_leaves_no_working_agent(
+        tmp_path,
+        tid,
+        capsys,
+        monkeypatch,
+        spec=spec,
+        match="Cannot read ai-accounts.json",
+    )
+
+
+def test_run_provider_mismatch_leaves_no_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["sessions"] = {
+        DEFAULT_SESSION: {"lanes": {"grok:implementer": "codex-builder"}},
+    }
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    _assert_run_config_failure_leaves_no_working_agent(
+        tmp_path,
+        tid,
+        capsys,
+        monkeypatch,
+        spec=spec,
+        match="provider does not match",
+    )
+
+
+def test_run_writable_reviewer_binding_leaves_no_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])  # implementer_done
+    capsys.readouterr()
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["sessions"][DEFAULT_SESSION]["lanes"]["grok:reviewer"] = "run-builder"
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    _assert_run_config_failure_leaves_no_working_agent(
+        tmp_path,
+        tid,
+        capsys,
+        monkeypatch,
+        spec=spec,
+        match="requires read-only access",
+    )
+
+
 def test_run_spec_file_reviewer_complete_no_auto_approve(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -395,10 +572,13 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
     _finish_implementer(tmp_path, tid, capsys)
     run(tmp_path, ["run", "--task", tid])  # implementer_done
     capsys.readouterr()
+    write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "review-spec.md"
     spec.write_text("review this\n", encoding="utf-8")
+    seen: dict = {}
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
         return LaneResult(
             role="reviewer",
             vendor="grok",
@@ -430,6 +610,10 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
         if agent.get("role") != "reviewer":
             continue
         assert agent.get("status") == "working"
+    assert seen.get("session_id") == "sess-1"
+    assert seen.get("config_home") == tmp_path
+    assert seen.get("role") == "reviewer"
+    assert seen.get("vendor") == "grok"
 
 
 def _advance_to_pushed(

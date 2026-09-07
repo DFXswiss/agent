@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -42,14 +41,6 @@ class AuthStale(StoreError):
     """Grok login missing or expired. Not a runtime failure of this scan."""
 
 
-def grok_auth_path() -> Path:
-    """$GROK_HOME/auth.json if GROK_HOME is set and non-empty, else ~/.grok/auth.json."""
-    home = os.environ.get("GROK_HOME")
-    if isinstance(home, str) and home != "":
-        return Path(home) / "auth.json"
-    return Path.home() / ".grok" / "auth.json"
-
-
 def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
     """
     Read the SuperGrok OIDC entry.
@@ -61,7 +52,9 @@ def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
     Return (token, account_email). Never log the token.
     Do not refresh tokens. Do not read refresh_token except to ignore it.
     """
-    path = auth_path if auth_path is not None else grok_auth_path()
+    if auth_path is None:
+        raise AuthStale("Grok authentication path must be explicitly configured")
+    path = auth_path
     if not path.is_file():
         raise AuthStale(f"grok auth file not found: {path}")
     try:
@@ -314,7 +307,7 @@ def scan_usage(
     now: Callable[[], str] | None = None,
 ) -> str | None:
     """
-    Load bearer, call fetch or fetch_credits_and_settings, parse, pick session.
+    Resolve an explicit usage binding (or injected auth_path), fetch and record.
     If usage_unchanged(last, snapshot): return None.
     Else insert activity via store.write_with_advisory:
       lock_key='usage.snapshot:grok'
@@ -326,11 +319,26 @@ def scan_usage(
     Raise StoreError on any failure. Never invent 0% on error.
     fetched_at = (now or utcnow)().
     """
+    session_id = None
+    if auth_path is None:
+        from .ai_accounts import load_ai_accounts
+        accounts = load_ai_accounts(store.home)
+        session_id = accounts.usage_session
+        if session_id is None:
+            raise AuthStale("AI usage monitoring is not configured")
+        row = store.row("session", session_id)
+        if row is None or row.get("_origin_device_id") != store.device_id() or row.get("status") != "active":
+            raise StoreError("AI usage session must be owned and active")
+        selected = accounts.for_session(session_id)
+        auth_path = Path(selected.account.config_dir) / "auth.json"
     token, account_email = load_grok_bearer(auth_path)
     credits, settings = (fetch or fetch_credits_and_settings)(token)
     fetched_at = (now or utcnow)()
     snapshot = snapshot_from_payloads(credits, settings, fetched_at, account_email)
-    session_id = pick_session_id(store)
+    # Explicit auth_path is an injection hook for callers supplying their own
+    # account path; automatic polling always uses the configured usage session.
+    if session_id is None:
+        session_id = pick_session_id(store)
     if usage_unchanged(last_usage_snapshot(store), snapshot):
         return None
     activity_id = str(uuid.uuid4())

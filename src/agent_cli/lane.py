@@ -15,9 +15,6 @@ from pathlib import Path
 
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 LANE_VENDORS = ("grok", "codex")
-WRITE_ROLES = frozenset({"implementer"})
-GROK_LANE_MODEL = "grok-4.5"
-CODEX_LANE_MODEL = "gpt-5.6-sol"
 NPROC_CAP = 800
 GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
@@ -51,9 +48,9 @@ def _env_strip_prefix() -> list[str]:
     return argv
 
 
-def grok_argv(*, spec_file: str, cwd: str, write: bool) -> list[str]:
+def grok_argv(*, spec_file: str, cwd: str, write: bool, model: str) -> list[str]:
     argv = _env_strip_prefix()
-    argv.extend(["grok", "--prompt-file", spec_file, "-m", GROK_LANE_MODEL])
+    argv.extend(["grok", "--prompt-file", spec_file, "-m", model])
     if write:
         argv.extend(
             [
@@ -95,7 +92,7 @@ def grok_argv(*, spec_file: str, cwd: str, write: bool) -> list[str]:
     return argv
 
 
-def codex_argv(*, cwd: str, write: bool, output_file: str) -> list[str]:
+def codex_argv(*, cwd: str, write: bool, output_file: str, model: str) -> list[str]:
     sandbox = "workspace-write" if write else "read-only"
     argv = _env_strip_prefix()
     argv.extend(
@@ -103,9 +100,7 @@ def codex_argv(*, cwd: str, write: bool, output_file: str) -> list[str]:
             "codex",
             "exec",
             "--model",
-            CODEX_LANE_MODEL,
-            "-c",
-            "model_reasoning_effort=high",
+            model,
             "--sandbox",
             sandbox,
             "--skip-git-repo-check",
@@ -226,11 +221,17 @@ def launch(
     runner: Runner | None = None,
     dry_run: bool = False,
     tmux: bool = True,
+    config_home: Path | None = None,
+    session_id: str | None = None,
 ) -> LaneResult:
     if role not in LANE_ROLES:
         raise SystemExit(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
         raise SystemExit("vendor must be grok|codex")
+    from .ai_accounts import load_ai_accounts
+    if not session_id or config_home is None:
+        raise SystemExit("lane requires an explicit session and AI configuration home")
+    selected = load_ai_accounts(config_home).for_lane(session_id, role, vendor)
 
     path = Path(spec_file)
     if not path.is_file():
@@ -241,16 +242,17 @@ def launch(
     spec_file = str(path.resolve())
     cwd = str(Path(cwd).resolve())
 
-    write = role in WRITE_ROLES
+    write = selected.access == "workspace-write"
     codex_output_file: str | None = None
     if vendor == "grok":
-        argv = grok_argv(spec_file=spec_file, cwd=cwd, write=write)
+        argv = grok_argv(spec_file=spec_file, cwd=cwd, write=write, model=selected.model)
     else:
         if dry_run:
             argv = codex_argv(
                 cwd=cwd,
                 write=write,
                 output_file="/tmp/agent-lane-codex-dry-run.txt",
+                model=selected.model,
             )
         else:
             fd, codex_output_file = tempfile.mkstemp(
@@ -258,7 +260,11 @@ def launch(
                 suffix=".txt",
             )
             os.close(fd)
-            argv = codex_argv(cwd=cwd, write=write, output_file=codex_output_file)
+            argv = codex_argv(cwd=cwd, write=write, output_file=codex_output_file, model=selected.model)
+
+    # Apply the selected provider home inside the tmux child too. The builders'
+    # credential-clearing prefix is nested, never a process-global mutation.
+    argv = [*selected.env_prefix(), *argv]
 
     tmux_session: str | None = None
     if tmux:

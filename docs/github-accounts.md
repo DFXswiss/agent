@@ -5,7 +5,9 @@ Static scripts that load this manifest select GitHub accounts from
 bindings. A missing file, `{}`, or null/empty `accounts` and `sessions` leaves
 those covered GitHub executors unconfigured. There is no implicit account from
 hub pairing, the host login, or environment tokens. CLI paths that never load
-this file are outside this enforcement; see the remaining gaps below.
+this file are outside this enforcement; see A38 visibility below for the
+explicit `--github-session` path and the standalone PR guard's documented
+workflow-token configuration.
 
 The following is an operator-supplied example, not an installed default:
 
@@ -98,12 +100,13 @@ sessions explicitly before enabling these operations after upgrading.
 Hub pairing and event ownership are separate: using a second GitHub execution
 account does not re-pair the device or change ownership of its rows.
 
-**Remaining gaps.** This manifest does not cover legacy ambient `gh` paths that
-never load it. One reachable example is `agent a38` visibility lookup
-(`gh repo view` when `--private` is omitted), which still uses the host `gh`
-login. Configurable AI accounts and roles are part of the
-[empty-default requirement](../DESIGN.md#198-configuration-starts-empty) and are
-not implemented by this manifest.
+**A38 visibility.** `agent a38 run` requires `--github-session SESSION` for
+GitHub visibility lookup; the selected account is verified using this manifest.
+Explicit `--private`/`--public` supplies report visibility without that lookup.
+AI account and role selections use the separate [AI manifest](ai-accounts.md).
+The standalone PR guard uses its documented explicitly supplied workflow-token
+configuration; it does not select a host GitHub CLI login. Pure argv builders
+and injected-runner libraries are not a sandbox; callers remain trusted scripts.
 
 Transfer options are deliberately limited to the explicit allowlists in
 `github_accounts.py`. Unknown options (including custom receive/upload programs),
