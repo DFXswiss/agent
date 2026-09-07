@@ -38,7 +38,9 @@ def _text(value: object, label: str) -> str:
 
 def _repo(value: object) -> str:
     name = _text(value, 'repository')
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', name):
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+', name):
+        raise StoreError('repository must be owner/name')
+    if name.split('/')[1] in {'.', '..'}:
         raise StoreError('repository must be owner/name')
     return name
 
@@ -104,7 +106,11 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
             if not isinstance(entry, dict) or set(entry) != {'base', 'publication_repo', 'check_argv', 'readiness_argv'}:
                 raise StoreError('repository requires base, publication_repo, check_argv and readiness_argv')
             base = _text(entry['base'], 'base')
-            if base.startswith('-') or any(c in base for c in ' ~^:?*[\\') or '..' in base or '@{' in base:
+            if (base.startswith('-') or base == '@' or base.endswith('.')
+                    or any(ord(c) < 32 or ord(c) == 127 or c in ' ~^:?*[\\' for c in base)
+                    or '..' in base or '@{' in base
+                    or any(not part or part.startswith('.') or part.endswith('.lock')
+                           for part in base.split('/'))):
                 raise StoreError('invalid base branch')
             repos[repo] = RepositoryConfig(repo, base, _repo(entry['publication_repo']),
                                           _argv(entry['check_argv'], 'check_argv'),

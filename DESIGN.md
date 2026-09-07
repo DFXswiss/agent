@@ -632,13 +632,24 @@ hostnames belong in the deployment configuration, not this public repository.
    that human merge, as defined in the lifecycle.
 
 **Existing implementation boundaries.** This requirement is not a claim that
-the complete workflow is already implemented or enabled on a deployment:
+the workflow is enabled on a deployment:
+
+- The optional [`coordinator.py`](src/agent_cli/coordinator.py) entrypoint and
+  [`coordinator_runtime.py`](src/agent_cli/coordinator_runtime.py) provide the
+  script-owned issue workflow. Its explicit device configuration, evidence
+  requirements and recovery boundaries are described in
+  [docs/issue-coordinator.md](docs/issue-coordinator.md). `agent coordinate
+  --session ID` performs a bounded advancement; `--follow` is the script's loop.
+  No worker, account or role is installed by default.
 
 - [`watch.py`](src/agent_cli/watch.py) implements assignment scanning, a queue,
   workspace files, and session dispatch. `dispatch_assigned` does not publish an
   acceptance comment before starting the session.
 - [`daemon.py`](src/agent_cli/daemon.py) starts knock, dashboard, CLI bridge, and
-  paired sync. It does not start `agent watch assigned --follow`.
+  paired sync, plus each explicitly configured coordinator worker. Changes to
+  the daemon's worker set require a daemon restart. It does not start the legacy
+  `agent watch assigned --follow`. Legacy dispatch and `supervise` refuse
+  sessions selected for the coordinator.
 - The shipped `ask=False` path in
   [`supervise.py`](src/agent_cli/supervise.py) does not acknowledge completion of
   an assignment from verified PR results. Its optional closed-question path is
@@ -676,9 +687,9 @@ or role selections. A38 visibility lookup uses an explicitly bound GitHub
 session, or operator-supplied visibility without a GitHub lookup.
 
 The standalone PR guard retains its explicit workflow-token configuration.
-Trusted script APIs and raw terminal commands are not a sandbox. Complete
-issue-to-PR orchestration and technical restrictions on model tools remain
-separate work as documented in §19.7.
+Trusted script APIs and raw terminal commands are not a sandbox. The optional
+issue coordinator and its deployment boundaries are documented in §19.7;
+technical enforcement of every model tool restriction remains separate work.
 
 ## 20. Refused: hub as a coding control plane
 

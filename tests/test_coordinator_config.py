@@ -70,3 +70,23 @@ def test_worker_roots_cannot_share_an_execution_tree(tmp_path):
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='overlap'):
         load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize('base', ['../main', '/main', 'feature/', 'feature//main',
+                                 'feature/.hidden', 'main.lock', 'main.', 'ma\tin', '@'])
+def test_invalid_branch_is_rejected_before_acceptance(tmp_path, base):
+    data = config(tmp_path)
+    data['workers']['selected-session']['repositories']['example/project']['base'] = base
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='invalid base branch'):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize('repo', ['../project', 'example/..', 'example/.', '-example/project'])
+def test_repository_cannot_escape_selected_api_path(tmp_path, repo):
+    data = config(tmp_path)
+    entry = data['workers']['selected-session']['repositories'].pop('example/project')
+    data['workers']['selected-session']['repositories'][repo] = entry
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='repository must be owner/name'):
+        load_coordinator_config(tmp_path)
