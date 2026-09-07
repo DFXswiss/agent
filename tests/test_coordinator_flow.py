@@ -16,7 +16,7 @@ import pytest
 
 from agent_cli.coordinator import tick
 from agent_cli.store import Store
-from tests.test_coordinator_support import (
+from test_coordinator_support import (
     FakeGh,
     lane_runner,
     make_session,

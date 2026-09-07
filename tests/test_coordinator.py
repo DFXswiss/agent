@@ -25,7 +25,7 @@ from agent_cli.coordinator_runtime import (
 )
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
-from tests.test_coordinator_support import (
+from test_coordinator_support import (
     FakeGh,
     lane_runner,
     make_session,
