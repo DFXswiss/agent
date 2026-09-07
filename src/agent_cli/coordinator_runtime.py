@@ -23,6 +23,7 @@ from .coordinator_common import (
     REQUIRED_LANE_SLOTS,
     REQUIRED_REVIEW_SKILLS,
     REQUIRED_WORKER_SKILLS,
+    CiObservedFailureError,
     CoordinatorError,
     LaneRunner,
     Runner,
@@ -1159,6 +1160,20 @@ def advance_one(
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
         return handler()
+    except CiObservedFailureError as exc:
+        # Ready-side observed actual failed CI: hand off to script phase_ci.
+        # Do not reply-gate on the Ready phase, and do not let same-phase retry
+        # setters overwrite this transition. Next tick fetches logs / routes
+        # implement (or preserves logs-inaccessible external blocker).
+        c = coord(task)
+        evidence = c.get("evidence")
+        if isinstance(evidence, dict):
+            evidence["ci_green"] = False
+        c["phase"] = "ci"
+        c["resume_phase"] = None
+        c["blocker"] = None
+        save_task(store, task)
+        return [str(exc) or "CI failed on recheck; returning to CI observation"]
     except (CoordinatorError, StoreError) as exc:
         # Task-specific failures must become GitHub-visible blockers when possible.
         c = coord(task)

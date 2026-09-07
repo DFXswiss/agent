@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -14,6 +15,9 @@ from .coordinator_common import (
     CI_PENDING,
     CI_SUCCESS,
     CiInventoryProtocolError,
+    CiObservationProtocolError,
+    CiObservationTransportError,
+    CiObservedFailureError,
     CoordinatorError,
     QUESTION_MARKER_PREFIX,
     STATUS_MARKER_PREFIX,
@@ -287,21 +291,26 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
 
     Shape / missing ``workflow_runs`` / pagination truncation raise
     ``CiInventoryProtocolError`` (recoverable blocked + ``resume_phase=ci``).
-    Transient ``gh_json`` transport failures propagate as ``CoordinatorError``
-    so ``phase_ci`` can retry the same static phase without a reply gate.
+    Transient ``gh_json`` transport failures raise ``CiObservationTransportError``
+    so callers can retry the same static phase without a reply gate.
     """
     owner, name = repo.split("/", 1)
     page = 1
     runs: list[dict[str, Any]] = []
     while page <= 20:
-        raw = gh_json(
-            runner,
-            [
-                "gh",
-                "api",
-                f"repos/{owner}/{name}/actions/runs?head_sha={head}&per_page=100&page={page}",
-            ],
-        )
+        try:
+            raw = gh_json(
+                runner,
+                [
+                    "gh",
+                    "api",
+                    f"repos/{owner}/{name}/actions/runs?head_sha={head}&per_page=100&page={page}",
+                ],
+            )
+        except CoordinatorError as exc:
+            raise CiObservationTransportError(
+                str(exc) or "workflow inventory temporarily unavailable"
+            ) from exc
         if not isinstance(raw, dict):
             raise CiInventoryProtocolError("workflow inventory has unexpected shape")
         batch = raw.get("workflow_runs")
@@ -319,6 +328,151 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
     else:
         raise CiInventoryProtocolError("workflow inventory pagination truncated")
     return runs
+
+
+def _fetch_pr_json(runner: Runner, target: str, number: int, fields: str) -> Any:
+    """Fetch ``gh pr view`` JSON; transport failures are typed, not generic blockers."""
+    try:
+        return gh_json(
+            runner,
+            ["gh", "pr", "view", str(number), "--repo", target, "--json", fields],
+        )
+    except CoordinatorError as exc:
+        raise CiObservationTransportError(
+            str(exc) or "PR view temporarily unavailable"
+        ) from exc
+
+
+@dataclass(frozen=True)
+class _CiObservation:
+    """Deterministic CI observation classification shared by phase_ci and rechecks."""
+
+    kind: str
+    detail: str
+    failures: tuple[str, ...] = ()
+    action_required: tuple[str, ...] = ()
+    new_head: str | None = None
+    rollup: tuple[Any, ...] | None = None
+    latest: dict[str, dict[str, Any]] | None = None
+
+
+def _classify_rollup_and_inventory(
+    rollup: list[Any],
+    latest: dict[str, dict[str, Any]],
+) -> _CiObservation:
+    """Classify fetched rollup+inventory facts. Never guesses from log text."""
+    pending = False
+    failures: list[str] = []
+    action_required: list[str] = []
+    successes = 0
+
+    for check in rollup:
+        if not isinstance(check, dict):
+            return _CiObservation("protocol", "PR check rollup entry malformed")
+        state = _rollup_state(check)
+        name = str(check.get("name") or check.get("context") or "check")
+        if state in CI_PENDING or state == "":
+            pending = True
+        elif state in CI_ACTION_REQUIRED:
+            action_required.append(name)
+        elif state in CI_SUCCESS:
+            successes += 1
+        else:
+            # cancelled/skipped/failure/neutral/pass/passing — not success here.
+            failures.append(f"{name}:{state or 'unknown'}")
+
+    for key, run in latest.items():
+        status = str(run.get("status") or "").lower()
+        conclusion = str(run.get("conclusion") or "").lower()
+        path = str(run.get("path") or key)
+        if status != "completed":
+            pending = True
+            continue
+        if conclusion in CI_ACTION_REQUIRED:
+            action_required.append(path)
+        elif conclusion in CI_SUCCESS:
+            successes += 1
+        else:
+            failures.append(f"{path}:{conclusion or 'unknown'}")
+
+    if action_required:
+        return _CiObservation(
+            "action_required",
+            "CI action_required (external authorization)",
+            action_required=tuple(action_required),
+            rollup=tuple(rollup),
+            latest=latest,
+        )
+    if not rollup and not latest:
+        return _CiObservation("pending", "no checks yet", rollup=tuple(rollup), latest=latest)
+    if pending and not failures:
+        return _CiObservation("pending", "checks pending", rollup=tuple(rollup), latest=latest)
+    if failures:
+        return _CiObservation(
+            "failed",
+            "CI failed",
+            failures=tuple(failures),
+            rollup=tuple(rollup),
+            latest=latest,
+        )
+    rollup_ok = any(
+        isinstance(check, dict) and _rollup_state(check) in CI_SUCCESS for check in rollup
+    )
+    inventory_ok = any(
+        str(run.get("status") or "") == "completed" and str(run.get("conclusion") or "") in CI_SUCCESS
+        for run in latest.values()
+    )
+    if not rollup or not latest or not rollup_ok or not inventory_ok or successes <= 0:
+        return _CiObservation(
+            "pending",
+            "incomplete rollup/inventory success evidence",
+            rollup=tuple(rollup),
+            latest=latest,
+        )
+    return _CiObservation("green", "CI green", rollup=tuple(rollup), latest=latest)
+
+
+def _observe_exact_head_ci(
+    runner: Runner,
+    target: str,
+    number: int,
+    head: str,
+    *,
+    fields: str,
+) -> _CiObservation:
+    """Shared exact-head CI observation for ``phase_ci`` and Ready-side rechecks."""
+    try:
+        pr = _fetch_pr_json(runner, target, number, fields)
+    except CiObservationTransportError:
+        return _CiObservation("transport", "PR view temporarily unavailable")
+    if not isinstance(pr, dict):
+        return _CiObservation("protocol", "PR view failed")
+    observed_head = str(pr.get("headRefOid") or "")
+    if observed_head.lower() != head.lower():
+        return _CiObservation(
+            "head_changed",
+            "PR head changed",
+            new_head=(observed_head or head).lower(),
+        )
+    rollup = pr.get("statusCheckRollup")
+    # Absent rollup must not skip head workflow inventory: action_required (and
+    # actual failures) may exist only in inventory. Empty rollup still cannot
+    # be green, but inventory facts remain visible to classification.
+    if rollup is None:
+        rollup = []
+    elif not isinstance(rollup, list):
+        return _CiObservation("protocol", "PR check rollup malformed")
+    try:
+        runs = _paginate_workflow_runs(runner, target, head)
+    except CiInventoryProtocolError as exc:
+        return _CiObservation("protocol", f"CI inventory: {exc}")
+    except CiObservationTransportError:
+        return _CiObservation("transport", "inventory temporarily unavailable")
+    except CoordinatorError:
+        # Defensive: any other typed command failure stays transport, not reply-gated.
+        return _CiObservation("transport", "inventory temporarily unavailable")
+    latest = _latest_run_attempts(runs, head)
+    return _classify_rollup_and_inventory(rollup, latest)
 
 
 def _latest_run_attempts(runs: list[dict[str, Any]], head: str) -> dict[str, dict[str, Any]]:
@@ -401,6 +555,10 @@ def fetch_failure_logs(
             chunks.append(f"{path}: logs inaccessible")
             continue
         raw = completed.stdout or ""
+        if not raw.strip():
+            inaccessible = True
+            chunks.append(f"{path}: logs inaccessible (empty output)")
+            continue
         # ZIP / binary archives must not be fed to the implementer as "logs".
         if raw.startswith("PK") or "\x00" in raw[:200]:
             inaccessible = True
@@ -420,7 +578,12 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
     This core observes cumulative GitHub CI targets only. Target-repository
     policy / A38 live join belongs to configured readiness_argv. No generic
     cancelled/skipped bypass. Empty or malformed evidence is not green.
+    Absent ``statusCheckRollup`` is treated as ``[]`` and inventory is still
+    inspected so inventory-only ``action_required`` / failures stay visible.
     action_required is an authorization blocker, not a source-code failure.
+    Pending / absent-yet evidence and transient observation transport stay on
+    static ``phase=ci`` with no idle model and no reply gate. Hard protocol
+    faults use recoverable blocked + ``resume_phase=ci`` + checkpoint.
     """
     c = coord(task)
     target = target_repo(task)
@@ -429,91 +592,42 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
     if number is None or not head:
         raise CoordinatorError("CI observation requires PR number and head")
     scoped_runner = scoped(store, worker.session_id, runner)
-    pr = gh_json(
+    obs = _observe_exact_head_ci(
         scoped_runner,
-        [
-            "gh",
-            "pr",
-            "view",
-            str(number),
-            "--repo",
-            target,
-            "--json",
-            "statusCheckRollup,headRefOid,state,isDraft,author,baseRefName,mergeable",
-        ],
+        target,
+        number,
+        head,
+        fields="statusCheckRollup,headRefOid,state,isDraft,author,baseRefName,mergeable",
     )
-    if not isinstance(pr, dict):
-        raise CoordinatorError("PR view failed")
-    if str(pr.get("headRefOid") or "").lower() != head.lower():
-        c["head_sha"] = str(pr.get("headRefOid") or head).lower()
+    if obs.kind == "transport":
+        # Transient PR-view / inventory transport: same static ci phase.
+        return [f"CI pending on {head[:7]} ({obs.detail})"]
+    if obs.kind == "pending":
+        return [f"CI pending on {head[:7]} ({obs.detail})"]
+    if obs.kind == "head_changed":
+        c["head_sha"] = str(obs.new_head or head).lower()
         invalidate_head_evidence(c, c["head_sha"])
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed; invalidating evidence"]
-    rollup = pr.get("statusCheckRollup")
-    if rollup is None:
-        return [f"CI pending on {head[:7]} (rollup absent)"]
-    if not isinstance(rollup, list):
-        raise CoordinatorError("PR check rollup malformed")
-    try:
-        runs = _paginate_workflow_runs(scoped_runner, target, head)
-    except CiInventoryProtocolError as exc:
-        # Hard inventory protocol/shape/truncation: same recoverable blocked
-        # path as malformed rollup (resume_phase=ci + reply checkpoint).
+    if obs.kind == "protocol":
+        # Hard rollup/inventory shape/truncation: recoverable blocked + ci resume.
         c["phase"] = "blocked"
         c["resume_phase"] = "ci"
-        c["blocker"] = f"CI inventory: {exc}"
+        c["blocker"] = obs.detail
         save_task(store, task)
+        kind = "ci-inventory" if obs.detail.startswith("CI inventory:") else "ci-rollup"
         return publish_blocker(
             store,
             worker,
             task,
             runner,
-            f"CI inventory: {exc}",
-            kind="ci-inventory",
+            obs.detail,
+            kind=kind,
             reply_checkpoint=True,
         )
-    except CoordinatorError:
-        # Transient transport / command failure: retry same static ci phase.
-        # Do not idle a model and do not enter blind implement.
-        return [f"CI pending on {head[:7]} (inventory temporarily unavailable)"]
-    latest = _latest_run_attempts(runs, head)
-
-    pending = False
-    failures: list[str] = []
-    action_required: list[str] = []
-    successes = 0
-
-    for check in rollup:
-        if not isinstance(check, dict):
-            raise CoordinatorError("PR check rollup entry malformed")
-        state = _rollup_state(check)
-        name = str(check.get("name") or check.get("context") or "check")
-        if state in CI_PENDING or state == "":
-            pending = True
-        elif state in CI_ACTION_REQUIRED:
-            action_required.append(name)
-        elif state in CI_SUCCESS:
-            successes += 1
-        else:
-            # cancelled/skipped/failure/neutral/pass/passing — not success here.
-            failures.append(f"{name}:{state or 'unknown'}")
-
-    for key, run in latest.items():
-        status = str(run.get("status") or "").lower()
-        conclusion = str(run.get("conclusion") or "").lower()
-        path = str(run.get("path") or key)
-        if status != "completed":
-            pending = True
-            continue
-        if conclusion in CI_ACTION_REQUIRED:
-            action_required.append(path)
-        elif conclusion in CI_SUCCESS:
-            successes += 1
-        else:
-            failures.append(f"{path}:{conclusion or 'unknown'}")
-
-    if action_required:
+    if obs.kind == "action_required":
+        names = list(obs.action_required)
         c["phase"] = "blocked"
         c["resume_phase"] = "ci"
         c["blocker"] = "CI action_required (external authorization)"
@@ -524,16 +638,13 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
             task,
             runner,
             "GitHub CI reports action_required (authorization), not a code failure: "
-            + ", ".join(action_required[:5]),
+            + ", ".join(names[:5]),
             kind="ci-action-required",
             reply_checkpoint=True,
         )
-
-    if not rollup and not latest:
-        return [f"CI pending on {head[:7]} (no checks yet)"]
-    if pending and not failures:
-        return [f"CI pending on {head[:7]}"]
-    if failures:
+    if obs.kind == "failed":
+        failures = list(obs.failures)
+        latest = obs.latest or {}
         logs = fetch_failure_logs(scoped_runner, target, latest, failures)
         if "inaccessible" in logs and not any(
             line for line in logs.splitlines() if "inaccessible" not in line and line.strip()
@@ -561,16 +672,8 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
         invalidate_head_evidence(c, head)
         save_task(store, task)
         return [f"CI failed on {head[:7]}; routing to implementer"]
-    # Fail closed: require successful evidence in BOTH rollup and inventory.
-    rollup_ok = any(
-        isinstance(check, dict) and _rollup_state(check) in CI_SUCCESS for check in rollup
-    )
-    inventory_ok = any(
-        str(run.get("status") or "") == "completed" and str(run.get("conclusion") or "") in CI_SUCCESS
-        for run in latest.values()
-    )
-    if not rollup or not latest or not rollup_ok or not inventory_ok or successes <= 0:
-        return [f"CI pending on {head[:7]} (incomplete rollup/inventory success evidence)"]
+    if obs.kind != "green":
+        raise CoordinatorError(f"CI observation inconclusive ({obs.kind}: {obs.detail})")
     evidence = c.setdefault("evidence", {})
     if not isinstance(evidence, dict):
         evidence = {}
@@ -589,61 +692,46 @@ def _fresh_ci_still_green(
     task: dict[str, Any],
     runner: Runner,
     head: str,
-) -> None:
-    """Re-observe CI on this tick; do not trust a stale ci_green flag."""
+) -> str | None:
+    """Re-observe CI on this tick; do not trust a stale ci_green flag.
+
+    Returns ``None`` when still green. Returns a same-phase retry message for
+    pending / absent-yet evidence and transient observation transport — callers
+    must not manufacture a reply gate or idle a model, and must not proceed to
+    APPROVE/Ready. Raises ``CiObservedFailureError`` for an observed actual
+    failed CI so ``advance_one`` can route to existing ``phase_ci`` log/implement
+    handling without a same-phase retry setter or human reply gate. Raises for
+    hard protocol faults, action_required, and head change.
+    """
     c = coord(task)
-    # Temporarily keep phase; call observation logic inline.
     target = target_repo(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("CI recheck requires PR number")
     scoped_runner = scoped(store, worker.session_id, runner)
-    pr = gh_json(
+    obs = _observe_exact_head_ci(
         scoped_runner,
-        [
-            "gh",
-            "pr",
-            "view",
-            str(number),
-            "--repo",
-            target,
-            "--json",
-            "statusCheckRollup,headRefOid",
-        ],
+        target,
+        number,
+        head,
+        fields="statusCheckRollup,headRefOid",
     )
-    if str(pr.get("headRefOid") or "").lower() != head.lower():
+    if obs.kind == "green":
+        return None
+    if obs.kind in ("pending", "transport"):
+        return f"CI {obs.detail} on {head[:7]}; retrying without Ready/APPROVE"
+    if obs.kind == "head_changed":
         raise CoordinatorError("PR head changed during readiness")
-    rollup = pr.get("statusCheckRollup")
-    if not isinstance(rollup, list) or not rollup:
-        raise CoordinatorError("CI rollup missing on recheck")
-    runs = _paginate_workflow_runs(scoped_runner, target, head)
-    latest = _latest_run_attempts(runs, head)
-    if not latest:
-        raise CoordinatorError("CI inventory empty on recheck")
-    rollup_ok = False
-    for check in rollup:
-        if not isinstance(check, dict):
-            raise CoordinatorError("CI rollup malformed on recheck")
-        state = _rollup_state(check)
-        if state in CI_PENDING or state == "":
-            raise CoordinatorError("CI pending on recheck")
-        if state in CI_SUCCESS:
-            rollup_ok = True
-        elif state not in CI_SUCCESS:
-            raise CoordinatorError(f"CI not green on recheck ({state})")
-    if not rollup_ok:
-        raise CoordinatorError("CI rollup has no successful check on recheck")
-    inventory_ok = False
-    for run in latest.values():
-        if str(run.get("status") or "") != "completed":
-            raise CoordinatorError("CI inventory pending on recheck")
-        conclusion = str(run.get("conclusion") or "")
-        if conclusion in CI_SUCCESS:
-            inventory_ok = True
-        else:
-            raise CoordinatorError("CI inventory not green on recheck")
-    if not inventory_ok:
-        raise CoordinatorError("CI inventory has no successful run on recheck")
+    if obs.kind == "protocol":
+        raise CiObservationProtocolError(obs.detail)
+    if obs.kind == "action_required":
+        raise CoordinatorError(
+            "CI action_required on recheck: " + ", ".join(obs.action_required[:5])
+        )
+    if obs.kind == "failed":
+        detail = ", ".join(obs.failures[:5]) if obs.failures else obs.detail
+        raise CiObservedFailureError(f"CI not green on recheck ({detail})")
+    raise CoordinatorError(f"CI observation inconclusive on recheck ({obs.kind})")
 
 
 def _parse_readiness_result(stdout: str, *, head: str, base: str, base_name: str) -> dict[str, Any]:
@@ -791,19 +879,21 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     if number is None:
         raise CoordinatorError("readiness requires PR number")
     scoped_runner = scoped(store, worker.session_id, runner)
-    pr = gh_json(
-        scoped_runner,
-        [
-            "gh",
-            "pr",
-            "view",
-            str(number),
-            "--repo",
+    try:
+        pr = _fetch_pr_json(
+            scoped_runner,
             target,
-            "--json",
+            number,
             "headRefOid,baseRefName,author,isDraft,state,mergeable",
-        ],
-    )
+        )
+    except CiObservationTransportError:
+        # Unavailable fetch ≠ known mismatched identity/base/signature.
+        # Keep phase off formal_approve so nested Ready-side callers return.
+        c["phase"] = "readiness"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying readiness"]
+    if not isinstance(pr, dict):
+        raise CoordinatorError("PR view failed")
     account = account_for(store, worker.session_id)
     if str(pr.get("headRefOid") or "").lower() != head:
         raise CoordinatorError("PR head does not match clean signed head")
@@ -822,7 +912,13 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
     if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
         raise CoordinatorError("tests not green on current head")
-    _fresh_ci_still_green(store, worker, task, runner, head)
+    retry = _fresh_ci_still_green(store, worker, task, runner, head)
+    if retry is not None:
+        # Pending/transient CI observation: no reply gate, no APPROVE/Ready.
+        # Never leave phase=formal_approve on an incomplete readiness tick.
+        c["phase"] = "readiness"
+        save_task(store, task)
+        return [retry]
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
         g = latest.get((stage, dimension))
@@ -936,7 +1032,11 @@ def phase_formal_approve(
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
     if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
         raise CoordinatorError("tests not green before formal approve")
-    _fresh_ci_still_green(store, worker, task, runner, head)
+    retry = _fresh_ci_still_green(store, worker, task, runner, head)
+    if retry is not None:
+        c["phase"] = "formal_approve"
+        save_task(store, task)
+        return [retry]
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
         g = latest.get((stage, dimension))
@@ -1205,7 +1305,11 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         raise CoordinatorError("tests not green before leave-draft")
     if evidence.get("readiness_head") != head:
         raise CoordinatorError("readiness evidence not on current head before leave-draft")
-    _fresh_ci_still_green(store, worker, task, runner, head)
+    retry = _fresh_ci_still_green(store, worker, task, runner, head)
+    if retry is not None:
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [retry]
     # Fail fast when already dismissed; a second check after readiness is still
     # required because readiness can take up to check_timeout.
     if not _fresh_formal_still_approved(store, worker, task, runner, head=head):
@@ -1219,19 +1323,19 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             raise CoordinatorError(f"missing approved gate {stage}/{dimension} before leave-draft")
 
     scoped_runner = scoped(store, worker.session_id, runner)
-    pr = gh_json(
-        scoped_runner,
-        [
-            "gh",
-            "pr",
-            "view",
-            str(number),
-            "--repo",
+    try:
+        pr = _fetch_pr_json(
+            scoped_runner,
             target,
-            "--json",
+            number,
             "headRefOid,baseRefName,author,isDraft,state,mergeable",
-        ],
-    )
+        )
+    except CiObservationTransportError:
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"PR metadata temporarily unavailable on {head[:7]}; retrying leave-draft"]
+    if not isinstance(pr, dict):
+        raise CoordinatorError("PR view failed")
     if str(pr.get("headRefOid") or "").lower() != head:
         raise CoordinatorError("PR head mismatch before leave-draft")
     if str(pr.get("mergeable") or "").upper() != "MERGEABLE":
@@ -1283,6 +1387,11 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     # Publishing the evidence comment is itself an external call; recheck after it.
     if not _fresh_formal_still_approved(store, worker, task, runner, head=head):
         return [f"formal APPROVE not yet visible on {head[:7]}; retrying leave-draft"]
+    retry_after_comment = _fresh_ci_still_green(store, worker, task, runner, head)
+    if retry_after_comment is not None:
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [retry_after_comment]
     ready = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target])
     if ready.returncode != 0:
         raise CoordinatorError(redact(ready.stderr or ready.stdout or "gh pr ready failed"))

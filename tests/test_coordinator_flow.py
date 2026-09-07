@@ -887,6 +887,618 @@ def test_formal_approve_transport_preserves_same_attempt_until_visible(
     assert post_seen["n"] == 1
 
 
+def _drive_through_ci_to(store, worker, fake, lane, target_phase: str) -> None:
+    """Drive successive ticks from discover through green CI to target Ready phase."""
+    tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) == "implement":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "implement"
+    fake.dirty = True
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(4):
+        phase = _phase(store)
+        if phase in ("inner_review", "tests", "pr_gates_grok"):
+            break
+        if phase == "publish_draft":
+            fake.commits_ahead = True
+        tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) in ("tests", "pr_gates_grok"):
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(2):
+        if _phase(store) == "pr_gates_grok":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "pr_gates_codex"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "ci"
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "readiness"
+    if target_phase == "readiness":
+        return
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "formal_approve"
+    if target_phase == "formal_approve":
+        return
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "leave_draft"
+    assert target_phase == "leave_draft"
+
+
+def _green_ci(fake: FakeGh) -> None:
+    fake.pr_view_rc = 0
+    fake.workflow_inventory_rc = 0
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "ready_phase,fault",
+    [
+        ("readiness", "rollup_pending"),
+        ("readiness", "inventory_pending"),
+        ("readiness", "pr_view_transport"),
+        ("readiness", "inventory_transport"),
+        ("formal_approve", "rollup_pending"),
+        ("formal_approve", "inventory_pending"),
+        ("formal_approve", "pr_view_transport"),
+        ("formal_approve", "inventory_transport"),
+        ("leave_draft", "rollup_pending"),
+        ("leave_draft", "inventory_pending"),
+        ("leave_draft", "pr_view_transport"),
+        ("leave_draft", "inventory_transport"),
+    ],
+)
+def test_ready_side_ci_pending_or_transport_retries_without_reply_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ready_phase: str,
+    fault: str,
+) -> None:
+    """Ready-side fresh CI rechecks: pending/transport never invent a reply gate."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, ready_phase)
+
+    launched_before = list(fake.launched)
+    reviews_before = list(fake.reviews)
+    coord_before = store.rows("task")[0]["payload"]["coordinator"]
+    attempt_before = coord_before.get("formal_approve_attempt")
+    activity_before = coord_before.get("formal_approve_id")
+    question_before = coord_before.get("question_activity_id")
+
+    if fault == "rollup_pending":
+        fake.pr["statusCheckRollup"] = [
+            {"name": "tests", "conclusion": "", "status": "in_progress"}
+        ]
+    elif fault == "inventory_pending":
+        fake.workflow_runs = [
+            {
+                "id": 1,
+                "path": ".github/workflows/ci.yml",
+                "event": "pull_request",
+                "head_sha": fake.head,
+                "status": "in_progress",
+                "conclusion": "",
+                "run_attempt": 1,
+            }
+        ]
+    elif fault == "pr_view_transport":
+        fake.pr_view_rc = 1
+    else:
+        fake.workflow_inventory_rc = 1
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] != "blocked", lines
+    assert coord.get("resume_phase") in (None, "")
+    assert coord.get("question_activity_id") == question_before
+    assert fake.pr["isDraft"] is True
+    assert fake.launched == launched_before
+    assert fake.reviews == reviews_before
+    assert coord.get("formal_approve_attempt") == attempt_before
+    assert coord.get("formal_approve_id") == activity_before
+    # Pending/transport must not count as green progress into Ready.
+    assert _phase(store) != "await_merge"
+
+    _green_ci(fake)
+    # Restore success: Ready-side phases progress without a new authorized reply.
+    for _ in range(4):
+        phase = _phase(store)
+        if phase == "await_merge" or fake.pr["isDraft"] is False:
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    assert fake.pr["isDraft"] is False
+    assert _phase(store) == "await_merge"
+    assert fake.launched == launched_before
+    coord = store.rows("task")[0]["payload"]["coordinator"]
+    if ready_phase in ("formal_approve", "leave_draft"):
+        # Same durable formal attempt/activity across the pending window.
+        assert coord.get("formal_approve_attempt") == attempt_before
+        if activity_before is not None:
+            assert coord.get("formal_approve_id") == activity_before
+        assert len([r for r in fake.reviews if str(r.get("state") or "").upper() == "APPROVED"]) == 1
+
+
+def test_leave_draft_ci_pending_after_evidence_comment_retries_same_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Immediate CI recheck after Ready evidence comment stays leave_draft, no new gate."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, "leave_draft")
+
+    launched_before = list(fake.launched)
+    coord_before = store.rows("task")[0]["payload"]["coordinator"]
+    attempt_before = coord_before.get("formal_approve_attempt")
+    activity_before = coord_before.get("formal_approve_id")
+    pending_after_comment = {"armed": False}
+
+    def flap_after_evidence(argv):
+        joined = " ".join(argv)
+        # Evidence comment is a gh pr comment; arm pending for the post-comment CI recheck.
+        if argv[:3] == ["gh", "pr", "comment"]:
+            result = fake(argv)
+            pending_after_comment["armed"] = True
+            return result
+        if pending_after_comment["armed"] and (
+            argv[:3] == ["gh", "pr", "view"] or "actions/runs" in joined
+        ):
+            # First post-comment CI observation is pending rollup; then restore.
+            if argv[:3] == ["gh", "pr", "view"] and "statusCheckRollup" in joined:
+                pending_after_comment["armed"] = False
+                view = dict(fake.pr)
+                view["statusCheckRollup"] = [
+                    {"name": "tests", "conclusion": "", "status": "in_progress"}
+                ]
+                return Completed(0, json.dumps(view), "")
+        return fake(argv)
+
+    lines = tick(store, worker, runner=flap_after_evidence, lane_runner=lane)
+    assert fake.pr["isDraft"] is True, lines
+    assert _phase(store) == "leave_draft", lines
+    coord = store.rows("task")[0]["payload"]["coordinator"]
+    assert coord.get("resume_phase") in (None, "")
+    assert coord.get("question_activity_id") in (None, "")
+    assert coord.get("formal_approve_attempt") == attempt_before
+    assert coord.get("formal_approve_id") == activity_before
+    assert fake.launched == launched_before
+    # Evidence comment exists; Ready mutation did not run.
+    assert any(
+        row.get("type") == "comment.post"
+        and "Ready for review" in str((row.get("payload") or {}).get("body") or "")
+        for row in store.rows("activity")
+    )
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    assert fake.pr["isDraft"] is False, lines
+    assert _phase(store) == "await_merge", lines
+    coord = store.rows("task")[0]["payload"]["coordinator"]
+    assert coord.get("formal_approve_attempt") == attempt_before
+    assert coord.get("formal_approve_id") == activity_before
+    assert fake.launched == launched_before
+
+
+def test_ready_side_ci_hard_fault_still_blocks_with_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hard inventory protocol on Ready-side recheck remains fail-closed blocked."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, "readiness")
+    launched_before = list(fake.launched)
+    fake.workflow_inventory_body = {"total_count": 1}  # missing workflow_runs
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "readiness"
+    assert isinstance(coord.get("question_activity_id"), str)
+    assert fake.pr["isDraft"] is True
+    assert fake.launched == launched_before
+
+
+def _red_ci(fake: FakeGh, *, conclusion: str = "failure") -> None:
+    fake.pr_view_rc = 0
+    fake.workflow_inventory_rc = 0
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": conclusion, "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": conclusion,
+            "run_attempt": 1,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "ready_phase,after_evidence_comment",
+    [
+        ("readiness", False),
+        ("formal_approve", False),
+        ("leave_draft", False),
+        ("leave_draft", True),
+    ],
+)
+def test_ready_side_actual_red_ci_routes_to_ci_then_implement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ready_phase: str,
+    after_evidence_comment: bool,
+) -> None:
+    """Ready-side observed failed CI returns to phase_ci → logs → implement.
+
+    No human reply gate, no premature APPROVE/Ready, and no implementer until
+    actual plain-text failure logs exist on the next ci tick.
+    """
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, ready_phase)
+
+    launched_before = list(fake.launched)
+    reviews_before = list(fake.reviews)
+    question_before = store.rows("task")[0]["payload"]["coordinator"].get(
+        "question_activity_id"
+    )
+
+    if after_evidence_comment:
+        # Arm failure only for the immediate post–evidence-comment CI recheck.
+        pending_after_comment = {"armed": False}
+
+        def fail_after_evidence(argv):
+            joined = " ".join(argv)
+            if argv[:3] == ["gh", "pr", "comment"]:
+                result = fake(argv)
+                pending_after_comment["armed"] = True
+                return result
+            if pending_after_comment["armed"] and (
+                argv[:3] == ["gh", "pr", "view"] or "actions/runs" in joined
+            ):
+                if argv[:3] == ["gh", "pr", "view"] and "statusCheckRollup" in joined:
+                    view = dict(fake.pr)
+                    view["statusCheckRollup"] = [
+                        {"name": "tests", "conclusion": "failure", "status": "completed"}
+                    ]
+                    return Completed(0, json.dumps(view), "")
+                if "actions/runs" in joined:
+                    pending_after_comment["armed"] = False
+                    return Completed(
+                        0,
+                        json.dumps(
+                            {
+                                "total_count": 1,
+                                "workflow_runs": [
+                                    {
+                                        "id": 1,
+                                        "path": ".github/workflows/ci.yml",
+                                        "event": "pull_request",
+                                        "head_sha": fake.head,
+                                        "status": "completed",
+                                        "conclusion": "failure",
+                                        "run_attempt": 1,
+                                    }
+                                ],
+                            }
+                        ),
+                        "",
+                    )
+            return fake(argv)
+
+        lines = tick(store, worker, runner=fail_after_evidence, lane_runner=lane)
+        # Persist the observed failure so the following phase_ci tick sees it.
+        _red_ci(fake)
+    else:
+        _red_ci(fake)
+        lines = tick(store, worker, runner=fake, lane_runner=lane)
+
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "ci", lines
+    assert coord.get("resume_phase") in (None, "")
+    assert coord.get("blocker") in (None, "")
+    assert coord.get("question_activity_id") == question_before
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "await_merge"
+    assert fake.launched == launched_before
+    assert fake.reviews == reviews_before
+    evidence = coord.get("evidence") if isinstance(coord.get("evidence"), dict) else {}
+    assert evidence.get("ci_green") is False
+
+    # Next tick: existing phase_ci fetches plain-text logs and routes implement.
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "implement", lines
+    assert any("CI failed" in line or "routing to implementer" in line for line in lines)
+    findings = str(coord.get("findings") or "")
+    assert "failing log line" in findings or "AssertionError" in findings
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "await_merge"
+    # Still no model until the script starts implement on a later tick.
+    assert fake.launched == launched_before
+
+
+def test_ready_side_actual_red_ci_does_not_become_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Actual failed CI on recheck never becomes green; cancelled/skipped neither."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, "readiness")
+    launched_before = list(fake.launched)
+    _red_ci(fake, conclusion="failure")
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    # Recovery path: Ready-side failure returns to script ci observation.
+    assert coord["phase"] == "ci", lines
+    assert coord.get("resume_phase") in (None, "")
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "formal_approve"
+    assert _phase(store) != "await_merge"
+    assert fake.launched == launched_before
+    evidence = coord.get("evidence") if isinstance(coord.get("evidence"), dict) else {}
+    assert evidence.get("ci_green") is False
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "implement", lines
+    assert fake.pr["isDraft"] is True
+    assert fake.launched == launched_before
+
+    # cancelled/skipped must also fail closed, not count as green or Ready progress.
+    # Re-enter readiness with stale ci_green cleared so the fresh recheck sees red.
+    from agent_cli.coordinator_common import save_task
+
+    coord["phase"] = "readiness"
+    coord["resume_phase"] = None
+    coord["blocker"] = None
+    if isinstance(coord.get("evidence"), dict):
+        coord["evidence"]["ci_green"] = True  # stale flag must not win
+        coord["evidence"]["ci_head"] = fake.head
+    save_task(store, task)
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "cancelled", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "skipped",
+            "run_attempt": 1,
+        }
+    ]
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "ci", lines
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "formal_approve"
+    assert _phase(store) != "await_merge"
+    assert fake.launched == launched_before
+    evidence = coord.get("evidence") if isinstance(coord.get("evidence"), dict) else {}
+    assert evidence.get("ci_green") is False
+
+
+@pytest.mark.parametrize("log_failure", ["transport", "empty", "whitespace"])
+def test_ready_side_red_ci_preserves_logs_inaccessible_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, log_failure: str
+) -> None:
+    """Ready-side failure still uses phase_ci logs-inaccessible external blocker."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, "readiness")
+    launched_before = list(fake.launched)
+    _red_ci(fake)
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "ci", lines
+    fake.failed_logs_inaccessible = log_failure == "transport"
+    fake.failed_log_text = " \n\t" if log_failure == "whitespace" else ""
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "ci"
+    assert isinstance(coord.get("question_activity_id"), str)
+    assert any("inaccessible" in line for line in lines)
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "await_merge"
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched[len(launched_before) :]
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "blocked", lines
+    assert fake.launched == launched_before
+
+
+@pytest.mark.parametrize("ready_phase", ["readiness", "formal_approve", "leave_draft"])
+def test_ready_side_absent_rollup_inventory_action_required_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ready_phase: str
+) -> None:
+    """Absent rollup on Ready-side recheck still surfaces inventory action_required."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, ready_phase)
+    launched_before = list(fake.launched)
+    fake.pr["statusCheckRollup"] = None
+    fake.workflow_runs = [
+        {
+            "id": 3,
+            "path": ".github/workflows/deploy.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "action_required",
+            "run_attempt": 1,
+        }
+    ]
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == ready_phase
+    assert isinstance(coord.get("question_activity_id"), str)
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "await_merge"
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched[len(launched_before) :]
+
+
+@pytest.mark.parametrize("ready_phase", ["readiness", "formal_approve", "leave_draft"])
+def test_ready_side_absent_rollup_inventory_failure_routes_to_ci(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ready_phase: str
+) -> None:
+    """Absent rollup on Ready-side recheck still surfaces inventory failure."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    _drive_through_ci_to(store, worker, fake, lane, ready_phase)
+    launched_before = list(fake.launched)
+    fake.pr["statusCheckRollup"] = None
+    fake.workflow_runs = [
+        {
+            "id": 4,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_attempt": 1,
+        }
+    ]
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "ci", lines
+    assert coord.get("resume_phase") in (None, "")
+    assert fake.pr["isDraft"] is True
+    assert _phase(store) != "await_merge"
+    assert fake.launched == launched_before
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "implement", lines
+    assert fake.launched == launched_before
+
+
 @pytest.mark.parametrize("crash_after_question", [False, True])
 def test_repeated_question_needs_a_new_reply(tmp_path, monkeypatch, crash_after_question):
     """A later identical ask is a new occurrence, not reuse of the old reply."""

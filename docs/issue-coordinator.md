@@ -201,27 +201,46 @@ for worker in workers.values():
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
    head-specific evidence.
 8. **CI**: exact-head PR check rollup **and** paginated head workflow inventory
-   (path+event+attempt). Only `success` counts. `action_required` is an
-   external authorization blocker (not routed to the implementer; `resume_phase`
-   stays `ci`; `question_activity_id` is pinned so an authorized reply resumes
-   CI observation). Hard inventory protocol faults (unexpected shape, missing
-   `workflow_runs`, pagination truncation — typed `CiInventoryProtocolError`)
-   enter the same recoverable blocked + `resume_phase=ci` + checkpoint path as
-   a malformed rollup; an authorized reply resumes CI once valid inventory is
-   restored. Transient inventory transport failures stay on static `phase=ci`
-   and retry without an idle model or blind implement. Missing / pending /
-   failure / cancelled / skipped / neutral are not green. This core observes
-   **cumulative GitHub CI** only; target-repository policy / A38 live join
-   belongs to configured `readiness_argv`. Failures fetch plain-text logs via
+   (path+event+attempt), classified by one shared observer used by both
+   ordinary `phase_ci` and Ready-side fresh rechecks. Only `success` counts.
+   An absent `statusCheckRollup` is normalized to `[]` and inventory is still
+   inspected — `action_required` (and actual failures) may be present only in
+   inventory; absent rollup prevents green but must not hide those facts.
+   `action_required` is an external authorization blocker (not routed to the
+   implementer; `resume_phase` stays `ci`; `question_activity_id` is pinned so
+   an authorized reply resumes CI observation). Hard protocol faults
+   (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
+   pagination truncation — typed `CiObservationProtocolError` /
+   `CiInventoryProtocolError`) enter recoverable blocked + `resume_phase=ci` +
+   checkpoint; an authorized reply resumes CI once valid evidence is restored.
+   Transient observation transport (PR view **or** inventory `gh_json` /
+   typed `CiObservationTransportError`) and pending / absent-yet evidence stay
+   on static `phase=ci` and retry without an idle model, blind implement, or
+   reply gate. Missing / pending / failure / cancelled / skipped / neutral are
+   not green. This core observes **cumulative GitHub CI** only; target-
+   repository policy / A38 live join belongs to configured `readiness_argv`.
+   Failures fetch plain-text logs via
    `gh run view <id> --repo <target> --log-failed --attempt <n>` (never ZIP
-   `/logs` archive bytes). Inaccessible logs are a reply-recoverable blocker.
+   `/logs` archive bytes). Inaccessible logs, including successful fetches with
+   empty or whitespace-only output, are a reply-recoverable blocker.
    Transient pending returns without an idle model.
 9. **Ready**: run `readiness_argv` (cwd = worktree, ambient GitHub tokens
    cleared). Stdout must be the fixed JSON readiness contract below (trusted
    operator script output — not model/repo input). Re-verify clean signed head
    **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
-   head, author/base/mergeability, tests, and all four same-head gates. Close
-   `contributing_ok` / deviation checklist keys from that JSON via
+   head, author/base/mergeability, tests, and all four same-head gates. Fresh
+   CI rechecks on readiness / formal_approve / leave-draft (including after the
+   Ready evidence comment) treat pending / absent-yet evidence and transient
+   observation or PR-metadata transport as same-phase retry: no new authorized
+   reply, no idle model, no premature APPROVE/Ready. Hard protocol faults stay
+   fail-closed blockers. Observed actual failed CI raises a typed
+   `CiObservedFailureError` handled by `advance_one` (not a Ready-phase reply
+   gate): phase returns to script `ci` so the next tick reuses existing
+   `phase_ci` log fetch → implement routing; inaccessible logs keep the
+   existing external blocker. No premature APPROVE/Ready and no model until
+   actual logs exist. A known mismatched head/author/base is distinct from an
+   unavailable fetch. Close `contributing_ok` / deviation checklist keys from
+   that JSON via
    `chain.close_allowed` **before** Ready — never after human merge. Formal
    `review.post` **APPROVE** from the separate review account with an
    explicitly validated full-SHA `commit_id` in the activity payload

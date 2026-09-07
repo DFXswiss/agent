@@ -64,8 +64,20 @@ class CoordinatorError(StoreError):
     """Visible coordinator failure; never a silent skip."""
 
 
-class CiInventoryProtocolError(CoordinatorError):
+class CiObservationTransportError(CoordinatorError):
+    """Transient CI observation transport; same-phase retry, no reply gate."""
+
+
+class CiObservationProtocolError(CoordinatorError):
+    """Hard malformed CI observation evidence; blocked + checkpoint."""
+
+
+class CiInventoryProtocolError(CiObservationProtocolError):
     """Fail-closed workflow inventory shape / missing field / truncation."""
+
+
+class CiObservedFailureError(CoordinatorError):
+    """Observed actual failed CI on a Ready-side recheck; route to phase_ci."""
 
 
 def redact(text: str, *, limit: int = OUTPUT_BOUND) -> str:

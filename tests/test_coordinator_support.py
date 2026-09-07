@@ -172,6 +172,11 @@ class FakeGh:
         # ``workflow_inventory_rc`` non-zero simulates transient transport failure.
         self.workflow_inventory_body: Any | None = None
         self.workflow_inventory_rc: int = 0
+        # ``pr_view_rc`` non-zero simulates transient ``gh pr view`` transport failure.
+        self.pr_view_rc: int = 0
+        # Plain-text failed-job logs for ``gh run view --log-failed``.
+        self.failed_log_text: str = "failing log line\nAssertionError: expected green\n"
+        self.failed_logs_inaccessible: bool = False
         self.model_outputs: dict[str, str] = {
             "implementer": "STATUS: complete\nRESULT: done\nSUMMARY_EN: Correct widget initialization.\nSUMMARY_DE: Widget-Initialisierung korrigiert.\npatched\n",
             "reviewer": "STATUS: complete\nRESULT: approved\n",
@@ -286,6 +291,8 @@ class FakeGh:
             return Completed(0, f"https://github.com/example/project/issues/7#issuecomment-{self.comments[-1]['id']}", "")
 
         if argv[:3] == ["gh", "pr", "view"]:
+            if self.pr_view_rc != 0:
+                return Completed(self.pr_view_rc, "", "connection reset on pr view")
             if argv[3] != "42" and not self.pr_created:
                 return Completed(1, "", "no pull request found for branch")
             # gh pr view's mapped actor omits the REST account type.
@@ -341,6 +348,11 @@ class FakeGh:
             return Completed(0, json.dumps(next(r for r in self.reviews if r["id"] == rid)), "")
         if "pulls/42/reviews" in joined:
             return Completed(0, json.dumps(self.reviews), "")
+
+        if argv[:3] == ["gh", "run", "view"] and "--log-failed" in argv:
+            if self.failed_logs_inaccessible:
+                return Completed(1, "", "logs unavailable")
+            return Completed(0, self.failed_log_text, "")
 
         if "actions/runs" in joined and "/logs" in joined:
             return Completed(0, "failing log line\n", "")

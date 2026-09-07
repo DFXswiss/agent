@@ -596,6 +596,158 @@ def test_exact_head_invalidation_and_ci_failure_route(
     assert any("CI failed" in line for line in lines)
 
 
+def test_ci_absent_rollup_inventory_action_required_is_blocker_not_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absent statusCheckRollup must still surface inventory action_required."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-55555555555a"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = None
+    fake.workflow_runs = [
+        {
+            "id": 11,
+            "path": ".github/workflows/deploy.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "action_required",
+            "run_attempt": 1,
+        }
+    ]
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "ci"
+    assert any("action_required" in line for line in lines)
+    assert coord.get("evidence", {}).get("ci_green") is not True
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched
+
+
+def test_ci_absent_rollup_inventory_failure_routes_to_implement_with_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absent statusCheckRollup must still surface inventory failure via logs path."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-55555555555b"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = None
+    fake.workflow_runs = [
+        {
+            "id": 12,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_attempt": 1,
+        }
+    ]
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "implement", lines
+    assert any("CI failed" in line for line in lines)
+    findings = str(coord.get("findings") or "")
+    assert "failing log line" in findings or "AssertionError" in findings
+    assert coord.get("evidence", {}).get("ci_green") is False
+
+
 def test_ci_action_required_is_blocker_not_implementer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -961,6 +1113,153 @@ def test_ci_inventory_transport_failure_retries_same_ci_phase(
     task = store.row("task", tid)
     assert task["payload"]["coordinator"]["phase"] == "readiness", lines
     assert "implementer" not in fake.launched
+
+
+def test_ci_pr_view_transport_failure_retries_same_ci_phase_then_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transient PR-view transport stays on phase=ci; later tick observes green."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-555555555559"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    fake.pr_view_rc = 1
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "ci", lines
+    assert task["payload"]["coordinator"].get("resume_phase") in (None, "")
+    assert task["payload"]["coordinator"].get("question_activity_id") in (None, "")
+    assert any("PR view temporarily unavailable" in line for line in lines)
+    assert fake.launched == launched_before
+    # Same static observation recovers to green without a human reply gate.
+    fake.pr_view_rc = 0
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "readiness", lines
+    assert "implementer" not in fake.launched
+
+
+def test_ci_rollup_protocol_fault_blocks_with_ci_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hard malformed rollup still fail-closed blocked + resume_phase=ci."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-55555555555a"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = {"not": "a-list"}
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked", lines
+    assert task["payload"]["coordinator"].get("resume_phase") == "ci"
+    assert isinstance(task["payload"]["coordinator"].get("question_activity_id"), str)
+    assert fake.launched == launched_before
 
 
 def test_no_duplicate_acceptance_on_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
