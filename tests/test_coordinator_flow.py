@@ -357,10 +357,16 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
 
 
 @pytest.mark.parametrize("dismissal_point", ["readiness", "evidence_comment"])
-def test_formal_dismissal_during_readiness_blocks_leave_draft(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dismissal_point: str
+@pytest.mark.parametrize("repeat_dismissal", [False, True])
+def test_formal_dismissal_recovery_requires_new_reply_then_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dismissal_point: str, repeat_dismissal: bool
 ) -> None:
-    """Dismissal inside readiness must be caught before gh pr ready."""
+    """Dismissal during leave-draft clears formal evidence and recovers only after a new reply.
+
+    Covers readiness and evidence-comment dismissal windows, no premature Ready,
+    no automatic re-APPROVE, no implementer start, crash-idempotent re-APPROVE,
+    then actual Ready via the real activity executor.
+    """
     store = Store(tmp_path)
     write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -422,10 +428,18 @@ def test_formal_dismissal_during_readiness_blocks_leave_draft(
     assert _phase(store) == "formal_approve"
     tick(store, worker, runner=fake, lane_runner=lane)
     assert _phase(store) == "leave_draft"
-    assert any(r.get("state") == "APPROVED" for r in fake.reviews)
+    first_approve = [r for r in fake.reviews if str(r.get("state") or "").upper() == "APPROVED"]
+    assert len(first_approve) == 1
+    first_approve_id = first_approve[0]["id"]
+    first_activity = store.rows("task")[0]["payload"]["coordinator"].get("formal_approve_id")
+    assert isinstance(first_activity, str) and first_activity
     assert fake.pr["isDraft"] is True
 
-    def dismissing_readiness(argv, *, timeout, cwd=None, stdin_text=None, env=None, clear_ambient_github=False):
+    dismissed_once = {"done": False}
+
+    def dismissing_readiness(
+        argv, *, timeout, cwd=None, stdin_text=None, env=None, clear_ambient_github=False
+    ):
         assert cwd and timeout > 0
         env = env or {}
         assert env.get("AGENT_COORDINATOR_HEAD") == fake.head
@@ -433,9 +447,14 @@ def test_formal_dismissal_during_readiness_blocks_leave_draft(
             return Completed(fake.check_rc, "configured full-check result", "")
         if argv[0] == "/operator/readiness":
             assert clear_ambient_github
-            for review in fake.reviews:
-                if dismissal_point == "readiness" and str(review.get("state") or "").upper() == "APPROVED":
-                    review["state"] = "DISMISSED"
+            if (
+                dismissal_point == "readiness"
+                and not dismissed_once["done"]
+            ):
+                for review in fake.reviews:
+                    if str(review.get("state") or "").upper() == "APPROVED":
+                        review["state"] = "DISMISSED"
+                dismissed_once["done"] = True
             return Completed(
                 fake.readiness_rc,
                 json.dumps(
@@ -454,18 +473,128 @@ def test_formal_dismissal_during_readiness_blocks_leave_draft(
     monkeypatch.setattr("agent_cli.coordinator_github.run_bounded", dismissing_readiness)
 
     def transport(argv):
-        if dismissal_point == "evidence_comment" and argv[:3] == ["gh", "pr", "comment"]:
+        if (
+            dismissal_point == "evidence_comment"
+            and not dismissed_once["done"]
+            and argv[:3] == ["gh", "pr", "comment"]
+        ):
             for review in fake.reviews:
                 review["state"] = "DISMISSED"
+            dismissed_once["done"] = True
         return fake(argv)
+
     lines = tick(store, worker, runner=transport, lane_runner=lane)
     task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
     assert fake.pr["isDraft"] is True, lines
-    assert task["payload"]["coordinator"]["phase"] == "blocked", lines
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "formal_approve", coord
+    evidence = coord.get("evidence") if isinstance(coord.get("evidence"), dict) else {}
+    assert evidence.get("formal_head") is None
+    assert coord.get("formal_approve_id") is None
+    assert coord.get("formal_approve_attempt") == 1
     assert any(
-        "formal" in line.lower() or "approv" in line.lower() or "dismiss" in line.lower() or "blocked" in line.lower()
+        "formal" in line.lower()
+        or "approv" in line.lower()
+        or "dismiss" in line.lower()
+        or "blocked" in line.lower()
         for line in lines
     )
+    assert not any(str(r.get("state") or "").upper() == "APPROVED" for r in fake.reviews)
+    qid = coord.get("question_activity_id")
+    assert isinstance(qid, str) and qid
+
+    # Successive tick without a NEW authorized reply must not re-APPROVE or Ready.
+    launched_before = list(fake.launched)
+    review_count = len(fake.reviews)
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "formal_approve"
+    assert fake.pr["isDraft"] is True
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched[len(launched_before) :]
+    assert len(fake.reviews) == review_count
+    assert not any(str(r.get("state") or "").upper() == "APPROVED" for r in fake.reviews)
+
+    activity = store.row("activity", qid)
+    assert activity is not None
+    body = str((activity.get("payload") or {}).get("body") or "")
+    fake.comments = [
+        {"id": 1, "body": body, "user": {"login": "worker-bot"}},
+        {
+            "id": 2,
+            "body": "re-approve after dismissal; resume formal",
+            "user": {"login": "human-owner"},
+        },
+    ]
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert _phase(store) == "formal_approve", lines
+    assert "implementer" not in fake.launched[len(launched_before) :]
+
+    # New formal APPROVE on the same head via a new durable activity occurrence.
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert _phase(store) == "leave_draft", lines
+    second_activity = coord.get("formal_approve_id")
+    assert isinstance(second_activity, str) and second_activity
+    assert second_activity != first_activity
+    approved = [r for r in fake.reviews if str(r.get("state") or "").upper() == "APPROVED"]
+    assert len(approved) == 1
+    assert approved[0]["id"] != first_approve_id
+    assert approved[0].get("commit_id") == fake.head
+    assert (coord.get("evidence") or {}).get("formal_head") == fake.head
+
+    # Crash/retry idempotency: same occurrence rediscovers, does not POST again.
+    from agent_cli.coordinator_common import save_task
+
+    approved_count = len(approved)
+    coord["phase"] = "formal_approve"
+    (coord.get("evidence") or {}).pop("formal_head", None)
+    save_task(store, task)
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert _phase(store) == "leave_draft", lines
+    assert (
+        len([r for r in fake.reviews if str(r.get("state") or "").upper() == "APPROVED"])
+        == approved_count
+    )
+    assert store.rows("task")[0]["payload"]["coordinator"].get("formal_approve_id") == second_activity
+
+    if repeat_dismissal:
+        # This comment predates the next dismissal and is not new authorization.
+        fake.comments.append({"id": len(fake.comments) + 1,
+                              "body": "Message before the second dismissal.",
+                              "user": {"login": "human-owner"}})
+        for review in fake.reviews:
+            if review.get("state") == "APPROVED":
+                review["state"] = "DISMISSED"
+        lines = tick(store, worker, runner=transport, lane_runner=lane)
+        assert _phase(store) == "blocked", lines
+        checkpoint = store.rows("task")[0]["payload"]["coordinator"]
+        assert checkpoint["question_activity_id"] != qid
+        count = len(fake.reviews)
+        lines = tick(store, worker, runner=transport, lane_runner=lane)
+        assert _phase(store) == "blocked", lines
+        assert len(fake.reviews) == count
+        assert fake.launched == launched_before
+        fake.comments.append({"id": len(fake.comments) + 1,
+                              "body": "Authorize a new approval after this second dismissal.",
+                              "user": {"login": "human-owner"}})
+        tick(store, worker, runner=transport, lane_runner=lane)
+        assert _phase(store) == "formal_approve"
+        tick(store, worker, runner=transport, lane_runner=lane)
+        assert _phase(store) == "leave_draft"
+        assert len(fake.reviews) == count + 1
+        assert fake.launched == launched_before
+
+    # Actual Ready with the real executor; dismissed review stays rejected.
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert fake.pr["isDraft"] is False, lines
+    assert _phase(store) == "await_merge", lines
+    dismissed = [r for r in fake.reviews if r.get("id") == first_approve_id]
+    assert dismissed and str(dismissed[0].get("state") or "").upper() == "DISMISSED"
 
 
 @pytest.mark.parametrize("crash_after_question", [False, True])

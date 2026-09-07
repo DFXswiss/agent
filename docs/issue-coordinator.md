@@ -213,14 +213,21 @@ for worker in workers.values():
    head, author/base/mergeability, tests, and all four same-head gates. Close
    `contributing_ok` / deviation checklist keys from that JSON via
    `chain.close_allowed` **before** Ready — never after human merge. Formal
-   `review.post` **APPROVE** from the separate review account pinned with
-   `commit_id` (discover-before-POST; verify state/head/login/id/url). Leave-
-   draft re-runs readiness, then performs a fresh GET that must still show
-   APPROVED on the exact head **immediately before** the Ready mutation
-   (stored `formal_head` is not current proof; a dismissal during readiness
-   must block leave-draft). One evidence comment (must complete with
-   `execution_status=done`), `allow pr-ready`, then leave draft and verify
-   `isDraft=false`. **Never merge.**
+   `review.post` **APPROVE** from the separate review account with an
+   explicitly validated full-SHA `commit_id` in the activity payload
+   (executor discover-before-POST and POST both bind that head; verify
+   state/head/login/id/url). Leave-draft re-runs readiness, then performs a
+   fresh GET that must still show APPROVED on the exact head **immediately
+   before** the Ready mutation (stored `formal_head` is not current proof; a
+   dismissal during readiness or the evidence comment must block leave-draft).
+   On that failure the script clears stale formal evidence, pins
+   `resume_phase=formal_approve`, and requires an authorized **new** reply
+   before another approval attempt — human dismissal is not silent override
+   permission. The resumed attempt uses a new durable activity occurrence
+   (same attempt stays crash-idempotent; a dismissed same-marker APPROVE
+   fails closed in `review.post` and cannot be marked done). One evidence
+   comment (must complete with `execution_status=done`), `allow pr-ready`,
+   then leave draft and verify `isDraft=false`. **Never merge.**
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
     must be exactly `User` (missing type is not human; Bot is refused). Also
     require merge SHA, timestamp, and base/target. Then existing `task-done`

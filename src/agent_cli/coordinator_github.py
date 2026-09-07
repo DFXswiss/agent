@@ -120,6 +120,11 @@ def publish_blocker(
     lines = [f"blocked: {redact(message)}"]
     if source is None:
         return lines
+    occurrence = ""
+    if reply_checkpoint and c.get("resume_phase") == "formal_approve":
+        # Every invalidated approval needs a reply after its own blocker, even
+        # when a later dismissal has the same wording as an earlier one.
+        occurrence = f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
     try:
         activity_id = post_issue_comment(
             store,
@@ -129,6 +134,7 @@ def publish_blocker(
             number=int(source["number"]),
             body=f"Blocked: {redact(message)}",
             kind=kind,
+            occurrence=occurrence,
         )
         if reply_checkpoint and not c.get("uncertain_lane"):
             prior = c.get("question_activity_id")
@@ -844,31 +850,51 @@ def phase_formal_approve(
     except AccountError as exc:
         raise CoordinatorError(str(exc)) from exc
 
-    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-formal-approve:{task['id']}:{head}"))
+    # Occurrence advances when stale formal evidence is cleared after dismissal so
+    # a resumed attempt gets a new durable activity id (and marker). Same attempt
+    # stays idempotent across crash/retry.
+    attempt = as_int(c.get("formal_approve_attempt")) or 0
+    activity_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-formal-approve:{task['id']}:{head}:{attempt}")
+    )
     marker = ACTIVITY_MARKER.format(id=activity_id)
     body = f"Formal approval for head `{head[:7]}` after script-verified gates and CI.\n{marker}"
 
-    queue_activity(store, activity_id=activity_id, session_id=worker.review_session,
-                   typ="review.post", payload={"repo": target, "number": number,
-                                              "body": body, "event": "APPROVE"})
-    endpoint = f"repos/{target}/pulls/{number}/reviews"
-    def pinned_transport(argv):
-        command = list(argv)
-        try:
-            gh_at = command.index("gh")
-        except ValueError:
-            return runner(command)
-        if command[gh_at:gh_at + 5] == ["gh", "api", "-X", "POST", endpoint]:
-            command.extend(["-f", f"commit_id={head}"])
-        return runner(command)
-    execute_github(store, pinned_transport, activity_ids=(activity_id,))
+    queue_activity(
+        store,
+        activity_id=activity_id,
+        session_id=worker.review_session,
+        typ="review.post",
+        payload={
+            "repo": target,
+            "number": number,
+            "body": body,
+            "event": "APPROVE",
+            "commit_id": head,
+        },
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
     recorded = store.row("activity", activity_id)
+    discovered = _discover_formal_approve(
+        scoped_review,
+        repo=target,
+        number=number,
+        marker=marker,
+        head=head,
+        login=review_account.login,
+    )
+    if discovered is None:
+        # Missing/dismissed/revoked: do not reuse this occurrence. A later authorized
+        # reply must mint a new durable activity id; fail-closed executor errors on a
+        # same-marker DISMISSED review are not silent retry fuel.
+        _invalidate_stale_formal_approval(task, reason="missing or revoked")
+        if recorded is not None and recorded.get("execution_status") == "done":
+            raise CoordinatorError(
+                "formal review is not currently APPROVED on the reviewed head"
+            )
+        raise CoordinatorError("formal approval publication is not verified")
     if recorded is None or recorded.get("execution_status") != "done":
         raise CoordinatorError("formal approval publication is not verified")
-    discovered = _discover_formal_approve(scoped_review, repo=target, number=number,
-                                         marker=marker, head=head, login=review_account.login)
-    if discovered is None:
-        raise CoordinatorError("formal review is not currently APPROVED on the reviewed head")
     recorded["result"] = {"repo": target, "number": number, **discovered}
     store.write("activity", "update", activity_id, strip_row(recorded))
     c["formal_approve_id"] = activity_id
@@ -924,6 +950,26 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
     }
 
 
+def _invalidate_stale_formal_approval(task: dict[str, Any], *, reason: str) -> None:
+    """Clear stale formal evidence and pin recovery to formal_approve.
+
+    Human dismissal is not permission to silently re-APPROVE. A later tick must
+    wait for an authorized NEW reply, then use a new durable activity occurrence.
+    """
+    c = coord(task)
+    evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else None
+    if isinstance(evidence, dict):
+        evidence.pop("formal_head", None)
+    c.pop("formal_approve_id", None)
+    attempt = as_int(c.get("formal_approve_attempt")) or 0
+    c["formal_approve_attempt"] = attempt + 1
+    c["resume_phase"] = "formal_approve"
+    c["blocker"] = (
+        f"formal APPROVE no longer valid on exact head ({reason}); "
+        "authorized reply required before a new approval attempt"
+    )
+
+
 def _fresh_formal_still_approved(
     store: Store,
     worker: WorkerConfig,
@@ -954,11 +1000,22 @@ def _fresh_formal_still_approved(
         login=review_account.login,
     )
     if discovered is None:
+        _invalidate_stale_formal_approval(task, reason="dismissed or missing")
         raise CoordinatorError("formal APPROVE no longer present on exact head (dismissed or missing)")
     if str(discovered.get("state") or "").upper() != "APPROVED":
+        _invalidate_stale_formal_approval(task, reason="not APPROVED")
         raise CoordinatorError("formal review is not APPROVED on fresh GET")
     if str(discovered.get("commit_id") or "").lower() != head.lower():
+        _invalidate_stale_formal_approval(task, reason="commit_id mismatch")
         raise CoordinatorError("formal APPROVE commit_id mismatch on fresh GET")
+
+
+def _require_formal_head_evidence(task: dict[str, Any], head: str, *, when: str) -> None:
+    evidence = coord(task).get("evidence") if isinstance(coord(task).get("evidence"), dict) else {}
+    if evidence.get("formal_head") != head:
+        label = when.strip() or "before leave-draft"
+        _invalidate_stale_formal_approval(task, reason=f"formal_head stale ({label})")
+        raise CoordinatorError(f"formal approve not on current head{when}")
 
 
 def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
@@ -985,8 +1042,7 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         raise CoordinatorError(f"pr-ready denied: {allow.reason}")
 
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
-    if evidence.get("formal_head") != head:
-        raise CoordinatorError("formal approve not on current head")
+    _require_formal_head_evidence(task, head, when="")
     if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
         raise CoordinatorError("tests not green before leave-draft")
     if evidence.get("readiness_head") != head:
@@ -1036,8 +1092,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if coord(task).get("phase") != "formal_approve":
         return fresh
     head = verify_signed_clean_head(store, worker, runner, worktree)
-    if evidence.get("formal_head") != head:
-        raise CoordinatorError("formal approve not on current head after readiness")
+    evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
+    _require_formal_head_evidence(task, head, when=" after readiness")
     _fresh_formal_still_approved(store, worker, task, runner, head=head)
     c["phase"] = "leave_draft"
     save_task(store, task)

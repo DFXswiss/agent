@@ -18,6 +18,8 @@ ACTIVITY_MARKER = "<!-- agent-activity:{id} -->"
 _URL_RE = re.compile(
     r"https://github\.com/[^/\s]+/[^/\s]+/(?:pulls?|issues)/(\d+)"
 )
+# Full commit SHA for optional review.post commit_id (exact-head APPROVE binding).
+_FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class _GhError(Exception):
@@ -359,6 +361,16 @@ def _login(runner: Runner) -> str | None:
     return None
 
 
+def _optional_full_sha(payload: dict[str, Any], key: str) -> str | None:
+    """Return a validated 40-hex commit SHA, or None when the field is absent/null."""
+    if key not in payload or payload[key] is None:
+        return None
+    raw = payload[key]
+    if not isinstance(raw, str) or not _FULL_SHA_RE.fullmatch(raw):
+        raise _GhError(f"{key} must be a full 40-hex commit SHA")
+    return raw
+
+
 def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     """Submit a pull-request review of type COMMENT carrying the findings.
 
@@ -385,6 +397,11 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
     event = payload.get("event", "COMMENT")
     if event not in ("COMMENT", "APPROVE"):
         _mark(store, row, status="error", error="review.post event must be COMMENT or APPROVE")
+        return f"review.post {rid} error"
+    try:
+        commit_id = _optional_full_sha(payload, "commit_id")
+    except _GhError as exc:
+        _mark(store, row, status="error", error=str(exc))
         return f"review.post {rid} error"
     marker = ACTIVITY_MARKER.format(id=rid)
     owner, name = repo.split("/", 1)
@@ -418,6 +435,20 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             # watch.py compares one: the same account can be spelled either way.
             if not isinstance(login, str) or login.lower() != me.lower():
                 continue
+            if event == "APPROVE":
+                # Dismissed / revoked same-marker approvals must not satisfy the
+                # activity and must not be treated as delivery. Fail closed so a
+                # fresh authorized activity (new id/marker) can POST instead.
+                state = str(review.get("state") or "").upper()
+                if state != "APPROVED":
+                    raise _GhError(
+                        "review.post APPROVE marker matches a non-APPROVED review"
+                    )
+                rev_commit = str(review.get("commit_id") or "")
+                if commit_id is not None and rev_commit.lower() != commit_id.lower():
+                    raise _GhError(
+                        "review.post APPROVE marker commit_id does not match payload"
+                    )
             url = review.get("html_url") or review.get("url")
             if not isinstance(url, str) or url == "":
                 raise _GhError("review missing url")
@@ -427,20 +458,20 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 result["id"] = rev_id
             _mark(store, row, status="done", result=result)
             return f"review.post {rid} done"
-        created = _gh_json(
-            [
-                "gh",
-                "api",
-                "-X",
-                "POST",
-                f"repos/{owner}/{name}/pulls/{number}/reviews",
-                "-f",
-                f"body={_with_marker(body, rid)}",
-                "-f",
-                f"event={event}",
-            ],
-            runner,
-        )
+        post_argv = [
+            "gh",
+            "api",
+            "-X",
+            "POST",
+            f"repos/{owner}/{name}/pulls/{number}/reviews",
+            "-f",
+            f"body={_with_marker(body, rid)}",
+            "-f",
+            f"event={event}",
+        ]
+        if commit_id is not None:
+            post_argv.extend(["-f", f"commit_id={commit_id}"])
+        created = _gh_json(post_argv, runner)
         if not isinstance(created, dict):
             raise _GhError("review response is not an object")
         url = created.get("html_url") or created.get("url")

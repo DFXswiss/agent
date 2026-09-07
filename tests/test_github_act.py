@@ -1052,6 +1052,266 @@ def test_review_post_submits_an_approve_when_asked(tmp_path: Path) -> None:
     assert scan_github(store, runner) == [f"review.post {act_id} done"]
 
 
+def test_review_post_approve_posts_validated_commit_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7b"
+    head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "exact-head approve",
+            "event": "APPROVE",
+            "commit_id": head,
+        },
+    )
+    posted: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            joined = " ".join(argv)
+            posted.append(joined)
+            assert f"commit_id={head}" in joined
+            assert "event=APPROVE" in joined
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 12,
+                        "html_url": "https://example.invalid/a",
+                        "state": "APPROVED",
+                        "commit_id": head,
+                    }
+                ),
+                "",
+            )
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    assert posted
+
+
+def test_review_post_rejects_invalid_commit_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7c"
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "bad sha",
+            "event": "APPROVE",
+            "commit_id": "not-a-full-sha",
+        },
+    )
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        posted.append(list(argv))
+        return Completed(0, json.dumps([[]]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == []
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "commit_id" in str(row.get("execution_error") or "")
+
+
+def test_review_post_approve_fails_closed_on_dismissed_same_marker(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7d"
+    head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "retry after dismiss",
+            "event": "APPROVE",
+            "commit_id": head,
+        },
+    )
+    existing = [
+        {
+            "id": 44,
+            "html_url": "https://example.invalid/dismissed",
+            "body": f"old approval\n{marker}",
+            "state": "DISMISSED",
+            "commit_id": head,
+            "user": {"login": "theo-vane"},
+        }
+    ]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            raise AssertionError("must not POST over a revoked same-marker APPROVE")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([existing]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == []
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "non-APPROVED" in str(row.get("execution_error") or "")
+
+
+def test_review_post_approve_fails_closed_on_commit_id_mismatch(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7e"
+    head = "cccccccccccccccccccccccccccccccccccccccc"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "head moved",
+            "event": "APPROVE",
+            "commit_id": head,
+        },
+    )
+    existing = [
+        {
+            "id": 45,
+            "html_url": "https://example.invalid/stale",
+            "body": f"stale\n{marker}",
+            "state": "APPROVED",
+            "commit_id": "dddddddddddddddddddddddddddddddddddddddd",
+            "user": {"login": "theo-vane"},
+        }
+    ]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            raise AssertionError("must not POST when same-marker commit_id mismatches")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([existing]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} error"]
+    assert posted == []
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+
+
+def test_review_post_fresh_approve_activity_can_post_after_dismissed_marker(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    old_id = "r-old"
+    new_id = "r-new"
+    head = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    existing = [
+        {
+            "id": 50,
+            "html_url": "https://example.invalid/old",
+            "body": f"revoked\n{ACTIVITY_MARKER.format(id=old_id)}",
+            "state": "DISMISSED",
+            "commit_id": head,
+            "user": {"login": "theo-vane"},
+        }
+    ]
+    _pending(
+        store,
+        new_id,
+        "review.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "fresh authorized approve",
+            "event": "APPROVE",
+            "commit_id": head,
+        },
+    )
+    posted: list[str] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            joined = " ".join(argv)
+            posted.append(joined)
+            assert ACTIVITY_MARKER.format(id=new_id) in joined
+            assert f"commit_id={head}" in joined
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "id": 51,
+                        "html_url": "https://example.invalid/new",
+                        "state": "APPROVED",
+                        "commit_id": head,
+                    }
+                ),
+                "",
+            )
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([existing]), "")
+
+    assert scan_github(store, runner) == [f"review.post {new_id} done"]
+    assert posted
+
+
+def test_review_post_comment_still_accepts_same_marker_without_state(
+    tmp_path: Path,
+) -> None:
+    # COMMENT discover semantics stay marker+login only; state is APPROVE-specific.
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "r-7f"
+    marker = ACTIVITY_MARKER.format(id=act_id)
+    _pending(
+        store,
+        act_id,
+        "review.post",
+        {"repo": "dfxswiss/agent", "number": 3, "body": "findings"},
+    )
+    existing = [
+        {
+            "id": 60,
+            "html_url": "https://example.invalid/comment",
+            "body": marker,
+            "user": {"login": "theo-vane"},
+        }
+    ]
+    posted: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        if "-X" in argv and argv[argv.index("-X") + 1] == "POST":
+            posted.append(list(argv))
+            raise AssertionError("COMMENT must rediscover by marker")
+        if argv[-1] == "user":
+            return Completed(0, json.dumps({"login": "theo-vane"}), "")
+        return Completed(0, json.dumps([existing]), "")
+
+    assert scan_github(store, runner) == [f"review.post {act_id} done"]
+    assert posted == []
+
+
 def test_review_post_refuses_request_changes(tmp_path: Path) -> None:
     # An account that can request changes can hold a merge closed through branch
     # protection. Refused in the executor, not left to whoever writes the payload.
