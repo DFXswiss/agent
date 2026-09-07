@@ -95,6 +95,8 @@ class PullSnapshot:
     # Used to locate configuration; never a built-in scope rule by itself.
     # Empty is allowed for closed no-ops; open assessments fail closed without it.
     default_branch: str = ""
+    # True only when GitHub reports draft is JSON true; missing/None/False → not draft.
+    draft: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,7 @@ class Assessment:
     workflow_approvals: list[dict[str, Any]] = field(default_factory=list)
     lifecycle_enabled: bool = False
     lifecycle: dict[str, Any] = field(default_factory=dict)
+    draft: bool = False
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -185,6 +188,7 @@ class Assessment:
             "state": self.state_for_status,
             "description": self.description,
             "closed": self.closed,
+            "draft": self.draft,
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
             "writes": list(self.writes),
@@ -640,6 +644,8 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
     default_branch = _parse_default_branch(
         base_repo.get("default_branch"), required=(state == "open")
     )
+    # Fail closed for the draft exemption: only JSON true is draft.
+    draft = data.get("draft") is True
     return PullSnapshot(
         repo=repo,
         number=number,
@@ -652,6 +658,7 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         author_login=author_login,
         head_repo=head_repository,
         default_branch=default_branch,
+        draft=draft,
     )
 
 
@@ -985,22 +992,45 @@ def build_comment_body(assessment: Assessment) -> str:
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
     if len(problems) > 800:
         problems = problems[:799] + "…"
-    en = (
-        f"A38 {assessment.status}: "
-        + (
-            "author local-CI report accepted for this head."
-            if assessment.ok and assessment.status == "pass"
-            else "author local-CI report missing or invalid for this head."
+    passing = assessment.ok and assessment.status == "pass"
+    if assessment.draft:
+        extra_en = (
+            " An author local-CI report is accepted for this head."
+            if passing
+            else " An author local-CI report is still required before Ready."
         )
-    )
-    de = (
-        f"A38 {assessment.status}: "
-        + (
-            "Autor-Local-CI-Report für diesen Head akzeptiert."
-            if assessment.ok and assessment.status == "pass"
-            else "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
+        extra_de = (
+            " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."
+            if passing
+            else " Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
         )
-    )
+        en = (
+            "A38: this pull request is a draft; "
+            "no blocking A38 report status is published until Ready for review."
+            + extra_en
+        )
+        de = (
+            "A38: dieser Pull Request ist ein Draft; "
+            "bis Ready for review wird kein blockierender A38-Report-Status veröffentlicht."
+            + extra_de
+        )
+    else:
+        en = (
+            f"A38 {assessment.status}: "
+            + (
+                "author local-CI report accepted for this head."
+                if passing
+                else "author local-CI report missing or invalid for this head."
+            )
+        )
+        de = (
+            f"A38 {assessment.status}: "
+            + (
+                "Autor-Local-CI-Report für diesen Head akzeptiert."
+                if passing
+                else "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
+            )
+        )
     if assessment.mode == "observe":
         en = "Observe mode (advisory, not branch-required). " + en
         de = "Observe-Modus (Hinweis, nicht branch-pflichtig). " + de
@@ -1050,6 +1080,13 @@ def _status_bits(assessment: Assessment) -> None:
         return
     assessment.context = status_context_enforce(base)
     assessment.observe_context = ""
+    if assessment.draft:
+        # Draft enforce: keep context for audit JSON; do not post success or failure.
+        assessment.state_for_status = ""
+        assessment.description = truncate_desc(
+            "draft: A38 status omitted until Ready"
+        )
+        return
     if assessment.ok and assessment.status == "pass":
         assessment.state_for_status = "success"
         assessment.description = truncate_desc(f"pass for {assessment.head_sha[:7]}")
@@ -1094,6 +1131,7 @@ def assess_from_parts(
         private=pull.private,
         closed=pull.state != "open",
         dry_run=dry_run,
+        draft=pull.draft,
         standard_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, POLICY_DOCS),
         policy_url=blob_url(active_policy_repo, active_policy_sha, POLICY_PATH),
         guard_docs_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, GUARD_DOCS),
@@ -1344,6 +1382,7 @@ def _out_of_scope_assessment(
         comment_body="",
         skip_publish=False,
         dry_run=dry_run,
+        draft=snap.draft,
     )
     _attach_trusted_config(assessment, trusted)
     return assessment
@@ -1360,6 +1399,7 @@ def _snapshot_matches_assessment(fresh: PullSnapshot, assessment: Assessment) ->
         and fresh.head_repo == assessment.head_repo
         and fresh.private == assessment.private
         and fresh.state == expected_state
+        and fresh.draft == assessment.draft
     )
 
 
@@ -1400,7 +1440,7 @@ def assess_pull(
             default_branch=snap.default_branch,
             trusted_default_branch=snap.default_branch,
             head_repo=snap.head_repo, private=snap.private,
-            state_for_status="", dry_run=dry_run,
+            state_for_status="", dry_run=dry_run, draft=snap.draft,
         )
     # Open PRs require trusted default_branch metadata to locate configuration.
     if not snap.default_branch:
@@ -1636,6 +1676,8 @@ def publish_assessment(
             assessment.description,
             require_report=True,
         )
+    elif assessment.draft:
+        assessment.writes.append("status:skipped:draft")
     else:
         _post_status(
             assessment.context or status_context_enforce(assessment.base_ref),
@@ -1702,6 +1744,8 @@ def reconcile_pull(
 def invalidate_status(api: GitHubApi, pull: PullSnapshot) -> None:
     """Best-effort error status on known head; never hide the original API failure."""
     if pull.state != "open":
+        return
+    if pull.draft:
         return
     try:
         status, _, _ = api.request(
@@ -1915,8 +1959,13 @@ def _load_event(
 
 
 def _assessment_exit_code(assessment: Assessment) -> int:
-    """A closed PR is a successful no-op; observe remains advisory."""
-    return 0 if assessment.closed or assessment.ok or assessment.mode == "observe" else 1
+    """Closed, observe, and draft enforce skips exit 0; Ready enforce failure exits 1."""
+    return 0 if (
+        assessment.closed
+        or assessment.ok
+        or assessment.mode == "observe"
+        or assessment.draft
+    ) else 1
 
 
 def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | None = None,
