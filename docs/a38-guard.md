@@ -257,7 +257,7 @@ Issue-only events and the bot's own comments are ignored. The installed workflow
 
 Closed PRs return `status: closed` and process exit zero without reading policy, pr-guard configuration or publishing comments/statuses, including when a PR closes during an all-open scan. Ignored events and empty all-open scans are also successful no-ops.
 
-On an open **draft** in `enforce` mode the guard still publishes or updates its educational comment, but it does **not** create or update the `A38 / report (<target>)` commit status (and does not post an invalidating `error` status on draft). Process exit is 0 so `dfx pr guard` is not red merely because a draft lacks an author report. Ready (`draft=false`) keeps success-only-for-valid-evidence and failure otherwise.
+On an open **draft** in `enforce` mode the guard still publishes or updates its educational comment, but it does **not** create or update a blocking `A38 / report (<target>)` commit status (and does not post an invalidating `error` status on draft). Configured `not_applicable` exclusions may still write success on that context only to clear a wrong prior status; that is not a test-pass claim. Process exit is 0 so `dfx pr guard` is not red merely because a draft lacks an author report. Ready (`draft=false`) keeps success-only-for-valid-evidence and failure otherwise.
 
 The bot marker is `<!-- PR-GUARD:A38:v1 -->`. Only comments owned by the numeric acting user may be updated. `/user` resolves normal tokens; fallback to the verified official Actions bot is allowed only when `GITHUB_ACTIONS=true`. Failed authentication outside Actions does not impersonate that bot. Existing identical comments/statuses are not reposted.
 
