@@ -229,7 +229,7 @@ The latest author report-like comment, ordered by `updated_at` and numeric comme
 
 | Mode | Stable status context | Meaning |
 | --- | --- | --- |
-| `enforce` | `A38 / report (develop)` for target branch `develop` | On a draft PR: omit this commit status entirely (not failure, not pending, not a fabricated pass); the guard process exits 0 so `dfx pr guard` is not red merely for a missing draft report. An author report is still required before Ready. Once Ready (`draft=false`): success only for valid evidence; otherwise failure. |
+| `enforce` | `A38 / report (develop)` for target branch `develop` | On a draft PR: omit the **blocking** commit status (not failure, not pending, not a fabricated pass); see the `not_applicable` success-clear carve-out below. The guard process exits 0 so `dfx pr guard` is not red merely for a missing draft report. An author report is still required before Ready. Once Ready (`draft=false`): success only for valid evidence; otherwise failure. |
 | `observe` | `A38 / report (observe: develop)` | Advisory status only; do not require this context for merging. Unchanged on drafts. |
 
 Configured `not_applicable` exclusions still publish success on the target enforce context to clear a wrong prior status, including on drafts; that success is not a test-pass claim.

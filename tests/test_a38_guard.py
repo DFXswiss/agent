@@ -903,6 +903,43 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(payload["config_revision"], DEFAULT_TIP)
         self.assertEqual(payload["scope_decision"], "exclude")
 
+    def test_excluded_target_on_draft_still_posts_not_applicable_success(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        self._release_pull(fake)
+        del fake.files[(BASE, ".github/a38.json")]
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(result.ok)
+        self.assertTrue(result.draft)
+        self.assertEqual(result.status, "not_applicable")
+        self.assertEqual(result.state_for_status, "success")
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        self.assertTrue(
+            any(
+                s["context"] == status_context_enforce("main") and s["state"] == "success"
+                for s in fake.statuses
+            )
+        )
+        self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+        self.assertFalse(any(w.startswith("comment:") for w in result.writes))
+
+    def test_invalidate_status_skips_drafts(self) -> None:
+        fake = FakeAPI()
+        snap = fetch_pull(fake.api(), REPO, 1)
+        self.assertFalse(snap.draft)
+        a38_guard.invalidate_status(fake.api(), snap)
+        self.assertTrue(
+            any(s.get("state") == "error" for s in fake.statuses)
+        )
+        fake_draft = FakeAPI()
+        fake_draft.pull = fake_draft._pull(HEAD, BASE, draft=True)
+        draft_snap = fetch_pull(fake_draft.api(), REPO, 1)
+        self.assertTrue(draft_snap.draft)
+        before = list(fake_draft.statuses)
+        a38_guard.invalidate_status(fake_draft.api(), draft_snap)
+        self.assertEqual(fake_draft.statuses, before)
+        self.assertFalse(any(s.get("state") == "error" for s in fake_draft.statuses))
+
     def test_configurable_enforce_exclude_default_and_exact_match(self) -> None:
         fake = FakeAPI()
         fake.set_pr_guard_config(
