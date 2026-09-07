@@ -31,6 +31,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     LOCAL_CI_END,
     assess_pull,
     event_should_ignore,
+    fetch_pull,
     looks_like_report,
     main,
     pick_latest_author_report,
@@ -182,10 +183,13 @@ class FakeAPI:
             return
         self.files[key] = json.dumps(config).encode()
 
-    def _pull(self, head: str, base: str, *, state: str = "open") -> dict[str, Any]:
+    def _pull(
+        self, head: str, base: str, *, state: str = "open", draft: bool = False
+    ) -> dict[str, Any]:
         return {
             "number": 1,
             "state": state,
+            "draft": draft,
             "user": {"id": AUTHOR_ID, "login": "author"},
             "head": {"sha": head, "repo": {"full_name": REPO, "default_branch": "feature"}},
             "base": {
@@ -405,6 +409,64 @@ class A38GuardE2ETests(unittest.TestCase):
             result.policy_url,
             f"https://github.com/{REPO}/blob/{BASE}/.github/a38.json",
         )
+
+    def test_draft_no_report_omits_status_and_exits_zero(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.ok)
+        self.assertTrue(result.draft)
+        self.assertTrue(any("no author" in r for r in result.reasons))
+        self.assertTrue(any(w.startswith("comment:") for w in result.writes))
+        self.assertTrue(
+            any(w == "status:skipped:draft" for w in result.writes)
+            or not any(w.startswith("status:create:") for w in result.writes)
+        )
+        self.assertNotIn(
+            status_context_enforce("develop"),
+            [s["context"] for s in fake.statuses],
+        )
+        self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+        body = result.comment_body
+        self.assertIn("EN:", body)
+        self.assertIn("DE:", body)
+        self.assertRegex(body, r"(?i)draft")
+        self.assertRegex(body, r"(?i)Ready")
+
+    def test_draft_valid_report_omits_enforce_status(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=21)
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(result.ok)
+        self.assertTrue(result.draft)
+        self.assertEqual(result.status, "pass")
+        self.assertNotIn(
+            status_context_enforce("develop"),
+            [s["context"] for s in fake.statuses],
+        )
+        self.assertTrue(
+            any(w == "status:skipped:draft" for w in result.writes)
+            or not any(w.startswith("status:create:") for w in result.writes)
+        )
+        self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+
+    def test_fetch_pull_draft_true_only_when_json_true(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        snap = fetch_pull(fake.api(), REPO, 1)
+        self.assertTrue(snap.draft)
+
+        fake.pull = fake._pull(HEAD, BASE, draft=False)
+        self.assertFalse(fetch_pull(fake.api(), REPO, 1).draft)
+
+        fake.pull = fake._pull(HEAD, BASE)
+        del fake.pull["draft"]
+        self.assertFalse(fetch_pull(fake.api(), REPO, 1).draft)
+
+        fake.pull = fake._pull(HEAD, BASE)
+        fake.pull["draft"] = None
+        self.assertFalse(fetch_pull(fake.api(), REPO, 1).draft)
 
     def test_author_valid_report(self) -> None:
         fake = FakeAPI()

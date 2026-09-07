@@ -49,6 +49,8 @@ Hosted CI and other applicable checks may fail. There is no promise that CI neve
 
 Pending checks must be labeled **pending**. Do not fabricate a pass.
 
+The A38/report commit status is **omitted** on drafts (not pending, not failure, and not a fabricated pass). Real red hosted CI remains a blocker. Once the pull request is Ready for review, A38 publishes success only for valid evidence and failure otherwise.
+
 Repositories can enable the [guard's continuous readiness reconciliation](a38-guard.md#optional-continuous-readiness).
 An open Ready PR returns to Draft with an explanatory comment when required CI
 is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts.

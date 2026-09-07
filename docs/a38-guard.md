@@ -229,8 +229,10 @@ The latest author report-like comment, ordered by `updated_at` and numeric comme
 
 | Mode | Stable status context | Meaning |
 | --- | --- | --- |
-| `enforce` | `A38 / report (develop)` for target branch `develop` | Success only for valid evidence; otherwise failure. |
-| `observe` | `A38 / report (observe: develop)` | Advisory status only; do not require this context for merging. |
+| `enforce` | `A38 / report (develop)` for target branch `develop` | On a draft PR: omit this commit status entirely (not failure, not pending, not a fabricated pass); the guard process exits 0 so `dfx pr guard` is not red merely for a missing draft report. An author report is still required before Ready. Once Ready (`draft=false`): success only for valid evidence; otherwise failure. |
+| `observe` | `A38 / report (observe: develop)` | Advisory status only; do not require this context for merging. Unchanged on drafts. |
+
+Configured `not_applicable` exclusions still publish success on the target enforce context to clear a wrong prior status, including on drafts; that success is not a test-pass claim.
 
 Contexts use the **target branch name**, not the moving base SHA. Thus branch protection can require a stable name while a head targeting different branches gets distinct contexts. Supported branch names are bounded to 75 ASCII letters/digits, dots, underscores, hyphens and slashes; unsupported names fail closed. The exact base SHA remains in the comment and approval binding.
 
@@ -254,6 +256,8 @@ Issue-only events and the bot's own comments are ignored. The installed workflow
 ## Publication and failures
 
 Closed PRs return `status: closed` and process exit zero without reading policy, pr-guard configuration or publishing comments/statuses, including when a PR closes during an all-open scan. Ignored events and empty all-open scans are also successful no-ops.
+
+On an open **draft** in `enforce` mode the guard still publishes or updates its educational comment, but it does **not** create or update the `A38 / report (<target>)` commit status (and does not post an invalidating `error` status on draft). Process exit is 0 so `dfx pr guard` is not red merely because a draft lacks an author report. Ready (`draft=false`) keeps success-only-for-valid-evidence and failure otherwise.
 
 The bot marker is `<!-- PR-GUARD:A38:v1 -->`. Only comments owned by the numeric acting user may be updated. `/user` resolves normal tokens; fallback to the verified official Actions bot is allowed only when `GITHUB_ACTIONS=true`. Failed authentication outside Actions does not impersonate that bot. Existing identical comments/statuses are not reposted.
 
