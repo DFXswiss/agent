@@ -2,8 +2,7 @@
 
 Operators supply ``$AGENT_HOME/ai-accounts.json``. Installation creates no
 accounts, roles, or selections. Credentials stay in each account's provider CLI
-configuration directory; this manifest stores only directory paths. Launch-site
-integration is separate from this loader.
+configuration directory; this manifest stores only directory paths. Static launch sites resolve these bindings before invoking a provider.
 """
 
 from __future__ import annotations
@@ -108,6 +107,7 @@ class AIAccounts:
     accounts: dict[str, AIAccount]
     roles: dict[str, AIRole]
     sessions: dict[str, AISessionBinding]
+    usage_session: str | None = None
 
     def for_lane(self, session_id: str, role: str, vendor: str) -> AIRole:
         binding = self.sessions.get(session_id)
@@ -145,8 +145,8 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
-    if not isinstance(raw, dict) or set(raw) - {"accounts", "roles", "sessions"}:
-        raise AccountError(f"{CONFIG_FILE} accepts only accounts, roles, and sessions")
+    if not isinstance(raw, dict) or set(raw) - {"accounts", "roles", "sessions", "usage_session"}:
+        raise AccountError(f"{CONFIG_FILE} accepts only accounts, roles, sessions, and usage_session")
     accounts_raw = raw.get("accounts")
     roles_raw = raw.get("roles")
     sessions_raw = raw.get("sessions")
@@ -218,4 +218,12 @@ def load_ai_accounts(home: Path) -> AIAccounts:
             lanes[slot] = bound
         sessions[session_id] = AISessionBinding(interactive, lanes)
 
-    return AIAccounts(accounts, roles, sessions)
+    usage_session = raw.get("usage_session")
+    if usage_session is not None:
+        usage_session = _text(usage_session, "usage_session")
+        if usage_session not in sessions or sessions[usage_session].interactive is None:
+            raise AccountError("usage_session requires a configured interactive session")
+        selected = roles[sessions[usage_session].interactive]
+        if selected.account.provider != "grok":
+            raise AccountError("usage_session currently supports the Grok billing adapter only")
+    return AIAccounts(accounts, roles, sessions, usage_session)

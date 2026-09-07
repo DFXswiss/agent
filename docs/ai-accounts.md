@@ -7,8 +7,9 @@ accounts, roles, or session selections. A missing file, `{}`, or null/empty
 implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
-This loader is device-local configuration only. Wiring launch sites to call it
-is separate work in the same draft and is not claimed here.
+This device-local manifest is used by `agent lane run`, the lane steps of
+`agent run`, interactive Grok session starts, and optional Grok usage polling.
+It does not implement the complete issue-to-PR coordinator or a sandbox.
 
 The following is an **operator-supplied example**, never an installed default:
 
@@ -60,6 +61,11 @@ Each role requires:
 - `model`: explicit model id string (no default)
 - `access`: `read-only` or `workspace-write` (no default)
 
+The optional top-level `usage_session` selects an explicitly configured
+interactive Grok session for automatic billing reads. Missing/null disables
+those reads; it never chooses the host profile or the first available account.
+The selected session must exist locally, be owned and active.
+
 Each session may include:
 
 - `interactive`: role name for the interactive runner, or omit/null when none
@@ -92,8 +98,11 @@ authenticated for that profile.
 `AIAccounts.for_session(session_id)` resolves `sessions[session_id].interactive`
 and fails when that binding is absent or null. The loader may represent Codex
 roles in the manifest. Interactive runtime support remains Grok-only initially;
-the runtime that starts an interactive session must refuse an unsupported
-interactive provider. This document does not invent Codex interactive support.
+unsupported interactive providers are refused. The configured model is required,
+and a supplied `--model` must agree with it. A resumed conversation is pinned to
+the configured role, account, model, access and configuration-directory identity;
+a changed or missing binding requires a new session. Existing unbound Grok
+conversation IDs are not silently adopted under a newly configured account.
 
 ## Migration from implicit defaults
 
@@ -109,6 +118,11 @@ vendor/role lists and built-in model choices in code. After adopting
 4. Existing sessions are unconfigured until those bindings are added. An empty
    or missing file does not authorize a fallback identity.
 
-Configure sessions explicitly before enabling covered launch paths after
-upgrading. Covered launch-site callers are integrated separately; absence of
-that wiring here is intentional for this document.
+Configure sessions explicitly before enabling launch paths after upgrading.
+For example, the static script invokes `agent lane run --session chosen-session
+--role implementer --vendor grok --spec-file task.md --no-tmux`; it resolves the
+`grok:implementer` slot to the operator-defined role. `agent run` resolves slots
+using its task session. Interactive starts use `agent session start --id
+chosen-session --provider grok`. Raw terminal `--cmd` remains an explicitly
+supplied script command, outside provider-profile launch enforcement; it is not
+a sandboxed model interface. No model lane may invoke these execution commands.

@@ -294,8 +294,10 @@ def test_run_prints_vendor_stdout(
     tid = _bootstrap_implement(tmp_path, capsys)
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
+    seen: dict = {}
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
         return LaneResult(
             role="implementer",
             vendor="grok",
@@ -324,6 +326,11 @@ def test_run_prints_vendor_stdout(
     marker_at = out.index("distinctive-marker-run456")
     summary_at = out.index("STATUS=complete")
     assert marker_at < summary_at
+    assert seen.get("session_id") == "sess-1"
+    assert seen.get("config_home") == tmp_path
+    assert seen.get("role") == "implementer"
+    assert seen.get("vendor") == "grok"
+    assert seen.get("tmux") is False
 
 
 def test_run_spec_file_implementer_complete(
@@ -332,8 +339,10 @@ def test_run_spec_file_implementer_complete(
     tid = _bootstrap_implement(tmp_path, capsys)
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
+    seen: dict = {}
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
         return LaneResult(
             role="implementer",
             vendor="grok",
@@ -364,6 +373,9 @@ def test_run_spec_file_implementer_complete(
         a.get("role") == "implementer" and a.get("status") == "done"
         for a in _agents(tmp_path, tid)
     )
+    assert seen.get("session_id") == "sess-1"
+    assert seen.get("config_home") == tmp_path
+    assert seen.get("spec_file") == str(spec)
 
 
 def test_run_missing_spec_file_does_not_leave_working_agent(
@@ -397,8 +409,10 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
     capsys.readouterr()
     spec = tmp_path / "review-spec.md"
     spec.write_text("review this\n", encoding="utf-8")
+    seen: dict = {}
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
         return LaneResult(
             role="reviewer",
             vendor="grok",
@@ -430,6 +444,10 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
         if agent.get("role") != "reviewer":
             continue
         assert agent.get("status") == "working"
+    assert seen.get("session_id") == "sess-1"
+    assert seen.get("config_home") == tmp_path
+    assert seen.get("role") == "reviewer"
+    assert seen.get("vendor") == "grok"
 
 
 def _advance_to_pushed(

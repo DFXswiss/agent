@@ -26,10 +26,13 @@ Accounts and roles must start unconfigured (`NULL`); see
 execution accounts and session bindings explicitly in
 [`github-accounts.json`](docs/github-accounts.md) for the executors that load
 it. There is no default GitHub account or fallback to the host login on those
-paths. Some legacy CLI paths still use ambient host `gh` (for example
-`agent a38` visibility lookup when `--private` is omitted); that gap is named
-in the design and the accounts document. AI-account and role configuration
-remain separate implementation work, as recorded in the design.
+paths. A38 visibility lookup likewise requires an explicitly configured
+`--github-session`, unless `--private` or `--public` supplies the report visibility.
+[AI accounts and roles](docs/ai-accounts.md) configure provider profiles, models,
+access and session bindings without built-in selections. `agent lane run` needs
+`--session`; `agent run` uses its task session. Interactive Grok starts require
+an interactive role binding. Automatic Grok usage reads are disabled until
+`usage_session` is explicitly configured.
 
 ## Install
 
