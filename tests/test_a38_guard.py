@@ -433,7 +433,10 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("DE:", body)
         self.assertRegex(body, r"(?i)draft")
         self.assertRegex(body, r"(?i)Ready")
-        self.assertIn("no A38 status is published until Ready for review", body)
+        self.assertIn(
+            "no blocking A38 report status is published until Ready for review",
+            body,
+        )
         self.assertIn("author local-CI report is still required before Ready", body)
         self.assertNotIn("missing or invalid", body)
         self.assertNotRegex(body, r"A38 fail:")
@@ -456,6 +459,14 @@ class A38GuardE2ETests(unittest.TestCase):
             or not any(w.startswith("status:create:") for w in result.writes)
         )
         self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+        body = result.comment_body
+        self.assertIn(
+            "no blocking A38 report status is published until Ready for review",
+            body,
+        )
+        self.assertIn("author local-CI report is accepted for this head", body)
+        self.assertNotRegex(body, r"A38 fail:")
+        self.assertNotRegex(body, r"A38 pass:")
 
     def test_fetch_pull_draft_true_only_when_json_true(self) -> None:
         fake = FakeAPI()

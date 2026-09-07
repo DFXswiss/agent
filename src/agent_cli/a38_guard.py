@@ -993,16 +993,26 @@ def build_comment_body(assessment: Assessment) -> str:
     if len(problems) > 800:
         problems = problems[:799] + "…"
     passing = assessment.ok and assessment.status == "pass"
-    if assessment.draft and not passing:
+    if assessment.draft:
+        extra_en = (
+            " An author local-CI report is accepted for this head."
+            if passing
+            else " An author local-CI report is still required before Ready."
+        )
+        extra_de = (
+            " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."
+            if passing
+            else " Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
+        )
         en = (
             "A38: this pull request is a draft; "
-            "no A38 status is published until Ready for review. "
-            "An author local-CI report is still required before Ready."
+            "no blocking A38 report status is published until Ready for review."
+            + extra_en
         )
         de = (
             "A38: dieser Pull Request ist ein Draft; "
-            "bis Ready for review wird kein A38-Status veröffentlicht. "
-            "Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
+            "bis Ready for review wird kein blockierender A38-Report-Status veröffentlicht."
+            + extra_de
         )
     else:
         en = (
