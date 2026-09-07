@@ -2783,6 +2783,11 @@ def cmd_run(args: list[str]) -> None:
                 round_num: int | None = None
                 if role in ("implementer", "reviewer"):
                     round_num = current_round
+                # Fail closed on AI lane binding before creating a working agent.
+                # launch() still resolves the same binding; no ambient fallback.
+                from .ai_accounts import load_ai_accounts
+
+                load_ai_accounts(store.home).for_lane(session_id, role, vendor)
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )
