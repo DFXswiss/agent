@@ -358,6 +358,7 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
                     "gh",
                     "api",
                     "--paginate",
+                    "--slurp",
                     f"repos/{repo}/issues?assignee={login}&state=open&per_page=100",
                 ],
             )
@@ -539,6 +540,7 @@ def _apply_implementer_outcome(
             runner,
             f"Implementer returned incomplete status={status}",
             kind="implementer-incomplete",
+            reply_checkpoint=True,
         ) + draft_lines
 
     if model_result not in _IMPLEMENTER_RESULTS:
@@ -558,12 +560,10 @@ def _apply_implementer_outcome(
             runner,
             f"Implementer RESULT must be done|ask|blocked|no-change (got {model_result or 'empty'})",
             kind="implementer-invalid-result",
+            reply_checkpoint=True,
         ) + draft_lines
 
     if model_result == "ask":
-        tr["implementer_verdict"] = "blocked"
-        tr["finished_at"] = utcnow()
-        store.write("task_round", "update", tr["id"], strip_row(tr))
         question = redact(stdout or "Question from implementer.")
         source = c["source"]
         pending_q = c.get("pending_question")
@@ -578,6 +578,7 @@ def _apply_implementer_outcome(
                 number=int(source["number"]),
                 body=f"Question:\n{question}",
                 kind="question",
+                occurrence=f"{task['id']}:{round_num}",
             )
         except (CoordinatorError, StoreError) as exc:
             # Preserve the actual question across draft/publication failures.
@@ -594,26 +595,38 @@ def _apply_implementer_outcome(
                 runner,
                 f"Failed to publish implementer question: {redact(str(exc))}",
                 kind="ask-publish",
+                reply_checkpoint=True,
             ) + draft_lines
         c.pop("pending_question", None)
         c["phase"] = "ask"
+        if c.get("question_activity_id") != qid:
+            c["replies_consumed_through"] = None
         c["question_activity_id"] = qid
-        c["replies_consumed_through"] = None
         c["resume_phase"] = "implement"
         _mark_applied()
         task["state"] = "open"
-        save_task(store, task)
+        # Keep the round open while publication is uncertain. Its occurrence ID
+        # must remain stable if the process stops after GitHub posts the question.
+        tr["implementer_verdict"] = "blocked"
+        tr["finished_at"] = utcnow()
+        with store.conn.transaction():
+            store.write("task_round", "update", tr["id"], strip_row(tr))
+            save_task(store, task)
         return [f"ask posted on {source['repo']}#{source['number']}"] + draft_lines
 
     if model_result == "blocked":
+        # review-loop: implementer blocked → task failed. Stop.
+        # Distinct from RESULT ask (reply-recoverable) and from external
+        # blockers (CI authorization / incomplete reviews) which keep a
+        # non-failed task and resume_phase + question checkpoint.
         tr["implementer_verdict"] = "blocked"
         tr["finished_at"] = utcnow()
         store.write("task_round", "update", tr["id"], strip_row(tr))
         c["phase"] = "blocked"
-        c["resume_phase"] = "implement"
+        c.pop("resume_phase", None)
         c["blocker"] = "implementer blocked"
         _mark_applied()
-        task["state"] = "open"
+        task["state"] = "failed"
         save_task(store, task)
         return publish_blocker(
             store,
@@ -639,6 +652,7 @@ def _apply_implementer_outcome(
                 runner,
                 "No code change and no pull request. Stopping without an empty PR.",
                 kind="no-change",
+                reply_checkpoint=True,
             ) + draft_lines
 
     summaries = {}
@@ -944,6 +958,7 @@ def phase_inner_review(
             f"Inner reviewer incomplete (status={status}, result={model_result or 'empty'}); "
             "not a code rejection.",
             kind="reviewer-incomplete",
+            reply_checkpoint=True,
         )
     if not review_is_approved(status, model_result):
         return _reject_inner_and_reopen(store, worker, task, tr, result.stdout or "rejected")
@@ -1106,7 +1121,9 @@ def advance_one(
             c["resume_phase"] = phase if phase not in ("blocked", "ask", "done") else "implement"
             c["blocker"] = str(exc)
             save_task(store, task)
-            return publish_blocker(store, worker, task, runner, str(exc), kind="stopped")
+            return publish_blocker(
+                store, worker, task, runner, str(exc), kind="stopped", reply_checkpoint=True
+            )
 
     handlers = {
         "accept": lambda: phase_accept(store, worker, task, runner),
@@ -1140,7 +1157,15 @@ def advance_one(
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
         save_task(store, task)
-        return publish_blocker(store, worker, task, runner, str(exc), kind="phase-error")
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            str(exc),
+            kind="phase-error",
+            reply_checkpoint=True,
+        )
     except Exception as exc:  # noqa: BLE001 — never escape as silent tick failure
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
@@ -1156,4 +1181,5 @@ def advance_one(
             runner,
             redact(str(exc)),
             kind="phase-error",
+            reply_checkpoint=True,
         )

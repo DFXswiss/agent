@@ -128,6 +128,10 @@ class FakeGh:
     def __init__(self) -> None:
         self.comments: list[dict[str, Any]] = []
         self.pr_comments: list[dict[str, Any]] = []
+        # Optional multi-page shapes for --paginate --slurp regression coverage.
+        # When set, each entry is one GitHub API page (list of items).
+        self.issue_pages: list[list[dict[str, Any]]] | None = None
+        self.comment_pages: list[list[dict[str, Any]]] | None = None
         self.last_login = "worker-bot"
         self.reviews: list[dict[str, Any]] = []
         self.issues = [
@@ -213,10 +217,25 @@ class FakeGh:
         if "repos/example/project/issues?assignee=" in joined or (
             argv[0] == "gh" and argv[1] == "api" and "--paginate" in argv and "issues?assignee=" in argv[-1]
         ):
+            pages = self.issue_pages
+            if pages is not None:
+                if "--slurp" not in argv:
+                    # Real gh without --slurp concatenates page JSON — unparsable.
+                    return Completed(0, "".join(json.dumps(page) for page in pages), "")
+                return Completed(0, json.dumps(pages), "")
+            if "--paginate" in argv and "--slurp" not in argv:
+                return Completed(0, "invalid concatenated pages", "")
             return Completed(0, json.dumps(self.issues), "")
 
         if argv[0] == "gh" and argv[1] == "api" and str(argv[-1]).endswith("/issues/7"):
-            return Completed(0, json.dumps(self.issues[0]), "")
+            issue = self.issues[0] if self.issues else {"number": 7, "state": "open", "assignees": []}
+            if self.issue_pages:
+                for page in self.issue_pages:
+                    for item in page:
+                        if item.get("number") == 7:
+                            issue = item
+                            break
+            return Completed(0, json.dumps(issue), "")
 
         if "issues/7/events" in joined or "issues/7/timeline" in joined:
             return Completed(0, json.dumps([{"id": 701, "event": "assigned",
@@ -240,6 +259,13 @@ class FakeGh:
         if "issues/7/comments" in joined:
             if "-X" in argv and "POST" in argv:
                 return Completed(0, json.dumps({"id": 1, "html_url": "https://x/1"}), "")
+            pages = self.comment_pages
+            if pages is not None:
+                if "--slurp" not in argv:
+                    return Completed(0, "".join(json.dumps(page) for page in pages), "")
+                return Completed(0, json.dumps(pages), "")
+            if "--paginate" in argv and "--slurp" not in argv:
+                return Completed(0, "invalid concatenated pages", "")
             return Completed(0, json.dumps(self.comments), "")
 
         if argv[:3] == ["gh", "issue", "comment"]:
@@ -333,6 +359,13 @@ class FakeGh:
             return Completed(self.readiness_rc, "ready" if self.readiness_rc == 0 else "no", "")
 
         if argv[0] == "gh" and argv[1] == "api" and "comments" in joined:
+            pages = self.comment_pages
+            if pages is not None:
+                if "--slurp" not in argv:
+                    return Completed(0, "".join(json.dumps(page) for page in pages), "")
+                return Completed(0, json.dumps(pages), "")
+            if "--paginate" in argv and "--slurp" not in argv:
+                return Completed(0, "invalid concatenated pages", "")
             return Completed(0, json.dumps(self.comments), "")
 
         return Completed(1, "", f"unhandled: {argv}")

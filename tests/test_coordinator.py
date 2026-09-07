@@ -664,8 +664,117 @@ def test_ci_action_required_is_blocker_not_implementer(
     task = store.row("task", tid)
     assert task["payload"]["coordinator"]["phase"] == "blocked"
     assert task["payload"]["coordinator"].get("resume_phase") == "ci"
+    qid = task["payload"]["coordinator"].get("question_activity_id")
+    assert isinstance(qid, str) and qid
     assert "implementer" not in fake.launched
     assert any("action_required" in line for line in lines)
+
+
+def test_ci_action_required_authorized_reply_resumes_ci_not_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """External CI authorization blocker: reply resumes ci observation, never implement."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-555555555556"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(store, worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = [
+        {"name": "deploy", "conclusion": "action_required", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 11,
+            "path": ".github/workflows/deploy.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "action_required",
+            "run_attempt": 1,
+        }
+    ]
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+    assert task["payload"]["coordinator"].get("resume_phase") == "ci"
+    qid = task["payload"]["coordinator"]["question_activity_id"]
+    activity = store.row("activity", qid)
+    assert activity is not None
+    body = str((activity.get("payload") or {}).get("body") or "")
+    assert qid in body
+    # Multi-page slurped comments: checkpoint + authorized reply on page 2.
+    fake.comment_pages = [
+        [{"id": 1, "body": "earlier noise", "user": {"login": "other-user"}}],
+        [
+            {"id": 10, "body": body, "user": {"login": "worker-bot"}},
+            {
+                "id": 11,
+                "body": "workflow authorized; continue observation",
+                "user": {"login": "human-owner"},
+            },
+        ],
+    ]
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "ci", lines
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched
+    # Next tick observes CI again; still action_required → block, still no implementer.
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked", lines
+    assert task["payload"]["coordinator"].get("resume_phase") == "ci"
+    assert "implementer" not in fake.launched
+    # The same authorization reply cannot re-trigger another attempt.
+    consumed = task["payload"]["coordinator"]["replies_consumed_through"]
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked", lines
+    assert task["payload"]["coordinator"]["replies_consumed_through"] == consumed
+    assert fake.launched == launched_before
 
 
 def test_no_duplicate_acceptance_on_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -888,3 +997,146 @@ def test_revoked_assignment_stops_before_formal(
 def test_required_lane_slots_constant() -> None:
     assert "grok:implementer" in REQUIRED_LANE_SLOTS
     assert "codex:pr-reviewer-logic" in REQUIRED_LANE_SLOTS
+
+
+def test_assignment_discovery_flattens_slurped_issue_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    issue = dict(fake.issues[0])
+    fake.issues = []
+    fake.issue_pages = [
+        [
+            {
+                "number": 3,
+                "id": 300,
+                "title": "PR-shaped",
+                "body": "",
+                "html_url": "https://github.com/example/project/pull/3",
+                "state": "open",
+                "updated_at": "2026-09-01T00:00:00Z",
+                "assignees": [{"login": "worker-bot"}],
+                "pull_request": {"url": "https://api.github.com/repos/example/project/pulls/3"},
+            }
+        ],
+        [issue],
+    ]
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    tasks = store.rows("task")
+    assert tasks, lines
+    assert tasks[0]["payload"]["coordinator"]["source"]["number"] == 7
+
+
+def test_implementer_result_blocked_sets_task_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review-loop: RESULT blocked → task failed and stop (not reply-open)."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    fake.model_outputs["implementer"] = (
+        "STATUS: complete\nRESULT: blocked\nNeed a human decision before coding.\n"
+    )
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    patch_run_bounded(monkeypatch, fake)
+    # Drive real admission, acceptance and checkout ownership before the model.
+    for _ in range(5):
+        tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+        tasks = store.rows("task")
+        if tasks and tasks[0]["payload"]["coordinator"]["phase"] == "implement":
+            break
+    task = store.rows("task")[0]
+    tid = task["id"]
+    assert task["payload"]["coordinator"]["phase"] == "implement"
+    assert fake.launched == []
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["state"] == "failed", lines
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+    assert task["payload"]["coordinator"].get("resume_phase") in (None, "")
+    assert "implementer" in fake.launched
+    launched = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["state"] == "failed"
+    assert fake.launched == launched
+    assert any("failed task remains" in line for line in lines)
+
+
+def test_uncertain_lane_authorized_reply_does_not_resume_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "88888888-8888-8888-8888-888888888888"
+    qid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    marker = f"<!-- agent-coordinator:question:v1:{qid} -->"
+    fake.comments = [
+        {"id": 1, "body": f"Blocked uncertain\n{marker}", "user": {"login": "worker-bot"}},
+        {"id": 2, "body": "please retry the lane", "user": {"login": "human-owner"}},
+    ]
+    seed_task(store, worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": None,
+            "payload": {
+                "coordinator": {
+                    "phase": "blocked",
+                    "resume_phase": "implement",
+                    "uncertain_lane": True,
+                    "blocker": "uncertain prior lane outcome",
+                    "question_activity_id": qid,
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-88888888",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                }
+            },
+            "state": "open",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+    assert task["payload"]["coordinator"].get("uncertain_lane") is True
+    assert task["payload"]["coordinator"].get("phase") != "implement"
+    assert "implementer" not in fake.launched
+    assert any("uncertain" in line.lower() or "blocked" in line.lower() for line in lines)

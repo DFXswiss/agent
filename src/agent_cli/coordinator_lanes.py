@@ -810,13 +810,14 @@ def phase_pr_gates(
         ):
             # Incomplete/invalid reviewer RESULT (including ask/blocked): stop.
             # Not a code rejection and not an implementer fix loop.
+            resume = "pr_gates_grok" if vendor == "grok" else "pr_gates_codex"
             c["phase"] = "blocked"
+            c["resume_phase"] = resume
             c["blocker"] = (
                 f"{stage}/{dimension} provider incomplete "
                 f"(status={status or 'empty'} result={model_result or 'empty'})"
             )
-            save_task(store, task)
-            _post_issue_status(
+            qid = _post_issue_status(
                 store,
                 worker,
                 runner,
@@ -825,6 +826,11 @@ def phase_pr_gates(
                 f"(status={status}, result={model_result or 'empty'}). Not a code rejection.",
                 "provider-incomplete",
             )
+            prior = c.get("question_activity_id")
+            c["question_activity_id"] = qid
+            if prior != qid:
+                c["replies_consumed_through"] = None
+            save_task(store, task)
             lines.append(f"{stage}/{dimension} unavailable; blocked")
             return lines
         if not review_is_approved(status, model_result):

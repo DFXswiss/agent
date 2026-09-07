@@ -141,14 +141,15 @@ for worker in workers.values():
 ## Workflow (script-owned)
 
 1. **Discover** configured repositories for open issues assigned to the
-   configured GitHub login (paginated API). Initial scan includes current
-   assignments (no silent first-run ignore). Idempotent source key:
+   configured GitHub login (`gh api --paginate --slurp`). Initial scan includes
+   current assignments (no silent first-run ignore). Idempotent source key:
    `repo + issue number` device-wide — first session owns; one task/PR until
    terminal. Failed tasks are **not** auto-reopened merely because the issue is
-   still assigned; recovery needs an authorized reply or a verified new event.
-   Assignment evidence is verified on GitHub; forged model activity payloads
-   are not trusted. Issue bodies are redacted/bounded before persistence.
-   `updated_at` is not treated as `assigned_at`.
+   still assigned, and this coordinator does **not** implement automatic
+   recovery of `state=failed` tasks on reply alone. Assignment evidence is
+   verified on GitHub; forged model activity payloads are not trusted. Issue
+   bodies are redacted/bounded before persistence. `updated_at` is not treated
+   as `assigned_at`.
 2. **Accept** with a deterministic issue comment (fixed wording + idempotency
    marker) via `comment.post` / `scan_github` **before** any model start. A
    failed comment never starts a model. Effects are discovered on retry.
@@ -160,11 +161,21 @@ for worker in workers.values():
    checkout. Interrupted clones are refused without deleting unrelated content.
 4. **Implement / inner review** via `lane.launch` builders with explicit session
    and config home. No round cap. Rejection routes findings to a fresh
-   implementer. Ask/blocked results are published on the source issue; the tick
-   returns with no model active. Authorized replies (`reply_logins` only),
-   strictly after the verified own question comment id/login, resume as
-   untrusted spec with exactly-once consumption checkpoints. Uncertain lane
-   outcomes refuse a second model start and publish a GitHub-visible blocker.
+   implementer. Outcome distinction (review-loop preserved, not waived):
+   - `RESULT: ask` → publish a question checkpoint, keep the task non-failed,
+     wait for an authorized reply, then resume `implement`.
+   - `RESULT: blocked` → publish a blocker, set `task.state=failed`, clear
+     `resume_phase`, and stop. Later ticks do not advance that task; discovery
+     only notes that the failed task remains. Automatic reply-recovery of
+     failed tasks is **not** implemented.
+   - Incomplete implementer status / invalid RESULT and external blockers
+     (CI `action_required`, inaccessible CI logs, incomplete inner/PR reviews)
+     keep a non-failed task, set `resume_phase` to the exact safe phase, and
+     pin `question_activity_id` on the published checkpoint so an authorized
+     reply can resume observation — never a blind implementer start for CI
+     authorization. Uncertain lane outcomes refuse a second model start (a
+     human reply must not silently duplicate an uncertain process) and publish
+     a GitHub-visible blocker.
 5. **Draft** as soon as the first signed task commit exists (`pr.open` on the
    **target** repo), before full tests/reviews. Each new signed head is pushed
    to the existing PR before later stages. No empty fake PR when there is no
@@ -179,18 +190,22 @@ for worker in workers.values():
    threads, results persisted on the main thread), then Codex quality+logic the
    same way only after both Grok dimensions are approved on that head. Author
    session does not sit those reviews. Incomplete/unavailable vendor output is a
-   GitHub-visible blocker — not a rejected complete gate and not an implementer
-   fix loop. Rejections publish `review.post` **COMMENT** (not
-   `REQUEST_CHANGES`) and invalidate head-specific evidence.
+   GitHub-visible blocker with `resume_phase` of `pr_gates_grok` /
+   `pr_gates_codex` and a pinned `question_activity_id` — not a rejected
+   complete gate and not an implementer fix loop. Rejections publish
+   `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
+   head-specific evidence.
 8. **CI**: exact-head PR check rollup **and** paginated head workflow inventory
    (path+event+attempt). Only `success` counts. `action_required` is an
    external authorization blocker (not routed to the implementer; `resume_phase`
-   stays `ci`). Missing / pending / failure / cancelled / skipped / neutral are
-   not green. This core observes **cumulative GitHub CI** only; target-repository
-   policy / A38 live join belongs to configured `readiness_argv`. Failures fetch
-   plain-text logs via `gh run view <id> --repo <target> --log-failed
-   --attempt <n>` (never ZIP `/logs` archive bytes). Inaccessible logs are a
-   blocker. Transient pending returns without an idle model.
+   stays `ci`; `question_activity_id` is pinned so an authorized reply resumes
+   CI observation). Missing / pending / failure / cancelled / skipped / neutral
+   are not green. This core observes **cumulative GitHub CI** only;
+   target-repository policy / A38 live join belongs to configured
+   `readiness_argv`. Failures fetch plain-text logs via `gh run view <id>
+   --repo <target> --log-failed --attempt <n>` (never ZIP `/logs` archive
+   bytes). Inaccessible logs are a reply-recoverable blocker. Transient pending
+   returns without an idle model.
 9. **Ready**: run `readiness_argv` (cwd = worktree, ambient GitHub tokens
    cleared). Stdout must be the fixed JSON readiness contract below (trusted
    operator script output — not model/repo input). Re-verify clean signed head
@@ -199,9 +214,11 @@ for worker in workers.values():
    `contributing_ok` / deviation checklist keys from that JSON via
    `chain.close_allowed` **before** Ready — never after human merge. Formal
    `review.post` **APPROVE** from the separate review account pinned with
-   `commit_id` (discover-before-POST; verify state/head/login/id/url). Before
-   leave-draft, a fresh GET must still show APPROVED on the exact head (stored
-   `formal_head` is not current proof). One evidence comment (must complete with
+   `commit_id` (discover-before-POST; verify state/head/login/id/url). Leave-
+   draft re-runs readiness, then performs a fresh GET that must still show
+   APPROVED on the exact head **immediately before** the Ready mutation
+   (stored `formal_head` is not current proof; a dismissal during readiness
+   must block leave-draft). One evidence comment (must complete with
    `execution_status=done`), `allow pr-ready`, then leave draft and verify
    `isDraft=false`. **Never merge.**
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
@@ -262,10 +279,12 @@ Implementer `RESULT` must be `done|ask|blocked|no-change` (empty / approved /
 rejected fail closed). Reviewer `RESULT` must be `approved|rejected`; `ask` /
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
-starting another model. Authorized replies resume the exact `resume_phase`
-checkpoint (not blindly `implement` for CI authorization / checkout blockers).
-Uncertain prior agents refuse a second model start. Inner and PR reviewers
-receive a script-generated base→head diff artifact outside the worktree.
+starting another model. Authorized replies (`reply_logins` only), listed with
+`gh api --paginate --slurp`, resume the exact `resume_phase` after the pinned
+`question_activity_id` checkpoint (not blindly `implement` for CI authorization
+/ incomplete review / checkout blockers). Uncertain prior agents refuse a
+second model start even when a human replies. Inner and PR reviewers receive a
+script-generated base→head diff artifact outside the worktree.
 
 ## Model output protocol
 

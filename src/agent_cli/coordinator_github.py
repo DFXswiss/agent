@@ -47,7 +47,7 @@ from .store import Store, StoreError, utcnow
 # Fixed JSON contract for configured readiness_argv (trusted operator script).
 # Tied to exact HEAD and base. Not model/repo input and not a policy DSL.
 READINESS_CONTRACT = (
-    '{"head":"<40-hex>","base":"<40-hex-or-configured-base>",'
+    '{"head":"<40-hex>","base":"<40-hex-pinned-base>",'
     '"contributing_ok":true,'
     '"deviation":{"declared":false}'
     "|{\"declared\":true,\"granted\":true,\"granted_by\":\"<reply_login>\","
@@ -68,13 +68,14 @@ def post_issue_comment(
     number: int,
     body: str,
     kind: str,
+    occurrence: str = "",
 ) -> str:
     """Publish a deterministic idempotent source-issue status/question comment."""
     safe = redact(body, limit=2000)
     activity_id = str(
         uuid5(
             NAMESPACE_URL,
-            f"coordinator-{kind}:{worker.session_id}:{repo}:{number}:{safe[:120]}",
+            f"coordinator-{kind}:{worker.session_id}:{repo}:{number}:{occurrence}:{safe}",
         )
     )
     marker = f"{STATUS_MARKER_PREFIX}{kind}:{activity_id} -->"
@@ -105,14 +106,22 @@ def publish_blocker(
     message: str,
     *,
     kind: str = "blocker",
+    reply_checkpoint: bool = False,
 ) -> list[str]:
+    """Publish a source-issue blocker.
+
+    When ``reply_checkpoint`` is true, pin ``question_activity_id`` to the
+    published comment so ``phase_read_replies`` can resume the exact
+    ``resume_phase``. Status re-publishes while waiting must leave the existing
+    checkpoint alone (default ``reply_checkpoint=False``).
+    """
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else None
     lines = [f"blocked: {redact(message)}"]
     if source is None:
         return lines
     try:
-        post_issue_comment(
+        activity_id = post_issue_comment(
             store,
             worker,
             runner,
@@ -121,6 +130,14 @@ def publish_blocker(
             body=f"Blocked: {redact(message)}",
             kind=kind,
         )
+        if reply_checkpoint and not c.get("uncertain_lane"):
+            prior = c.get("question_activity_id")
+            c["question_activity_id"] = activity_id
+            # Same idempotent blocker activity must not re-open already consumed
+            # replies; a new checkpoint activity starts a fresh reply window.
+            if prior != activity_id:
+                c["replies_consumed_through"] = None
+            save_task(store, task)
         lines.append(f"blocker published on {source['repo']}#{source['number']}")
     except (CoordinatorError, StoreError) as exc:
         # These subclass SystemExit — must not be treated as successful publication.
@@ -434,6 +451,7 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
             "GitHub CI reports action_required (authorization), not a code failure: "
             + ", ".join(action_required[:5]),
             kind="ci-action-required",
+            reply_checkpoint=True,
         )
 
     if not rollup and not latest:
@@ -456,6 +474,7 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
                 runner,
                 f"CI failed on {head[:7]} but workflow logs are inaccessible",
                 kind="ci-logs",
+                reply_checkpoint=True,
             )
         c["findings"] = redact(f"CI failed on {head[:7]}:\n" + "\n".join(failures) + "\n" + logs)
         c["phase"] = "implement"
@@ -973,8 +992,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if evidence.get("readiness_head") != head:
         raise CoordinatorError("readiness evidence not on current head before leave-draft")
     _fresh_ci_still_green(store, worker, task, runner, head)
-    # Re-run trusted readiness / current-base binding when a prior tick may be stale:
-    # formal approval must still be APPROVED on this exact head right now.
+    # Fail fast when already dismissed; a second check after readiness is still
+    # required because readiness can take up to check_timeout.
     _fresh_formal_still_approved(store, worker, task, runner, head=head)
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
@@ -1010,9 +1029,16 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             return [f"already ready {target}#{number}; awaiting human merge"]
         raise CoordinatorError("PR draft state unexpected before leave-draft")
 
+    # Readiness can take up to check_timeout; a dismissal during that window must
+    # still block leave-draft. Formal APPROVE freshness is checked again below,
+    # immediately before the Ready mutation — not only before readiness.
     fresh = phase_readiness(store, worker, task, runner)
     if coord(task).get("phase") != "formal_approve":
         return fresh
+    head = verify_signed_clean_head(store, worker, runner, worktree)
+    if evidence.get("formal_head") != head:
+        raise CoordinatorError("formal approve not on current head after readiness")
+    _fresh_formal_still_approved(store, worker, task, runner, head=head)
     c["phase"] = "leave_draft"
     save_task(store, task)
 
@@ -1034,6 +1060,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if ready_row is None or ready_row.get("execution_status") != "done":
         raise CoordinatorError("Ready evidence comment not verified")
 
+    # Publishing the evidence comment is itself an external call; recheck after it.
+    _fresh_formal_still_approved(store, worker, task, runner, head=head)
     ready = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target])
     if ready.returncode != 0:
         raise CoordinatorError(redact(ready.stderr or ready.stdout or "gh pr ready failed"))
@@ -1204,15 +1232,17 @@ def phase_read_replies(
     account = account_for(store, worker.session_id)
     comments = gh_list(
         scoped_runner,
-        ["gh", "api", "--paginate", f"repos/{repo}/issues/{number}/comments"],
+        ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/issues/{number}/comments"],
     )
     allowed = set(worker.reply_logins)
     q_activity = c.get("question_activity_id")
     if not isinstance(q_activity, str) or not q_activity:
         return [f"waiting for question checkpoint on {repo}#{number}"]
     q_marker = f"{QUESTION_MARKER_PREFIX}{q_activity} -->"
-    # Also accept ACTIVITY_MARKER form if executor rewrote body.
+    # Also accept ACTIVITY_MARKER form if executor rewrote body, and status
+    # checkpoints published for reply-recoverable external blockers.
     q_marker_alt = ACTIVITY_MARKER.format(id=q_activity)
+    status_needle = f":{q_activity} -->"
 
     question_id: int | None = None
     for comment in comments:
@@ -1223,7 +1253,8 @@ def phase_read_replies(
         login = str(user.get("login") or "").casefold()
         if login != account.login.casefold():
             continue
-        if q_marker in body or q_marker_alt in body:
+        status_hit = STATUS_MARKER_PREFIX in body and status_needle in body
+        if q_marker in body or q_marker_alt in body or status_hit:
             cid = as_int(comment.get("id"))
             if cid is None:
                 continue
