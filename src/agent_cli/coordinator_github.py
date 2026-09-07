@@ -98,6 +98,24 @@ def post_issue_comment(
     return activity_id
 
 
+def reply_checkpoint_eligible(task: dict[str, Any], c: dict[str, Any] | None = None) -> bool:
+    """True when task state + resume_phase make a reply checkpoint recoverable.
+
+    Terminal implementer ``RESULT: blocked`` (failed) and uncertain-lane outcomes
+    stay ineligible. A missed ``reply_checkpoint=True`` must not wedge a path that
+    already pinned a safe ``resume_phase``.
+    """
+    inner = c if isinstance(c, dict) else coord(task)
+    if inner.get("uncertain_lane"):
+        return False
+    if task.get("state") == "failed":
+        return False
+    resume = inner.get("resume_phase")
+    if not isinstance(resume, str) or not resume or resume in ("ask", "blocked", "done"):
+        return False
+    return True
+
+
 def publish_blocker(
     store: Store,
     worker: WorkerConfig,
@@ -110,18 +128,25 @@ def publish_blocker(
 ) -> list[str]:
     """Publish a source-issue blocker.
 
-    When ``reply_checkpoint`` is true, pin ``question_activity_id`` to the
-    published comment so ``phase_read_replies`` can resume the exact
-    ``resume_phase``. Status re-publishes while waiting must leave the existing
-    checkpoint alone (default ``reply_checkpoint=False``).
+    Recoverable blockers pin ``question_activity_id`` so ``phase_read_replies``
+    can resume the exact ``resume_phase``. Eligibility follows task state and
+    ``resume_phase`` so a missed boolean cannot silently wedge another
+    recoverable path. Status re-publishes while waiting keep an existing
+    checkpoint and must not reset consumed replies for that same checkpoint.
     """
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else None
     lines = [f"blocked: {redact(message)}"]
     if source is None:
         return lines
+    eligible = reply_checkpoint_eligible(task, c)
+    prior = c.get("question_activity_id")
+    has_prior = isinstance(prior, str) and bool(prior)
+    # Explicit request (re)pins when eligible; otherwise auto-pin only when a
+    # recoverable resume_phase is set and no checkpoint exists yet.
+    should_pin = eligible and (reply_checkpoint or not has_prior)
     occurrence = ""
-    if reply_checkpoint and c.get("resume_phase") == "formal_approve":
+    if should_pin and c.get("resume_phase") == "formal_approve":
         # Every invalidated approval needs a reply after its own blocker, even
         # when a later dismissal has the same wording as an earlier one.
         occurrence = f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
@@ -136,7 +161,7 @@ def publish_blocker(
             kind=kind,
             occurrence=occurrence,
         )
-        if reply_checkpoint and not c.get("uncertain_lane"):
+        if should_pin:
             prior = c.get("question_activity_id")
             c["question_activity_id"] = activity_id
             # Same idempotent blocker activity must not re-open already consumed
@@ -186,9 +211,12 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         verify_issue_assigned(scoped_runner, repo, number, account.login)
     except CoordinatorError as exc:
         c["phase"] = "blocked"
+        c["resume_phase"] = "accept"
         c["blocker"] = str(exc)
         save_task(store, task)
-        return publish_blocker(store, worker, task, runner, str(exc), kind="unassigned")
+        return publish_blocker(
+            store, worker, task, runner, str(exc), kind="unassigned", reply_checkpoint=True
+        )
     events = gh_list(scoped_runner, ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/issues/{number}/events"])
     assignments = [event for event in events if isinstance(event, dict)
                    and event.get("event") == "assigned"

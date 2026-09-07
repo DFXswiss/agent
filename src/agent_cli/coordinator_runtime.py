@@ -662,8 +662,17 @@ def _apply_implementer_outcome(
             c.update(phase="blocked", resume_phase="implement",
                      blocker="completed patch lacks concrete English/German change summaries")
             _mark_applied()
+            task["state"] = "open"
             save_task(store, task)
-            return publish_blocker(store, worker, task, runner, c["blocker"], kind="change-summary")
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                c["blocker"],
+                kind="change-summary",
+                reply_checkpoint=True,
+            )
         summaries[language] = redact(values[0].strip(), limit=800)
     task["change_summary_en"] = summaries["en"]
     task["change_summary_de"] = summaries["de"]

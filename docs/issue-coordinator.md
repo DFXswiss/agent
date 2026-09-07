@@ -168,14 +168,19 @@ for worker in workers.values():
      `resume_phase`, and stop. Later ticks do not advance that task; discovery
      only notes that the failed task remains. Automatic reply-recovery of
      failed tasks is **not** implemented.
-   - Incomplete implementer status / invalid RESULT and external blockers
-     (CI `action_required`, inaccessible CI logs, incomplete inner/PR reviews)
-     keep a non-failed task, set `resume_phase` to the exact safe phase, and
-     pin `question_activity_id` on the published checkpoint so an authorized
-     reply can resume observation — never a blind implementer start for CI
-     authorization. Uncertain lane outcomes refuse a second model start (a
-     human reply must not silently duplicate an uncertain process) and publish
-     a GitHub-visible blocker.
+   - Incomplete implementer status / invalid RESULT, missing required
+     `SUMMARY_EN`/`SUMMARY_DE` after `done`/`no-change`, accept-time
+     unassignment, and external blockers (CI `action_required`, inaccessible
+     CI logs, incomplete inner/PR reviews) keep a non-failed task, set
+     `resume_phase` to the exact safe phase (`implement`, `accept`, `ci`, …),
+     and pin `question_activity_id` on the published checkpoint so an
+     authorized reply can resume that phase — never a blind implementer start
+     for CI authorization or acceptance. `publish_blocker` also derives
+     checkpoint eligibility from `resume_phase` + non-failed / non-uncertain
+     state so a missed boolean cannot wedge another recoverable path; status
+     re-publishes keep the existing checkpoint. Uncertain lane outcomes refuse
+     a second model start (a human reply must not silently duplicate an
+     uncertain process) and publish a GitHub-visible blocker.
 5. **Draft** as soon as the first signed task commit exists (`pr.open` on the
    **target** repo), before full tests/reviews. Each new signed head is pushed
    to the existing PR before later stages. No empty fake PR when there is no

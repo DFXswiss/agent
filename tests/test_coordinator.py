@@ -1140,3 +1140,329 @@ def test_uncertain_lane_authorized_reply_does_not_resume_model(
     assert task["payload"]["coordinator"].get("phase") != "implement"
     assert "implementer" not in fake.launched
     assert any("uncertain" in line.lower() or "blocked" in line.lower() for line in lines)
+
+
+@pytest.mark.parametrize(
+    "model_result,stdout",
+    [
+        (
+            "done",
+            "STATUS: complete\nRESULT: done\npatched without summaries\n",
+        ),
+        (
+            "no-change",
+            "STATUS: complete\nRESULT: no-change\nNo further code change.\n",
+        ),
+    ],
+)
+def test_missing_change_summaries_reply_checkpoint_resumes_implement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model_result: str, stdout: str
+) -> None:
+    """done/no-change without SUMMARY_* pins a reply checkpoint and resumes implement safely."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    fake.model_outputs["implementer"] = stdout
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    patch_run_bounded(monkeypatch, fake)
+    for _ in range(5):
+        tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+        tasks = store.rows("task")
+        if tasks and tasks[0]["payload"]["coordinator"]["phase"] == "implement":
+            break
+    task = store.rows("task")[0]
+    tid = task["id"]
+    assert task["payload"]["coordinator"]["phase"] == "implement"
+    if model_result == "no-change":
+        # no-change without PR/sha takes the dedicated no-change blocker; give a PR so
+        # the missing-summary path is the one under test.
+        task["payload"]["coordinator"]["pr_number"] = 42
+        store.write("task", "update", tid, {k: v for k, v in task.items() if not k.startswith("_")})
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    coord = task["payload"]["coordinator"]
+    assert task["state"] == "open", lines
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "implement"
+    qid = coord.get("question_activity_id")
+    assert isinstance(qid, str) and qid
+    assert "implementer" in fake.launched
+    assert not task.get("change_summary_en")
+    assert not task.get("change_summary_de")
+    assert not any(
+        r.get("task_id") == tid and r.get("key") == "implementer_done" and r.get("status") == "ja"
+        for r in store.rows("checklist_item")
+    )
+    evidence = coord.get("evidence") if isinstance(coord.get("evidence"), dict) else {}
+    assert evidence.get("tests_pass") is not True
+
+    # Waiting/status re-publish must keep the same checkpoint and not reset consumed replies.
+    activity = store.row("activity", qid)
+    assert activity is not None
+    body = str((activity.get("payload") or {}).get("body") or "")
+    fake.comments = [{"id": 10, "body": body, "user": {"login": "worker-bot"}}]
+    coord["replies_consumed_through"] = 10
+    store.write("task", "update", tid, {k: v for k, v in task.items() if not k.startswith("_")})
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["question_activity_id"] == qid
+    assert task["payload"]["coordinator"]["replies_consumed_through"] == 10
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+    fake.comments.append(
+        {"id": 11, "body": "summaries will be supplied on the next implement pass", "user": {"login": "human-owner"}}
+    )
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "implement", lines
+    assert fake.launched == launched_before
+    # Resume must not forge checklist/test evidence from the failed summary pass.
+    assert not any(
+        r.get("task_id") == tid and r.get("key") == "implementer_done" and r.get("status") == "ja"
+        for r in store.rows("checklist_item")
+    )
+    evidence = task["payload"]["coordinator"].get("evidence")
+    if isinstance(evidence, dict):
+        assert evidence.get("tests_pass") is not True
+    assert not task.get("change_summary_en")
+    assert not task.get("change_summary_de")
+    # A later implementer start is allowed; still no forged evidence before it applies.
+    fake.model_outputs["implementer"] = (
+        "STATUS: complete\nRESULT: ask\nWhich summary wording is required?\n"
+    )
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert "implementer" in fake.launched[len(launched_before) :]
+    assert not any(
+        r.get("task_id") == tid and r.get("key") == "implementer_done" and r.get("status") == "ja"
+        for r in store.rows("checklist_item")
+    )
+    evidence = task["payload"]["coordinator"].get("evidence")
+    if isinstance(evidence, dict):
+        assert evidence.get("tests_pass") is not True
+
+
+def test_accept_unassigned_race_reply_resumes_accept_before_implement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assignment removed between advance_one precheck and accept stays reply-recoverable."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+
+    tid = "77777777-7777-7777-7777-777777777777"
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "Fix widget",
+            "repo": "example/project",
+            "ref": None,
+            "payload": {
+                "coordinator": {
+                    "phase": "accept",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a-seed",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix widget",
+                    },
+                    "worker_login": "worker-bot",
+                }
+            },
+            "state": "open",
+            "current_round": 0,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+
+    from agent_cli import coordinator_github, coordinator_runtime
+
+    calls = {"n": 0}
+    real_verify = coordinator_github.verify_issue_assigned
+
+    def race_verify(runner, repo, number, login):  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_verify(runner, repo, number, login)
+        raise CoordinatorError(
+            f"issue {repo}#{number} is no longer assigned to configured login"
+        )
+
+    monkeypatch.setattr(coordinator_github, "verify_issue_assigned", race_verify)
+    monkeypatch.setattr(coordinator_runtime, "verify_issue_assigned", race_verify)
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") == "accept"
+    qid = coord.get("question_activity_id")
+    assert isinstance(qid, str) and qid
+    assert "implementer" not in fake.launched
+    assert not any(
+        r.get("type") == "comment.post"
+        and "Accepted for implementation" in str((r.get("payload") or {}).get("body") or "")
+        for r in store.rows("activity")
+    )
+
+    activity = store.row("activity", qid)
+    assert activity is not None
+    body = str((activity.get("payload") or {}).get("body") or "")
+    fake.comments = [{"id": 20, "body": body, "user": {"login": "worker-bot"}}]
+    # Status re-publish while still unassigned must keep the checkpoint.
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["question_activity_id"] == qid
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+    assert "implementer" not in fake.launched
+
+    # Reassignment restored; authorized reply required before accept resumes.
+    monkeypatch.setattr(coordinator_github, "verify_issue_assigned", real_verify)
+    monkeypatch.setattr(coordinator_runtime, "verify_issue_assigned", real_verify)
+    fake.comments.append(
+        {"id": 21, "body": "reassigned; continue acceptance", "user": {"login": "human-owner"}}
+    )
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "accept", lines
+    assert "implementer" not in fake.launched
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "checkout", lines
+    assert any(
+        r.get("type") == "comment.post"
+        and "Accepted for implementation" in str((r.get("payload") or {}).get("body") or "")
+        for r in store.rows("activity")
+    )
+    assert "implementer" not in fake.launched
+    assert any(
+        r.get("task_id") == tid and r.get("key") == "session_registered" and r.get("status") == "ja"
+        for r in store.rows("checklist_item")
+    )
+    assert any(
+        r.get("task_id") == tid and r.get("key") == "spec_written" and r.get("status") == "ja"
+        for r in store.rows("checklist_item")
+    )
+
+
+def test_publish_blocker_auto_pins_from_resume_phase_without_boolean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Central eligibility: resume_phase alone pins a checkpoint; status does not reset it."""
+    from agent_cli.coordinator_github import publish_blocker, reply_checkpoint_eligible
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+
+    tid = "66666666-6666-6666-6666-666666666666"
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": None,
+            "payload": {
+                "coordinator": {
+                    "phase": "blocked",
+                    "resume_phase": "implement",
+                    "blocker": "synthetic recoverable blocker",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                }
+            },
+            "state": "open",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    task = store.row("task", tid)
+    assert reply_checkpoint_eligible(task) is True
+    # Deliberately omit reply_checkpoint=True — eligibility must still pin.
+    publish_blocker(
+        store,
+        worker,
+        task,
+        fake,
+        "synthetic recoverable blocker",
+        kind="synthetic-recoverable",
+    )
+    task = store.row("task", tid)
+    qid = task["payload"]["coordinator"].get("question_activity_id")
+    assert isinstance(qid, str) and qid
+    task["payload"]["coordinator"]["replies_consumed_through"] = 99
+    store.write("task", "update", tid, {k: v for k, v in task.items() if not k.startswith("_")})
+    # Status re-publish (default reply_checkpoint=False) must keep checkpoint + cursor.
+    publish_blocker(
+        store,
+        worker,
+        store.row("task", tid),
+        fake,
+        "synthetic recoverable blocker",
+        kind="status",
+    )
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["question_activity_id"] == qid
+    assert task["payload"]["coordinator"]["replies_consumed_through"] == 99
+
+    failed = dict(task)
+    failed["state"] = "failed"
+    failed["payload"] = {
+        "coordinator": {
+            **task["payload"]["coordinator"],
+            "resume_phase": "implement",
+            "question_activity_id": None,
+        }
+    }
+    assert reply_checkpoint_eligible(failed) is False
+    uncertain = dict(task)
+    uncertain["payload"] = {
+        "coordinator": {
+            **task["payload"]["coordinator"],
+            "uncertain_lane": True,
+            "resume_phase": "implement",
+            "question_activity_id": None,
+        }
+    }
+    assert reply_checkpoint_eligible(uncertain) is False
