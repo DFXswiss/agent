@@ -5,7 +5,9 @@ Static scripts that load this manifest select GitHub accounts from
 bindings. A missing file, `{}`, or null/empty `accounts` and `sessions` leaves
 those covered GitHub executors unconfigured. There is no implicit account from
 hub pairing, the host login, or environment tokens. CLI paths that never load
-this file are outside this enforcement; see the remaining gaps below.
+this file are outside this enforcement; see A38 visibility below for the
+explicit `--github-session` path and the standalone PR guard's documented
+workflow-token configuration.
 
 The following is an operator-supplied example, not an installed default:
 
