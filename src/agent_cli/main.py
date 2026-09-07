@@ -1180,6 +1180,11 @@ def _queue_gate_findings(
         # An errored row is not settled: the executor gave up on it, so a later
         # `gate record` has to hand it back rather than treat it as delivered.
         row = store.row("activity", activity_id)
+        # Preserve the executor's pinned identity from the authoritative read
+        # under the lock, including recovery from a stale initial insert choice.
+        payload.pop("execution_account", None)
+        if row is not None and "execution_account" in row:
+            payload["execution_account"] = row["execution_account"]
         return row is not None and row.get("execution_status") != "error"
 
     payload = {
