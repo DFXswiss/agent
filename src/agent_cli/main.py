@@ -1180,6 +1180,11 @@ def _queue_gate_findings(
         # An errored row is not settled: the executor gave up on it, so a later
         # `gate record` has to hand it back rather than treat it as delivered.
         row = store.row("activity", activity_id)
+        # Preserve the executor's pinned identity from the authoritative read
+        # under the lock, including recovery from a stale initial insert choice.
+        payload.pop("execution_account", None)
+        if row is not None and "execution_account" in row:
+            payload["execution_account"] = row["execution_account"]
         return row is not None and row.get("execution_status") != "error"
 
     payload = {
@@ -2642,10 +2647,12 @@ def cmd_run(args: list[str]) -> None:
         if step.key == "pushed":
             cwd = _resolve_run_cwd(args)
             from .git_act import GitActError, push_branch
+            from .github_accounts import load_accounts
 
             try:
+                account = load_accounts(store.home).for_session(str(snap.get("session_id") or ""))
                 sha = push_branch(
-                    cwd=cwd, runner=lambda argv: _exec_argv(argv, cwd=cwd)
+                    cwd=cwd, runner=account.runner(lambda argv: _exec_argv(argv, cwd=cwd), require_git=True)
                 )
             except GitActError as exc:
                 die(str(exc))
@@ -2661,14 +2668,31 @@ def cmd_run(args: list[str]) -> None:
         if step.key == "mergeable":
             cwd = _resolve_run_cwd(args)
             from .git_act import GitActError, measure_mergeable
+            from .github_accounts import load_accounts
 
             try:
                 expected = str(snap.get("head_sha") or head or "").strip() or None
-                evidence = measure_mergeable(
-                    cwd=cwd,
-                    runner=lambda argv: _exec_argv(argv, cwd=cwd),
-                    expected_head=expected,
-                )
+                account = load_accounts(store.home).for_session(str(snap.get("session_id") or ""))
+                pull_request = _task_pull_request(_need(store, "task", tid))
+                if pull_request is not None:
+                    pr_repo, pr_number = pull_request
+                    evidence = measure_mergeable(
+                        cwd=cwd,
+                        runner=account.runner(
+                            lambda argv: _exec_argv(argv, cwd=cwd), require_git=False
+                        ),
+                        expected_head=expected,
+                        repo=pr_repo,
+                        number=pr_number,
+                    )
+                else:
+                    evidence = measure_mergeable(
+                        cwd=cwd,
+                        runner=account.runner(
+                            lambda argv: _exec_argv(argv, cwd=cwd), require_git=True
+                        ),
+                        expected_head=expected,
+                    )
             except GitActError as exc:
                 die(str(exc))
         if step.key in NO_AUTO_CLOSE:

@@ -8,6 +8,17 @@ description: >-
 
 # Session store
 
+All GitHub communication, tests, and lane/subagent starts belong to static
+scripts, never to model lanes. For the required assignment workflow, the script
+accepts the issue and confirms acceptance on GitHub before it starts the
+implementation lane. See
+[DESIGN.md §19.7](../../../../DESIGN.md#197-issue-assignment-to-human-merge), which
+separates this requirement from the existing watcher behavior described below.
+
+Never start a monitor, poll status, or wait for CI or other events. Return your
+result or blocker to the script when no work remains. Scripts own monitoring
+and inform the model when an observed event provides useful work.
+
 Install this package locally and put `agent` on `PATH`. There is no second
 binary.
 

@@ -214,6 +214,10 @@ def enqueue_assigned(
     existing = pending_repo_number(store, session_id, repo, number)
     if existing is not None:
         return existing
+    from .github_accounts import load_accounts
+
+    account = load_accounts(store.home).for_session(session_id)
+    runner = account.runner(runner)
     now = utcnow()
     _ensure_assigned_session(store, session_id, now)
     url = f"https://github.com/{repo}/issues/{number}"

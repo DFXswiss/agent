@@ -6,10 +6,19 @@ from typing import Any
 
 import pytest
 
-from agent_cli.github_act import ACTIVITY_MARKER, scan_github
+from agent_cli.github_act import ACTIVITY_MARKER, scan_github as account_scan_github
 from agent_cli.main import main
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
+
+
+
+from github_support import configure_accounts, transport
+
+
+def scan_github(store, runner):
+    configure_accounts(store.home, [r['id'] for r in store.rows('session')], login='theo-vane')
+    return account_scan_github(store, transport(runner, login='theo-vane'))
 
 
 def run(home: Path, argv: list[str]) -> None:

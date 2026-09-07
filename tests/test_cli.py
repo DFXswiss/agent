@@ -2303,6 +2303,48 @@ def test_rejected_gate_requeues_a_comment_the_executor_gave_up_on(tmp_path: Path
     assert rows[0]["execution_status"] == "pending"
 
 
+@pytest.mark.parametrize('stale_read', [False, True])
+def test_gate_retry_preserves_account_and_refuses_switch(tmp_path, capsys, monkeypatch, stale_read):
+    from agent_cli.github_act import scan_github
+
+    tid, aid = _seed_pr_review_gate(tmp_path, capsys)
+    argv = _gate_argv(tid, aid, 'rejected', '--evidence', 'file.py:1 retry finding')
+    run(tmp_path, argv)
+    activity_id = _review_activities(tmp_path)[0]['id']
+    binding = {'account': 'original', 'login': 'firstworker'}
+    store = Store(tmp_path)
+    try:
+        row = {k: v for k, v in store.row('activity', activity_id).items() if not k.startswith('_')}
+        row.update(execution_status='error', execution_account=binding)
+        store.write('activity', 'update', activity_id, row)
+    finally:
+        store.close()
+    (tmp_path / 'github-accounts.json').write_text(json.dumps({
+        'accounts': {'replacement': {'login': 'SecondWorker', 'gh_config_dir': '/test/replacement'}},
+        'sessions': {'s': 'replacement'},
+    }))
+    real_row = Store.row
+    reads = []
+    def read(self, table, rid):
+        if table == 'activity' and rid == activity_id:
+            reads.append(rid)
+            if stale_read and len(reads) == 1:
+                return None
+        return real_row(self, table, rid)
+    monkeypatch.setattr(Store, 'row', read)
+    run(tmp_path, argv)
+    store = Store(tmp_path)
+    try:
+        assert store.row('activity', activity_id)['execution_account'] == binding
+        assert store.row('activity', activity_id)['execution_status'] == 'pending'
+        def forbidden(argv):
+            pytest.fail('Changed account must be refused before any GitHub access')
+        assert scan_github(store, forbidden) == [f'review.post {activity_id} error']
+        assert 'refusing account switch' in store.row('activity', activity_id)['execution_error']
+    finally:
+        store.close()
+
+
 def test_rejected_gate_survives_a_stale_existence_read(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

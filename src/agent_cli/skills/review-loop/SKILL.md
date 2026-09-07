@@ -13,6 +13,16 @@ Without this skill, implementer and reviewer `agent agent` commands refuse.
 
 ## Loop
 
+The static script owns this loop: it starts the implementer, starts the reviewer,
+and starts the implementer again for improvements. The commands below are script
+operations, not instructions for a model to launch another lane. Neither role
+may start subagents, execute tests, or access GitHub. See
+[DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+
+Neither lane starts monitors or waits/polls for tests, CI, or another lane.
+Return the implementation result, findings, or blocker to the script. It owns
+monitoring and informs the model when an event provides useful work.
+
 No round cap. Repeat until the reviewer sets `approved` or the implementer is
 `blocked`.
 

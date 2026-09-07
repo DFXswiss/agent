@@ -8,6 +8,29 @@ This device is the write owner of its own rows. The local store is PostgreSQL on
 
 The [A38 standard](docs/a38.md) defines repository-owned local test requirements and author reports using the existing local-CI format. `agent a38` measures and validates reports; the [dfx pr guard](docs/a38-guard.md) explains repository rules and checks author comments without executing pull-request code.
 
+The required GitHub issue-to-PR workflow is defined in
+[DESIGN.md §19.7](DESIGN.md#197-issue-assignment-to-human-merge), together with the
+current implementation boundaries. A static script accepts the assignment and
+confirms it in the issue before starting the implementation lane. Scripts own
+all lane starts, tests, and GitHub communication; model lanes do not start
+subagents, run tests, or access GitHub. The user works in GitHub and merges the
+reviewed PR there. This is a workflow requirement, not a claim of a complete
+deployed integration.
+
+Model lanes perform work and return results or blockers. They never start
+monitors, poll statuses, or wait for CI. Scripts own monitoring and inform a
+model when an observed event provides useful work; see DESIGN.md §19.1.
+
+Accounts and roles must start unconfigured (`NULL`); see
+[DESIGN.md §19.8](DESIGN.md#198-configuration-starts-empty). Configure GitHub
+execution accounts and session bindings explicitly in
+[`github-accounts.json`](docs/github-accounts.md) for the executors that load
+it. There is no default GitHub account or fallback to the host login on those
+paths. Some legacy CLI paths still use ambient host `gh` (for example
+`agent a38` visibility lookup when `--private` is omitted); that gap is named
+in the design and the accounts document. AI-account and role configuration
+remain separate implementation work, as recorded in the design.
+
 ## Install
 
 ```bash
@@ -115,7 +138,7 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 { "assigned_repos": ["Owner/repo"], "session_id": "assigned" }
 ```
 
-Missing or empty `assigned_repos` is an error. `session_id` is optional, defaults to `assigned`, and may contain only `A-Za-z0-9_-`. A session already present under that id must be `kind=runner`. The auto-created runner session attaches `spine`, `review-loop`, and `pr-review` (those skills stay opt-in for every other session). The working directory is `$AGENT_HOME/sessions/<session_id>` unless `AGENT_SESSION_ROOT` is set. The first successful scan records the `assigned_watch_since` watermark and the assigned session id, and creates no activities. Changing `session_id` after that pin is an error. The scan uses the paired GitHub login; a missing pair or a `gh api user` mismatch is an error. Later scans enqueue `issue.assigned` on **that one** runner session, push to the hub, write `MANDATE.md` / `QUEUE.md`, and start Grok only if that session is not already attached. The insert does not notify the knock daemon. There is one terminal; further assignments wait in the knock queue until the supervise script records `issue.assigned.ack` with `payload.assigned_id` set to that activity id. The follow CLI does not ack from pane text. `MANDATE.md` lists session and activity ids. `QUEUE.md` lists ids and urls. Neither file contains issue bodies. Use `--follow` for a 30s loop, or cron for one-shot runs.
+Missing or empty `assigned_repos` is an error. `session_id` is optional, defaults to `assigned`, and may contain only `A-Za-z0-9_-`. A session already present under that id must be `kind=runner`. The auto-created runner session attaches `spine`, `review-loop`, and `pr-review` (those skills stay opt-in for every other session). The working directory is `$AGENT_HOME/sessions/<session_id>` unless `AGENT_SESSION_ROOT` is set. The first successful scan records the `assigned_watch_since` watermark and the assigned session id, and creates no activities. Changing `session_id` after that pin is an error. The scan uses the session account from `github-accounts.json`; a missing binding or a `gh api user` mismatch is an error. Hub pairing is separate and still used for sync. Later scans enqueue `issue.assigned` on **that one** runner session, push to the hub, write `MANDATE.md` / `QUEUE.md`, and start Grok only if that session is not already attached. The insert does not notify the knock daemon. There is one terminal; further assignments wait in the knock queue until the supervise script records `issue.assigned.ack` with `payload.assigned_id` set to that activity id. The follow CLI does not ack from pane text. `MANDATE.md` lists session and activity ids. `QUEUE.md` lists ids and urls. Neither file contains issue bodies. Use `--follow` for a 30s loop, or cron for one-shot runs.
 
 ### Session terminal control
 

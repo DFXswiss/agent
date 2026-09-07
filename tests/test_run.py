@@ -9,6 +9,7 @@ from agent_cli.lane import LaneResult
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_cli import _last_agent_id, _last_task_id, run
+from github_support import configure_accounts
 
 
 def _store(home: Path) -> Store:
@@ -453,6 +454,7 @@ def test_run_pushed_calls_push_branch(
 ) -> None:
     tid = _bootstrap_implement(tmp_path, capsys)
     _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    configure_accounts(tmp_path, ["sess-1"], login="ok")
 
     called = {"n": 0}
 
@@ -582,6 +584,7 @@ def test_run_mergeable_after_gates(
 ) -> None:
     tid = _bootstrap_resolve(tmp_path, capsys)
     _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    configure_accounts(tmp_path, ["sess-1"], login="ok")
 
     push_called = {"n": 0}
 
@@ -612,7 +615,7 @@ def test_run_mergeable_after_gates(
 
     monkeypatch.setattr(
         "agent_cli.git_act.measure_mergeable",
-        lambda *, cwd, runner, expected_head=None: "ok",
+        lambda *, cwd, runner, expected_head=None, repo=None, number=None: "ok",
     )
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()

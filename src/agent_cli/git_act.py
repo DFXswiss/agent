@@ -13,6 +13,7 @@ Runner = Callable[[list[str]], Completed]
 PROTECTED = frozenset({"develop", "main", "master"})
 
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+_REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 class GitActError(Exception):
@@ -105,13 +106,52 @@ def push_branch(*, cwd: str, runner: Runner) -> str:
 
 
 def measure_mergeable(
-    *, cwd: str, runner: Runner, expected_head: str | None = None
+    *,
+    cwd: str,
+    runner: Runner,
+    expected_head: str | None = None,
+    repo: str | None = None,
+    number: int | None = None,
 ) -> str:
     """Return a short evidence string when the current branch PR is MERGEABLE
-    and every GitHub check is SUCCESS (or there are no checks). Else raise GitActError."""
-    _ = cwd  # gh argv has no -C; cwd is inherited from _exec_argv
+    and every GitHub check is SUCCESS (or there are no checks). Else raise GitActError.
+
+    Prefer an explicit task ``repo`` + PR ``number`` (fork target may differ from
+    origin). Otherwise derive the branch via mapped ``git -C`` and a validated
+    origin remote. Every ``gh`` call gets both ``--repo`` and a PR selector so
+    container-backed accounts do not depend on executor cwd.
+    """
+    from .github_accounts import GitHubHttpsRemoteError, validate_repo_remote
+
+    selector: str
+    target_repo: str
+    if repo is not None or number is not None:
+        if repo is None or number is None:
+            raise GitActError("pull request repo and number must be provided together")
+        if not isinstance(repo, str) or _REPO_NAME.fullmatch(repo) is None:
+            raise GitActError("invalid pull request repository")
+        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+            raise GitActError("invalid pull request number")
+        target_repo = repo
+        selector = str(number)
+    else:
+        try:
+            target_repo = validate_repo_remote(runner, cwd, "origin")
+        except GitHubHttpsRemoteError as exc:
+            raise GitActError(str(exc)) from exc
+        completed = runner(_git(cwd, "rev-parse", "--abbrev-ref", "HEAD"))
+        if completed.returncode != 0:
+            raise GitActError(_fail_detail(completed, "git failed"))
+        branch = completed.stdout.strip()
+        if not branch or branch == "HEAD":
+            raise GitActError("empty branch name")
+        selector = branch
+
     completed = runner(
-        ["gh", "pr", "view", "--json", "mergeable,state,url,number,headRefOid"]
+        [
+            "gh", "pr", "view", selector, "--repo", target_repo,
+            "--json", "mergeable,state,url,number,headRefOid",
+        ]
     )
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "gh failed"))
@@ -129,8 +169,8 @@ def measure_mergeable(
     state_ok = isinstance(state, str) and state.upper() == "OPEN"
     if mergeable != "MERGEABLE" or not state_ok:
         raise GitActError(f"mergeable={mergeable!r} state={state!r}")
-    number = view.get("number")
-    if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+    view_number = view.get("number")
+    if isinstance(view_number, bool) or not isinstance(view_number, int) or view_number <= 0:
         raise GitActError("pr view missing number")
     oid = view.get("headRefOid")
     if not isinstance(oid, str) or oid == "":
@@ -142,7 +182,7 @@ def measure_mergeable(
             raise GitActError(f"pr head {oid} does not match {want}")
 
     completed = runner(
-        ["gh", "pr", "checks", str(number), "--json", "name,state"]
+        ["gh", "pr", "checks", str(view_number), "--repo", target_repo, "--json", "name,state"]
     )
     if completed.returncode != 0:
         raise GitActError(_fail_detail(completed, "gh failed"))
@@ -165,4 +205,4 @@ def measure_mergeable(
         if str(check_state or "").upper() != "SUCCESS":
             raise GitActError(f"check {name} is {check_state}")
 
-    return f"mergeable number={number} checks=ok"
+    return f"mergeable number={view_number} checks=ok"

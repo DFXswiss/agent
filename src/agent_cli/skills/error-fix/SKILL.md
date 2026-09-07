@@ -24,6 +24,16 @@ rules live in DESIGN.md §§14–15, §19, and §21.
 
 ## Loop
 
+The static script starts implementation and review lanes, starts the implementer
+again for improvements, executes tests, and performs all GitHub communication.
+Model lanes never start subagents or execute tests themselves. Executor commands
+below belong to the script. See
+[DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+
+Model lanes never start monitors, poll, or wait for logs, CI, or PR events.
+Return the current result or blocker to the script. Event detection and any
+subsequent notification that provides useful model work belong to the script.
+
 1. A **script** on this device queries a configured log source, redacts,
    fingerprints, and inserts or enriches `activity.type=error.seen` on this
    session. First insert knocks `da ist Post id <uuid>`. Enrichment never

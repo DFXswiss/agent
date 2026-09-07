@@ -12,9 +12,28 @@ from agent_cli.watch import (
     dispatch_assigned,
     load_watch_config,
     pending_assigned,
-    scan_assigned,
-    scan_merged,
+    scan_assigned as account_scan_assigned,
+    scan_merged as account_scan_merged,
 )
+
+
+
+from github_support import configure_accounts, transport
+
+
+def scan_assigned(store, runner, *, now):
+    path = store.home / 'watch.json'
+    try:
+        sid = json.loads(path.read_text()).get('session_id', 'assigned')
+    except (OSError, ValueError):
+        sid = 'assigned'
+    configure_accounts(store.home, [sid])
+    return account_scan_assigned(store, transport(runner, authenticate=True), now=now)
+
+
+def scan_merged(store, runner):
+    configure_accounts(store.home, [r['id'] for r in store.rows('session')])
+    return account_scan_merged(store, transport(runner))
 
 
 def test_scan_merged_inserts_once(tmp_path: Path) -> None:
