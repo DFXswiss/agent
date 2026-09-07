@@ -497,21 +497,32 @@ class RunnerTests(unittest.TestCase):
             root = Path(tmp)
             repo = root / "repo"
             head = _init_repo(repo, origin="https://github.com/contributor/fork.git")
+            (root / 'github-accounts.json').write_text(json.dumps({
+                'accounts': {'configured': {'login': 'ExampleWorker', 'gh_config_dir': '/test/github'}},
+                'sessions': {'visibility': 'configured'},
+            }))
             calls = []
 
             def lookup(argv, cwd, env):
-                if argv[0] == "gh":
-                    calls.append(argv)
-                    return subprocess.CompletedProcess(argv, 0, '{"isPrivate":true}', "")
+                if argv[0] == 'env':
+                    self.assertIn('GH_CONFIG_DIR=/test/github', argv)
+                    command = argv[argv.index('gh'):]
+                    calls.append(command)
+                    output = 'ExampleWorker' if command[:3] == ['gh', 'api', 'user'] else '{"isPrivate":true}'
+                    return subprocess.CompletedProcess(argv, 0, output, "")
                 return subprocess.run(argv, cwd=cwd, env=env, text=True, capture_output=True)
 
             output = root / "report.md"
             verdict = run_policy(
                 repo, _policy_dict(), output=output, logs_dir=root / "logs",
                 base_sha=head, repository="example/app", run=lookup,
+                github_session='visibility', config_home=root,
             )
             self.assertTrue(verdict["ok"])
-            self.assertEqual(calls, [["gh", "repo", "view", "example/app", "--json", "isPrivate"]])
+            self.assertEqual(calls, [
+                ['gh', 'api', 'user', '--jq', '.login'],
+                ["gh", "repo", "view", "example/app", "--json", "isPrivate"],
+            ])
             self.assertTrue(output.read_text().startswith("EN:\n"))
             self.assertIn("<details>\n<summary>Details</summary>\n\n", output.read_text())
             report = parse_comment(output.read_text())
@@ -1143,3 +1154,36 @@ def stat_mode(path: Path) -> int:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize('session', [None, 'unbound'])
+def test_visibility_lookup_refuses_missing_account_before_network(tmp_path, monkeypatch, session):
+    from agent_cli.a38 import _resolve_private
+    monkeypatch.setenv('GH_TOKEN', 'synthetic-ambient-token')
+    def forbidden(*args):
+        pytest.fail('Unconfigured visibility lookup must not access GitHub')
+    with pytest.raises(A38Error):
+        _resolve_private(tmp_path, None, run=forbidden, repository='example/app',
+                         github_session=session, config_home=tmp_path)
+    assert _resolve_private(tmp_path, False, run=forbidden, repository='example/app') is False
+
+
+@pytest.mark.parametrize('auth_result', ['WrongWorker', None])
+def test_visibility_lookup_rejects_wrong_or_unavailable_account(tmp_path, auth_result):
+    from agent_cli.a38 import _resolve_private
+    (tmp_path / 'github-accounts.json').write_text(json.dumps({
+        'accounts': {'selected': {'login': 'ExpectedWorker', 'gh_config_dir': '/test/selected'}},
+        'sessions': {'chosen': 'selected'},
+    }))
+    calls = []
+    def runner(argv, cwd, env):
+        command = argv[argv.index('gh'):]
+        calls.append(command)
+        assert command == ['gh', 'api', 'user', '--jq', '.login']
+        return subprocess.CompletedProcess(argv, 1 if auth_result is None else 0,
+                                           auth_result or '', 'synthetic-private-error')
+    with pytest.raises(A38Error) as exc:
+        _resolve_private(tmp_path, None, run=runner, repository='example/app',
+                         github_session='chosen', config_home=tmp_path)
+    assert len(calls) == 1
+    assert 'synthetic-private-error' not in str(exc.value)

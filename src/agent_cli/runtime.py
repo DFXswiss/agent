@@ -16,7 +16,6 @@ from .store import StoreError
 
 TARGETS_FILE = "runtime-targets.json"
 
-GROK_DEFAULT_MODEL = "grok-4.6"
 GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -43,11 +42,11 @@ def grok_new_session_id() -> str:
 
 
 def grok_model(raw: str | None) -> str:
-    if raw is None:
-        return GROK_DEFAULT_MODEL
+    if not isinstance(raw, str):
+        raise StoreError("Grok model must be explicitly configured")
     stripped = raw.strip()
     if stripped == "":
-        return GROK_DEFAULT_MODEL
+        raise StoreError("Grok model must be explicitly configured")
     return stripped
 
 
