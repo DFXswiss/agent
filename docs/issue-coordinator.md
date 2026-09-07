@@ -176,11 +176,11 @@ for worker in workers.values():
      and pin `question_activity_id` on the published checkpoint so an
      authorized reply can resume that phase — never a blind implementer start
      for CI authorization or acceptance. `publish_blocker` also derives
-     checkpoint eligibility from `resume_phase` + non-failed / non-uncertain
-     state so a missed boolean cannot wedge another recoverable path; status
-     re-publishes keep the existing checkpoint. Uncertain lane outcomes refuse
-     a second model start (a human reply must not silently duplicate an
-     uncertain process) and publish a GitHub-visible blocker.
+     checkpoint eligibility from `resume_phase` + non-failed / non-done /
+     non-uncertain state so a missed boolean cannot wedge another recoverable
+     path; status re-publishes keep the existing checkpoint. Uncertain lane
+     outcomes refuse a second model start (a human reply must not silently
+     duplicate an uncertain process) and publish a GitHub-visible blocker.
 5. **Draft** as soon as the first signed task commit exists (`pr.open` on the
    **target** repo), before full tests/reviews. Each new signed head is pushed
    to the existing PR before later stages. No empty fake PR when there is no
@@ -204,13 +204,18 @@ for worker in workers.values():
    (path+event+attempt). Only `success` counts. `action_required` is an
    external authorization blocker (not routed to the implementer; `resume_phase`
    stays `ci`; `question_activity_id` is pinned so an authorized reply resumes
-   CI observation). Missing / pending / failure / cancelled / skipped / neutral
-   are not green. This core observes **cumulative GitHub CI** only;
-   target-repository policy / A38 live join belongs to configured
-   `readiness_argv`. Failures fetch plain-text logs via `gh run view <id>
-   --repo <target> --log-failed --attempt <n>` (never ZIP `/logs` archive
-   bytes). Inaccessible logs are a reply-recoverable blocker. Transient pending
-   returns without an idle model.
+   CI observation). Hard inventory protocol faults (unexpected shape, missing
+   `workflow_runs`, pagination truncation — typed `CiInventoryProtocolError`)
+   enter the same recoverable blocked + `resume_phase=ci` + checkpoint path as
+   a malformed rollup; an authorized reply resumes CI once valid inventory is
+   restored. Transient inventory transport failures stay on static `phase=ci`
+   and retry without an idle model or blind implement. Missing / pending /
+   failure / cancelled / skipped / neutral are not green. This core observes
+   **cumulative GitHub CI** only; target-repository policy / A38 live join
+   belongs to configured `readiness_argv`. Failures fetch plain-text logs via
+   `gh run view <id> --repo <target> --log-failed --attempt <n>` (never ZIP
+   `/logs` archive bytes). Inaccessible logs are a reply-recoverable blocker.
+   Transient pending returns without an idle model.
 9. **Ready**: run `readiness_argv` (cwd = worktree, ambient GitHub tokens
    cleared). Stdout must be the fixed JSON readiness contract below (trusted
    operator script output — not model/repo input). Re-verify clean signed head
@@ -225,20 +230,31 @@ for worker in workers.values():
    fresh GET that must still show APPROVED on the exact head **immediately
    before** the Ready mutation (stored `formal_head` is not current proof; a
    dismissal during readiness or the evidence comment must block leave-draft).
-   On that failure the script clears stale formal evidence, pins
-   `resume_phase=formal_approve`, and requires an authorized **new** reply
-   before another approval attempt — human dismissal is not silent override
-   permission. The resumed attempt uses a new durable activity occurrence
-   (same attempt stays crash-idempotent; a dismissed same-marker APPROVE
-   fails closed in `review.post` and cannot be marked done). One evidence
-   comment (must complete with `execution_status=done`), `allow pr-ready`,
-   then leave draft and verify `isDraft=false`. **Never merge.**
+   Only an **observed** same-marker revoked / non-APPROVED / misbound approval
+   (or the matching typed `review.post` executor error) clears stale formal
+   evidence, pins `resume_phase=formal_approve`, and requires an authorized
+   **new** reply before another approval attempt — human dismissal is not
+   silent override permission, and absent/unverified discovery alone is not
+   treated as dismissal. Transient POST/transport or not-yet-visible discovery
+   preserves the durable attempt/activity id and retries/reconciles through the
+   existing executor without new human authorization; unknown delivery is never
+   counted as approval. The resumed post-dismissal attempt uses a new durable
+   activity occurrence (same attempt stays crash-idempotent; a dismissed
+   same-marker APPROVE fails closed in `review.post` and cannot be marked
+   done). One evidence comment (must complete with `execution_status=done`),
+   `allow pr-ready`, then leave draft and verify `isDraft=false`. **Never merge.**
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
     must be exactly `User` (missing type is not human; Bot is refused). Also
     require merge SHA, timestamp, and base/target. Then existing `task-done`
     checklist / summary guard (summaries must already describe the actual
     result — no boilerplate invented at merge), then `issue.assigned.ack`. A
-    Ready PR closed unmerged is a user-facing blocker, not completion.
+    Ready PR closed unmerged, or a non-human merge, is an intentionally
+    non-recoverable user-facing blocker: stale `question_activity_id` /
+    `resume_phase` checkpoints are cleared, and later authorized comments must
+    not consume replies or start an implementer. Reply resume requires
+    `reply_checkpoint_eligible` (safe `resume_phase` + non-failed /
+    non-done / non-uncertain); missing `resume_phase` never defaults to
+    `implement`.
     Reassignment must not open a duplicate PR for a completed source.
     Revoked assignment stops new effects including formal approve / leave-draft;
     `await_merge` may continue observation only.
@@ -293,8 +309,10 @@ rejected fail closed). Reviewer `RESULT` must be `approved|rejected`; `ask` /
 signing/publishing so crash recovery applies the recorded result instead of
 starting another model. Authorized replies (`reply_logins` only), listed with
 `gh api --paginate --slurp`, resume the exact `resume_phase` after the pinned
-`question_activity_id` checkpoint (not blindly `implement` for CI authorization
-/ incomplete review / checkout blockers). Uncertain prior agents refuse a
+`question_activity_id` checkpoint only when `reply_checkpoint_eligible` holds
+(not blindly `implement` for CI authorization / incomplete review / checkout
+blockers, and not at all for terminal failed / done / uncertain /
+closed-unmerged / non-human-merge outcomes). Uncertain prior agents refuse a
 second model start even when a human replies. Inner and PR reviewers receive a
 script-generated base→head diff artifact outside the worktree.
 

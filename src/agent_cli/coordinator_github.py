@@ -13,6 +13,7 @@ from .coordinator_common import (
     CI_ACTION_REQUIRED,
     CI_PENDING,
     CI_SUCCESS,
+    CiInventoryProtocolError,
     CoordinatorError,
     QUESTION_MARKER_PREFIX,
     STATUS_MARKER_PREFIX,
@@ -40,9 +41,18 @@ from .coordinator_git import (
     verify_signed_clean_head,
 )
 from .coordinator_lanes import invalidate_head_evidence, latest_gates, set_checklist
-from .github_act import ACTIVITY_MARKER
+from .github_act import (
+    ACTIVITY_MARKER,
+    REVIEW_APPROVE_COMMIT_MISMATCH,
+    REVIEW_APPROVE_NON_APPROVED,
+)
 from .github_accounts import AccountError
 from .store import Store, StoreError, utcnow
+
+# Executor error strings that prove an observed same-marker APPROVE rejection.
+_FORMAL_OBSERVED_REJECTION_ERRORS = frozenset(
+    {REVIEW_APPROVE_NON_APPROVED, REVIEW_APPROVE_COMMIT_MISMATCH}
+)
 
 # Fixed JSON contract for configured readiness_argv (trusted operator script).
 # Tied to exact HEAD and base. Not model/repo input and not a policy DSL.
@@ -101,19 +111,26 @@ def post_issue_comment(
 def reply_checkpoint_eligible(task: dict[str, Any], c: dict[str, Any] | None = None) -> bool:
     """True when task state + resume_phase make a reply checkpoint recoverable.
 
-    Terminal implementer ``RESULT: blocked`` (failed) and uncertain-lane outcomes
-    stay ineligible. A missed ``reply_checkpoint=True`` must not wedge a path that
-    already pinned a safe ``resume_phase``.
+    Terminal implementer ``RESULT: blocked`` (failed), terminal ``done``, and
+    uncertain-lane outcomes stay ineligible. A missed ``reply_checkpoint=True``
+    must not wedge a path that already pinned a safe ``resume_phase``.
     """
     inner = c if isinstance(c, dict) else coord(task)
     if inner.get("uncertain_lane"):
         return False
-    if task.get("state") == "failed":
+    if task.get("state") in ("failed", "done"):
         return False
     resume = inner.get("resume_phase")
     if not isinstance(resume, str) or not resume or resume in ("ask", "blocked", "done"):
         return False
     return True
+
+
+def clear_reply_recovery(c: dict[str, Any]) -> None:
+    """Drop stale question/checkpoint/resume fields for non-recoverable outcomes."""
+    c.pop("question_activity_id", None)
+    c.pop("resume_phase", None)
+    c.pop("replies_consumed_through", None)
 
 
 def publish_blocker(
@@ -266,7 +283,13 @@ def _rollup_state(check: dict[str, Any]) -> str:
 
 
 def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[str, Any]]:
-    """Paginate Actions runs for an exact head; fail closed on truncation/unknown shape."""
+    """Paginate Actions runs for an exact head; fail closed on truncation/unknown shape.
+
+    Shape / missing ``workflow_runs`` / pagination truncation raise
+    ``CiInventoryProtocolError`` (recoverable blocked + ``resume_phase=ci``).
+    Transient ``gh_json`` transport failures propagate as ``CoordinatorError``
+    so ``phase_ci`` can retry the same static phase without a reply gate.
+    """
     owner, name = repo.split("/", 1)
     page = 1
     runs: list[dict[str, Any]] = []
@@ -280,10 +303,10 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
             ],
         )
         if not isinstance(raw, dict):
-            raise CoordinatorError("workflow inventory has unexpected shape")
+            raise CiInventoryProtocolError("workflow inventory has unexpected shape")
         batch = raw.get("workflow_runs")
         if not isinstance(batch, list):
-            raise CoordinatorError("workflow inventory missing workflow_runs")
+            raise CiInventoryProtocolError("workflow inventory missing workflow_runs")
         for item in batch:
             if isinstance(item, dict):
                 runs.append(item)
@@ -294,7 +317,7 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
             break
         page += 1
     else:
-        raise CoordinatorError("workflow inventory pagination truncated")
+        raise CiInventoryProtocolError("workflow inventory pagination truncated")
     return runs
 
 
@@ -434,8 +457,26 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
         raise CoordinatorError("PR check rollup malformed")
     try:
         runs = _paginate_workflow_runs(scoped_runner, target, head)
-    except CoordinatorError as exc:
-        return publish_blocker(store, worker, task, runner, f"CI inventory: {exc}", kind="ci-inventory")
+    except CiInventoryProtocolError as exc:
+        # Hard inventory protocol/shape/truncation: same recoverable blocked
+        # path as malformed rollup (resume_phase=ci + reply checkpoint).
+        c["phase"] = "blocked"
+        c["resume_phase"] = "ci"
+        c["blocker"] = f"CI inventory: {exc}"
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"CI inventory: {exc}",
+            kind="ci-inventory",
+            reply_checkpoint=True,
+        )
+    except CoordinatorError:
+        # Transient transport / command failure: retry same static ci phase.
+        # Do not idle a model and do not enter blind implement.
+        return [f"CI pending on {head[:7]} (inventory temporarily unavailable)"]
     latest = _latest_run_attempts(runs, head)
 
     pending = False
@@ -799,7 +840,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     return [f"readiness ok on {head[:7]}"]
 
 
-def _discover_formal_approve(
+def _inspect_formal_approve(
     runner: Runner,
     *,
     repo: str,
@@ -807,12 +848,20 @@ def _discover_formal_approve(
     marker: str,
     head: str,
     login: str,
-) -> dict[str, Any] | None:
+) -> tuple[str, dict[str, Any] | None]:
+    """Classify same-marker formal review facts from a successful reviews list.
+
+    Returns ``("approved", payload)``, ``("invalid", reason_payload)``, or
+    ``("absent", None)``. Absence alone is not proof of human dismissal —
+    only an observed same-marker non-APPROVED / misbound review is.
+    Transport failures raise from ``gh_list`` and must not invalidate.
+    """
     owner, name = repo.split("/", 1)
     reviews = gh_list(
         runner,
         ["gh", "api", "--paginate", "--slurp", f"repos/{owner}/{name}/pulls/{number}/reviews"],
     )
+    invalid: dict[str, Any] | None = None
     for review in reviews:
         if not isinstance(review, dict):
             continue
@@ -823,23 +872,45 @@ def _discover_formal_approve(
         if str(user.get("login") or "").casefold() != login.casefold():
             continue
         state = str(review.get("state") or "").upper()
-        if state != "APPROVED":
-            continue
         commit = str(review.get("commit_id") or "")
-        if not commit or commit.lower() != head.lower():
-            continue
         rev_id = as_int(review.get("id"))
         url = text(review.get("html_url") or review.get("url"))
-        if rev_id is None or rev_id <= 0 or url is None:
-            continue
-        return {
-            "id": rev_id,
-            "url": url,
-            "commit_id": commit,
-            "login": login.casefold(),
-            "state": "APPROVED",
-        }
-    return None
+        if (
+            state == "APPROVED"
+            and commit
+            and commit.lower() == head.lower()
+            and rev_id is not None
+            and rev_id > 0
+            and url is not None
+        ):
+            return (
+                "approved",
+                {
+                    "id": rev_id,
+                    "url": url,
+                    "commit_id": commit,
+                    "login": login.casefold(),
+                    "state": "APPROVED",
+                },
+            )
+        # Same marker + login observed, but not a valid APPROVED on this head.
+        if state != "APPROVED":
+            invalid = {"state": state or "missing", "commit_id": commit, "reason": "not APPROVED"}
+        elif not commit or commit.lower() != head.lower():
+            invalid = {
+                "state": state,
+                "commit_id": commit,
+                "reason": "commit_id mismatch",
+            }
+        else:
+            invalid = {
+                "state": state,
+                "commit_id": commit,
+                "reason": "missing id or url",
+            }
+    if invalid is not None:
+        return ("invalid", invalid)
+    return ("absent", None)
 
 
 def phase_formal_approve(
@@ -880,7 +951,7 @@ def phase_formal_approve(
 
     # Occurrence advances when stale formal evidence is cleared after dismissal so
     # a resumed attempt gets a new durable activity id (and marker). Same attempt
-    # stays idempotent across crash/retry.
+    # stays idempotent across crash/retry / transient transport.
     attempt = as_int(c.get("formal_approve_attempt")) or 0
     activity_id = str(
         uuid5(NAMESPACE_URL, f"coordinator-formal-approve:{task['id']}:{head}:{attempt}")
@@ -903,35 +974,81 @@ def phase_formal_approve(
     )
     execute_github(store, runner, activity_ids=(activity_id,))
     recorded = store.row("activity", activity_id)
-    discovered = _discover_formal_approve(
-        scoped_review,
-        repo=target,
-        number=number,
-        marker=marker,
-        head=head,
-        login=review_account.login,
-    )
-    if discovered is None:
-        # Missing/dismissed/revoked: do not reuse this occurrence. A later authorized
-        # reply must mint a new durable activity id; fail-closed executor errors on a
-        # same-marker DISMISSED review are not silent retry fuel.
-        _invalidate_stale_formal_approval(task, reason="missing or revoked")
-        if recorded is not None and recorded.get("execution_status") == "done":
-            raise CoordinatorError(
-                "formal review is not currently APPROVED on the reviewed head"
+    try:
+        status, discovered = _inspect_formal_approve(
+            scoped_review,
+            repo=target,
+            number=number,
+            marker=marker,
+            head=head,
+            login=review_account.login,
+        )
+    except CoordinatorError:
+        # Transient discovery transport: preserve attempt/activity; no reply gate.
+        return [
+            f"formal approval not yet verified on {head[:7]}; retrying same attempt"
+        ]
+    if status == "invalid":
+        # Observed same-marker revoked / non-APPROVED / misbound — new reply + attempt.
+        reason = "not APPROVED"
+        if isinstance(discovered, dict):
+            reason = str(discovered.get("reason") or reason)
+        _invalidate_stale_formal_approval(task, reason=reason)
+        raise CoordinatorError(
+            f"formal review is not currently APPROVED on the reviewed head ({reason})"
+        )
+    if status == "approved" and isinstance(discovered, dict):
+        # Live APPROVED on this attempt: reconcile through the executor when the
+        # activity row is not yet done (lost response / prior transport error).
+        if recorded is None or recorded.get("execution_status") != "done":
+            queue_activity(
+                store,
+                activity_id=activity_id,
+                session_id=worker.review_session,
+                typ="review.post",
+                payload={
+                    "repo": target,
+                    "number": number,
+                    "body": body,
+                    "event": "APPROVE",
+                    "commit_id": head,
+                },
             )
-        raise CoordinatorError("formal approval publication is not verified")
-    if recorded is None or recorded.get("execution_status") != "done":
-        raise CoordinatorError("formal approval publication is not verified")
-    recorded["result"] = {"repo": target, "number": number, **discovered}
-    store.write("activity", "update", activity_id, strip_row(recorded))
-    c["formal_approve_id"] = activity_id
-    evidence = c.setdefault("evidence", {})
-    if isinstance(evidence, dict):
-        evidence["formal_head"] = head
-    c["phase"] = "leave_draft"
-    save_task(store, task)
-    return [f"formal APPROVE on {target}#{number} at {head[:7]}"]
+            execute_github(store, runner, activity_ids=(activity_id,))
+            recorded = store.row("activity", activity_id)
+        if recorded is None or recorded.get("execution_status") != "done":
+            # Do not count unknown delivery as approval; retry same attempt.
+            return [
+                f"formal APPROVE observed on {target}#{number}; "
+                f"reconciling activity {activity_id[:8]} on same attempt"
+            ]
+        recorded["result"] = {"repo": target, "number": number, **discovered}
+        store.write("activity", "update", activity_id, strip_row(recorded))
+        c["formal_approve_id"] = activity_id
+        evidence = c.setdefault("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["formal_head"] = head
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"formal APPROVE on {target}#{number} at {head[:7]}"]
+
+    # Absent: only typed executor rejection facts may invalidate. Transient POST /
+    # transport / not-yet-visible results preserve the durable attempt id.
+    if recorded is not None and recorded.get("execution_status") == "error":
+        err = str(recorded.get("execution_error") or "")
+        if err in _FORMAL_OBSERVED_REJECTION_ERRORS:
+            reason = (
+                "not APPROVED"
+                if err == REVIEW_APPROVE_NON_APPROVED
+                else "commit_id mismatch"
+            )
+            _invalidate_stale_formal_approval(task, reason=reason)
+            raise CoordinatorError(
+                f"formal review is not currently APPROVED on the reviewed head ({reason})"
+            )
+    return [
+        f"formal approval not yet verified on {head[:7]}; retrying same attempt"
+    ]
 
 
 def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
@@ -1005,8 +1122,14 @@ def _fresh_formal_still_approved(
     runner: Runner,
     *,
     head: str,
-) -> None:
-    """Fresh GET: stored formal_head is not current GitHub proof."""
+) -> bool:
+    """Fresh GET: stored formal_head is not current GitHub proof.
+
+    Returns True when APPROVED on the exact head. Returns False when the
+    successful list has no same-marker hit yet (retry same attempt; do not
+    invalidate). Observed same-marker non-APPROVED / misbound invalidates and
+    raises so recovery requires a new authorized reply.
+    """
     c = coord(task)
     target = target_repo(task)
     number = as_int(c.get("pr_number"))
@@ -1019,23 +1142,30 @@ def _fresh_formal_still_approved(
         raise CoordinatorError(str(exc)) from exc
     activity_id = c.get("formal_approve_id")
     marker = ACTIVITY_MARKER.format(id=activity_id) if isinstance(activity_id, str) else ""
-    discovered = _discover_formal_approve(
-        scoped_review,
-        repo=target,
-        number=number,
-        marker=marker or f"Formal approval for head `{head[:7]}`",
-        head=head,
-        login=review_account.login,
-    )
-    if discovered is None:
-        _invalidate_stale_formal_approval(task, reason="dismissed or missing")
-        raise CoordinatorError("formal APPROVE no longer present on exact head (dismissed or missing)")
-    if str(discovered.get("state") or "").upper() != "APPROVED":
-        _invalidate_stale_formal_approval(task, reason="not APPROVED")
-        raise CoordinatorError("formal review is not APPROVED on fresh GET")
-    if str(discovered.get("commit_id") or "").lower() != head.lower():
-        _invalidate_stale_formal_approval(task, reason="commit_id mismatch")
-        raise CoordinatorError("formal APPROVE commit_id mismatch on fresh GET")
+    try:
+        status, discovered = _inspect_formal_approve(
+            scoped_review,
+            repo=target,
+            number=number,
+            marker=marker or f"Formal approval for head `{head[:7]}`",
+            head=head,
+            login=review_account.login,
+        )
+    except CoordinatorError:
+        # Transient discovery transport: retry leave-draft without invalidating.
+        return False
+    if status == "approved" and isinstance(discovered, dict):
+        return True
+    if status == "invalid":
+        reason = "not APPROVED"
+        if isinstance(discovered, dict):
+            reason = str(discovered.get("reason") or reason)
+        _invalidate_stale_formal_approval(task, reason=reason)
+        raise CoordinatorError(
+            f"formal APPROVE no longer valid on exact head ({reason})"
+        )
+    # Absence alone is not proof of human dismissal.
+    return False
 
 
 def _require_formal_head_evidence(task: dict[str, Any], head: str, *, when: str) -> None:
@@ -1078,7 +1208,10 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     _fresh_ci_still_green(store, worker, task, runner, head)
     # Fail fast when already dismissed; a second check after readiness is still
     # required because readiness can take up to check_timeout.
-    _fresh_formal_still_approved(store, worker, task, runner, head=head)
+    if not _fresh_formal_still_approved(store, worker, task, runner, head=head):
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"formal APPROVE not yet visible on {head[:7]}; retrying leave-draft"]
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
         g = latest.get((stage, dimension))
@@ -1122,7 +1255,10 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     head = verify_signed_clean_head(store, worker, runner, worktree)
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
     _require_formal_head_evidence(task, head, when=" after readiness")
-    _fresh_formal_still_approved(store, worker, task, runner, head=head)
+    if not _fresh_formal_still_approved(store, worker, task, runner, head=head):
+        c["phase"] = "leave_draft"
+        save_task(store, task)
+        return [f"formal APPROVE not yet visible on {head[:7]}; retrying leave-draft"]
     c["phase"] = "leave_draft"
     save_task(store, task)
 
@@ -1145,7 +1281,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         raise CoordinatorError("Ready evidence comment not verified")
 
     # Publishing the evidence comment is itself an external call; recheck after it.
-    _fresh_formal_still_approved(store, worker, task, runner, head=head)
+    if not _fresh_formal_still_approved(store, worker, task, runner, head=head):
+        return [f"formal APPROVE not yet visible on {head[:7]}; retrying leave-draft"]
     ready = scoped_runner(["gh", "pr", "ready", str(number), "--repo", target])
     if ready.returncode != 0:
         raise CoordinatorError(redact(ready.stderr or ready.stdout or "gh pr ready failed"))
@@ -1201,6 +1338,9 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         if merged_type not in ("User",):
             c["phase"] = "blocked"
             c["blocker"] = f"merge by non-human or unknown actor type ({merged_type or 'missing'})"
+            # Intentionally non-recoverable: drop stale ask/CI/formal checkpoints
+            # so a later authorized comment cannot resume implement.
+            clear_reply_recovery(c)
             save_task(store, task)
             return publish_blocker(
                 store,
@@ -1286,6 +1426,9 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     if state == "CLOSED":
         c["phase"] = "blocked"
         c["blocker"] = "Ready PR closed without merge"
+        # Intentionally non-recoverable: drop stale ask/CI/formal checkpoints
+        # so a later authorized comment cannot resume implement.
+        clear_reply_recovery(c)
         save_task(store, task)
         return publish_blocker(
             store,
@@ -1308,6 +1451,24 @@ def phase_read_replies(
     if c.get("uncertain_lane"):
         return [
             "blocked: uncertain prior lane outcome; refusing model start on reply alone"
+        ]
+    if task.get("state") == "failed":
+        return [
+            "blocked: task failed; refusing reply resume without eligible recovery"
+        ]
+    if task.get("state") == "done":
+        return [
+            "blocked: task done; refusing reply resume without eligible recovery"
+        ]
+    # Never consume or resume without a safe eligible resume_phase. Missing
+    # resume_phase must not default to implement (closed-unmerged / non-human
+    # merge / terminal outcomes leave stale checkpoints otherwise).
+    if not reply_checkpoint_eligible(task, c):
+        source = c.get("source") if isinstance(c.get("source"), dict) else {}
+        repo = str(source.get("repo") or "?")
+        number = source.get("number") or "?"
+        return [
+            f"blocked: no eligible resume_phase for reply recovery on {repo}#{number}"
         ]
     source = c["source"]
     repo = str(source["repo"])
@@ -1384,13 +1545,10 @@ def phase_read_replies(
     c["replies_consumed_through"] = last_id
     # Resume the exact safe script phase persisted at the blocker — never blindly
     # start implement for CI authorization / checkout / acceptance administrative issues.
-    resume = c.get("resume_phase")
-    if isinstance(resume, str) and resume and resume not in ("ask", "blocked", "done"):
-        c["phase"] = resume
-        c.pop("resume_phase", None)
-    else:
-        c["phase"] = "implement"
-    if c["phase"] == "implement":
+    resume = str(c.get("resume_phase") or "")
+    c["phase"] = resume
+    c.pop("resume_phase", None)
+    if resume == "implement":
         task["state"] = "implementing"
     save_task(store, task)
     return [f"consumed {len(new_replies)} authorized reply(ies); resuming {c['phase']}"]

@@ -64,6 +64,10 @@ class CoordinatorError(StoreError):
     """Visible coordinator failure; never a silent skip."""
 
 
+class CiInventoryProtocolError(CoordinatorError):
+    """Fail-closed workflow inventory shape / missing field / truncation."""
+
+
 def redact(text: str, *, limit: int = OUTPUT_BOUND) -> str:
     cleaned = _PRIVATE_KEY.sub('[redacted]', text or '')
     cleaned = _AUTH_HEADER.sub('[redacted]', cleaned)

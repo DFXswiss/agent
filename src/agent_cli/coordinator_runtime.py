@@ -624,6 +624,8 @@ def _apply_implementer_outcome(
         store.write("task_round", "update", tr["id"], strip_row(tr))
         c["phase"] = "blocked"
         c.pop("resume_phase", None)
+        c.pop("question_activity_id", None)
+        c.pop("replies_consumed_through", None)
         c["blocker"] = "implementer blocked"
         _mark_applied()
         task["state"] = "failed"

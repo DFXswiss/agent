@@ -15,6 +15,16 @@ Runner = Callable[[list[str]], Completed]
 
 ACTIVITY_MARKER = "<!-- agent-activity:{id} -->"
 
+# Typed executor facts for APPROVE discover-before-POST fail-closed outcomes.
+# Coordinator recovery must match these exactly — never infer dismissal from
+# arbitrary transport/log text.
+REVIEW_APPROVE_NON_APPROVED = (
+    "review.post APPROVE marker matches a non-APPROVED review"
+)
+REVIEW_APPROVE_COMMIT_MISMATCH = (
+    "review.post APPROVE marker commit_id does not match payload"
+)
+
 _URL_RE = re.compile(
     r"https://github\.com/[^/\s]+/[^/\s]+/(?:pulls?|issues)/(\d+)"
 )
@@ -441,14 +451,10 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 # fresh authorized activity (new id/marker) can POST instead.
                 state = str(review.get("state") or "").upper()
                 if state != "APPROVED":
-                    raise _GhError(
-                        "review.post APPROVE marker matches a non-APPROVED review"
-                    )
+                    raise _GhError(REVIEW_APPROVE_NON_APPROVED)
                 rev_commit = str(review.get("commit_id") or "")
                 if commit_id is not None and rev_commit.lower() != commit_id.lower():
-                    raise _GhError(
-                        "review.post APPROVE marker commit_id does not match payload"
-                    )
+                    raise _GhError(REVIEW_APPROVE_COMMIT_MISMATCH)
             url = review.get("html_url") or review.get("url")
             if not isinstance(url, str) or url == "":
                 raise _GhError("review missing url")

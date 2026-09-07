@@ -777,6 +777,192 @@ def test_ci_action_required_authorized_reply_resumes_ci_not_implementer(
     assert fake.launched == launched_before
 
 
+def test_ci_inventory_protocol_fault_blocks_with_ci_resume_then_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hard inventory shape fault → blocked+resume_phase=ci; reply recovers once valid."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-555555555557"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    # Protocol fault: object without workflow_runs (not transport).
+    fake.workflow_inventory_body = {"total_count": 1}
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "blocked", lines
+    assert task["payload"]["coordinator"].get("resume_phase") == "ci"
+    qid = task["payload"]["coordinator"].get("question_activity_id")
+    assert isinstance(qid, str) and qid
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched
+
+    activity = store.row("activity", qid)
+    assert activity is not None
+    body = str((activity.get("payload") or {}).get("body") or "")
+    fake.comments = [
+        {"id": 1, "body": body, "user": {"login": "worker-bot"}},
+        {
+            "id": 2,
+            "body": "inventory restored; continue CI observation",
+            "user": {"login": "human-owner"},
+        },
+    ]
+    # Restore valid inventory before the reply resumes ci.
+    fake.workflow_inventory_body = None
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "ci", lines
+    assert fake.launched == launched_before
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "readiness", lines
+    assert "implementer" not in fake.launched
+
+
+def test_ci_inventory_transport_failure_retries_same_ci_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transient inventory transport stays on phase=ci; no blocked reply gate."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    tid = "55555555-5555-5555-5555-555555555558"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": "ci",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-55555555",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_inventory_rc = 1
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "ci", lines
+    assert task["payload"]["coordinator"].get("resume_phase") in (None, "")
+    assert task["payload"]["coordinator"].get("question_activity_id") in (None, "")
+    assert any("temporarily unavailable" in line for line in lines)
+    assert fake.launched == launched_before
+    # Same phase retries after transport recovers.
+    fake.workflow_inventory_rc = 0
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    task = store.row("task", tid)
+    assert task["payload"]["coordinator"]["phase"] == "readiness", lines
+    assert "implementer" not in fake.launched
+
+
 def test_no_duplicate_acceptance_on_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -1456,6 +1642,16 @@ def test_publish_blocker_auto_pins_from_resume_phase_without_boolean(
         }
     }
     assert reply_checkpoint_eligible(failed) is False
+    done = dict(task)
+    done["state"] = "done"
+    done["payload"] = {
+        "coordinator": {
+            **task["payload"]["coordinator"],
+            "resume_phase": "implement",
+            "question_activity_id": None,
+        }
+    }
+    assert reply_checkpoint_eligible(done) is False
     uncertain = dict(task)
     uncertain["payload"] = {
         "coordinator": {

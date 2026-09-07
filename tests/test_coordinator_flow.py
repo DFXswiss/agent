@@ -597,6 +597,296 @@ def test_formal_dismissal_recovery_requires_new_reply_then_ready(
     assert dismissed and str(dismissed[0].get("state") or "").upper() == "DISMISSED"
 
 
+@pytest.mark.parametrize("outcome", ["closed-unmerged", "nonhuman-merge"])
+def test_nonrecoverable_post_ready_ignores_authorized_replies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    """Prior ask checkpoint + Ready, then closed/non-human: replies must not resume implement."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    ask_body = (
+        "STATUS: complete\nRESULT: ask\nWhich edge case should the widget cover?\n"
+    )
+    done_body = (
+        "STATUS: complete\nRESULT: done\n"
+        "SUMMARY_EN: Correct widget initialization.\n"
+        "SUMMARY_DE: Widget-Initialisierung korrigiert.\npatched\n"
+    )
+    fake.model_outputs["implementer"] = ask_body
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+
+    tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) == "implement":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "implement"
+    fake.dirty = True
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "ask"
+    task = store.rows("task")[0]
+    qid = task["payload"]["coordinator"].get("question_activity_id")
+    assert isinstance(qid, str) and qid
+    activity = store.row("activity", qid)
+    assert activity is not None
+    body = str((activity.get("payload") or {}).get("body") or "")
+    fake.comments = [
+        {"id": 1, "body": body, "user": {"login": "worker-bot"}},
+        {
+            "id": 2,
+            "body": "cover the empty-list edge; continue",
+            "user": {"login": "human-owner"},
+        },
+    ]
+    fake.model_outputs["implementer"] = done_body
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "implement"
+    # Stale question checkpoint remains after reply consume (pre-Ready).
+    assert store.rows("task")[0]["payload"]["coordinator"].get("question_activity_id") == qid
+
+    fake.dirty = True
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(4):
+        phase = _phase(store)
+        if phase in ("inner_review", "tests", "pr_gates_grok"):
+            break
+        if phase == "publish_draft":
+            fake.commits_ahead = True
+        tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) in ("tests", "pr_gates_grok"):
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(2):
+        if _phase(store) == "pr_gates_grok":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "pr_gates_codex"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "ci"
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "readiness"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "formal_approve"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "leave_draft"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "await_merge"
+    assert fake.pr["isDraft"] is False
+
+    launched_before = list(fake.launched)
+    if outcome == "closed-unmerged":
+        fake.pr["state"] = "CLOSED"
+    else:
+        fake.pr["state"] = "MERGED"
+        fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+        fake.pr["mergeCommit"] = {"oid": "dddddddddddddddddddddddddddddddddddddddd"}
+        fake.pr["mergedBy"] = {"login": "dependabot[bot]", "type": "Bot"}
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    task = store.rows("task")[0]
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "blocked", lines
+    assert coord.get("resume_phase") in (None, "")
+    assert coord.get("question_activity_id") in (None, "")
+    assert task["state"] != "done"
+    assert fake.launched == launched_before
+    assert "implementer" not in fake.launched[len(launched_before) :]
+    consumed_before = coord.get("replies_consumed_through")
+    replies_before = list(coord.get("authorized_replies") or [])
+
+    # New authorized comments after the non-recoverable outcome must not resume.
+    fake.comments = list(fake.comments) + [
+        {
+            "id": 90,
+            "body": "please continue implementing anyway",
+            "user": {"login": "human-owner"},
+        },
+        {
+            "id": 91,
+            "body": "authorized retry after close",
+            "user": {"login": "human-owner"},
+        },
+    ]
+    for _ in range(3):
+        lines = tick(store, worker, runner=fake, lane_runner=lane)
+        task = store.rows("task")[0]
+        coord = task["payload"]["coordinator"]
+        assert coord["phase"] == "blocked", lines
+        assert coord.get("resume_phase") in (None, "")
+        # No NEW lane starts after the non-recoverable outcome (pre-Ready
+        # implementers remain in the captured baseline).
+        assert fake.launched == launched_before
+        assert "implementer" not in fake.launched[len(launched_before) :]
+        # No reply consumption across subsequent ticks.
+        assert coord.get("replies_consumed_through") == consumed_before
+        assert list(coord.get("authorized_replies") or []) == replies_before
+        assert task["state"] != "implementing"
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_formal_approve_transport_preserves_same_attempt_until_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lost_response: bool
+) -> None:
+    """Lost/empty discovery after POST keeps attempt; later discover reconciles once."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+
+    tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) == "implement":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "implement"
+    fake.dirty = True
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(4):
+        phase = _phase(store)
+        if phase in ("inner_review", "tests", "pr_gates_grok"):
+            break
+        if phase == "publish_draft":
+            fake.commits_ahead = True
+        tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) in ("tests", "pr_gates_grok"):
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(2):
+        if _phase(store) == "pr_gates_grok":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "pr_gates_codex"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "ci"
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "readiness"
+    tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "formal_approve"
+
+    hide_discovery = {"n": 0}
+    post_seen = {"n": 0}
+
+    def transport(argv):
+        joined = " ".join(argv)
+        if "pulls/42/reviews" in joined and "-X" in argv:
+            result = fake(argv)
+            post_seen["n"] += 1
+            # After the real POST, hide the review on the immediate coordinator GET.
+            hide_discovery["n"] = 2
+            if lost_response:
+                return Completed(1, "", "connection lost after server accepted review")
+            return result
+        if (
+            hide_discovery["n"] > 0
+            and "pulls/42/reviews" in joined
+            and "-X" not in argv
+        ):
+            hide_discovery["n"] -= 1
+            # Empty successful list once, then transport failure once.
+            if hide_discovery["n"] == 1:
+                return Completed(0, json.dumps([]), "")
+            return Completed(1, "", "temporary reviews API unavailable")
+        return fake(argv)
+
+    launched_before = list(fake.launched)
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert _phase(store) == "formal_approve", lines
+    assert post_seen["n"] == 1
+    assert len([r for r in fake.reviews if str(r.get("state") or "").upper() == "APPROVED"]) == 1
+    coord = store.rows("task")[0]["payload"]["coordinator"]
+    assert coord.get("formal_approve_attempt") in (None, 0)
+    assert coord.get("formal_approve_id") is None
+    assert coord.get("resume_phase") in (None, "")
+    assert fake.launched == launched_before
+    activities = [
+        row for row in store.rows("activity")
+        if row.get("type") == "review.post" and row.get("payload", {}).get("event") == "APPROVE"
+    ]
+    assert len(activities) == 1
+    approval_id = activities[0]["id"]
+    assert activities[0]["execution_status"] == ("error" if lost_response else "done")
+
+    # The failed POST is reconciled through the real executor once discovery
+    # succeeds, even if its first retry GET also fails. No new activity or POST.
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert _phase(store) == ("leave_draft" if lost_response else "formal_approve"), lines
+    assert post_seen["n"] == 1
+    assert fake.launched == launched_before
+
+    # Discovery visible again: reconcile same activity, advance to leave_draft.
+    if not lost_response:
+        lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert _phase(store) == "leave_draft", lines
+    assert post_seen["n"] == 1
+    coord = store.rows("task")[0]["payload"]["coordinator"]
+    assert coord.get("formal_approve_id") == approval_id
+    assert store.row("activity", approval_id)["execution_status"] == "done"
+    assert [
+        row["id"] for row in store.rows("activity")
+        if row.get("type") == "review.post" and row.get("payload", {}).get("event") == "APPROVE"
+    ] == [approval_id]
+    assert coord.get("formal_approve_attempt") in (None, 0)
+    assert len([r for r in fake.reviews if str(r.get("state") or "").upper() == "APPROVED"]) == 1
+    assert (coord.get("evidence") or {}).get("formal_head") == fake.head
+    assert fake.launched == launched_before
+
+    lines = tick(store, worker, runner=transport, lane_runner=lane)
+    assert fake.pr["isDraft"] is False, lines
+    assert _phase(store) == "await_merge", lines
+    assert post_seen["n"] == 1
+
+
 @pytest.mark.parametrize("crash_after_question", [False, True])
 def test_repeated_question_needs_a_new_reply(tmp_path, monkeypatch, crash_after_question):
     """A later identical ask is a new occurrence, not reuse of the old reply."""

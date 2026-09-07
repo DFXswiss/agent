@@ -167,6 +167,11 @@ class FakeGh:
         self.commits_ahead = False
         self.signed = True
         self.workflow_runs: list[dict[str, Any]] = []
+        # Optional inventory overrides for protocol/transport fault tests.
+        # ``workflow_inventory_body`` replaces the JSON body when set (any shape).
+        # ``workflow_inventory_rc`` non-zero simulates transient transport failure.
+        self.workflow_inventory_body: Any | None = None
+        self.workflow_inventory_rc: int = 0
         self.model_outputs: dict[str, str] = {
             "implementer": "STATUS: complete\nRESULT: done\nSUMMARY_EN: Correct widget initialization.\nSUMMARY_DE: Widget-Initialisierung korrigiert.\npatched\n",
             "reviewer": "STATUS: complete\nRESULT: approved\n",
@@ -341,6 +346,13 @@ class FakeGh:
             return Completed(0, "failing log line\n", "")
 
         if "actions/runs" in joined:
+            if self.workflow_inventory_rc != 0:
+                return Completed(self.workflow_inventory_rc, "", "connection reset")
+            if self.workflow_inventory_body is not None:
+                body = self.workflow_inventory_body
+                if isinstance(body, (dict, list)):
+                    return Completed(0, json.dumps(body), "")
+                return Completed(0, str(body), "")
             return Completed(
                 0,
                 json.dumps(
