@@ -409,6 +409,7 @@ class A38GuardE2ETests(unittest.TestCase):
             result.policy_url,
             f"https://github.com/{REPO}/blob/{BASE}/.github/a38.json",
         )
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
 
     def test_draft_no_report_omits_status_and_exits_zero(self) -> None:
         fake = FakeAPI()
@@ -432,6 +433,11 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("DE:", body)
         self.assertRegex(body, r"(?i)draft")
         self.assertRegex(body, r"(?i)Ready")
+        self.assertIn("no A38 status is published until Ready for review", body)
+        self.assertIn("author local-CI report is still required before Ready", body)
+        self.assertNotIn("missing or invalid", body)
+        self.assertNotRegex(body, r"A38 fail:")
+        self.assertNotRegex(body, r"A38 pass:")
 
     def test_draft_valid_report_omits_enforce_status(self) -> None:
         fake = FakeAPI()

@@ -995,12 +995,12 @@ def build_comment_body(assessment: Assessment) -> str:
     passing = assessment.ok and assessment.status == "pass"
     if assessment.draft and not passing:
         en = (
-            f"A38 {assessment.status}: this pull request is a draft; "
+            "A38: this pull request is a draft; "
             "no A38 status is published until Ready for review. "
             "An author local-CI report is still required before Ready."
         )
         de = (
-            f"A38 {assessment.status}: dieser Pull Request ist ein Draft; "
+            "A38: dieser Pull Request ist ein Draft; "
             "bis Ready for review wird kein A38-Status veröffentlicht. "
             "Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
         )
