@@ -385,6 +385,7 @@ def test_newer_run_of_any_status_suppresses_old_action_required(changes: dict) -
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
     assert fake.cancels == [101]
+    assert "workflow:cancel:101" in result.writes
     assert any(item["run_id"] == 101 and item["status"] == "cancelled" for item in result.workflow_approvals)
 
 
@@ -397,6 +398,8 @@ def test_older_action_required_is_cancelled_when_newer_is_approved() -> None:
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [101]
     assert fake.cancels == [100]
+    assert "workflow:cancel:100" in result.writes
+    assert "workflow:approve:101" in result.writes
     statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
     assert statuses[101] == "approved"
     assert statuses[100] == "cancelled"
@@ -410,7 +413,33 @@ def test_non_allowlisted_held_run_on_this_head_is_cancelled() -> None:
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [101]
     assert fake.cancels == [202]
+    assert "workflow:cancel:202" in result.writes
     assert any(item["run_id"] == 202 and item["status"] == "cancelled" for item in result.workflow_approvals)
+
+
+def test_dry_run_plans_cancel_without_post() -> None:
+    fake = FakeApproval()
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    result = reconcile_pull(fake.api(), REPO, 1, dry_run=True)
+    statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
+    assert statuses[101] == "planned"
+    assert statuses[202] == "planned-cancel"
+    assert fake.posts == []
+    assert fake.cancels == []
+    assert not any(w.startswith("workflow:") for w in result.writes)
+
+
+def test_cancel_http_409_is_idempotent_success_not_approve() -> None:
+    fake = FakeApproval()
+    fake.cancel_status = 409
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.cancels == [202]
+    assert fake.posts == [101]
+    assert "workflow:cancel:202" in result.writes
+    assert "workflow:approve:202" not in result.writes
+    statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
+    assert statuses[202] == "cancelled"
 
 
 def test_newer_action_required_is_approved_over_older_success() -> None:

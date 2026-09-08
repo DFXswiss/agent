@@ -211,26 +211,27 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         if not _pending(run):
             continue
         _belongs_to_pull(api, run, pull)
+        final = fetch_pull(api, assessment.repo, assessment.pr)
+        config_now = resolve_trusted_guard_config(api, final)
+        comments = collect_comments(api, assessment.repo, assessment.pr)
+        if (final != snap or config_now.config_revision != trusted.config_revision
+                or config_now.fingerprint != trusted.fingerprint
+                or _report_fingerprint(pick_latest_author_report(comments, final.author_id)) != assessment.report_fingerprint
+                or migration_approval(api, final) != assessment.approval_fingerprint):
+            raise GuardError("pull or author evidence changed before workflow cancel")
+        run = api.get_json(f"/repos/{assessment.repo}/actions/runs/{stale['id']}")
+        if not isinstance(run, Mapping) or run.get("id") != stale["id"] or not _pending(run):
+            continue
         if not dry_run:
             status, _, _ = api.request(
                 "POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/cancel", retry=False
             )
+            # 202 = cancelled; 409 = already gone from the hold queue.
             if status not in {202, 409}:
                 raise GuardError(
                     f"workflow cancel HTTP {status}; Actions write permission is required"
                 )
             assessment.writes.append(f"workflow:cancel:{run['id']}")
-            if _pending(run) and status == 409:
-                # GitHub refused cancel on a completed hold: approve so it
-                # leaves action_required (may start a duplicate suite).
-                status, _, _ = api.request(
-                    "POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False
-                )
-                if status != 201:
-                    raise GuardError(
-                        f"workflow approval HTTP {status}; Actions write permission is required"
-                    )
-                assessment.writes.append(f"workflow:approve:{run['id']}")
         result.append(
             {
                 "run_id": stale["id"],
