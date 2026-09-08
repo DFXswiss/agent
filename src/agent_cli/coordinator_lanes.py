@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 import threading
 import uuid
 from pathlib import Path
@@ -18,7 +16,6 @@ from .coordinator_common import (
     Runner,
     control_dir,
     coord,
-    harden_grok_write_argv,
     parse_model_result,
     prompt_prohibitions,
     redact,
@@ -27,9 +24,8 @@ from .coordinator_common import (
     strip_row,
 )
 from .coordinator_config import WorkerConfig
-from .coordinator_exec import run_bounded
-from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
-from .lane import LaneResult, codex_argv, grok_argv
+from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity, git, require_git_ok
+from .lane import LaneResult
 from .store import Store, utcnow
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
@@ -149,6 +145,9 @@ def launch_lane(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
 
+    if selected.account.lane_runtime is None:
+        raise CoordinatorError("AI account lane_runtime is unconfigured")
+
     ctrl = control_dir(worker, task["id"])
     spec_path = ctrl / f"{role}-{vendor}.md"
     write_spec(spec_path, role, spec_body)
@@ -175,87 +174,38 @@ def launch_lane(
     c["lane"] = {"agent_id": aid, "role": role, "vendor": vendor, "state": "running"}
     save_task(store, task)
 
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    from .lane_executor import execute
     try:
-        if vendor == "grok":
-            argv = [*selected.env_prefix(), *grok_argv(spec_file=str(spec_path), cwd=worktree, write=write, model=selected.model)]
-            if role == "implementer":
-                argv = harden_grok_write_argv(argv)
-            stdin_text = None
-        else:
-            fd, codex_output = tempfile.mkstemp(prefix="agent-coord-codex-", suffix=".txt")
-            os.close(fd)
-            argv = [
-                *selected.env_prefix(),
-                *codex_argv(
-                    cwd=worktree,
-                    write=write,
-                    output_file=codex_output,
-                    model=selected.model,
-                ),
-            ]
-            stdin_text = spec_text
-
-        def _run(argv_local: list[str], stdin_local: str | None) -> Any:
-            if lane_runner is not None:
-                return lane_runner(argv_local, stdin_local)
-            return run_bounded(
-                argv_local,
-                timeout=worker.lane_timeout,
-                cwd=worktree,
-                stdin_text=stdin_local,
-            )
-
-        try:
-            completed = _run(argv, stdin_text)
-        except Exception as exc:
-            agent = store.row("agent", aid)
-            if agent is not None and agent.get("status") == "working":
-                agent["status"] = "done"
-                agent["finished_at"] = utcnow()
-                agent["note"] = redact(f"interrupted: {exc}")
-                store.write("agent", "update", aid, strip_row(agent))
-            c["lane"] = {"agent_id": aid, "state": "uncertain"}
-            c["phase"] = "blocked"
-            c["blocker"] = "lane interrupted; outcome uncertain"
-            c["uncertain_lane"] = True
-            save_task(store, task)
-            _post_issue_status(
-                store,
-                worker,
-                runner,
-                task,
-                "Blocked: model lane interrupted; outcome uncertain.",
-                "uncertain-lane",
-            )
-            raise CoordinatorError(f"lane interrupted: {redact(str(exc))}") from exc
-
-        returncode = int(getattr(completed, "returncode"))
-        stdout = str(getattr(completed, "stdout") or "")
-        stderr = str(getattr(completed, "stderr") or "")
-        if codex_output is not None:
-            try:
-                file_text = Path(codex_output).read_text(encoding="utf-8")
-            except OSError:
-                file_text = ""
-            if file_text:
-                stdout = file_text
-        result = LaneResult(
-            role=role,
-            vendor=vendor,
-            status=parse_model_result(stdout, returncode)[0],
-            argv=argv,
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
+        inventory = git(store, worker, runner, worktree, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+        require_git_ok(inventory, "source inventory")
+        executor = lane_runner if lane_runner is not None else execute
+        completed = executor(selected, cwd=worktree,
+                             manifest=[p for p in inventory.stdout.split("\0") if p],
+                             spec=spec_text, timeout=worker.lane_timeout)
+    except Exception as exc:
+        agent = store.row("agent", aid)
+        if agent is not None and agent.get("status") == "working":
+            agent["status"] = "done"
+            agent["finished_at"] = utcnow()
+            agent["note"] = redact(f"interrupted: {exc}")
+            store.write("agent", "update", aid, strip_row(agent))
+        c["lane"] = {"agent_id": aid, "state": "uncertain"}
+        c["phase"] = "blocked"
+        c["blocker"] = "lane interrupted; outcome uncertain"
+        c["uncertain_lane"] = True
+        save_task(store, task)
+        _post_issue_status(
+            store,
+            worker,
+            runner,
+            task,
+            "Blocked: model lane interrupted; outcome uncertain.",
+            "uncertain-lane",
         )
-    finally:
-        if codex_output is not None:
-            try:
-                os.unlink(codex_output)
-            except OSError:
-                pass
+        raise CoordinatorError(f"lane interrupted: {redact(str(exc))}") from exc
+    returncode = int(completed.returncode)
+    stdout, stderr = str(completed.stdout or ""), str(completed.stderr or "")
+    result = LaneResult(role, vendor, parse_model_result(stdout, returncode)[0], [], returncode, stdout, stderr)
 
     status, model_result = parse_model_result(result.stdout, result.returncode)
     note = redact(result.stdout or result.stderr or "")
@@ -548,28 +498,14 @@ def _prepare_pr_review_agent(
             "note": None,
         },
     )
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
-    if vendor == "grok":
-        argv = [*selected.env_prefix(), *grok_argv(spec_file=str(spec_path), cwd=worktree, write=write, model=selected.model)]
-        stdin_text = None
-    else:
-        fd, codex_output = tempfile.mkstemp(prefix="agent-coord-codex-", suffix=".txt")
-        os.close(fd)
-        argv = [
-            *selected.env_prefix(),
-            *codex_argv(cwd=worktree, write=write, output_file=codex_output, model=selected.model),
-        ]
-        stdin_text = spec_text
     return {
         "agent_id": aid,
         "role": role,
         "vendor": vendor,
-        "argv": argv,
-        "stdin_text": stdin_text,
-        "codex_output": codex_output,
         "worktree": worktree,
         "dimension": "quality" if role.endswith("quality") else "logic",
+        "selected": selected,
+        "spec_text": spec_text,
     }
 
 
@@ -580,36 +516,20 @@ def _run_prepared(
     lane_runner: LaneRunner | None,
 ) -> tuple[str, Any]:
     """Pure subprocess work for worker threads — no Store access."""
-    argv = list(prepared["argv"])
-    stdin_text = prepared["stdin_text"]
-    worktree = prepared["worktree"]
+    from .lane_executor import execute
     try:
-        if lane_runner is not None:
-            completed = lane_runner(argv, stdin_text)
-        else:
-            completed = run_bounded(argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text)
-    except Exception as exc:  # noqa: BLE001
+        executor = lane_runner if lane_runner is not None else execute
+        completed = executor(prepared["selected"], cwd=prepared["worktree"],
+                             manifest=prepared["manifest"], spec=prepared["spec_text"], timeout=timeout)
+    except Exception as exc:
         return prepared["agent_id"], exc
-    codex_output = prepared.get("codex_output")
-    stdout = str(getattr(completed, "stdout") or "")
-    stderr = str(getattr(completed, "stderr") or "")
-    returncode = int(getattr(completed, "returncode"))
-    if codex_output:
-        try:
-            file_text = Path(str(codex_output)).read_text(encoding="utf-8")
-        except OSError:
-            file_text = ""
-        if file_text:
-            stdout = file_text
-        try:
-            os.unlink(str(codex_output))
-        except OSError:
-            pass
+    stdout, stderr = str(completed.stdout or ""), str(completed.stderr or "")
+    returncode = int(completed.returncode)
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),
         vendor=str(prepared["vendor"]),
         status=parse_model_result(stdout, returncode)[0],
-        argv=argv,
+        argv=[],
         returncode=returncode,
         stdout=stdout,
         stderr=stderr,
@@ -710,7 +630,14 @@ def phase_pr_gates(
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     prepared_list: list[dict[str, Any]] = []
     try:
+        inventory = git(store, worker, runner, worktree, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+        require_git_ok(inventory, "source inventory")
+        manifest = [p for p in inventory.stdout.split("\0") if p]
+        # Models receive the full static diff as data, never a host-path instruction.
+        excerpt = diff_path.read_text(encoding="utf-8")
         for dimension, role in needed:
+            if load_ai_accounts(store.home).for_lane(worker.session_id, role, vendor).account.lane_runtime is None:
+                raise CoordinatorError("AI account lane_runtime is unconfigured")
             scope = (
                 "Quality/conformance: read CONTRIBUTING.md and attached skills first; "
                 "judge conformance of this exact base→head diff."
@@ -739,6 +666,7 @@ def phase_pr_gates(
                     ),
                 )
             )
+            prepared_list[-1]["manifest"] = manifest
     except CoordinatorError as exc:
         # Prelaunch failure after some inserts: close phantoms.
         for prep in prepared_list:

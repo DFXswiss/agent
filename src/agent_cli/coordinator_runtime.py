@@ -124,6 +124,8 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         for slot in REQUIRED_LANE_SLOTS:
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(worker.session_id, role, vendor)
+            if selected.account.lane_runtime is None:
+                raise CoordinatorError(f"{slot} requires an explicitly configured lane_runtime")
             if slot == "grok:implementer" and selected.access != "workspace-write":
                 raise CoordinatorError("implementer lane requires workspace-write access")
             if role != "implementer" and selected.access != "read-only":
@@ -922,6 +924,8 @@ def phase_inner_review(
             diff_path = write_review_diff(store, worker, task, runner, head=head)
             excerpt_path = diff_path.with_suffix(".excerpt.txt")
             excerpt = excerpt_path.read_text(encoding="utf-8")
+            if lane_runner is None:
+                excerpt = diff_path.read_text(encoding="utf-8")
             diff_note = (
                 f"Script-generated diff artifact: {diff_path}\n"
                 f"Read CONTRIBUTING.md and attached skills first.\n"

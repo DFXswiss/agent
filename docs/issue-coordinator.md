@@ -14,7 +14,7 @@ and bounded model lanes on the execution device. It never merges.
 | CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Legacy assignment dispatch and `supervise` refuse these sessions. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
-| Universal sandbox / forced model isolation | **Not claimed.** Grok implementer argv denies Bash/subagents/web-search; that is process argv hardening only. |
+| Model lane boundary | Bounded source protocol with explicitly pinned native runtimes and isolated profiles; see [lane-boundary.md](lane-boundary.md). No universal hostile-binary OS sandbox claim. |
 
 Distinguish a requirement (DESIGN §19.7), an implemented module, and a verified
 deployment. This document does not invent evidence that a device is running the
@@ -108,12 +108,13 @@ for worker in workers.values():
 - `runner` executes `gh`/`git` trusted calls and returns
   `Completed(returncode, stdout, stderr)`. GitHub-scoped calls go through
   `Account.runner` (explicit `GH_CONFIG_DIR`), never an ambient login.
-- `lane_runner(argv, stdin)` is optional. When omitted, lanes and trusted
-  argv lists run via a Python bounded subprocess (process-group kill on
-  timeout), preserving stdin and cwd. External `timeout(1)` is **not** used
-  (absent on stock macOS). Tests inject fakes. Grok implementer argv is
-  hardened with `--deny Bash`, `--no-subagents`, and `--disable-web-search`.
-  This is process argv hardening, **not** universal sandbox enforcement.
+- `lane_runner(selected_role, *, cwd, manifest, spec, timeout)` is an optional
+  trusted static dependency implementing the bounded source executor contract.
+  The default is the shared [bounded executor](lane-boundary.md); tests can
+  supply source-executor results. There is no native argv fallback. Runtime
+  configuration is required for each lane slot before a worker starts work.
+  The script's subprocess owner kills process groups on timeout without
+  depending on external `timeout(1)`.
 - Environment context for trusted `check_argv` / `readiness_argv` (set in the
   child environment, with cwd = worktree):
   `AGENT_COORDINATOR_HEAD`, `AGENT_COORDINATOR_BASE`, `AGENT_COORDINATOR_REPO`,
@@ -384,3 +385,10 @@ No silent failure.
 | `coordinator_exec.py` | Bounded subprocess helper |
 | `coordinator_common.py` | Shared helpers / constants |
 | `coordinator_config.py` | Parent-owned configuration loaders |
+## Model execution boundary
+
+Coordinator model lanes require explicitly pinned native runtimes and use
+the static [bounded source executor](lane-boundary.md). Models receive source
+and full review diffs as data; they cannot invoke GitHub, tests, other lanes
+or monitors through this protocol. The script remains responsible for every
+start and event wait. Installation activates no worker.

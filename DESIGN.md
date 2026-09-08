@@ -658,8 +658,12 @@ the workflow is enabled on a deployment:
   executor. Its existence alone does not establish that model lanes cannot
   access GitHub or execute tests or other agents.
 
-This section defines the required responsibility boundary. It does not claim
-that a sandbox or other technical enforcement has been implemented.
+Model lanes now use the static bounded source executor described in
+[docs/lane-boundary.md](docs/lane-boundary.md), with explicit native runtime
+pins and isolated selected login profiles. That protocol enforces permitted
+source operations; it is not a universal OS sandbox against a malicious CLI
+binary and does not cover the separate interactive session path. No worker
+activation or live deployment is implied.
 
 ### 19.8 Configuration starts empty
 

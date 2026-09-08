@@ -71,6 +71,7 @@ def run_bounded(
     stdin_text: str | None = None,
     env: Mapping[str, str] | None = None,
     clear_ambient_github: bool = True,
+    inherit_env: bool = True,
 ) -> Completed:
     """Run argv with a hard timeout; kill the process group on expiry.
 
@@ -81,7 +82,7 @@ def run_bounded(
         return Completed(127, "", "empty argv")
     if timeout <= 0:
         return Completed(127, "", "timeout must be positive")
-    run_env = dict(os.environ)
+    run_env = dict(os.environ) if inherit_env else {}
     if env is not None:
         run_env.update(env)
     if clear_ambient_github:
@@ -100,7 +101,7 @@ def _run_process(argv, timeout, cwd, stdin_text, run_env) -> Completed:
         with _CHILD_LOCK:
             try:
                 proc = subprocess.Popen(
-                    [sys.executable, '-c', _EXEC_UNMASKED, *argv],
+                    [sys.executable, '-I', '-S', '-c', _EXEC_UNMASKED, *argv],
                     stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True, cwd=cwd, env=run_env, start_new_session=True,

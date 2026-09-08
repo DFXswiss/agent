@@ -107,3 +107,32 @@ def test_listing_is_paginated_and_does_not_interpret_prefix_as_code():
 def test_offsets_are_bounded_integers(offset):
     with pytest.raises(ProtocolError):
         request(session(), action="read", path="src/a.py", offset=offset, limit=1)
+
+
+def test_exact_replace_changes_only_one_digest_checked_occurrence():
+    view = session()
+    result = request(view, action="replace", path="src/a.py", expected_sha256=digest("a\nb\n"),
+                     old="b\n", new="literal $(command)\n")
+    assert result["sha256"] == digest("a\nliteral $(command)\n")
+    assert view.original["src/a.py"] == "a\nb\n"
+    with pytest.raises(ProtocolError, match="digest"):
+        request(view, action="replace", path="src/a.py", expected_sha256=digest("a\nb\n"), old="a", new="x")
+
+
+@pytest.mark.parametrize("old", ["", "absent", "\n"])
+def test_replace_ambiguous_or_absent_text_preserves_source(old):
+    view = session()
+    with pytest.raises(ProtocolError, match="exactly one"):
+        request(view, action="replace", path="src/a.py", expected_sha256=digest("a\nb\n"), old=old, new="x")
+    assert view.files == view.original
+
+
+def test_replace_is_denied_to_reviewers():
+    with pytest.raises(ProtocolError, match="read-only"):
+        request(session(write=False), action="replace", path="src/a.py",
+                expected_sha256=digest("a\nb\n"), old="a", new="x")
+
+
+def test_invalid_unicode_path_is_a_protocol_error():
+    with pytest.raises(ProtocolError, match="UTF-8"):
+        request(session(), action="write", path="\ud800", expected_sha256=None, content="x")

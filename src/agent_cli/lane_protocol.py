@@ -26,7 +26,8 @@ def digest(content: str) -> str:
 
 
 def validate_path(value: object) -> str:
-    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > MAX_PATH_BYTES:
+    value = _text(value, MAX_PATH_BYTES)
+    if not value:
         raise ProtocolError("path must be a bounded relative string")
     parts = value.split("/")
     if any(p in ("", ".", "..") or p.casefold() == ".git" for p in parts):
@@ -66,7 +67,32 @@ def parse_request(raw: str) -> dict:
         raise ProtocolError("expected one strict JSON object") from exc
     if not isinstance(value, dict):
         raise ProtocolError("expected one JSON object")
+    if set(value) == {"request"}:
+        value = value["request"]
+        if not isinstance(value, dict):
+            raise ProtocolError("request envelope must contain an object")
     return value
+
+
+def response_schema() -> dict:
+    """Provider-neutral strict structured output; no executable tool schemas."""
+    string = {"type": "string"}
+    integer = {"type": "integer"}
+    shapes = {
+        "list": {"prefix": string, "offset": integer},
+        "read": {"path": string, "offset": integer, "limit": integer},
+        "write": {"path": string, "expected_sha256": {"type": ["string", "null"]}, "content": string},
+        "replace": {"path": string, "expected_sha256": string, "old": string, "new": string},
+        "delete": {"path": string, "expected_sha256": string},
+        "finish": {"text": string},
+    }
+    variants = []
+    for action, fields in shapes.items():
+        properties = {"action": {"type": "string", "enum": [action]}, **fields}
+        variants.append({"type": "object", "properties": properties,
+                         "required": list(properties), "additionalProperties": False})
+    return {"type": "object", "properties": {"request": {"anyOf": variants}},
+            "required": ["request"], "additionalProperties": False}
 
 
 @dataclass(frozen=True)
@@ -110,6 +136,7 @@ class SourceSession:
             "list": {"action", "prefix", "offset"},
             "read": {"action", "path", "offset", "limit"},
             "write": {"action", "path", "expected_sha256", "content"},
+            "replace": {"action", "path", "expected_sha256", "old", "new"},
             "delete": {"action", "path", "expected_sha256"},
             "finish": {"action", "text"},
         }
@@ -151,6 +178,12 @@ class SourceSession:
             if old is None:
                 raise ProtocolError("cannot delete an absent file")
             del proposed[path]
+        elif action == "replace":
+            before = _text(request["old"], MAX_FILE_BYTES)
+            after = _text(request["new"], MAX_FILE_BYTES)
+            if old is None or not before or old.count(before) != 1:
+                raise ProtocolError("replace requires exactly one existing occurrence")
+            proposed[path] = _text(old.replace(before, after, 1), MAX_FILE_BYTES)
         else:
             proposed[path] = _text(request["content"], MAX_FILE_BYTES)
         self._check_size(proposed)

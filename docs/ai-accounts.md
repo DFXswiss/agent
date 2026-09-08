@@ -55,6 +55,12 @@ Each account requires:
 - `config_dir`: absolute path to that profile's provider CLI configuration
   directory (no NUL, newline, CR, or parent traversal)
 
+`lane_runtime` is optional/null for stored accounts, but mandatory for lane
+execution: an absolute native `binary` path and its lowercase `sha256` digest.
+See [bounded model lanes](lane-boundary.md) for supported adapters, selected
+login-file handling, migration and verification limits. Installation supplies
+no runtime selection.
+
 Each role requires:
 
 - `account`: name of a configured account
@@ -82,7 +88,7 @@ account or role references are rejected. Credentials and API tokens must not
 appear in this manifest; they belong only inside each `config_dir`. Error text
 from the loader does not echo credential contents.
 
-## Process isolation prefix
+## Interactive process isolation prefix
 
 `AIRole.env_prefix()` returns an `env` argv prefix for child processes. It
 removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`,
@@ -92,6 +98,9 @@ removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`
 variables are left for the child to inherit. This is process configuration
 isolation, not a sandbox and not a claim that the provider CLI is already
 authenticated for that profile.
+
+Bounded lanes use their separate minimal environment and isolated temporary
+profile instead of this interactive prefix; see [lane-boundary.md](lane-boundary.md).
 
 ## Interactive selection
 

@@ -2787,7 +2787,9 @@ def cmd_run(args: list[str]) -> None:
                 # launch() still resolves the same binding; no ambient fallback.
                 from .ai_accounts import load_ai_accounts
 
-                load_ai_accounts(store.home).for_lane(session_id, role, vendor)
+                selected_lane = load_ai_accounts(store.home).for_lane(session_id, role, vendor)
+                if selected_lane.account.lane_runtime is None:
+                    die("AI account lane_runtime is unconfigured")
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )
@@ -2816,7 +2818,8 @@ def cmd_run(args: list[str]) -> None:
                     session_id=session_id,
                 )
                 _print_lane_result(result)
-                if role == "implementer" and result.status == "complete":
+                from .coordinator_common import parse_model_result
+                if role == "implementer" and parse_model_result(result.stdout, result.returncode) == ("complete", "done"):
                     working = _find_working_agent(
                         store, tid, role=role, vendor=vendor, round_num=round_num
                     )
@@ -2830,7 +2833,7 @@ def cmd_run(args: list[str]) -> None:
                             "--verdict",
                             "done",
                             "--note",
-                            "lane STATUS=complete",
+                            "bounded lane STATUS=complete RESULT=done",
                         ]
                     )
                     snap = _chain_snapshot(store, tid, extra_head=head)
@@ -3052,7 +3055,7 @@ def cmd_lane(args: list[str]) -> None:
         session_id=session_id,
     )
     if dry_run:
-        print(" ".join(result.argv))
+        print(_sanitize_lane_output(result.stdout) if result.stdout else " ".join(result.argv))
         return
     _print_lane_result(result)
     if result.status != "complete":

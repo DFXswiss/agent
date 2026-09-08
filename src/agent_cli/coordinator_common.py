@@ -13,7 +13,8 @@ from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
 Runner = Callable[[list[str]], Completed]
-LaneRunner = Callable[[list[str], str | None], Any]
+# Trusted static dependency implementing the bounded source executor contract.
+LaneRunner = Callable[..., Any]
 
 REQUIRED_WORKER_SKILLS = ("spine", "review-loop", "pr-review")
 REQUIRED_REVIEW_SKILLS = ("pr-review",)
@@ -199,31 +200,6 @@ def coordinator_env(
         "AGENT_COORDINATOR_SESSION": worker.session_id,
         "AGENT_COORDINATOR_WORKTREE": str(coord_data.get("worktree") or ""),
     }
-
-
-def harden_grok_write_argv(argv: list[str]) -> list[str]:
-    """Ensure the Grok implementer cannot Bash, spawn subagents, or web-search.
-
-    The stock write builder in lane.grok_argv does not add these denies. This is
-    process argv hardening for the coordinator, not universal sandbox enforcement.
-    """
-    if "grok" not in argv:
-        return list(argv)
-    out = list(argv)
-    if "--no-subagents" not in out:
-        out.append("--no-subagents")
-    if "--disable-web-search" not in out:
-        out.append("--disable-web-search")
-    denied = False
-    i = 0
-    while i < len(out) - 1:
-        if out[i] == "--deny" and out[i + 1] == "Bash":
-            denied = True
-            break
-        i += 1
-    if not denied:
-        out.extend(["--deny", "Bash"])
-    return out
 
 
 def parse_model_result(output: str, returncode: int) -> tuple[str, str]:
