@@ -99,44 +99,72 @@ collisions. These exclusions do not detect every possible secret in ordinary
 repository text; the selected repository remains the authorized source scope.
 
 Touched files are checked against the snapshot before application. Before any
-capture, the script writes and fsyncs a private recovery index
-(`recovery-index.json`) that maps each source-relative path and action
-(replace/delete) plus snapshot mode to the captured basename, and records the
-source root for operator-only recovery. That index is local operator data: it
-is never model source and is never published into prompts or messages.
-Existing targets are then renamed into a private same-filesystem recovery
-directory outside the repository (mode `0700`), re-validated against the
-snapshot, and replacements or new files are published with atomic no-clobber
-link of a fully written and fsynced exclusive temporary file. Captured
-originals remain in recovery even after successful publication or deletion so
-late writers through existing open descriptors are retained rather than
-destroyed; originals are never erased automatically. No-clobber publication of
-each replacement is atomic, but capture makes an existing path briefly absent,
-so proposals must not depend on intermediate ordering. This is not filesystem
-compare-and-swap, not portable CAS, not arbitrary-writer exclusion, and not a
-multi-file transaction: paths may be briefly absent during capture;
+capture, the script creates a private same-filesystem recovery directory
+outside the repository (mode `0700`) and fsyncs that directory's parent so the
+new recovery entry is requested durable on supporting filesystems. It then
+writes and fsyncs a private recovery index (`recovery-index.json`) that maps
+each source-relative path and action (replace/delete) plus snapshot mode to
+the captured basename, and records the source root for operator-only recovery;
+the recovery directory itself is fsynced after the index file. That index is
+local operator data: it is never model source and is never published into
+prompts or messages. The index alone does not make a later capture durable.
+
+Existing targets are then renamed into that recovery directory. After each
+capture rename the script fsyncs the destination recovery directory first,
+then the source parent directory, before treating capture as ready for
+validated publication or deletion success. Captured regular-file data is also
+fsynced after the usual nofollow/type/link/size checks. Newly created nested
+source parents are likewise fsynced in their parent directory before descent.
+Replacements or new files are published with atomic no-clobber link of a fully
+written and fsynced exclusive temporary file; after that link the target parent
+is fsynced, and after the temporary name is unlinked the target parent is
+fsynced again. Concurrent destinations are never unlinked. Any directory or
+data sync failure fails the operation rather than reporting complete success;
+after mutation the outcome can be uncertain while recovery data remains.
+EINVAL and EIO from these barriers are not hidden, and unsupported filesystems
+are not pretended to have passed.
+
+Captured originals remain in recovery even after successful publication or
+deletion so late writers through existing open descriptors are retained rather
+than destroyed; originals are never erased automatically. An earlier fsync of
+a captured inode does not make later writes through another open descriptor
+durable—those writers must sync their own later data. No-clobber publication
+of each replacement is atomic, but capture makes an existing path briefly
+absent, so proposals must not depend on intermediate ordering. This is not
+filesystem compare-and-swap, not portable CAS, not arbitrary-writer exclusion,
+and not a multi-file transaction: paths may be briefly absent during capture;
 noncooperating live writers may still produce an uncertain outcome, but
 displaced originals are kept for operator recovery instead of being destroyed.
-On captured mismatch, publish conflict, or publication I/O failure the script
-attempts restoration by writing a fresh independent inode (exclusive temp,
-fsync, atomic no-clobber link into the absent destination) while retaining the
-original captured inode in private recovery so late open-descriptor writes stay
-indexed there. When restoration succeeds, the worktree path is a distinct
+Directory fsync barriers are requested on supporting filesystems; hardware and
+filesystem durability guarantees, and any claim of an actual power-cut test,
+remain outside scope.
+
+On captured mismatch, publish conflict, sync failure after mutation, or
+publication I/O failure the script attempts restoration by writing a fresh
+independent inode (exclusive temp, fsync, atomic no-clobber link into the
+absent destination, with the same target-parent fsync ordering) while retaining
+the original captured inode in private recovery so late open-descriptor writes
+stay indexed there. When restoration succeeds, the worktree path is a distinct
 `nlink == 1` inode usable by later snapshots; the recovery original remains.
-When the destination already exists, both the concurrent destination and the
-recovery original are preserved. When restoration fails for other I/O or
+When the destination already exists (this script's own prior publication after
+a later sync failure, or another writer), both that existing destination and
+the recovery original are preserved; the reported status says existing
+destination rather than inventing concurrent provenance. No-clobber protection
+against concurrent writers remains. When restoration fails for other I/O or
 permission reasons with no destination observed, recovery data is retained and
-the error uses neutral retained-in-recovery wording rather than implying a
-concurrent destination. A `ProtocolError` reports the recovery basename without
+the error uses neutral retained-in-recovery wording rather than implying an
+occupied destination. A `ProtocolError` reports the recovery basename without
 leaking private absolute host paths. Concurrent destinations are never blindly
-unlinked during cleanup or rollback. The root/recovery device preflight only
-compares the source root and recovery parent (and refuses a filesystem root);
-nested mount mismatches among touched targets can still surface later as
-retained recovery or uncertainty rather than an all-files device guarantee.
-Recovery storage is an explicit tradeoff and is kept outside Git-controlled
-paths so it does not clutter the tracked worktree. The coordinator owns the
-worktree and treats interrupted application as uncertain. Source code and
-model output never become executable commands.
+unlinked during cleanup or rollback. Descriptors used on failure paths are
+closed exactly once; recovery data and index are kept with no automatic unsafe
+cleanup. The root/recovery device preflight only compares the source root and
+recovery parent (and refuses a filesystem root); nested mount mismatches among
+touched targets can still surface later as retained recovery or uncertainty
+rather than an all-files device guarantee. Recovery storage is an explicit
+tradeoff and is kept outside Git-controlled paths so it does not clutter the
+tracked worktree. The coordinator owns the worktree and treats interrupted
+application as uncertain. Source code and model output never become executable
+commands.
 
 ## Migration and verification
 

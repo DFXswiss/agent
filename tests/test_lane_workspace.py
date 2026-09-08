@@ -344,3 +344,266 @@ def test_late_hardlink_capture_is_not_copied_into_model_source(tmp_path, monkeyp
     assert "file" not in Workspace(tmp_path, ["file"]).files
     directory, _index, entry = _index_entry(tmp_path, "file")
     assert (directory / entry["basename"]).stat().st_ino == outside.stat().st_ino
+
+
+def test_capture_fsyncs_recovery_directory_before_source_parent(tmp_path, monkeypatch):
+    """Capture must fsync destination recovery first, then source parent."""
+    (tmp_path / "file").write_text("snapshot")
+    source = Workspace(tmp_path, ["file"])
+    events: list[tuple[str, int]] = []
+    real_fsync_dir = source._fsync_dir
+    real_rename = os.rename
+    rename_seen = {"done": False}
+
+    def tracking_rename(*args, **kwargs):
+        rename_seen["done"] = True
+        return real_rename(*args, **kwargs)
+
+    def tracking_fsync_dir(dir_fd):
+        if rename_seen["done"]:
+            info = os.fstat(dir_fd)
+            recovery_info = os.stat(source.recovery_dir, follow_symlinks=False)
+            source_info = os.stat(tmp_path, follow_symlinks=False)
+            if info.st_ino == recovery_info.st_ino and info.st_dev == recovery_info.st_dev:
+                events.append(("recovery", dir_fd))
+            elif info.st_ino == source_info.st_ino and info.st_dev == source_info.st_dev:
+                events.append(("source_parent", dir_fd))
+            else:
+                events.append(("other", dir_fd))
+        return real_fsync_dir(dir_fd)
+
+    monkeypatch.setattr(os, "rename", tracking_rename)
+    monkeypatch.setattr(source, "_fsync_dir", tracking_fsync_dir)
+    source.apply({"file": "published"})
+    assert (tmp_path / "file").read_text() == "published"
+    post_capture = [label for label, _fd in events]
+    assert post_capture[:2] == ["recovery", "source_parent"]
+    recovered = _recovery_files(tmp_path)
+    assert any(p.read_text() == "snapshot" for p in recovered)
+
+
+def test_publish_and_temp_unlink_fsync_target_parent(tmp_path, monkeypatch):
+    """No-clobber publication and temporary unlink each fsync the target parent."""
+    (tmp_path / "file").write_text("snapshot")
+    source = Workspace(tmp_path, ["file"])
+    events: list[str] = []
+    real_link = os.link
+    real_unlink = os.unlink
+    real_fsync_dir = source._fsync_dir
+    linked = {"done": False}
+    unlinked = {"done": False}
+    target_parent = os.stat(tmp_path, follow_symlinks=False)
+
+    def tracking_link(*args, **kwargs):
+        result = real_link(*args, **kwargs)
+        linked["done"] = True
+        events.append("link")
+        return result
+
+    def tracking_unlink(*args, **kwargs):
+        # Only observe the exclusive temp unlink after link, not recovery-index cleanup.
+        name = args[0] if args else kwargs.get("path")
+        if linked["done"] and isinstance(name, str) and name.startswith(".agent-text-"):
+            unlinked["done"] = True
+            events.append("unlink_temp")
+        return real_unlink(*args, **kwargs)
+
+    def tracking_fsync_dir(dir_fd):
+        info = os.fstat(dir_fd)
+        is_target_parent = (
+            info.st_ino == target_parent.st_ino and info.st_dev == target_parent.st_dev
+        )
+        if linked["done"] and not unlinked["done"]:
+            assert is_target_parent, "post-link fsync must target the destination parent"
+            events.append("fsync_after_link")
+        elif unlinked["done"]:
+            assert is_target_parent, "post-unlink fsync must target the destination parent"
+            events.append("fsync_after_unlink")
+        return real_fsync_dir(dir_fd)
+
+    monkeypatch.setattr(os, "link", tracking_link)
+    monkeypatch.setattr(os, "unlink", tracking_unlink)
+    monkeypatch.setattr(source, "_fsync_dir", tracking_fsync_dir)
+    source.apply({"file": "published"})
+    assert (tmp_path / "file").read_text() == "published"
+    assert events == ["link", "fsync_after_link", "unlink_temp", "fsync_after_unlink"]
+
+
+def test_new_parent_and_recovery_directory_parent_are_fsynced(tmp_path, monkeypatch):
+    """Creating nested parents and the private recovery directory syncs their parents."""
+    source = Workspace(tmp_path, [])
+    events: list[str] = []
+    real_mkdir = os.mkdir
+    real_fsync_dir = Workspace._fsync_dir
+    created_dirs: list[int | None] = []
+
+    def tracking_mkdir(name, mode=0o777, *, dir_fd=None):
+        real_mkdir(name, mode, dir_fd=dir_fd)
+        path_text = os.fspath(name)
+        # Recovery mkdir uses an absolute path under the worktree parent; nested
+        # source parents use relative names with dir_fd.
+        if dir_fd is None and path_text.startswith(str(tmp_path.parent)):
+            created_dirs.append(None)  # marker; recovery parent opened separately
+            events.append("mkdir_recovery")
+        elif dir_fd is not None:
+            created_dirs.append(dir_fd)
+            events.append(f"mkdir_nested:{path_text}")
+
+    def tracking_fsync_dir(dir_fd):
+        info = os.fstat(dir_fd)
+        parent_info = os.stat(tmp_path.parent, follow_symlinks=False)
+        if events and events[-1] == "mkdir_recovery":
+            if info.st_ino == parent_info.st_ino and info.st_dev == parent_info.st_dev:
+                events.append("fsync_parent_of:mkdir_recovery")
+        elif created_dirs and created_dirs[-1] == dir_fd and events and events[-1].startswith("mkdir_nested:"):
+            events.append(f"fsync_parent_of:{events[-1]}")
+        return real_fsync_dir(dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", tracking_mkdir)
+    monkeypatch.setattr(Workspace, "_fsync_dir", staticmethod(tracking_fsync_dir))
+    source.apply({"nested/deep/new.py": "created\n"})
+    assert (tmp_path / "nested/deep/new.py").read_text() == "created\n"
+    assert "mkdir_recovery" in events
+    assert "fsync_parent_of:mkdir_recovery" in events
+    assert "mkdir_nested:nested" in events
+    assert "fsync_parent_of:mkdir_nested:nested" in events
+    assert "mkdir_nested:deep" in events
+    assert "fsync_parent_of:mkdir_nested:deep" in events
+
+
+def test_capture_directory_sync_failure_keeps_recovery_without_silent_success(tmp_path, monkeypatch):
+    """Directory sync failure after capture must not report success; recovery stays."""
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    source = Workspace(tmp_path, ["file"])
+    real_fsync_dir = source._fsync_dir
+    real_rename = os.rename
+    renamed = {"done": False}
+    fail_next_source = {"armed": False}
+
+    def tracking_rename(*args, **kwargs):
+        result = real_rename(*args, **kwargs)
+        renamed["done"] = True
+        fail_next_source["armed"] = True
+        return result
+
+    def failing_fsync_dir(dir_fd):
+        if renamed["done"] and fail_next_source["armed"]:
+            info = os.fstat(dir_fd)
+            recovery_info = os.stat(source.recovery_dir, follow_symlinks=False)
+            if info.st_ino == recovery_info.st_ino and info.st_dev == recovery_info.st_dev:
+                return real_fsync_dir(dir_fd)
+            # Fail the source-parent sync that follows the recovery-dir sync.
+            fail_next_source["armed"] = False
+            raise OSError(22, "simulated capture directory sync failure")
+        return real_fsync_dir(dir_fd)
+
+    monkeypatch.setattr(os, "rename", tracking_rename)
+    monkeypatch.setattr(source, "_fsync_dir", failing_fsync_dir)
+    with pytest.raises(ProtocolError, match=r"capture namespace sync failed.*as [0-9a-f]{32}") as raised:
+        source.apply({"file": "model"})
+    assert "retained in recovery" in str(raised.value) or "restored" in str(raised.value)
+    # Original remains available either restored or only in recovery; never silent success.
+    recovered = _recovery_files(tmp_path)
+    assert any(p.read_text() == "snapshot" for p in recovered)
+    directory, _index, entry = _index_entry(tmp_path, "file")
+    assert (directory / entry["basename"]).read_text() == "snapshot"
+    if target.exists():
+        assert target.read_text() == "snapshot"
+        assert target.stat().st_nlink == 1
+
+
+def test_publication_directory_sync_failure_is_uncertain_and_preserves_recovery(tmp_path, monkeypatch):
+    """Sync failure after publication must not claim success; recovery remains."""
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    source = Workspace(tmp_path, ["file"])
+    real_fsync_dir = source._fsync_dir
+    real_link = os.link
+    linked = {"done": False}
+    target_parent = os.stat(tmp_path, follow_symlinks=False)
+
+    def tracking_link(*args, **kwargs):
+        result = real_link(*args, **kwargs)
+        linked["done"] = True
+        return result
+
+    def failing_fsync_dir(dir_fd):
+        if linked["done"]:
+            info = os.fstat(dir_fd)
+            if info.st_ino == target_parent.st_ino and info.st_dev == target_parent.st_dev:
+                raise OSError(5, "simulated publication directory sync failure")
+        return real_fsync_dir(dir_fd)
+
+    monkeypatch.setattr(os, "link", tracking_link)
+    monkeypatch.setattr(source, "_fsync_dir", failing_fsync_dir)
+    with pytest.raises(ProtocolError, match=r"(conflict|sync failed).*as [0-9a-f]{32}") as raised:
+        source.apply({"file": "model"})
+    # Own publication may already occupy the destination; status must not invent concurrency.
+    assert "existing destination" in str(raised.value) or "restored" in str(raised.value)
+    assert "concurrent destination" not in str(raised.value)
+    recovered = _recovery_files(tmp_path)
+    assert any(p.read_text() == "snapshot" for p in recovered)
+    directory, _index, entry = _index_entry(tmp_path, "file")
+    assert (directory / entry["basename"]).read_text() == "snapshot"
+    # Destination may already hold the published inode; outcome is uncertain, not success.
+    assert target.exists()
+    assert target.read_text() == "model"
+
+
+def test_restore_fsyncs_target_parent(tmp_path, monkeypatch):
+    """Successful restoration fsyncs the destination parent after link and temp unlink."""
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    source = Workspace(tmp_path, ["file"])
+    events: list[str] = []
+    real_link = os.link
+    real_unlink = os.unlink
+    real_fsync_dir = source._fsync_dir
+    target_parent = os.stat(tmp_path, follow_symlinks=False)
+    linked = {"done": False}
+    unlinked = {"done": False}
+
+    def fail_publish(parent_fd, name, content, mode):
+        raise OSError("simulated publication I/O failure")
+
+    def tracking_link(*args, **kwargs):
+        result = real_link(*args, **kwargs)
+        linked["done"] = True
+        events.append("link")
+        return result
+
+    def tracking_unlink(*args, **kwargs):
+        name = args[0] if args else kwargs.get("path")
+        if linked["done"] and isinstance(name, str) and name.startswith(".agent-text-"):
+            unlinked["done"] = True
+            events.append("unlink_temp")
+        return real_unlink(*args, **kwargs)
+
+    def tracking_fsync_dir(dir_fd):
+        info = os.fstat(dir_fd)
+        is_target_parent = (
+            info.st_ino == target_parent.st_ino and info.st_dev == target_parent.st_dev
+        )
+        if linked["done"] and not unlinked["done"]:
+            assert is_target_parent, "restore post-link fsync must target the destination parent"
+            events.append("fsync_after_link")
+        elif unlinked["done"]:
+            assert is_target_parent, "restore post-unlink fsync must target the destination parent"
+            events.append("fsync_after_unlink")
+        return real_fsync_dir(dir_fd)
+
+    monkeypatch.setattr(source, "_publish_new", fail_publish)
+    monkeypatch.setattr(os, "link", tracking_link)
+    monkeypatch.setattr(os, "unlink", tracking_unlink)
+    monkeypatch.setattr(source, "_fsync_dir", tracking_fsync_dir)
+    with pytest.raises(ProtocolError, match=r"conflict.*as [0-9a-f]{32}") as raised:
+        source.apply({"file": "model"})
+    assert "restored" in str(raised.value)
+    assert target.read_text() == "snapshot"
+    assert target.stat().st_nlink == 1
+    assert events == ["link", "fsync_after_link", "unlink_temp", "fsync_after_unlink"]
+    recovered = _recovery_files(tmp_path)
+    assert any(p.read_text() == "snapshot" for p in recovered)
+    directory, _index, entry = _index_entry(tmp_path, "file")
+    assert (directory / entry["basename"]).read_text() == "snapshot"

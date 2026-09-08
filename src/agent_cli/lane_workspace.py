@@ -73,6 +73,11 @@ class Workspace:
                 raise ProtocolError("source snapshot exceeds byte limit")
             self.files[path], self.modes[path] = text, mode
 
+    @staticmethod
+    def _fsync_dir(dir_fd: int) -> None:
+        """Request a directory durability barrier; surface EINVAL/EIO to callers."""
+        os.fsync(dir_fd)
+
     @contextmanager
     def _parent(self, path: str, *, create: bool = False):
         parts = source_path(path).split("/")
@@ -80,10 +85,15 @@ class Workspace:
         try:
             for part in parts[:-1]:
                 if create:
+                    created = False
                     try:
                         os.mkdir(part, mode=0o755, dir_fd=fd)
+                        created = True
                     except FileExistsError:
                         pass
+                    if created:
+                        # Persist the new directory entry before descending.
+                        self._fsync_dir(fd)
                 child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
                 os.close(fd)
                 fd = child
@@ -115,6 +125,21 @@ class Workspace:
                 raise ProtocolError("unsupported source contents")
             return content.decode("utf-8"), stat.S_IMODE(info.st_mode), info.st_ino
 
+    def _fsync_captured(self, recovery_fd: int, recovery_name: str) -> None:
+        """Fsync captured regular-file data after namespace persistence checks."""
+        fd = os.open(
+            recovery_name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=recovery_fd,
+        )
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_FILE_BYTES:
+                raise ProtocolError("source must be a bounded regular file without hard links")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
     def _open_recovery(self) -> tuple[Path, int]:
         """Create a private same-filesystem recovery directory outside the repository."""
         root = self.root.resolve()
@@ -133,6 +158,14 @@ class Workspace:
             os.mkdir(recovery, mode=0o700)
         except OSError as exc:
             raise ProtocolError("cannot create private recovery directory") from exc
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            try:
+                self._fsync_dir(parent_fd)
+            except OSError as exc:
+                raise ProtocolError("cannot persist private recovery directory") from exc
+        finally:
+            os.close(parent_fd)
         recovery_fd = os.open(recovery, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             recovery_stat = os.fstat(recovery_fd)
@@ -174,7 +207,7 @@ class Workspace:
             raise
         dir_fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=recovery_fd)
         try:
-            os.fsync(dir_fd)
+            self._fsync_dir(dir_fd)
         finally:
             os.close(dir_fd)
 
@@ -187,25 +220,40 @@ class Workspace:
             mode,
             dir_fd=parent_fd,
         )
+        error: BaseException | None = None
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.link(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
-        finally:
+            self._fsync_dir(parent_fd)
+        except BaseException as exc:
+            error = exc
+        unlinked = False
+        try:
+            os.unlink(temporary, dir_fd=parent_fd)
+            unlinked = True
+        except FileNotFoundError:
+            pass
+        if unlinked:
             try:
-                os.unlink(temporary, dir_fd=parent_fd)
-            except FileNotFoundError:
-                pass
+                self._fsync_dir(parent_fd)
+            except OSError as exc:
+                if error is None:
+                    error = exc
+        if error is not None:
+            raise error
 
     def _restore_captured(self, parent_fd: int, name: str, recovery_fd: int, recovery_name: str) -> str:
         """Restore via a fresh inode; retain the recovery original.
 
         Returns a short status for error text: ``restored``, ``retained in recovery``,
-        or ``retained in recovery beside concurrent destination``. Never unlinks a
-        concurrent destination and never hard-links the recovery inode into the
+        or ``retained in recovery beside existing destination``. Never unlinks an
+        existing destination and never hard-links the recovery inode into the
         worktree (restored paths stay ``nlink == 1`` for later snapshots).
+        FileExistsError only means the destination path is occupied (own prior
+        publication or another writer); it does not establish concurrent provenance.
         """
         try:
             fd = os.open(
@@ -224,7 +272,7 @@ class Workspace:
             self._publish_bytes(parent_fd, name, data, mode)
             return "restored"
         except FileExistsError:
-            return "retained in recovery beside concurrent destination"
+            return "retained in recovery beside existing destination"
         except OSError:
             return "retained in recovery"
 
@@ -241,13 +289,17 @@ class Workspace:
         Publication is race-resistant and data-preserving, not filesystem CAS or a
         multi-file transaction. Existing targets are renamed into a private
         same-filesystem recovery directory outside the repository, validated,
-        then replacements are published with no-clobber link. Captured originals
-        remain in recovery even on success so late writers through open
+        then replacements are published with no-clobber link. Captured
+        originals remain in recovery even on success so late writers through open
         descriptors are retained rather than destroyed. Paths may be briefly
         absent during capture; noncooperating writers can still yield an
         uncertain outcome. The root/recovery device preflight only compares the
         source root and recovery parent; nested mount mismatches surface later as
         retained recovery/uncertainty rather than a portable all-files guarantee.
+        Directory fsync barriers are requested after namespace mutations on
+        supporting filesystems; hardware and filesystem durability guarantees
+        remain outside scope. An earlier fsync of a captured inode does not
+        make later writes through another open descriptor durable.
         """
         if not changes:
             return
@@ -313,6 +365,17 @@ class Workspace:
                                 f"source disappeared before capture for {path}"
                             ) from exc
                         try:
+                            # Persist the capture rename: recovery dir first, then source parent.
+                            # The recovery index alone does not make the capture durable.
+                            self._fsync_dir(recovery_fd)
+                            self._fsync_dir(parent)
+                        except OSError as exc:
+                            detail = self._restore_captured(parent, name, recovery_fd, recovery_name)
+                            raise ProtocolError(
+                                f"capture namespace sync failed for {path}; "
+                                f"original {detail} as {recovery_name}"
+                            ) from exc
+                        try:
                             captured_text, captured_mode, _ino = self._read_at(recovery_fd, recovery_name)
                         except (ProtocolError, OSError, UnicodeError) as exc:
                             self._restore_captured(parent, name, recovery_fd, recovery_name)
@@ -326,6 +389,14 @@ class Workspace:
                                 f"worktree changed since the model snapshot for {path}; "
                                 f"captured original {detail} as {recovery_name}"
                             )
+                        try:
+                            self._fsync_captured(recovery_fd, recovery_name)
+                        except (ProtocolError, OSError) as exc:
+                            detail = self._restore_captured(parent, name, recovery_fd, recovery_name)
+                            raise ProtocolError(
+                                f"captured source sync failed for {path}; "
+                                f"original {detail} as {recovery_name}"
+                            ) from exc
                         if content is None:
                             # Deletion retains the captured original in recovery.
                             # Do not unlink a concurrent recreation of the destination.
@@ -340,10 +411,16 @@ class Workspace:
                             )
                         try:
                             self._publish_new(parent, name, content, expected_mode)
-                        except (ProtocolError, OSError) as exc:
+                        except ProtocolError as exc:
                             detail = self._restore_captured(parent, name, recovery_fd, recovery_name)
                             raise ProtocolError(
                                 f"publication conflict for {path}; "
+                                f"original {detail} as {recovery_name}"
+                            ) from exc
+                        except OSError as exc:
+                            detail = self._restore_captured(parent, name, recovery_fd, recovery_name)
+                            raise ProtocolError(
+                                f"publication sync failed for {path}; "
                                 f"original {detail} as {recovery_name}"
                             ) from exc
                     else:
@@ -354,6 +431,11 @@ class Workspace:
                             raise ProtocolError(
                                 f"publication conflict for {path}; "
                                 f"refusing to overwrite concurrent destination"
+                            ) from exc
+                        except OSError as exc:
+                            raise ProtocolError(
+                                f"publication sync failed for {path}; "
+                                f"outcome uncertain"
                             ) from exc
         finally:
             os.close(recovery_fd)
