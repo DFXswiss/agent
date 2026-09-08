@@ -62,7 +62,7 @@ def parse_lane_status(role: str, output: str, returncode: int) -> str:
         return status
     if len(re.findall(r"(?im)^(?:RESULT|VERDICT):.*$", output)) != 1:
         return "partial"
-    verdicts = re.findall(r"(?m)^(?:RESULT|VERDICT):[ \t]*(approved|rejected)[ \t]*\r?$",
+    verdicts = re.findall(r"(?m)^VERDICT:[ \t]*(approved|rejected)[ \t]*\r?$",
                           output, re.IGNORECASE)
     return "complete" if len(verdicts) == 1 else "partial"
 

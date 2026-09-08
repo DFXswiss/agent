@@ -56,13 +56,22 @@ def test_legacy_runner_cannot_receive_unrestricted_native_command(tmp_path):
     assert calls == []
 
 
+@pytest.mark.parametrize("role", [
+    "reviewer", "pr-reviewer-quality", "pr-reviewer-logic",
+])
 @pytest.mark.parametrize("verdict,expected", [
     ("VERDICT: approved", "complete"), ("VERDICT: rejected", "complete"),
-    ("RESULT: approved", "complete"), ("RESULT: done", "partial"),
+    ("RESULT: approved", "partial"), ("RESULT: rejected", "partial"),
+    ("RESULT: done", "partial"),
+    ("VERDICT: approved\nVERDICT: rejected", "partial"),
+    ("VERDICT: approve", "partial"),
     ("VERDICT: approved\nRESULT: rejected", "partial"), ("", "partial"),
     ("VERDICT: approved\nRESULT: done", "partial"),
+    ("RESULT: approved\nVERDICT: approved", "partial"),
 ])
-def test_generic_review_lane_preserves_its_verdict_contract(tmp_path, monkeypatch, verdict, expected):
+def test_generic_review_lane_preserves_its_verdict_contract(
+    tmp_path, monkeypatch, role, verdict, expected,
+):
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "task.md"
     spec.write_text("Review and return STATUS and VERDICT.")
@@ -71,7 +80,7 @@ def test_generic_review_lane_preserves_its_verdict_contract(tmp_path, monkeypatc
         assert selected.access == "read-only"
         return CompletedProcess([], 0, "STATUS: complete\n" + verdict, "")
     monkeypatch.setattr("agent_cli.lane_executor.execute", executor)
-    result = launch(role="reviewer", vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
+    result = launch(role=role, vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
                     config_home=tmp_path, session_id=DEFAULT_SESSION)
     assert result.status == expected
     assert result.stdout == "STATUS: complete\n" + verdict
