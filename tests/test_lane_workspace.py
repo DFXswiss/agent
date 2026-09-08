@@ -607,3 +607,94 @@ def test_restore_fsyncs_target_parent(tmp_path, monkeypatch):
     assert any(p.read_text() == "snapshot" for p in recovered)
     directory, _index, entry = _index_entry(tmp_path, "file")
     assert (directory / entry["basename"]).read_text() == "snapshot"
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o755])
+def test_replacement_under_umask077_preserves_exact_permissions(tmp_path, mode):
+    """Successful replacement under umask 077 keeps snapshot mode and new content."""
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    target.chmod(mode)
+    source = Workspace(tmp_path, ["file"])
+    previous = os.umask(0o077)
+    try:
+        source.apply({"file": "published"})
+        assert target.read_text() == "published"
+        assert target.stat().st_mode & 0o777 == mode
+        assert target.stat().st_nlink == 1
+        refreshed = Workspace(tmp_path, ["file"])
+        assert refreshed.files["file"] == "published"
+        assert refreshed.modes["file"] == mode
+    finally:
+        os.umask(previous)
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o755])
+def test_restore_after_link_failure_under_umask077_preserves_original(tmp_path, monkeypatch, mode):
+    """Link failure then fresh-inode restore under umask 077 keeps content and mode."""
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    target.chmod(mode)
+    original_ino = target.stat().st_ino
+    source = Workspace(tmp_path, ["file"])
+    real_link = os.link
+    attempts = {"count": 0}
+
+    def fail_first_publication_link(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError("simulated first publication link failure")
+        return real_link(*args, **kwargs)
+
+    monkeypatch.setattr(os, "link", fail_first_publication_link)
+    previous = os.umask(0o077)
+    try:
+        with pytest.raises(ProtocolError, match=r"publication sync failed.*as [0-9a-f]{32}") as raised:
+            source.apply({"file": "model"})
+        assert "restored" in str(raised.value)
+        assert target.read_text() == "snapshot"
+        assert target.stat().st_mode & 0o777 == mode
+        assert target.stat().st_nlink == 1
+        assert target.stat().st_ino != original_ino
+        recovered = _recovery_files(tmp_path)
+        assert any(p.read_text() == "snapshot" for p in recovered)
+        directory, _index, entry = _index_entry(tmp_path, "file")
+        recovery_path = directory / entry["basename"]
+        assert recovery_path.read_text() == "snapshot"
+        assert recovery_path.stat().st_ino == original_ino
+        assert recovery_path.stat().st_nlink == 1
+        assert recovery_path.stat().st_ino != target.stat().st_ino
+        refreshed = Workspace(tmp_path, ["file"])
+        assert refreshed.files["file"] == "snapshot"
+        assert refreshed.modes["file"] == mode
+    finally:
+        os.umask(previous)
+
+
+def test_fchmod_failure_fails_closed_without_publication(tmp_path, monkeypatch):
+    """Injected fchmod failure must not publish; original remains recoverable."""
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    target.chmod(0o644)
+    source = Workspace(tmp_path, ["file"])
+
+    def failing_fchmod(fd, mode):
+        raise OSError("simulated fchmod failure")
+
+    monkeypatch.setattr(os, "fchmod", failing_fchmod)
+    with pytest.raises(ProtocolError, match=r"publication sync failed.*as [0-9a-f]{32}") as raised:
+        source.apply({"file": "model"})
+    assert "retained in recovery" in str(raised.value) or "restored" in str(raised.value)
+    # Fail closed: never leave model content published at the destination.
+    if target.exists():
+        assert target.read_text() == "snapshot"
+        assert target.stat().st_mode & 0o777 == 0o644
+        assert target.stat().st_nlink == 1
+    recovered = _recovery_files(tmp_path)
+    assert any(p.read_text() == "snapshot" for p in recovered)
+    directory, _index, entry = _index_entry(tmp_path, "file")
+    assert (directory / entry["basename"]).read_text() == "snapshot"
+    assert not any(
+        p.name.startswith(".agent-text-") and p.is_file()
+        for p in tmp_path.iterdir()
+    )

@@ -225,6 +225,8 @@ class Workspace:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(data)
                 stream.flush()
+                # os.open mode is filtered by umask; set the intended mode explicitly.
+                os.fchmod(stream.fileno(), mode)
                 os.fsync(stream.fileno())
             os.link(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
             self._fsync_dir(parent_fd)
