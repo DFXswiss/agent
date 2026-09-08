@@ -32,7 +32,6 @@ from .coordinator_common import (
     coord,
     coordinator_env,
     gh_list,
-    harden_grok_write_argv,
     owned_session,
     parse_model_result,
     redact,
