@@ -102,6 +102,20 @@ Publish the migration proposal draft first per the [pull request lifecycle](pull
 
 The bot identifies the active policy revision in its comment. Download `.github/a38.json` from that exact revision before generating the report. For ordinary PRs, this is the base; for explicitly approved migrations, it is the head.
 
+## How fork GitHub Actions are meant to work
+
+This is the intended sequence. Ready for review is **not** a CI switch. Labels such as `ci` / `ci:full` are repository-specific scope, not the A38 gate.
+
+1. A pull request is opened (often from a fork, often as a draft).
+2. GitHub may create `pull_request` workflow runs and **hold** them (`action_required`). That hold is not a test result and is not a red A38 report.
+3. The author measures A38 on the current head and posts the report.
+4. The **trusted** guard (pinned action, no PR checkout) validates that report.
+5. Only a fresh **enforce pass** on this head may **approve** those waiting **initial** runs, and only for workflow paths listed in the trusted `.github/pr-guard.json`.
+6. Approval means GitHub may start those runs. It is not a green check. The jobs still have to finish.
+7. A human merges. The merger does **not** click **Approve and run workflows**.
+
+The guard does **not** approve on open, push, label, or Ready alone. Missing, failed, observe-mode, excluded, closed, or same-repository PRs get no approval. Changing the repository's fork-protection setting is not a fallback.
+
 ## Optional fork workflow approval
 
 A repository may opt in to bot-owned CI authorization in its trusted default-branch `.github/pr-guard.json`:
