@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.coordinator_common import CoordinatorError
-from agent_cli.coordinator_lanes import _prepare_pr_review_agent, phase_pr_gates
+from agent_cli.coordinator_common import CoordinatorError, coord
+from agent_cli.coordinator_lanes import _prepare_pr_review_agent, launch_lane, phase_pr_gates
 from agent_cli.coordinator_runtime import phase_inner_review
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
@@ -226,3 +226,68 @@ def test_pr_and_inner_review_prompts_receive_complete_diff_without_host_paths(
     assert "---- diff excerpt ----" not in inner
     assert "Script-generated diff artifact" not in inner
     assert "review-diff-" not in inner
+
+
+def test_launch_lane_inventory_failure_creates_no_working_agent_or_uncertain_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failing static git inventory before executor creates neither agent nor uncertain_lane."""
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+
+    # Checkout identity is unrelated; inventory failure is the regression under test.
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity", lambda *a: {}
+    )
+
+    launched: list[bool] = []
+
+    def refusing_executor(selected, *, cwd, manifest, spec, timeout):
+        launched.append(True)
+        raise AssertionError("executor must not run after inventory failure")
+
+    def failing_inventory(argv: list[str]) -> Completed:
+        if argv and argv[0] == "env" and "git" in argv:
+            argv = argv[argv.index("git") :]
+        if argv[:1] == ["git"]:
+            args = argv[1:]
+            if args and args[0] == "-C":
+                args = args[2:]
+            if args and args[0] == "ls-files":
+                return Completed(1, "", "source inventory unavailable")
+        return fake(argv)
+
+    tid = "44444444-4444-4444-4444-444444444444"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    _seed_pr_task(store, worker, tid, wt, fake, phase="implement")
+    task = store.row("task", tid)
+    assert task is not None
+
+    before = [a for a in store.rows("agent") if a.get("task_id") == tid]
+    with pytest.raises(CoordinatorError, match="inventory"):
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="grok",
+            round_num=1,
+            spec_body="implement body",
+            runner=failing_inventory,
+            lane_runner=refusing_executor,
+        )
+    after = [a for a in store.rows("agent") if a.get("task_id") == tid]
+    assert after == before
+    assert not any(a.get("status") == "working" for a in after)
+    refreshed = store.row("task", tid)
+    assert refreshed is not None
+    c = coord(refreshed)
+    assert c.get("uncertain_lane") is not True
+    assert launched == []

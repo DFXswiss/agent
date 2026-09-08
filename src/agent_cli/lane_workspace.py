@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import uuid
@@ -13,6 +14,7 @@ from .lane_protocol import MAX_FILE_BYTES, ProtocolError, validate_path
 
 _PRIVATE_PARTS = {".git", ".ssh", ".config", ".coordinator-control", ".agent-coordinator"}
 _PRIVATE_FILES = {".env", "ai-accounts.json", "github-accounts.json", "coordinator.json"}
+_RECOVERY_INDEX = "recovery-index.json"
 
 
 def path_key(path: str) -> str:
@@ -58,6 +60,7 @@ class Workspace:
         self.unavailable: list[str] = []
         self.total = 0
         self.max_bytes = max_bytes
+        self.recovery_dir: Path | None = None
         for path in sorted(paths):
             try:
                 source_path(path)
@@ -100,15 +103,135 @@ class Workspace:
                     raise ProtocolError("unsupported source contents")
                 return content.decode("utf-8"), stat.S_IMODE(info.st_mode)
 
+    def _read_at(self, parent_fd: int, name: str) -> tuple[str, int, int]:
+        """Return text, mode, and inode for a regular file opened via dir_fd."""
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_FILE_BYTES:
+                raise ProtocolError("source must be a bounded regular file without hard links")
+            content = stream.read(MAX_FILE_BYTES + 1)
+            if len(content) > MAX_FILE_BYTES or b"\0" in content:
+                raise ProtocolError("unsupported source contents")
+            return content.decode("utf-8"), stat.S_IMODE(info.st_mode), info.st_ino
+
+    def _open_recovery(self) -> tuple[Path, int]:
+        """Create a private same-filesystem recovery directory outside the repository."""
+        root = self.root.resolve()
+        parent = root.parent
+        if root == parent:
+            raise ProtocolError("unsupported source publication root")
+        try:
+            root_stat = os.stat(root, follow_symlinks=False)
+            parent_stat = os.stat(parent, follow_symlinks=False)
+        except OSError as exc:
+            raise ProtocolError("cannot verify source publication device") from exc
+        if root_stat.st_dev != parent_stat.st_dev:
+            raise ProtocolError("unsupported cross-device source publication")
+        recovery = parent / f".agent-source-recovery-{uuid.uuid4().hex}"
+        try:
+            os.mkdir(recovery, mode=0o700)
+        except OSError as exc:
+            raise ProtocolError("cannot create private recovery directory") from exc
+        recovery_fd = os.open(recovery, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            recovery_stat = os.fstat(recovery_fd)
+            if recovery_stat.st_dev != root_stat.st_dev:
+                raise ProtocolError("unsupported cross-device source publication")
+        except Exception:
+            os.close(recovery_fd)
+            raise
+        self.recovery_dir = recovery
+        return recovery, recovery_fd
+
+    def _write_recovery_index(
+        self,
+        recovery_fd: int,
+        entries: list[dict[str, object]],
+    ) -> None:
+        """Persist operator-only capture mapping before any source mutation."""
+        payload = {
+            "source_root": str(self.root.resolve()),
+            "entries": entries,
+        }
+        raw = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        fd = os.open(
+            _RECOVERY_INDEX,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=recovery_fd,
+        )
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except Exception:
+            try:
+                os.unlink(_RECOVERY_INDEX, dir_fd=recovery_fd)
+            except OSError:
+                pass
+            raise
+        dir_fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=recovery_fd)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def _restore_captured(self, parent_fd: int, name: str, recovery_fd: int, recovery_name: str) -> bool:
+        """No-clobber restore of a captured original. Returns True when linked back."""
+        try:
+            os.link(recovery_name, name, src_dir_fd=recovery_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            return False
+
+    def _publish_new(self, parent_fd: int, name: str, content: str, mode: int) -> None:
+        """Write an exclusive temp file, fsync it, then no-clobber link into place."""
+        temporary = ".agent-text-" + uuid.uuid4().hex
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            mode,
+            dir_fd=parent_fd,
+        )
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content.encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+            except FileExistsError as exc:
+                raise ProtocolError("publication conflict; destination exists") from exc
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+
     def apply(self, changes: dict[str, str | None]) -> None:
         """Check every touched path before applying; never execute the proposal.
 
-        Individual writes are atomic. The coordinator owns the worktree lock
-        and treats an interrupted multi-file application as uncertain.
+        Publication is race-resistant and data-preserving, not filesystem CAS or a
+        multi-file transaction. Existing targets are renamed into a private
+        same-filesystem recovery directory outside the repository, validated,
+        then replacements are published with no-clobber link. Captured originals
+        remain in recovery even on success so late writers through open
+        descriptors are retained rather than destroyed. Paths may be briefly
+        absent during capture; noncooperating writers can still yield an
+        uncertain outcome. The root/recovery device preflight only compares the
+        source root and recovery parent; nested mount mismatches surface later as
+        retained recovery/uncertainty rather than a portable all-files guarantee.
         """
+        if not changes:
+            return
         folded = {path_key(p): p for p in self.files}
-        # Reject file/directory conversions too: application is deliberately
-        # per-file atomic, so no proposal may depend on intermediate ordering.
+        # Reject file/directory conversions too: no-clobber publication of each
+        # replacement is atomic, but capture makes an existing path briefly
+        # absent, so no proposal may depend on intermediate ordering.
         all_paths = {path_key(p) for p in [*self.files, *self.unavailable, *changes]}
         for path in all_paths:
             parts = path.split("/")
@@ -131,22 +254,85 @@ class Workspace:
                 raise ProtocolError("worktree changed since the model snapshot")
             if content is None and current is None:
                 raise ProtocolError("cannot delete absent source")
+
+        planned: list[tuple[str, str | None, str | None, int]] = []
+        index_entries: list[dict[str, object]] = []
         for path, content in sorted(changes.items()):
-            with self._parent(path, create=content is not None) as (parent, name):
-                if content is None:
-                    os.unlink(name, dir_fd=parent)
-                    continue
-                temporary = ".agent-text-" + uuid.uuid4().hex
-                fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                             self.modes.get(path, 0o644), dir_fd=parent)
-                try:
-                    with os.fdopen(fd, "wb") as stream:
-                        stream.write(content.encode("utf-8"))
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
-                finally:
-                    try:
-                        os.unlink(temporary, dir_fd=parent)
-                    except FileNotFoundError:
-                        pass
+            expected_text = self.files.get(path)
+            expected_mode = self.modes.get(path, 0o644)
+            if expected_text is not None or content is None:
+                recovery_name = uuid.uuid4().hex
+                action = "delete" if content is None else "replace"
+                planned.append((path, content, recovery_name, expected_mode))
+                index_entries.append(
+                    {
+                        "path": path,
+                        "action": action,
+                        "mode": expected_mode,
+                        "basename": recovery_name,
+                    }
+                )
+            else:
+                planned.append((path, content, None, 0o644))
+
+        recovery, recovery_fd = self._open_recovery()
+        try:
+            self._write_recovery_index(recovery_fd, index_entries)
+            for path, content, recovery_name, expected_mode in planned:
+                expected_text = self.files.get(path)
+                with self._parent(path, create=content is not None) as (parent, name):
+                    if recovery_name is not None:
+                        # Existing snapshot path or explicit delete: capture first.
+                        try:
+                            os.rename(name, recovery_name, src_dir_fd=parent, dst_dir_fd=recovery_fd)
+                        except FileNotFoundError as exc:
+                            raise ProtocolError(
+                                f"source disappeared before capture for {path}"
+                            ) from exc
+                        try:
+                            captured_text, captured_mode, _ino = self._read_at(recovery_fd, recovery_name)
+                        except (ProtocolError, OSError, UnicodeError) as exc:
+                            self._restore_captured(parent, name, recovery_fd, recovery_name)
+                            raise ProtocolError(
+                                f"captured source unreadable for {path}; "
+                                f"original retained as {recovery_name}"
+                            ) from exc
+                        if captured_text != expected_text or captured_mode != expected_mode:
+                            restored = self._restore_captured(parent, name, recovery_fd, recovery_name)
+                            detail = "restored" if restored else "left in recovery beside concurrent destination"
+                            raise ProtocolError(
+                                f"worktree changed since the model snapshot for {path}; "
+                                f"captured original {detail} as {recovery_name}"
+                            )
+                        if content is None:
+                            # Deletion retains the captured original in recovery.
+                            # Do not unlink a concurrent recreation of the destination.
+                            try:
+                                os.lstat(name, dir_fd=parent)
+                            except FileNotFoundError:
+                                continue
+                            raise ProtocolError(
+                                f"publication conflict for {path}; "
+                                f"original preserved beside concurrent destination "
+                                f"as {recovery_name}"
+                            )
+                        try:
+                            self._publish_new(parent, name, content, expected_mode)
+                        except (ProtocolError, OSError) as exc:
+                            restored = self._restore_captured(parent, name, recovery_fd, recovery_name)
+                            detail = "restored" if restored else "preserved beside concurrent destination"
+                            raise ProtocolError(
+                                f"publication conflict for {path}; "
+                                f"original {detail} as {recovery_name}"
+                            ) from exc
+                    else:
+                        # New file relative to the snapshot: no-clobber publish only.
+                        try:
+                            self._publish_new(parent, name, content, 0o644)
+                        except ProtocolError as exc:
+                            raise ProtocolError(
+                                f"publication conflict for {path}; "
+                                f"refusing to overwrite concurrent destination"
+                            ) from exc
+        finally:
+            os.close(recovery_fd)

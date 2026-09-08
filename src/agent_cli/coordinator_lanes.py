@@ -153,6 +153,12 @@ def launch_lane(
     write_spec(spec_path, role, spec_body)
     spec_text = spec_path.read_text(encoding="utf-8")
 
+    # Resolve inventory before any ledger side effects so a failed static
+    # inventory creates neither a working agent nor an uncertain_lane marker.
+    inventory = git(store, worker, runner, worktree, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    require_git_ok(inventory, "source inventory")
+    manifest = [p for p in inventory.stdout.split("\0") if p]
+
     aid = str(uuid.uuid4())
     store.write(
         "agent",
@@ -176,11 +182,9 @@ def launch_lane(
 
     from .lane_executor import execute
     try:
-        inventory = git(store, worker, runner, worktree, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-        require_git_ok(inventory, "source inventory")
         executor = lane_runner if lane_runner is not None else execute
         completed = executor(selected, cwd=worktree,
-                             manifest=[p for p in inventory.stdout.split("\0") if p],
+                             manifest=manifest,
                              spec=spec_text, timeout=worker.lane_timeout)
     except Exception as exc:
         agent = store.row("agent", aid)

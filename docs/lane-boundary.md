@@ -98,10 +98,38 @@ paths, known control/credential paths, links, binary source and ambiguous path
 collisions. These exclusions do not detect every possible secret in ordinary
 repository text; the selected repository remains the authorized source scope.
 
-Touched files are checked against the snapshot before application. Individual
-writes are atomic; a multi-file proposal is not a filesystem transaction.
-The coordinator owns the worktree and treats interrupted application as
-uncertain. Source code and model output never become executable commands.
+Touched files are checked against the snapshot before application. Before any
+capture, the script writes and fsyncs a private recovery index
+(`recovery-index.json`) that maps each source-relative path and action
+(replace/delete) plus snapshot mode to the captured basename, and records the
+source root for operator-only recovery. That index is local operator data: it
+is never model source and is never published into prompts or messages.
+Existing targets are then renamed into a private same-filesystem recovery
+directory outside the repository (mode `0700`), re-validated against the
+snapshot, and replacements or new files are published with atomic no-clobber
+link of a fully written and fsynced exclusive temporary file. Captured
+originals remain in recovery even after successful publication or deletion so
+late writers through existing open descriptors are retained rather than
+destroyed; originals are never erased automatically. No-clobber publication of
+each replacement is atomic, but capture makes an existing path briefly absent,
+so proposals must not depend on intermediate ordering. This is not filesystem
+compare-and-swap, not portable CAS, not arbitrary-writer exclusion, and not a
+multi-file transaction: paths may be briefly absent during capture;
+noncooperating live writers may still produce an uncertain outcome, but
+displaced originals are kept for operator recovery instead of being destroyed.
+On captured mismatch, publish conflict, or publication I/O failure the original
+is restored with no-clobber link only when the destination path is absent;
+otherwise both the concurrent destination and the recovery original are
+preserved and a `ProtocolError` reports the recovery basename without leaking
+private absolute host paths. Concurrent destinations are never blindly
+unlinked during cleanup or rollback. The root/recovery device preflight only
+compares the source root and recovery parent (and refuses a filesystem root);
+nested mount mismatches among touched targets can still surface later as
+retained recovery or uncertainty rather than an all-files device guarantee.
+Recovery storage is an explicit tradeoff and is kept outside Git-controlled
+paths so it does not clutter the tracked worktree. The coordinator owns the
+worktree and treats interrupted application as uncertain. Source code and
+model output never become executable commands.
 
 ## Migration and verification
 
