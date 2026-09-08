@@ -84,7 +84,6 @@ __all__ = [
     "CoordinatorError",
     "advance_one",
     "discover_assignments",
-    "harden_grok_write_argv",
     "parse_model_result",
     "preflight_worker",
     "redact",
