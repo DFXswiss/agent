@@ -63,7 +63,7 @@ def _runs(api: Any, repo: str, head: str, *, event: str | None = "pull_request")
     raise GuardError("workflow run pagination bound exceeded")
 
 
-def _matches(run: Mapping[str, Any], pull: Mapping[str, Any], paths: list[str]) -> bool:
+def _on_this_pull(run: Mapping[str, Any], pull: Mapping[str, Any]) -> bool:
     head, base = pull["head"], pull["base"]
     return (
         run.get("event") == "pull_request"
@@ -73,8 +73,11 @@ def _matches(run: Mapping[str, Any], pull: Mapping[str, Any], paths: list[str]) 
         and run["repository"].get("full_name") == base["repo"]["full_name"]
         and isinstance(run.get("head_repository"), Mapping)
         and run["head_repository"].get("full_name") == head["repo"]["full_name"]
-        and run.get("path") in paths
     )
+
+
+def _matches(run: Mapping[str, Any], pull: Mapping[str, Any], paths: list[str]) -> bool:
+    return _on_this_pull(run, pull) and run.get("path") in paths
 
 
 def _latest(runs: list[Mapping[str, Any]], pull: Mapping[str, Any], paths: list[str]) -> dict[str, Mapping[str, Any]]:
@@ -94,6 +97,31 @@ def _pending(run: Mapping[str, Any]) -> bool:
     # A later attempt is never auto-approved: this feature does not retry tests.
     return (run.get("status") == "completed" and run.get("conclusion") == "action_required"
             and type(run.get("run_attempt")) is int and run["run_attempt"] == 1)
+
+
+def _stale_held(
+    runs: list[Mapping[str, Any]],
+    pull: Mapping[str, Any],
+    latest: dict[str, Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Held runs on this head that must not stay `action_required`.
+
+    GitHub's PR banner counts every such run, including superseded copies and
+    workflows that are not allowlisted. Cancel those so the banner clears.
+    Never cancel the latest allowlisted candidate (that one is approved).
+    """
+    keep = {run["id"] for run in latest.values() if _pending(run)}
+    stale: list[Mapping[str, Any]] = []
+    seen: set[int] = set()
+    for run in runs:
+        ident = run.get("id")
+        if type(ident) is not int or ident in seen or ident in keep:
+            continue
+        if not _on_this_pull(run, pull) or not _pending(run):
+            continue
+        seen.add(ident)
+        stale.append(run)
+    return stale
 
 
 def _belongs_to_pull(api: Any, run: Mapping[str, Any], pull: Mapping[str, Any]) -> None:
@@ -172,8 +200,45 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         return pull
 
     pull = fresh_pull()
-    candidates = _latest(_runs(api, assessment.repo, assessment.head_sha), pull, paths)
+    inventory = _runs(api, assessment.repo, assessment.head_sha)
+    candidates = _latest(inventory, pull, paths)
     result = []
+    for stale in _stale_held(inventory, pull, candidates):
+        pull = fresh_pull()
+        run = api.get_json(f"/repos/{assessment.repo}/actions/runs/{stale['id']}")
+        if not isinstance(run, Mapping) or run.get("id") != stale["id"] or not _on_this_pull(run, pull):
+            raise GuardError("workflow run identity changed before cancel")
+        if not _pending(run):
+            continue
+        _belongs_to_pull(api, run, pull)
+        if not dry_run:
+            status, _, _ = api.request(
+                "POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/cancel", retry=False
+            )
+            if status not in {202, 409}:
+                raise GuardError(
+                    f"workflow cancel HTTP {status}; Actions write permission is required"
+                )
+            assessment.writes.append(f"workflow:cancel:{run['id']}")
+            if _pending(run) and status == 409:
+                # GitHub refused cancel on a completed hold: approve so it
+                # leaves action_required (may start a duplicate suite).
+                status, _, _ = api.request(
+                    "POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False
+                )
+                if status != 201:
+                    raise GuardError(
+                        f"workflow approval HTTP {status}; Actions write permission is required"
+                    )
+                assessment.writes.append(f"workflow:approve:{run['id']}")
+        result.append(
+            {
+                "run_id": stale["id"],
+                "workflow": stale.get("path"),
+                "head": assessment.head_sha,
+                "status": "planned-cancel" if dry_run else "cancelled",
+            }
+        )
     for path, candidate in sorted(candidates.items()):
         if not _pending(candidate):
             continue

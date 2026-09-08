@@ -26,6 +26,7 @@ class ApprovalAPI(FakeAPI):
         self.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=21)
         self.runs = [self.run()]
         self.posts = []
+        self.cancels = []
         self.actions_gets = []
         self.post_status = 201
         self.before_run_read = None
@@ -55,7 +56,11 @@ class ApprovalAPI(FakeAPI):
             ident = int(path.split("/actions/runs/")[1].split("/")[0])
             run = next(r for r in self.runs if r["id"] == ident)
             if method == "POST":
-                assert path.endswith("/approve"), "no rerun/dispatch/cancel endpoint allowed"
+                if path.endswith("/cancel"):
+                    self.cancels.append(ident)
+                    run.update(status="completed", conclusion="cancelled")
+                    return 202, {}, {}
+                assert path.endswith("/approve"), "no rerun/dispatch endpoint allowed"
                 self.posts.append(ident)
                 if self.post_status == 201:
                     run.update(status="queued", conclusion=None)
@@ -129,6 +134,10 @@ def test_ineligible_runs_are_never_approved(changes):
     fake.runs = [fake.run(**changes)]
     reconcile_pull(fake.api(), REPO, 1)
     assert not fake.posts
+    if changes.get("path") == ".github/workflows/unknown.yml":
+        assert fake.cancels == [101]
+    else:
+        assert not fake.cancels
 
 
 @pytest.mark.parametrize("changes", [{"conclusion": "success"}, {"conclusion": "failure"},
@@ -138,6 +147,7 @@ def test_newer_run_suppresses_old_blocked_run_even_when_not_successful(changes):
     fake.runs.append(fake.run(id=102, created_at="2026-09-05T11:01:00Z", **changes))
     reconcile_pull(fake.api(), REPO, 1)
     assert not fake.posts
+    assert fake.cancels == [101]
 
 
 def test_permission_denial_fails_and_is_not_retried():

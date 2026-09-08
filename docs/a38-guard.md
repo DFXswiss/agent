@@ -111,8 +111,9 @@ This is the intended sequence. Ready for review is **not** a CI switch. Labels s
 3. The author measures A38 on the current head and posts the report.
 4. The **trusted** guard (pinned action, no PR checkout) validates that report.
 5. Only a fresh **enforce pass** on this head may **approve** those waiting **initial** runs, and only for workflow paths listed in the trusted `.github/pr-guard.json`.
-6. Approval means GitHub may start those runs. It is not a green check. The jobs still have to finish.
-7. A human merges. The merger does **not** click **Approve and run workflows**.
+6. Superseded or non-allowlisted `action_required` runs on this head are **cancelled** so GitHub does not keep the yellow “workflows awaiting approval” banner. That is not stopping a running test.
+7. Approval means GitHub may start those runs. It is not a green check. The jobs still have to finish.
+8. A human merges. The merger does **not** click **Approve and run workflows**.
 
 The guard does **not** approve on open, push, label, or Ready alone. Missing, failed, observe-mode, excluded, closed, or same-repository PRs get no approval. Changing the repository's fork-protection setting is not a fallback.
 
@@ -131,11 +132,11 @@ This is an optional top-level object alongside `schema` and `a38`. Omission disa
 
 The bot approves only an **initial** `pull_request` run waiting in `completed` / `action_required`, with `run_attempt: 1`, for an allowlisted workflow on the exact current head, fork repository and branch. A fresh A38 `pass` under `enforce` is required. Failed or incomplete evidence, observe mode, excluded targets, closed PRs and same-repository PRs cannot trigger approval. Existing migration authorization remains required for policy/workflow/config changes.
 
-For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The bot never calls a rerun, dispatch, cancel, merge, review-approval or environment-approval endpoint. Approval authorizes execution; it is not a test result or a Ready verdict.
+For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The bot never calls a rerun, dispatch, merge, review-approval or environment-approval endpoint. It **cancels** superseded or non-allowlisted `action_required` runs on the current head so GitHub does not keep the pull request banner “workflows awaiting approval”. It never cancels an in-progress or queued test. Approval authorizes execution; it is not a test result or a Ready verdict.
 
 The run's PR association must match the current PR/head/base. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, its head must include the current base, and the run must not predate the PR or a later recorded target/lifecycle change. Ambiguous association, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, latest author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
 
-Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes. Assessment JSON includes `workflow_approvals`; completed authorization also records `workflow:approve:<run-id>` in `writes`.
+Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes. Assessment JSON includes `workflow_approvals`; completed authorization also records `workflow:approve:<run-id>` and `workflow:cancel:<run-id>` in `writes`.
 
 The trusted default-branch workflow and config must be installed before this feature is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
 
