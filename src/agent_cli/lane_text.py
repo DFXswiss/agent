@@ -110,6 +110,13 @@ class TextCLI:
                         raise ProtocolError("unexpected Grok configuration surface: " + key)
                 if any(a.get("source", {}).get("type") != "builtin" for a in inspection.get("agents", [])):
                     raise ProtocolError("unexpected external Grok agent definition")
+                # --tools Read is the Grok CLI allow-list alias; the canonical
+                # native tool name is read_file. --disallowed-tools read_file
+                # removes that canonical tool. For the pinned versions above,
+                # native fake-provider probes already show an empty work-tool
+                # inventory and injected read_file yields "Tool not found".
+                # This documents the measured alias/canonical combination, not
+                # a new bypass claim.
                 self.args = [str(self.binary), "--model", self.role.model, "--verbatim",
                              "--tools", "Read", "--disallowed-tools", "read_file,search_tool,use_tool",
                              "--no-subagents", "--disable-web-search", "--no-plan", "--max-turns", "1",

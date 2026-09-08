@@ -50,6 +50,7 @@ def execute(role: AIRole, *, cwd: str, manifest: list[str], spec: str, timeout: 
                "unavailable_files": workspace.unavailable[:100]}
     history = ["TASK DATA:\n" + spec, "SCRIPT: " + json.dumps(initial, ensure_ascii=True)]
     deadline = time.monotonic() + timeout
+    finished = None
     with transport_factory(role, binary=runtime.binary, sha256=runtime.sha256, timeout=timeout) as transport:
         while True:
             if time.monotonic() >= deadline:
@@ -60,12 +61,20 @@ def execute(role: AIRole, *, cwd: str, manifest: list[str], spec: str, timeout: 
                                           + "\nSCRIPT WORK BUDGET: " + json.dumps(budget))
             outcome = view.request(response)
             if isinstance(outcome, Finished):
-                # The script applies only a completed implementation result.
-                # Questions, blockers, partial work and rejected reviews do
-                # not leave hidden edits in the publication worktree.
-                from .coordinator_common import parse_model_result
-                status, result = parse_model_result(outcome.text, 0)
-                if view.write and status == "complete" and result == "done":
-                    workspace.apply(view.changes())
-                return Completed(0, outcome.text, "")
+                # Retain the finish outcome and leave the transport context
+                # before applying source or returning Completed. Teardown may
+                # fail while persisting refreshed auth or cleaning temporary
+                # data; those failures must propagate and fail closed without
+                # applying edits or treating the lane as approved.
+                finished = outcome
+                break
             history += ["MODEL: " + response, "SCRIPT: " + json.dumps(outcome, ensure_ascii=True)]
+    # The script applies only a completed implementation result, and only
+    # after transport context exit succeeded. Questions, blockers, partial
+    # work and rejected reviews do not leave hidden edits in the publication
+    # worktree.
+    from .coordinator_common import parse_model_result
+    status, result = parse_model_result(finished.text, 0)
+    if view.write and status == "complete" and result == "done":
+        workspace.apply(view.changes())
+    return Completed(0, finished.text, "")

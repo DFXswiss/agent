@@ -17,6 +17,9 @@ class Transport:
     responses = []
     prompts = []
     started = 0
+    events = []
+    exit_error = None
+    observe_path = None
 
     def __init__(self, selected, **kwargs):
         type(self).started += 1
@@ -24,12 +27,19 @@ class Transport:
         assert kwargs["binary"] == "/explicit/native/cli"
 
     def __enter__(self):
+        type(self).events.append("enter")
         return self
 
     def __exit__(self, *_):
-        pass
+        type(self).events.append("exit")
+        if type(self).observe_path is not None:
+            type(self).events.append(
+                ("content_during_exit", type(self).observe_path.read_text()))
+        if type(self).exit_error is not None:
+            raise type(self).exit_error
 
     def complete(self, prompt):
+        type(self).events.append("complete")
         self.prompts.append(prompt)
         return self.responses.pop(0)
 
@@ -39,6 +49,9 @@ def fresh_transport():
     Transport.responses = []
     Transport.prompts = []
     Transport.started = 0
+    Transport.events = []
+    Transport.exit_error = None
+    Transport.observe_path = None
 
 
 def run(tmp_path, selected=None):
@@ -99,3 +112,48 @@ def test_unconfigured_runtime_starts_no_transport(tmp_path):
     with pytest.raises(ProtocolError, match="unconfigured"):
         run(tmp_path, role(configured=False))
     assert Transport.started == 0
+
+
+def test_teardown_failure_after_complete_done_leaves_source_unchanged(tmp_path):
+    target = tmp_path / "file.py"
+    target.write_text("old")
+    Transport.observe_path = target
+    Transport.exit_error = RuntimeError("auth persist failed")
+    Transport.responses = [json.dumps(r) for r in (
+        {"action": "write", "path": "file.py", "expected_sha256": digest("old"), "content": "new"},
+        {"action": "finish", "text": "STATUS: complete\nRESULT: done\n"},
+    )]
+    with pytest.raises(RuntimeError, match="auth persist failed"):
+        run(tmp_path)
+    assert target.read_text() == "old"
+    assert ("content_during_exit", "old") in Transport.events
+    assert Transport.events[:3] == ["enter", "complete", "complete"]
+    assert "exit" in Transport.events
+
+
+def test_successful_teardown_applies_only_after_exit(tmp_path):
+    target = tmp_path / "file.py"
+    target.write_text("old")
+    Transport.observe_path = target
+    Transport.responses = [json.dumps(r) for r in (
+        {"action": "write", "path": "file.py", "expected_sha256": digest("old"), "content": "new"},
+        {"action": "finish", "text": "STATUS: complete\nRESULT: done\n"},
+    )]
+    result = run(tmp_path)
+    assert result.returncode == 0 and "RESULT: done" in result.stdout
+    assert target.read_text() == "new"
+    assert Transport.events == [
+        "enter", "complete", "complete", "exit", ("content_during_exit", "old"),
+    ]
+
+
+def test_readonly_finish_unavailable_when_teardown_fails(tmp_path):
+    (tmp_path / "file.py").write_text("old")
+    Transport.exit_error = RuntimeError("temp cleanup failed")
+    Transport.responses = [json.dumps(
+        {"action": "finish", "text": "STATUS: complete\nVERDICT: approved\n"},
+    )]
+    with pytest.raises(RuntimeError, match="temp cleanup failed"):
+        run(tmp_path, role(write=False))
+    assert (tmp_path / "file.py").read_text() == "old"
+    assert Transport.events == ["enter", "complete", "exit"]

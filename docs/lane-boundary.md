@@ -58,17 +58,30 @@ project configuration are not copied from the original profile. The Python
 process bridge also uses isolated startup and the minimal environment.
 
 Grok disables subagents/web and removes its native work tools using the
-adapter's explicit tool settings. `--verbatim` preserves long task input as
-text. The complete Grok work input is a JSON-encoded string with the file
-mention delimiter escaped: raw `@/path` otherwise causes the CLI itself to
-read host files before model execution. The model decodes source data; the
-CLI receives no raw mention delimiter. Codex disables its discovered feature switches and uses a read-only
-sandbox with approval policy `never`. This is not a claim that every native
-handler is absent: adversarial probes exercise recognized Codex patch calls
-that are rejected by the read-only sandbox, and code execution calls whose
-code-mode host is disabled. The selected executable, its installed runtime
-and the host are trusted; this is not an OS isolation guarantee against a
-malicious CLI binary. Native provider metadata requests can still occur.
+adapter's explicit tool settings. For the pinned Grok versions above,
+`--tools Read` is the CLI allow-list alias while the canonical native tool
+name is `read_file`; `--disallowed-tools read_file` removes that canonical
+tool. Measured native fake-provider probes already show an empty work-tool
+inventory and injected `read_file` yields `Tool not found`, alongside
+positive execution controls. This documents the measured alias/canonical
+combination for those pins, not a new bypass claim. `--verbatim` preserves
+long task input as text. The complete Grok work input is a JSON-encoded
+string with the file mention delimiter escaped: raw `@/path` otherwise
+causes the CLI itself to read host files before model execution. The model
+decodes source data; the CLI receives no raw mention delimiter. Codex
+disables its discovered feature switches and uses a read-only sandbox with
+approval policy `never`. This is not a claim that every native handler is
+absent: adversarial probes exercise recognized Codex patch calls that are
+rejected by the read-only sandbox, and code execution calls whose code-mode
+host is disabled. The selected executable, its installed runtime and the
+host are trusted; this is not an OS isolation guarantee against a malicious
+CLI binary. Native provider metadata requests can still occur.
+
+Source application and `Completed` return happen only after the transport
+context exits successfully. If `__exit__` fails while persisting refreshed
+auth or cleaning temporary data, that failure propagates and the lane fails
+closed without applying proposed edits. Readonly finish outcomes are also
+unavailable on teardown failure; they are never treated as false approval.
 
 Task text reaches the model directly as `TASK DATA` text, not nested inside
 metadata JSON. TextCLI still JSON-encodes the entire Grok prompt and escapes
