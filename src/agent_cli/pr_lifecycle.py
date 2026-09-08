@@ -193,6 +193,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     from .a38_guard import GuardError, assess_pull, fetch_pull, resolve_trusted_guard_config
     if assessment.closed or not assessment.lifecycle_enabled:
         return {}
+    if assessment.scope_decision == "exclude":
+        return {}
     snap = fetch_pull(api, assessment.repo, assessment.pr)
     trusted = resolve_trusted_guard_config(api, snap)
     config = (trusted.config or {}).get("lifecycle")

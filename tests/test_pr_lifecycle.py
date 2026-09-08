@@ -88,15 +88,30 @@ def test_missing_ci_is_not_vacuously_green():
     assert result.lifecycle["reasons"] == [f"Missing required CI: {PATH}"]
 
 
-def test_conflict_demotes_even_with_all_ci_green_and_a38_excluded():
+def test_excluded_scope_skips_lifecycle_even_with_conflicts():
     fake = LifecycleAPI()
     fake.pull["mergeable"] = False
     fake.config["a38"]["default"] = "exclude"
     fake.set_pr_guard_config(fake.config)
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.status == "not_applicable"
-    assert fake.transitions == [True]
-    assert result.lifecycle["reasons"] == ["Merge conflicts"]
+    assert result.scope_decision == "exclude"
+    assert fake.transitions == []
+    assert result.lifecycle == {}
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+
+
+def test_excluded_target_with_in_progress_required_ci_skips_lifecycle():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    fake.config["a38"]["default"] = "exclude"
+    fake.set_pr_guard_config(fake.config)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.status == "not_applicable"
+    assert result.scope_decision == "exclude"
+    assert fake.transitions == []
+    assert result.lifecycle == {}
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
 
 
 def test_unknown_mergeability_never_promotes_or_invents_conflicts():

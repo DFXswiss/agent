@@ -175,15 +175,17 @@ listed check must actually finish successfully in its latest check suite.
 Use this for workflows whose setup job can succeed while the test jobs skip;
 an overall workflow success must not hide a missing or skipped required test.
 
-For **every open Ready PR**, confirmed merge conflicts or CI that is missing,
-queued, waiting, running, blocked, cancelled or failed cause a Draft transition.
-This applies even when the target is excluded from A38. Missing required
-workflows are not an empty green result. Only completed, successful required
-workflows satisfy CI. Optional workflows that intentionally skip are not counted
-as successful required tests. Pending or failed independent check runs and commit
-statuses also block Ready. The newest workflow run supersedes historical results;
-both workflow inventories and checks are inspected, including approval-blocked
-runs absent from GitHub's rollup.
+For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
+conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
+or failed cause a Draft transition. Lifecycle Draft/Ready writes run only on
+A38-enforced targets; excluded bases (for example a develop→main release PR)
+are left untouched. Missing required workflows are not an empty green result.
+Only completed, successful required workflows satisfy CI. Optional workflows
+that intentionally skip are not counted as successful required tests. Pending
+or failed independent check runs and commit statuses also block Ready. The
+newest workflow run supersedes historical results; both workflow inventories
+and checks are inspected, including approval-blocked runs absent from GitHub's
+rollup.
 
 Ignore only repository control workflows that are not product CI, particularly
 the guard itself: otherwise its in-progress check would always prevent Ready.
