@@ -18,7 +18,6 @@ from agent_cli.coordinator_git import verify_signed_clean_head
 from agent_cli.coordinator_runtime import (
     REQUIRED_LANE_SLOTS,
     CoordinatorError,
-    harden_grok_write_argv,
     parse_model_result,
     preflight_worker,
     review_is_approved,
@@ -130,14 +129,6 @@ def patch_run_bounded(monkeypatch: Any, fake: FakeGh) -> None:
 
     monkeypatch.setattr("agent_cli.coordinator_runtime.run_bounded", fake_bounded)
     monkeypatch.setattr("agent_cli.coordinator_github.run_bounded", fake_bounded)
-
-
-def test_harden_grok_write_adds_denies() -> None:
-    argv = ["env", "-u", "X", "grok", "--permission-mode", "acceptEdits", "--allow", "Write"]
-    out = harden_grok_write_argv(argv)
-    assert "--deny" in out and "Bash" in out
-    assert "--no-subagents" in out
-    assert "--disable-web-search" in out
 
 
 def test_invalid_review_never_approved() -> None:

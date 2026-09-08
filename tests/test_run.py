@@ -58,6 +58,8 @@ def write_operator_ai_accounts(home: Path, *, sessions: dict | None = None) -> N
             },
         },
     }
+    for account in data["accounts"].values():
+        account["lane_runtime"] = {"binary": "/explicit/native", "sha256": "0" * 64}
     (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -354,7 +356,7 @@ def test_run_prints_vendor_stdout(
             status="complete",
             argv=["grok"],
             returncode=0,
-            stdout="implemented the thing, distinctive-marker-run456\nSTATUS: complete\n",
+            stdout="implemented the thing, distinctive-marker-run456\nSTATUS: complete\nRESULT: done\n",
             stderr="",
         )
 
@@ -400,7 +402,7 @@ def test_run_spec_file_implementer_complete(
             status="complete",
             argv=["grok"],
             returncode=0,
-            stdout="STATUS: complete\n",
+            stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
         )
 
@@ -427,6 +429,35 @@ def test_run_spec_file_implementer_complete(
     assert seen.get("session_id") == "sess-1"
     assert seen.get("config_home") == tmp_path
     assert seen.get("spec_file") == str(spec)
+
+
+@pytest.mark.parametrize("result", ["", "RESULT: blocked\n", "RESULT: ask\n", "RESULT: no-change\n"])
+def test_run_incomplete_implementation_never_closes_done(tmp_path, capsys, monkeypatch, result):
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("work")
+    monkeypatch.setattr("agent_cli.main.launch", lambda **kw: LaneResult(
+        "implementer", "grok", "complete", [], 0, "STATUS: complete\n" + result, ""))
+    with pytest.raises(SystemExit):
+        run(tmp_path, ["run", "--task", tid, "--spec-file", str(spec), "--cwd", str(tmp_path)])
+    assert _checklist(tmp_path, tid)["implementer_done"] != "ja"
+    assert not any(a.get("role") == "implementer" and a.get("status") == "done" for a in _agents(tmp_path, tid))
+
+
+def test_run_unconfigured_runtime_leaves_no_working_agent(tmp_path, capsys):
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    config = json.loads(path.read_text())
+    for account in config["accounts"].values():
+        account.pop("lane_runtime")
+    path.write_text(json.dumps(config))
+    spec = tmp_path / "spec.md"
+    spec.write_text("work")
+    with pytest.raises(SystemExit):
+        run(tmp_path, ["run", "--task", tid, "--spec-file", str(spec), "--cwd", str(tmp_path)])
+    assert _agents(tmp_path, tid) == []
 
 
 def test_run_missing_spec_file_does_not_leave_working_agent(

@@ -32,7 +32,6 @@ from .coordinator_common import (
     coord,
     coordinator_env,
     gh_list,
-    harden_grok_write_argv,
     owned_session,
     parse_model_result,
     redact,
@@ -85,7 +84,6 @@ __all__ = [
     "CoordinatorError",
     "advance_one",
     "discover_assignments",
-    "harden_grok_write_argv",
     "parse_model_result",
     "preflight_worker",
     "redact",
@@ -124,6 +122,8 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         for slot in REQUIRED_LANE_SLOTS:
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(worker.session_id, role, vendor)
+            if selected.account.lane_runtime is None:
+                raise CoordinatorError(f"{slot} requires an explicitly configured lane_runtime")
             if slot == "grok:implementer" and selected.access != "workspace-write":
                 raise CoordinatorError("implementer lane requires workspace-write access")
             if role != "implementer" and selected.access != "read-only":
@@ -920,12 +920,13 @@ def phase_inner_review(
     if head and c.get("base_sha"):
         try:
             diff_path = write_review_diff(store, worker, task, runner, head=head)
-            excerpt_path = diff_path.with_suffix(".excerpt.txt")
-            excerpt = excerpt_path.read_text(encoding="utf-8")
+            # Complete static diff as prompt data for default and injected executors.
+            # Host artifact paths remain script-only evidence; do not instruct the model.
+            diff_text = diff_path.read_text(encoding="utf-8")
             diff_note = (
-                f"Script-generated diff artifact: {diff_path}\n"
                 f"Read CONTRIBUTING.md and attached skills first.\n"
-                f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
+                f"Script-generated complete base→head diff follows; do not run Git.\n"
+                f"---- complete diff ----\n{diff_text}\n---- end diff ----\n"
             )
         except (CoordinatorError, OSError) as exc:
             return publish_blocker(

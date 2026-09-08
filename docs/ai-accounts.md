@@ -18,7 +18,11 @@ The following is an **operator-supplied example**, never an installed default:
   "accounts": {
     "provider-profile": {
       "provider": "grok",
-      "config_dir": "/operator/path"
+      "config_dir": "/operator/path",
+      "lane_runtime": {
+        "binary": "/operator/path/to/grok-1.0.13",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
     }
   },
   "roles": {
@@ -39,6 +43,13 @@ The following is an **operator-supplied example**, never an installed default:
 }
 ```
 
+The `lane_runtime.binary` and `lane_runtime.sha256` values above are placeholders only,
+never a verified binary or hash and never installed defaults. Before lane execution,
+the operator must select a supported actual native binary and replace the digest with
+the actual SHA256 measured by the static script. Accounts may leave `lane_runtime`
+null/unconfigured for interactive-only use; lane execution still requires a configured
+runtime.
+
 Add as many named accounts, roles, and session bindings as needed. No fixed
 account list, role list, or count is built in. Configurable role names are
 chosen by the operator; they are distinct from the fixed workflow kinds
@@ -54,6 +65,12 @@ Each account requires:
 - `provider`: `grok` or `codex`
 - `config_dir`: absolute path to that profile's provider CLI configuration
   directory (no NUL, newline, CR, or parent traversal)
+
+`lane_runtime` is optional/null for stored accounts, but mandatory for lane
+execution: an absolute native `binary` path and its lowercase `sha256` digest.
+See [bounded model lanes](lane-boundary.md) for supported adapters, selected
+login-file handling, migration and verification limits. Installation supplies
+no runtime selection.
 
 Each role requires:
 
@@ -82,7 +99,7 @@ account or role references are rejected. Credentials and API tokens must not
 appear in this manifest; they belong only inside each `config_dir`. Error text
 from the loader does not echo credential contents.
 
-## Process isolation prefix
+## Interactive process isolation prefix
 
 `AIRole.env_prefix()` returns an `env` argv prefix for child processes. It
 removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`,
@@ -92,6 +109,9 @@ removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`
 variables are left for the child to inherit. This is process configuration
 isolation, not a sandbox and not a claim that the provider CLI is already
 authenticated for that profile.
+
+Bounded lanes use their separate minimal environment and isolated temporary
+profile instead of this interactive prefix; see [lane-boundary.md](lane-boundary.md).
 
 ## Interactive selection
 
@@ -111,11 +131,15 @@ vendor/role lists and built-in model choices in code. After adopting
 `ai-accounts.json`:
 
 1. Create one account entry per provider CLI profile directory you intend to use.
-2. Define roles with explicit `account`, `model`, and `access` (no omitted
+2. For accounts used by lanes, select a supported native binary and its SHA256
+   digest for `lane_runtime` (see [lane-boundary.md](lane-boundary.md) for
+   supported adapter limitations). Interactive-only accounts may leave
+   `lane_runtime` null/unconfigured.
+3. Define roles with explicit `account`, `model`, and `access` (no omitted
    fields).
-3. Bind each session that should run lanes or an interactive runner: set
+4. Bind each session that should run lanes or an interactive runner: set
    `lanes` keys such as `grok:implementer` and, when needed, `interactive`.
-4. Existing sessions are unconfigured until those bindings are added. An empty
+5. Existing sessions are unconfigured until those bindings are added. An empty
    or missing file does not authorize a fallback identity.
 
 Configure sessions explicitly before enabling launch paths after upgrading.

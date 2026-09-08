@@ -45,8 +45,8 @@ def write_accounts(home: Path) -> None:
         json.dumps(
             {
                 "accounts": {
-                    "grok-w": {"provider": "grok", "config_dir": "/test/grok"},
-                    "codex-w": {"provider": "codex", "config_dir": "/test/codex"},
+                    "grok-w": {"provider": "grok", "config_dir": "/test/grok", "lane_runtime": {"binary": "/test/native-grok", "sha256": "0" * 64}},
+                    "codex-w": {"provider": "codex", "config_dir": "/test/codex", "lane_runtime": {"binary": "/test/native-codex", "sha256": "1" * 64}},
                 },
                 "roles": {
                     "impl": {
@@ -402,6 +402,8 @@ class FakeGh:
         if not args:
             return Completed(1, "", "empty git")
         cmd = args[0]
+        if cmd == "ls-files":
+            return Completed(0, "", "")
         if cmd == "clone":
             dest = Path(args[-1])
             dest.mkdir(parents=True, exist_ok=True)
@@ -513,9 +515,11 @@ def patch_account_runners(monkeypatch: Any, fake: FakeGh) -> None:
 
 
 def lane_runner(fake: FakeGh):
-    def run(argv: list[str], stdin: str | None = None) -> Completed:
+    def run(selected, *, cwd, manifest, spec, timeout) -> Completed:
         role = "implementer"
-        joined = " ".join(argv) + "\n" + (stdin or "")
+        joined = spec
+        assert selected.account.lane_runtime is not None and timeout > 0
+        assert isinstance(manifest, list) and cwd
         for name in ("pr-reviewer-quality", "pr-reviewer-logic", "reviewer", "implementer"):
             if name in joined:
                 role = name
@@ -528,10 +532,7 @@ def lane_runner(fake: FakeGh):
                 fake.parallel_launch_seen = {"pr-reviewer-quality", "pr-reviewer-logic"} <= fake._inflight_roles
         fake.launched.append(role)
         if role == "implementer":
-            assert "--deny" in argv and "Bash" in argv
-            assert "--no-subagents" in argv
-            assert "--disable-web-search" in argv
-            assert "timeout" not in argv
+            assert selected.access == "workspace-write"
         out = fake.model_outputs.get(role, "STATUS: partial\n")
         if role.startswith("pr-reviewer"):
             fake._lane_barrier.wait(timeout=3)

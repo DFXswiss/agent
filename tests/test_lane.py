@@ -11,18 +11,96 @@ import pytest
 
 from agent_cli.ai_accounts import AccountError
 from agent_cli.lane import (
-    GROK_STRIP_ENV,
     LaneResult,
-    _run_in_tmux,
-    codex_argv,
-    grok_argv,
     launch,
     parse_status,
-    tmux_wrap_argv,
 )
 from agent_cli.main import _sanitize_lane_output, main
+from agent_cli.lane_protocol import ProtocolError
 
 pytestmark = pytest.mark.no_pg
+
+
+@pytest.mark.parametrize("final,expected", [
+    ("STATUS: complete\nRESULT: done", "complete"),
+    ("STATUS: complete\nRESULT: blocked", "partial"),
+    ("STATUS: complete\nRESULT: ask", "partial"),
+    ("STATUS: complete", "partial"),
+])
+def test_bounded_launch_requires_actual_done_and_needs_no_github(tmp_path, monkeypatch, final, expected):
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "task.md"
+    spec.write_text("bounded task")
+    monkeypatch.setattr("agent_cli.lane_workspace.local_manifest", lambda cwd: ["a.py"])
+    seen = []
+    def executor(selected, **kwargs):
+        seen.append((selected, kwargs))
+        return CompletedProcess([], 0, final, "")
+    monkeypatch.setattr("agent_cli.lane_executor.execute", executor)
+    result = launch(role="implementer", vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
+                    config_home=tmp_path, session_id=DEFAULT_SESSION)
+    assert result.status == expected and result.stdout == final
+    assert result.argv == [] and result.tmux_session is None
+    assert seen[0][1]["manifest"] == ["a.py"]
+    assert seen[0][0].account.name == "grok-a"
+
+
+def test_legacy_runner_cannot_receive_unrestricted_native_command(tmp_path):
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "task.md"
+    spec.write_text("task")
+    calls = []
+    with pytest.raises(ProtocolError, match="legacy"):
+        launch(role="implementer", vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
+               config_home=tmp_path, session_id=DEFAULT_SESSION, runner=lambda *a: calls.append(a))
+    assert calls == []
+
+
+@pytest.mark.parametrize("role", [
+    "reviewer", "pr-reviewer-quality", "pr-reviewer-logic",
+])
+@pytest.mark.parametrize("verdict,expected", [
+    ("VERDICT: approved", "complete"), ("VERDICT: rejected", "complete"),
+    ("RESULT: approved", "partial"), ("RESULT: rejected", "partial"),
+    ("RESULT: done", "partial"),
+    ("VERDICT: approved\nVERDICT: rejected", "partial"),
+    ("VERDICT: approve", "partial"),
+    ("VERDICT: approved\nRESULT: rejected", "partial"), ("", "partial"),
+    ("VERDICT: approved\nRESULT: done", "partial"),
+    ("RESULT: approved\nVERDICT: approved", "partial"),
+])
+def test_generic_review_lane_preserves_its_verdict_contract(
+    tmp_path, monkeypatch, role, verdict, expected,
+):
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "task.md"
+    spec.write_text("Review and return STATUS and VERDICT.")
+    monkeypatch.setattr("agent_cli.lane_workspace.local_manifest", lambda cwd: [])
+    def executor(selected, **kwargs):
+        assert selected.access == "read-only"
+        return CompletedProcess([], 0, "STATUS: complete\n" + verdict, "")
+    monkeypatch.setattr("agent_cli.lane_executor.execute", executor)
+    result = launch(role=role, vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
+                    config_home=tmp_path, session_id=DEFAULT_SESSION)
+    assert result.status == expected
+    assert result.stdout == "STATUS: complete\n" + verdict
+
+
+def test_dry_run_selects_explicit_session_without_starting_transport(tmp_path, monkeypatch):
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "task.md"
+    spec.write_text("task")
+    def fail(*a, **kw):
+        raise AssertionError("dry run started work")
+    monkeypatch.setattr("agent_cli.lane_executor.execute", fail)
+    monkeypatch.setattr("agent_cli.lane_workspace.local_manifest", fail)
+    for session, account, model in [(DEFAULT_SESSION, "grok-a", OPERATOR_GROK_MODEL),
+                                    (ALT_SESSION, "grok-b", OPERATOR_GROK_MODEL_B)]:
+        result = launch(role="implementer", vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
+                        config_home=tmp_path, session_id=session, dry_run=True)
+        plan = json.loads(result.stdout)
+        assert plan["account"] == account and plan["model"] == model
+        assert result.argv == [] and result.tmux_session is None
 
 OPERATOR_GROK_MODEL = "operator-lane-grok-model"
 OPERATOR_CODEX_MODEL = "operator-lane-codex-model"
@@ -100,163 +178,13 @@ def write_operator_ai_accounts(
             },
         },
     }
+    for account in data["accounts"].values():
+        account["lane_runtime"] = {"binary": "/explicit/native", "sha256": "0" * 64}
     (home / "ai-accounts.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 def run(argv: list[str]) -> None:
     main(argv)
-
-
-def _lane_inner(argv: list[str]) -> list[str]:
-    if "--" in argv:
-        return argv[argv.index("--") + 1 :]
-    return list(argv)
-
-
-def _assert_nested_role_env_prefix(
-    argv: list[str], *, config_dir: str, provider: str
-) -> None:
-    inner = _lane_inner(argv)
-    assert inner[0] == "env"
-    home_key = "GROK_HOME" if provider == "grok" else "CODEX_HOME"
-    assert f"{home_key}={config_dir}" in inner
-    for key in (
-        "XAI_API_KEY",
-        "GROK_API_KEY",
-        "OPENAI_API_KEY",
-        "CODEX_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "CLAUDECODE",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "GROK_HOME",
-        "CODEX_HOME",
-    ):
-        assert key in inner
-        assert inner[inner.index(key) - 1] == "-u"
-    # Role env_prefix precedes the existing provider argv (which itself starts with env).
-    second_env = inner.index("env", 1)
-    assert second_env > inner.index(f"{home_key}={config_dir}")
-    provider_bin = "grok" if provider == "grok" else "codex"
-    assert provider_bin in inner[second_env:]
-
-
-def test_grok_implementer_argv_requires_explicit_model() -> None:
-    argv = grok_argv(
-        spec_file="/tmp/spec.md", cwd="/work", write=True, model="explicit-grok-model"
-    )
-    assert "--session-id" not in argv
-    assert "--always-approve" not in argv
-    assert "reasoning-effort" not in argv
-    assert "grok-4.5" not in argv
-    assert "grok-4.6" not in argv
-    assert argv[0] == "env"
-    for key in GROK_STRIP_ENV:
-        assert "-u" in argv
-        assert key in argv
-    assert argv[argv.index("grok") :] == [
-        "grok",
-        "--prompt-file",
-        "/tmp/spec.md",
-        "-m",
-        "explicit-grok-model",
-        "--permission-mode",
-        "acceptEdits",
-        "--allow",
-        "Write",
-        "--allow",
-        "Edit",
-        "--output-format",
-        "plain",
-        "--cwd",
-        "/work",
-    ]
-    strip_idx = [argv.index(k) for k in GROK_STRIP_ENV]
-    assert strip_idx == sorted(strip_idx)
-
-
-def test_grok_reviewer_argv_requires_explicit_model() -> None:
-    argv = grok_argv(
-        spec_file="/tmp/spec.md", cwd="/work", write=False, model="explicit-readonly-model"
-    )
-    assert "--permission-mode" not in argv
-    assert "acceptEdits" not in argv
-    assert "--always-approve" not in argv
-    assert "--session-id" not in argv
-    assert "reasoning-effort" not in argv
-    assert argv[argv.index("grok") :] == [
-        "grok",
-        "--prompt-file",
-        "/tmp/spec.md",
-        "-m",
-        "explicit-readonly-model",
-        "--allow",
-        "Read",
-        "--allow",
-        "Grep",
-        "--allow",
-        "Glob",
-        "--deny",
-        "Write",
-        "--deny",
-        "Edit",
-        "--deny",
-        "Bash",
-        "--no-subagents",
-        "--disable-web-search",
-        "--output-format",
-        "plain",
-        "--cwd",
-        "/work",
-    ]
-
-
-def test_pr_reviewer_quality_uses_readonly_grok_argv(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("review this\n", encoding="utf-8")
-    result = launch(
-        role="pr-reviewer-quality",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        dry_run=True,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert "--deny" in result.argv
-    assert "Write" in result.argv
-    assert "acceptEdits" not in result.argv
-    assert "--permission-mode" not in result.argv
-    assert OPERATOR_GROK_MODEL in result.argv
-    _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
-    )
-
-
-def test_codex_implementer_argv_requires_explicit_model() -> None:
-    argv = codex_argv(
-        cwd="/work", write=True, output_file="/tmp/out.txt", model="explicit-codex-model"
-    )
-    assert "workspace-write" in argv
-    assert "explicit-codex-model" in argv
-    assert "gpt-5.6-sol" not in argv
-    assert "reasoning-effort" not in argv
-    assert argv[-1] == "-"
-    assert argv[0] == "env"
-    for key in GROK_STRIP_ENV:
-        assert key in argv
-    assert argv[argv.index("--model") + 1] == "explicit-codex-model"
-
-
-def test_codex_reviewer_argv_requires_explicit_model() -> None:
-    argv = codex_argv(
-        cwd="/work", write=False, output_file="/tmp/out.txt", model="explicit-codex-ro"
-    )
-    assert "read-only" in argv
-    assert "workspace-write" not in argv
-    assert argv[argv.index("--model") + 1] == "explicit-codex-ro"
-    assert argv[-1] == "-"
 
 
 def test_parse_status_complete() -> None:
@@ -417,443 +345,6 @@ def test_launch_writable_reviewer_binding_refused_before_runner(tmp_path: Path) 
     assert called["n"] == 0
 
 
-def test_two_sessions_select_different_config_homes_and_models(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("implement\n", encoding="utf-8")
-    monkeypatch.setenv("XAI_API_KEY", "ambient-xai-token")
-    monkeypatch.setenv("GROK_API_KEY", "ambient-grok-token")
-    monkeypatch.setenv("GROK_HOME", "/ambient/should-not-leak")
-    monkeypatch.setenv("OPENAI_API_KEY", "ambient-openai")
-
-    result_a = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        dry_run=True,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    result_b = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        dry_run=True,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=ALT_SESSION,
-    )
-
-    assert OPERATOR_GROK_MODEL in result_a.argv
-    assert OPERATOR_GROK_MODEL_B in result_b.argv
-    assert OPERATOR_GROK_MODEL_B not in result_a.argv
-    assert OPERATOR_GROK_MODEL not in result_b.argv
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in result_a.argv
-    assert f"GROK_HOME={OPERATOR_GROK_HOME_B}" in result_b.argv
-    assert "/ambient/should-not-leak" not in result_a.argv
-    assert "/ambient/should-not-leak" not in result_b.argv
-    assert "ambient-xai-token" not in " ".join(result_a.argv)
-    assert "ambient-grok-token" not in " ".join(result_b.argv)
-    assert os.environ["XAI_API_KEY"] == "ambient-xai-token"
-    assert os.environ["GROK_HOME"] == "/ambient/should-not-leak"
-    _assert_nested_role_env_prefix(
-        result_a.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
-    )
-    _assert_nested_role_env_prefix(
-        result_b.argv, config_dir=OPERATOR_GROK_HOME_B, provider="grok"
-    )
-
-
-def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("do the thing\n", encoding="utf-8")
-
-    def boom(argv: list[str], stdin_text: str | None) -> object:
-        raise AssertionError("runner must not be called on dry_run")
-
-    result = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        runner=boom,
-        dry_run=True,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert result.status == ""
-    assert result.returncode == 0
-    assert OPERATOR_GROK_MODEL in result.argv
-    _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
-    )
-
-
-def test_launch_codex_dry_run_skips_mkstemp(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("codex dry run\n", encoding="utf-8")
-
-    def boom_mkstemp(*_args: object, **_kwargs: object) -> tuple[int, str]:
-        raise AssertionError("tempfile.mkstemp must not be called on dry_run")
-
-    monkeypatch.setattr("agent_cli.lane.tempfile.mkstemp", boom_mkstemp)
-    result = launch(
-        role="implementer",
-        vendor="codex",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        dry_run=True,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert "--output-last-message" in result.argv
-    assert OPERATOR_CODEX_MODEL in result.argv
-    _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_CODEX_HOME, provider="codex"
-    )
-
-
-def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    contents = "codex please implement\n"
-    spec.write_text(contents, encoding="utf-8")
-    seen: list[tuple[list[str], str | None]] = []
-    output_paths: list[str] = []
-
-    def fake(argv: list[str], stdin_text: str | None) -> object:
-        seen.append((argv, stdin_text))
-        out_path = argv[argv.index("--output-last-message") + 1]
-        output_paths.append(out_path)
-        Path(out_path).write_text("STATUS: complete\n", encoding="utf-8")
-        return SimpleNamespace(returncode=0, stdout="STATUS: partial\n", stderr="")
-
-    result = launch(
-        role="implementer",
-        vendor="codex",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        runner=fake,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert len(seen) == 1
-    assert seen[0][1] == contents
-    assert "codex" in seen[0][0]
-    assert OPERATOR_CODEX_MODEL in seen[0][0]
-    assert result.status == "complete"
-    assert result.returncode == 0
-    assert output_paths
-    assert not Path(output_paths[0]).exists()
-
-
-def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("codex please fail\n", encoding="utf-8")
-    out_path: str | None = None
-
-    def fake(argv: list[str], stdin_text: str | None) -> object:
-        nonlocal out_path
-        out_path = argv[argv.index("--output-last-message") + 1]
-        Path(out_path).write_text("STATUS: complete\n", encoding="utf-8")
-        raise RuntimeError("codex runner failed")
-
-    with pytest.raises(RuntimeError, match="codex runner failed"):
-        launch(
-            role="implementer",
-            vendor="codex",
-            spec_file=str(spec),
-            cwd=str(tmp_path),
-            runner=fake,
-            tmux=False,
-            config_home=tmp_path,
-            session_id=DEFAULT_SESSION,
-        )
-    assert out_path is not None
-    assert not Path(out_path).exists()
-
-
-def test_launch_fake_runner_grok_stdin_none_or_empty(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("grok please implement\n", encoding="utf-8")
-    seen: list[str | None] = []
-
-    @dataclass
-    class FakeDone:
-        returncode: int
-        stdout: str
-        stderr: str
-
-    def fake(argv: list[str], stdin_text: str | None) -> object:
-        seen.append(stdin_text)
-        return FakeDone(0, "STATUS: complete\n", "")
-
-    result = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        runner=fake,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert seen == [None] or seen == [""]
-    assert result.status == "complete"
-
-
-def test_tmux_wrap_argv_shape() -> None:
-    inner = ["env", "-u", "ANTHROPIC_API_KEY", "grok", "--prompt-file", "s"]
-    argv = tmux_wrap_argv(inner, name="agent-lane-grok-implementer", cwd="/work")
-    assert argv[:6] == [
-        "tmux",
-        "new-session",
-        "-d",
-        "-s",
-        "agent-lane-grok-implementer",
-        "-c",
-    ]
-    assert argv[6] == "/work"
-    assert argv[7] == "--"
-    assert argv[8:] == inner
-
-
-def test_launch_default_wraps_tmux(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("implement me\n", encoding="utf-8")
-    result = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        dry_run=True,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert result.argv[:3] == ["tmux", "new-session", "-d"]
-    assert "-s" in result.argv
-    assert result.tmux_session is not None
-    assert result.tmux_session.startswith("agent-lane-grok-implementer")
-    assert "--" in result.argv
-    assert OPERATOR_GROK_MODEL in result.argv
-    inner = result.argv[result.argv.index("--") + 1 :]
-    assert inner[0] == "env"
-    _assert_nested_role_env_prefix(
-        result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
-    )
-
-
-def test_launch_no_tmux_starts_with_env(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("implement me\n", encoding="utf-8")
-    result = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        dry_run=True,
-        tmux=False,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert result.argv[0] == "env"
-    assert "tmux" not in result.argv
-    assert result.tmux_session is None
-    assert OPERATOR_GROK_MODEL in result.argv
-
-
-def test_launch_tmux_fake_runner_gets_wrapped_argv(tmp_path: Path) -> None:
-    write_operator_ai_accounts(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("implement me\n", encoding="utf-8")
-    seen: list[list[str]] = []
-
-    def fake(argv: list[str], stdin_text: str | None) -> object:
-        seen.append(list(argv))
-        return SimpleNamespace(returncode=0, stdout="STATUS: complete\n", stderr="")
-
-    result = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file=str(spec),
-        cwd=str(tmp_path),
-        runner=fake,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    assert len(seen) == 1
-    assert seen[0][:3] == ["tmux", "new-session", "-d"]
-    assert result.status == "complete"
-
-
-def _tmux_script(handler):
-    calls: list[list[str]] = []
-
-    def fake(argv: list[str]) -> CompletedProcess[str]:
-        calls.append(list(argv))
-        return handler(argv, calls)
-
-    return fake, calls
-
-
-def test_run_in_tmux_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if argv[:2] == ["tmux", "new-session"]:
-            return CompletedProcess(argv, 0, "", "")
-        if "remain-on-exit" in argv:
-            return CompletedProcess(argv, 0, "", "")
-        if argv[-1] == "#{pane_dead}":
-            return CompletedProcess(argv, 0, "1\n", "")
-        if argv[-1] == "#{pane_dead_status}":
-            return CompletedProcess(argv, 0, "0\n", "")
-        if "capture-pane" in argv:
-            return CompletedProcess(argv, 0, "STATUS: complete\n", "")
-        if "kill-session" in argv:
-            return CompletedProcess(argv, 0, "", "")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok", "--prompt-file", "s"], name="agent-lane-t", cwd="/w", stdin_text=None)
-    assert result.returncode == 0
-    assert "STATUS: complete" in result.stdout
-    assert calls[0][:3] == ["tmux", "new-session", "-d"]
-    assert any("kill-session" in c for c in calls)
-
-
-def test_run_in_tmux_pane_dead_status_is_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if argv[-1] == "#{pane_dead}":
-            return CompletedProcess(argv, 0, "1\n", "")
-        if argv[-1] == "#{pane_dead_status}":
-            return CompletedProcess(argv, 0, "42\n", "")
-        if "capture-pane" in argv:
-            return CompletedProcess(argv, 0, "STATUS: partial\n", "")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
-    assert result.returncode == 42
-    assert any("kill-session" in c for c in calls)
-
-
-def test_run_in_tmux_empty_pane_dead_status_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if argv[-1] == "#{pane_dead}":
-            return CompletedProcess(argv, 0, "1\n", "")
-        if argv[-1] == "#{pane_dead_status}":
-            return CompletedProcess(argv, 0, "\n", "")
-        if "capture-pane" in argv:
-            return CompletedProcess(argv, 0, "", "")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, _calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
-    assert result.returncode == 1
-
-
-def test_run_in_tmux_kills_on_remain_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if "remain-on-exit" in argv:
-            return CompletedProcess(argv, 1, "", "no tmux")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
-    assert result.returncode == 1
-    assert any("kill-session" in c for c in calls)
-
-
-def test_run_in_tmux_kills_on_pane_dead_query_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if argv[-1] == "#{pane_dead}":
-            return CompletedProcess(argv, 2, "", "gone")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["grok"], name="agent-lane-t", cwd="/w", stdin_text=None)
-    assert result.returncode == 2
-    assert any("kill-session" in c for c in calls)
-
-
-def test_run_in_tmux_send_keys_adds_trailing_newline(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if argv[-1] == "#{pane_dead}":
-            return CompletedProcess(argv, 0, "1\n", "")
-        if argv[-1] == "#{pane_dead_status}":
-            return CompletedProcess(argv, 0, "0\n", "")
-        if "capture-pane" in argv:
-            return CompletedProcess(argv, 0, "STATUS: complete\n", "")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="no-newline")
-    typed = [c for c in calls if "send-keys" in c and "-l" in c]
-    assert typed
-    assert typed[0][-1].endswith("\n")
-
-
-def test_launch_tmux_passes_absolute_spec_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    write_operator_ai_accounts(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    spec = tmp_path / "spec.md"
-    spec.write_text("implement me\n", encoding="utf-8")
-    work = tmp_path / "work"
-    work.mkdir()
-    result = launch(
-        role="implementer",
-        vendor="grok",
-        spec_file="spec.md",
-        cwd=str(work),
-        dry_run=True,
-        config_home=tmp_path,
-        session_id=DEFAULT_SESSION,
-    )
-    inner = result.argv[result.argv.index("--") + 1 :]
-    prompt = inner[inner.index("--prompt-file") + 1]
-    assert Path(prompt).is_absolute()
-    assert Path(prompt) == spec.resolve()
-    assert result.argv[result.argv.index("-c") + 1] == str(work.resolve())
-    inner_cwd = inner[inner.index("--cwd") + 1]
-    assert inner_cwd == str(work.resolve())
-
-
-def test_run_in_tmux_kills_on_send_keys_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
-        if "send-keys" in argv and "-l" in argv:
-            return CompletedProcess(argv, 3, "", "no pane")
-        return CompletedProcess(argv, 0, "", "")
-
-    fake, calls = _tmux_script(handler)
-    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
-    result = _run_in_tmux(["codex"], name="agent-lane-t", cwd="/w", stdin_text="spec")
-    assert result.returncode == 3
-    assert any("kill-session" in c for c in calls)
-
-
 def test_cli_lane_run_prints_vendor_stdout(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -993,10 +484,10 @@ def test_cli_dry_run_implementer_grok(
         ]
     )
     out = capsys.readouterr().out.strip()
-    assert "tmux" in out
-    assert "new-session" in out
+    assert "bounded-source" in out
+    assert "new-session" not in out
     assert OPERATOR_GROK_MODEL in out
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in out
+    assert "grok-a" in out
     assert "STATUS=" not in out
 
 
@@ -1026,10 +517,10 @@ def test_cli_no_tmux_dry_run(
         ]
     )
     out = capsys.readouterr().out.strip()
-    assert out.startswith("env ")
+    assert "bounded-source" in out
     assert "new-session" not in out
     assert OPERATOR_GROK_MODEL in out
-    assert f"GROK_HOME={OPERATOR_GROK_HOME}" in out
+    assert "grok-a" in out
 
 
 def test_cli_missing_session_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -11,6 +11,11 @@ GitHub communication. Implementers and reviewers never run tests, spawn agents,
 or access GitHub themselves. See DESIGN.md §§19.1 and 19.7. Distinguish required
 behavior from implemented and verified behavior; never invent evidence.
 
+Model lanes use the static bounded source executor. Explicit native runtime
+pins and compatible selected login files are required; no legacy native-tool
+fallback is allowed. See [docs/lane-boundary.md](docs/lane-boundary.md) for the
+implemented boundary, supported adapters and remaining trust assumptions.
+
 Models never start monitors, poll status, or wait for CI or other events. Return
 results or blockers to the script when there is no more work. The script owns
 monitoring and informs a model when an observed event provides useful work.

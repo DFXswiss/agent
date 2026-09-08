@@ -13,7 +13,8 @@ from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
 Runner = Callable[[list[str]], Completed]
-LaneRunner = Callable[[list[str], str | None], Any]
+# Trusted static dependency implementing the bounded source executor contract.
+LaneRunner = Callable[..., Any]
 
 REQUIRED_WORKER_SKILLS = ("spine", "review-loop", "pr-review")
 REQUIRED_REVIEW_SKILLS = ("pr-review",)
@@ -201,35 +202,15 @@ def coordinator_env(
     }
 
 
-def harden_grok_write_argv(argv: list[str]) -> list[str]:
-    """Ensure the Grok implementer cannot Bash, spawn subagents, or web-search.
-
-    The stock write builder in lane.grok_argv does not add these denies. This is
-    process argv hardening for the coordinator, not universal sandbox enforcement.
-    """
-    if "grok" not in argv:
-        return list(argv)
-    out = list(argv)
-    if "--no-subagents" not in out:
-        out.append("--no-subagents")
-    if "--disable-web-search" not in out:
-        out.append("--disable-web-search")
-    denied = False
-    i = 0
-    while i < len(out) - 1:
-        if out[i] == "--deny" and out[i + 1] == "Bash":
-            denied = True
-            break
-        i += 1
-    if not denied:
-        out.extend(["--deny", "Bash"])
-    return out
-
-
 def parse_model_result(output: str, returncode: int) -> tuple[str, str]:
     """Return (status, result). Approval requires complete+approved only."""
     if returncode != 0:
         return ('timeout' if returncode == 124 else 'unavailable'), ''
+    # Count malformed/foreign verdict fields too, rather than silently
+    # accepting one valid line alongside a contradictory extra result.
+    if (len(re.findall(r"(?im)^STATUS:.*$", output or "")) != 1
+            or len(re.findall(r"(?im)^(?:RESULT|VERDICT):.*$", output or "")) != 1):
+        return 'partial', ''
     status_matches = list(_STATUS_RE.finditer(output or ""))
     result_matches = list(_RESULT_RE.finditer(output or ""))
     if len(status_matches) != 1 or len(result_matches) != 1:

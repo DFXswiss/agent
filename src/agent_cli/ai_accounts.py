@@ -8,6 +8,7 @@ configuration directory; this manifest stores only directory paths. Static launc
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,10 +63,17 @@ def _config_dir(value: Any, field: str) -> str:
 
 
 @dataclass(frozen=True)
+class LaneRuntime:
+    binary: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class AIAccount:
     name: str
     provider: str
     config_dir: str
+    lane_runtime: LaneRuntime | None = None
 
 
 @dataclass(frozen=True)
@@ -166,13 +174,23 @@ def load_ai_accounts(home: Path) -> AIAccounts:
     accounts: dict[str, AIAccount] = {}
     for name, entry in accounts_raw.items():
         _text(name, "account name")
-        if not isinstance(entry, dict) or set(entry) - {"provider", "config_dir"}:
+        if not isinstance(entry, dict) or set(entry) - {"provider", "config_dir", "lane_runtime"}:
             raise AccountError(f"Invalid account fields for {name}")
         provider = _text(entry.get("provider"), "provider")
         if provider not in SUPPORTED_PROVIDERS:
             raise AccountError(f"Unsupported provider for account {name}")
         config_dir = _config_dir(entry.get("config_dir"), "config_dir")
-        accounts[name] = AIAccount(name, provider, config_dir)
+        runtime_raw = entry.get("lane_runtime")
+        runtime = None
+        if runtime_raw is not None:
+            if not isinstance(runtime_raw, dict) or set(runtime_raw) != {"binary", "sha256"}:
+                raise AccountError(f"Invalid lane runtime for {name}")
+            binary = _config_dir(runtime_raw.get("binary"), "lane runtime binary")
+            sha256 = runtime_raw.get("sha256")
+            if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+                raise AccountError(f"Invalid lane runtime SHA-256 for {name}")
+            runtime = LaneRuntime(binary, sha256)
+        accounts[name] = AIAccount(name, provider, config_dir, runtime)
 
     roles: dict[str, AIRole] = {}
     for name, entry in roles_raw.items():
