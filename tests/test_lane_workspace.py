@@ -297,7 +297,7 @@ def test_publication_io_failure_restores_captured_original(tmp_path, monkeypatch
 
     monkeypatch.setattr(source, "_publish_new", fail_publish)
     with target.open("r+") as original:
-        with pytest.raises(ProtocolError, match=r"conflict.*as [0-9a-f]{32}") as raised:
+        with pytest.raises(ProtocolError, match=r"publication sync failed.*as [0-9a-f]{32}") as raised:
             source.apply({"file": "model"})
         assert str(tmp_path.resolve()) not in str(raised.value)
         assert "retained in recovery" in str(raised.value) or "restored" in str(raised.value)
@@ -597,7 +597,7 @@ def test_restore_fsyncs_target_parent(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "link", tracking_link)
     monkeypatch.setattr(os, "unlink", tracking_unlink)
     monkeypatch.setattr(source, "_fsync_dir", tracking_fsync_dir)
-    with pytest.raises(ProtocolError, match=r"conflict.*as [0-9a-f]{32}") as raised:
+    with pytest.raises(ProtocolError, match=r"publication sync failed.*as [0-9a-f]{32}") as raised:
         source.apply({"file": "model"})
     assert "restored" in str(raised.value)
     assert target.read_text() == "snapshot"
