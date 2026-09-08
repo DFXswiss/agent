@@ -470,7 +470,7 @@ def _prepare_pr_review_agent(
     head: str,
     spec_body: str,
 ) -> dict[str, Any]:
-    """Insert working agent and build argv on the main thread (Store-safe)."""
+    """Prepare bounded source inputs and register the review agent (Store-safe)."""
     c = coord(task)
     worktree = str(c["worktree"])
     existing = blocking_working_agent(store, task["id"], role=role, vendor=vendor)

@@ -178,18 +178,8 @@ class Workspace:
         finally:
             os.close(dir_fd)
 
-    def _restore_captured(self, parent_fd: int, name: str, recovery_fd: int, recovery_name: str) -> bool:
-        """No-clobber restore of a captured original. Returns True when linked back."""
-        try:
-            os.link(recovery_name, name, src_dir_fd=recovery_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
-            return True
-        except FileExistsError:
-            return False
-        except OSError:
-            return False
-
-    def _publish_new(self, parent_fd: int, name: str, content: str, mode: int) -> None:
-        """Write an exclusive temp file, fsync it, then no-clobber link into place."""
+    def _publish_bytes(self, parent_fd: int, name: str, data: bytes, mode: int) -> None:
+        """Write an exclusive temp inode, fsync it, then no-clobber link into place."""
         temporary = ".agent-text-" + uuid.uuid4().hex
         fd = os.open(
             temporary,
@@ -199,18 +189,51 @@ class Workspace:
         )
         try:
             with os.fdopen(fd, "wb") as stream:
-                stream.write(content.encode("utf-8"))
+                stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            try:
-                os.link(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
-            except FileExistsError as exc:
-                raise ProtocolError("publication conflict; destination exists") from exc
+            os.link(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
         finally:
             try:
                 os.unlink(temporary, dir_fd=parent_fd)
             except FileNotFoundError:
                 pass
+
+    def _restore_captured(self, parent_fd: int, name: str, recovery_fd: int, recovery_name: str) -> str:
+        """Restore via a fresh inode; retain the recovery original.
+
+        Returns a short status for error text: ``restored``, ``retained in recovery``,
+        or ``retained in recovery beside concurrent destination``. Never unlinks a
+        concurrent destination and never hard-links the recovery inode into the
+        worktree (restored paths stay ``nlink == 1`` for later snapshots).
+        """
+        try:
+            fd = os.open(
+                recovery_name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=recovery_fd,
+            )
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_FILE_BYTES:
+                    return "retained in recovery"
+                data = stream.read(MAX_FILE_BYTES + 1)
+                if len(data) > MAX_FILE_BYTES or b"\0" in data:
+                    return "retained in recovery"
+                mode = stat.S_IMODE(info.st_mode)
+            self._publish_bytes(parent_fd, name, data, mode)
+            return "restored"
+        except FileExistsError:
+            return "retained in recovery beside concurrent destination"
+        except OSError:
+            return "retained in recovery"
+
+    def _publish_new(self, parent_fd: int, name: str, content: str, mode: int) -> None:
+        """Write an exclusive temp file, fsync it, then no-clobber link into place."""
+        try:
+            self._publish_bytes(parent_fd, name, content.encode("utf-8"), mode)
+        except FileExistsError as exc:
+            raise ProtocolError("publication conflict; destination exists") from exc
 
     def apply(self, changes: dict[str, str | None]) -> None:
         """Check every touched path before applying; never execute the proposal.
@@ -298,8 +321,7 @@ class Workspace:
                                 f"original retained as {recovery_name}"
                             ) from exc
                         if captured_text != expected_text or captured_mode != expected_mode:
-                            restored = self._restore_captured(parent, name, recovery_fd, recovery_name)
-                            detail = "restored" if restored else "left in recovery beside concurrent destination"
+                            detail = self._restore_captured(parent, name, recovery_fd, recovery_name)
                             raise ProtocolError(
                                 f"worktree changed since the model snapshot for {path}; "
                                 f"captured original {detail} as {recovery_name}"
@@ -319,8 +341,7 @@ class Workspace:
                         try:
                             self._publish_new(parent, name, content, expected_mode)
                         except (ProtocolError, OSError) as exc:
-                            restored = self._restore_captured(parent, name, recovery_fd, recovery_name)
-                            detail = "restored" if restored else "preserved beside concurrent destination"
+                            detail = self._restore_captured(parent, name, recovery_fd, recovery_name)
                             raise ProtocolError(
                                 f"publication conflict for {path}; "
                                 f"original {detail} as {recovery_name}"

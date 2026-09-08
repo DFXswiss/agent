@@ -117,11 +117,18 @@ compare-and-swap, not portable CAS, not arbitrary-writer exclusion, and not a
 multi-file transaction: paths may be briefly absent during capture;
 noncooperating live writers may still produce an uncertain outcome, but
 displaced originals are kept for operator recovery instead of being destroyed.
-On captured mismatch, publish conflict, or publication I/O failure the original
-is restored with no-clobber link only when the destination path is absent;
-otherwise both the concurrent destination and the recovery original are
-preserved and a `ProtocolError` reports the recovery basename without leaking
-private absolute host paths. Concurrent destinations are never blindly
+On captured mismatch, publish conflict, or publication I/O failure the script
+attempts restoration by writing a fresh independent inode (exclusive temp,
+fsync, atomic no-clobber link into the absent destination) while retaining the
+original captured inode in private recovery so late open-descriptor writes stay
+indexed there. When restoration succeeds, the worktree path is a distinct
+`nlink == 1` inode usable by later snapshots; the recovery original remains.
+When the destination already exists, both the concurrent destination and the
+recovery original are preserved. When restoration fails for other I/O or
+permission reasons with no destination observed, recovery data is retained and
+the error uses neutral retained-in-recovery wording rather than implying a
+concurrent destination. A `ProtocolError` reports the recovery basename without
+leaking private absolute host paths. Concurrent destinations are never blindly
 unlinked during cleanup or rollback. The root/recovery device preflight only
 compares the source root and recovery parent (and refuses a filesystem root);
 nested mount mismatches among touched targets can still surface later as

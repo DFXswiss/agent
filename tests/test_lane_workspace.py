@@ -163,12 +163,20 @@ def test_editor_change_between_validation_and_capture_preserves_original(tmp_pat
     with pytest.raises(ProtocolError, match=r"changed.*as [0-9a-f]{32}") as raised:
         source.apply({"file": "model"})
     assert str(tmp_path.resolve()) not in str(raised.value)
+    assert "retained in recovery" in str(raised.value) or "restored" in str(raised.value)
     assert target.read_text() == "editor race"
+    assert target.stat().st_nlink == 1
     recovered = _recovery_files(tmp_path)
     assert any(p.read_text() == "editor race" for p in recovered)
     directory, _index, entry = _index_entry(tmp_path, "file")
     assert entry["action"] == "replace"
-    assert (directory / entry["basename"]).read_text() == "editor race"
+    recovery_path = directory / entry["basename"]
+    assert recovery_path.read_text() == "editor race"
+    assert recovery_path.stat().st_ino != target.stat().st_ino
+    assert recovery_path.stat().st_nlink == 1
+    # Restored worktree path must be usable by a fresh snapshot (_read requires nlink==1).
+    refreshed = Workspace(tmp_path, ["file"])
+    assert refreshed.files["file"] == "editor race"
 
 
 def test_replace_recreated_between_capture_and_publication_preserves_both(tmp_path, monkeypatch):
@@ -284,15 +292,55 @@ def test_publication_io_failure_restores_captured_original(tmp_path, monkeypatch
     source = Workspace(tmp_path, ["file"])
 
     def fail_publish(parent_fd, name, content, mode):
+        # Fail primary publication only; restoration uses _publish_bytes separately.
         raise OSError("simulated publication I/O failure")
 
     monkeypatch.setattr(source, "_publish_new", fail_publish)
-    with pytest.raises(ProtocolError, match=r"conflict.*as [0-9a-f]{32}") as raised:
-        source.apply({"file": "model"})
-    assert str(tmp_path.resolve()) not in str(raised.value)
-    assert target.read_text() == "snapshot"
-    recovered = _recovery_files(tmp_path)
-    assert any(p.read_text() == "snapshot" for p in recovered)
+    with target.open("r+") as original:
+        with pytest.raises(ProtocolError, match=r"conflict.*as [0-9a-f]{32}") as raised:
+            source.apply({"file": "model"})
+        assert str(tmp_path.resolve()) not in str(raised.value)
+        assert "retained in recovery" in str(raised.value) or "restored" in str(raised.value)
+        assert target.read_text() == "snapshot"
+        assert target.stat().st_nlink == 1
+        recovered = _recovery_files(tmp_path)
+        assert any(p.read_text() == "snapshot" for p in recovered)
+        directory, _index, entry = _index_entry(tmp_path, "file")
+        assert entry["action"] == "replace"
+        recovery_path = directory / entry["basename"]
+        assert recovery_path.read_text() == "snapshot"
+        assert recovery_path.stat().st_ino != target.stat().st_ino
+        assert recovery_path.stat().st_nlink == 1
+        # Restored worktree path must be usable by a fresh snapshot (_read requires nlink==1).
+        refreshed = Workspace(tmp_path, ["file"])
+        assert refreshed.files["file"] == "snapshot"
+        assert recovery_path.stat().st_ino == os.fstat(original.fileno()).st_ino
+        original.seek(0)
+        original.write("late-after-restore")
+        original.flush()
+        assert recovery_path.read_text() == "late-after-restore"
+        assert target.read_text() == "snapshot"
+
+
+def test_late_hardlink_capture_is_not_copied_into_model_source(tmp_path, monkeypatch):
+    target = tmp_path / "file"
+    target.write_text("snapshot")
+    outside = tmp_path.parent / (tmp_path.name + "-outside-data")
+    outside.write_text("outside contents")
+    source = Workspace(tmp_path, ["file"])
+    real_open_recovery = source._open_recovery
+
+    def replace_after_validation():
+        target.unlink()
+        os.link(outside, target)
+        return real_open_recovery()
+
+    monkeypatch.setattr(source, "_open_recovery", replace_after_validation)
+    with pytest.raises(ProtocolError, match="captured source unreadable"):
+        source.apply({"file": "model proposal"})
+    # Restoration must not launder a forbidden hard link into a readable copy.
+    assert not target.exists()
+    assert outside.read_text() == "outside contents"
+    assert "file" not in Workspace(tmp_path, ["file"]).files
     directory, _index, entry = _index_entry(tmp_path, "file")
-    assert entry["action"] == "replace"
-    assert (directory / entry["basename"]).read_text() == "snapshot"
+    assert (directory / entry["basename"]).stat().st_ino == outside.stat().st_ino
