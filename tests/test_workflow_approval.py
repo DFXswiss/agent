@@ -63,6 +63,8 @@ class FakeApproval(FakeAPI):
         self.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=21)
         self.runs = [self.run()]
         self.posts: list[int] = []
+        self.cancels: list[int] = []
+        self.cancel_status = 202
         self.actions_pages: list[int] = []
         self.compare_urls: list[str] = []
         self.event_reads = 0
@@ -116,6 +118,12 @@ class FakeApproval(FakeAPI):
             ident = int(path.split("/actions/runs/")[1].split("/")[0])
             run = next(r for r in self.runs if r["id"] == ident)
             if method == "POST":
+                if path.endswith("/cancel"):
+                    self.cancels.append(ident)
+                    if self.cancel_status in {202, 409}:
+                        if self.cancel_status == 202:
+                            run.update(status="completed", conclusion="cancelled")
+                    return self.cancel_status, {}, {}
                 assert path.endswith("/approve")
                 self.posts.append(ident)
                 if self.post_status == 201:
@@ -250,6 +258,7 @@ def test_invalid_trusted_config_never_lists_actions() -> None:
         reconcile_pull(fake.api(), REPO, 1)
     assert fake.actions_pages == []
     assert fake.posts == []
+    assert fake.cancels == []
 
 
 # --- opt-in / short-circuit -------------------------------------------------
@@ -292,6 +301,7 @@ def test_opt_in_disabled_or_missing_never_calls_actions(case: str) -> None:
     assert result.to_json()["workflow_approvals"] == []
     assert fake.actions_pages == []
     assert fake.posts == []
+    assert fake.cancels == []
 
 
 # --- reconcile integration --------------------------------------------------
@@ -373,8 +383,63 @@ def test_newer_run_of_any_status_suppresses_old_action_required(changes: dict) -
     fake = FakeApproval()
     fake.runs.append(fake.run(id=102, created_at="2026-09-05T11:01:00Z", **changes))
     result = reconcile_pull(fake.api(), REPO, 1)
-    assert result.workflow_approvals == []
     assert fake.posts == []
+    assert fake.cancels == [101]
+    assert "workflow:cancel:101" in result.writes
+    assert any(item["run_id"] == 101 and item["status"] == "cancelled" for item in result.workflow_approvals)
+
+
+def test_older_action_required_is_cancelled_when_newer_is_approved() -> None:
+    fake = FakeApproval()
+    fake.runs = [
+        fake.run(id=100, created_at="2026-09-05T10:00:00Z"),
+        fake.run(id=101, created_at="2026-09-05T11:00:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert fake.cancels == [100]
+    assert "workflow:cancel:100" in result.writes
+    assert "workflow:approve:101" in result.writes
+    statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
+    assert statuses[101] == "approved"
+    assert statuses[100] == "cancelled"
+
+
+def test_non_allowlisted_held_run_on_this_head_is_cancelled() -> None:
+    fake = FakeApproval()
+    fake.runs.append(
+        fake.run(id=202, path=OTHER, created_at="2026-09-05T11:00:00Z")
+    )
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert fake.cancels == [202]
+    assert "workflow:cancel:202" in result.writes
+    assert any(item["run_id"] == 202 and item["status"] == "cancelled" for item in result.workflow_approvals)
+
+
+def test_dry_run_plans_cancel_without_post() -> None:
+    fake = FakeApproval()
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    result = reconcile_pull(fake.api(), REPO, 1, dry_run=True)
+    statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
+    assert statuses[101] == "planned"
+    assert statuses[202] == "planned-cancel"
+    assert fake.posts == []
+    assert fake.cancels == []
+    assert not any(w.startswith("workflow:") for w in result.writes)
+
+
+def test_cancel_http_409_is_idempotent_success_not_approve() -> None:
+    fake = FakeApproval()
+    fake.cancel_status = 409
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.cancels == [202]
+    assert fake.posts == [101]
+    assert "workflow:cancel:202" in result.writes
+    assert "workflow:approve:202" not in result.writes
+    statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
+    assert statuses[202] == "cancelled"
 
 
 def test_newer_action_required_is_approved_over_older_success() -> None:
@@ -397,7 +462,9 @@ def test_same_timestamp_higher_id_is_latest() -> None:
     ]
     reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
+    assert fake.cancels == [101]
     fake.posts.clear()
+    fake.cancels.clear()
     fake.runs = [
         fake.run(id=101, created_at=stamp, conclusion="success"),
         fake.run(id=102, created_at=stamp),
@@ -426,8 +493,14 @@ def test_inexact_or_retry_runs_are_never_approved(changes: dict) -> None:
     fake = FakeApproval()
     fake.runs = [fake.run(**changes)]
     result = reconcile_pull(fake.api(), REPO, 1)
-    assert result.workflow_approvals == []
     assert fake.posts == []
+    on_pull = changes.get("path") == OTHER
+    if on_pull:
+        assert fake.cancels == [101]
+        assert any(item["status"] == "cancelled" for item in result.workflow_approvals)
+    else:
+        assert result.workflow_approvals == []
+        assert fake.cancels == []
 
 
 def test_allowlist_approves_only_listed_workflow() -> None:
@@ -437,10 +510,11 @@ def test_allowlist_approves_only_listed_workflow() -> None:
         fake.run(id=202, path=OTHER),
     ]
     result = reconcile_pull(fake.api(), REPO, 1)
-    assert result.workflow_approvals == [
-        {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
-    ]
     assert fake.posts == [101]
+    assert fake.cancels == [202]
+    statuses = {item["run_id"]: item["status"] for item in result.workflow_approvals}
+    assert statuses[101] == "approved"
+    assert statuses[202] == "cancelled"
 
 
 # --- pagination -------------------------------------------------------------
@@ -453,7 +527,8 @@ def test_pagination_boundary_reads_page_two_for_the_pending_run() -> None:
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [101]
     assert 2 in fake.actions_pages
-    assert result.workflow_approvals[0]["run_id"] == 101
+    assert any(item["run_id"] == 101 and item["status"] == "approved" for item in result.workflow_approvals)
+    assert len(fake.cancels) == 100
 
 
 def test_pagination_exact_page_does_not_fetch_another_page() -> None:
@@ -470,7 +545,8 @@ def test_pagination_exact_page_does_not_fetch_another_page() -> None:
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [100]
     assert fake.actions_pages == [1, 1]
-    assert result.workflow_approvals[0]["run_id"] == 100
+    assert any(item["run_id"] == 100 and item["status"] == "approved" for item in result.workflow_approvals)
+    assert len(fake.cancels) == 99
 
 
 @pytest.mark.parametrize(
