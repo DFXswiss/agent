@@ -3354,6 +3354,9 @@ def cmd_supervise(args: list[str]) -> None:
     if "--session" not in args:
         die("Usage: agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]")
     sid = require_flag(args, "--session")
+    from .coordinator_config import load_coordinator_config
+    if sid in load_coordinator_config(home()):
+        die("session belongs to the static issue coordinator")
     if SESSION_RE.match(sid) is None:
         die("session id may contain only A-Za-z0-9_-")
     repo = flag(args, "--repo")
@@ -3439,6 +3442,53 @@ def cmd_supervise(args: list[str]) -> None:
         store.close()
 
 
+def cmd_coordinate(args: list[str]) -> None:
+    """Run bounded coordinator work; only this script owns the follow loop."""
+    from .coordinator_config import load_coordinator_config
+
+    sid = None
+    follow = False
+    i = 0
+    while i < len(args):
+        if args[i] == "--session" and i + 1 < len(args) and sid is None:
+            sid = args[i + 1]
+            i += 2
+        elif args[i] == "--follow" and not follow:
+            follow = True
+            i += 1
+        else:
+            die("Usage: agent coordinate --session ID [--follow]")
+    config = load_coordinator_config(home())
+    if sid is None:
+        if not config and not follow:
+            print("coordinator unconfigured")
+            return
+        die("coordinate requires an explicitly selected --session")
+    if sid not in config:
+        die("coordinator session is not configured")
+    from .coordinator import tick
+
+    while True:
+        config = load_coordinator_config(home())
+        worker = config.get(sid)
+        if worker is None:
+            print("coordinator disabled by configuration")
+            return
+        store = open_store()
+        try:
+            for line in tick(store, worker):
+                print(line, flush=True)
+        except StoreError as exc:
+            if not follow:
+                raise
+            print(f"coordinator error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            store.close()
+        if not follow:
+            return
+        time.sleep(worker.poll_seconds)
+
+
 def cmd_a38(args: list[str]) -> None:
     from .a38 import main as a38_main
 
@@ -3483,6 +3533,7 @@ COMMANDS = {
     "lane": cmd_lane,
     "watch": cmd_watch,
     "supervise": cmd_supervise,
+    "coordinate": cmd_coordinate,
     "github": cmd_github,
     "query": cmd_query,
     "subscribe": cmd_subscribe,
@@ -3496,7 +3547,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|watch|"
-            "github|query|subscribe|mail|supervise> …"
+            "github|query|subscribe|mail|supervise|coordinate> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

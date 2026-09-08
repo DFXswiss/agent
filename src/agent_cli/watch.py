@@ -596,6 +596,9 @@ def dispatch_assigned(
     sid = activity.get("session_id")
     if not isinstance(sid, str) or sid == "":
         raise StoreError(f"activity {activity_id} has no session_id")
+    from .coordinator_config import load_coordinator_config
+    if sid in load_coordinator_config(store.home):
+        raise StoreError("session belongs to the static issue coordinator")
     session = store.row("session", sid)
     if session is None:
         raise StoreError(f"session {sid} not found")

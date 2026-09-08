@@ -151,11 +151,18 @@ def run_supervisor(
     now_fn = monotonic or time.monotonic
     sleep_fn = sleep or time.sleep
 
+    from .coordinator_config import load_coordinator_config
+    configured_workers = load_coordinator_config(home)
     lock_handle = acquire_lock(home)
     children: dict[str, Any] = {}
     sync_deaths: list[float] = []
     stopping = False
     specs = dict(child_specs(argv_prefix))
+    for sid in configured_workers:
+        specs["coordinator:" + sid] = [*argv_prefix, "coordinate", "--session", sid, "--follow"]
+    required_children = ["knock", "dashboard", "cli-bridge", *(
+        "coordinator:" + sid for sid in configured_workers
+    )]
 
     def terminate_remaining() -> None:
         for proc in children.values():
@@ -174,6 +181,9 @@ def run_supervisor(
             children["knock"] = start(specs["knock"], start_new_session=True)
             children["dashboard"] = start(specs["dashboard"], start_new_session=True)
             children["cli-bridge"] = start(specs["cli-bridge"], start_new_session=True)
+            for sid in configured_workers:
+                name = "coordinator:" + sid
+                children[name] = start(specs[name], start_new_session=True)
             if hub_configured(home):
                 children["sync"] = start(specs["sync"], start_new_session=True)
         except SystemExit:
@@ -185,7 +195,7 @@ def run_supervisor(
             if stopping:
                 raise SystemExit(0)
             sleep_fn(0.2)
-            for name in ("knock", "dashboard", "cli-bridge"):
+            for name in required_children:
                 proc = children[name]
                 code = proc.poll()
                 if code is not None:

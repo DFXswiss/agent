@@ -122,7 +122,8 @@ agent knock             # valid foreground loop; the user-service daemon is the 
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon covers the loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
-agent watch assigned [--follow]  # allowlisted assignments; needs `gh` and `$AGENT_HOME/watch.json`
+agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
+agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
@@ -130,6 +131,13 @@ agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
 ```
 
 `agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the Grok tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The TUI working probe (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
+
+The optional [issue coordinator](docs/issue-coordinator.md) uses explicitly
+configured worker sessions, GitHub and AI accounts, checks, and workspace roots.
+Installation starts with no configured worker. `agent coordinate --session ID`
+advances one worker; `--follow` lets the script observe later events. The daemon
+starts configured workers on startup; changing its worker set requires a restart.
+Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 

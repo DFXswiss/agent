@@ -22,6 +22,12 @@ GitHub configuration, and docs/ai-accounts.md for AI profiles, named roles and
 explicit launch/usage selections. A38 visibility lookup requires a configured
 GitHub session unless visibility is explicitly supplied.
 
+The optional static issue coordinator is configured through
+`$AGENT_HOME/coordinator.json`; see [docs/issue-coordinator.md](docs/issue-coordinator.md).
+`agent coordinate --session ID` advances the selected worker; `--follow` is the
+script-owned loop. Installation enables no worker. Legacy assignment dispatch
+and `supervise` refuse a session selected for this coordinator.
+
 Draft publication is immediate after the first signed task commit; see the
 lifecycle. A draft plus local tests is not done. Ready for review is signed
 commits on a branch in this repository, grok quality and logic then Codex
