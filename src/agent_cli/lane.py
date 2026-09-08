@@ -44,6 +44,29 @@ def parse_status(output: str, returncode: int) -> str:
     return "partial"
 
 
+def parse_lane_status(role: str, output: str, returncode: int) -> str:
+    """Respect the implementation RESULT and independent review VERDICT contracts."""
+    from .coordinator_common import parse_model_result
+    if role == "implementer":
+        status, result = parse_model_result(output, returncode)
+        return "partial" if status == "complete" and result != "done" else status
+    if returncode:
+        return "timeout" if returncode == 124 else "unavailable"
+    if len(re.findall(r"(?im)^STATUS:.*$", output)) != 1:
+        return "partial"
+    statuses = _STATUS_RE.findall(output)
+    if len(statuses) != 1:
+        return "partial"
+    status = statuses[0].lower()
+    if status != "complete":
+        return status
+    if len(re.findall(r"(?im)^(?:RESULT|VERDICT):.*$", output)) != 1:
+        return "partial"
+    verdicts = re.findall(r"(?m)^(?:RESULT|VERDICT):[ \t]*(approved|rejected)[ \t]*\r?$",
+                          output, re.IGNORECASE)
+    return "complete" if len(verdicts) == 1 else "partial"
+
+
 def launch(
     *,
     role: str,
@@ -76,7 +99,6 @@ def launch(
 
     from .lane_executor import execute
     from .lane_protocol import ProtocolError
-    from .coordinator_common import parse_model_result
     if selected.account.lane_runtime is None:
         raise ProtocolError("AI account lane_runtime is unconfigured")
     if runner is not None:
@@ -92,8 +114,6 @@ def launch(
         }), "")
     from .lane_workspace import local_manifest
     completed = execute(selected, cwd=cwd, manifest=local_manifest(cwd), spec=spec_text, timeout=1800)
-    status, result = parse_model_result(completed.stdout, completed.returncode)
-    if role == "implementer" and status == "complete" and result != "done":
-        status = "partial"
+    status = parse_lane_status(role, completed.stdout, completed.returncode)
     return LaneResult(role, vendor, status, [], completed.returncode,
                       completed.stdout, completed.stderr)

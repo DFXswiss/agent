@@ -424,7 +424,7 @@ def write_review_diff(
         raise CoordinatorError(redact(completed.stderr or completed.stdout or "git diff failed"))
     diff_text = completed.stdout or ""
     diff_path.write_text(diff_text, encoding="utf-8")
-    # Bounded excerpt for prompts; full diff remains on the local artifact path.
+    # Bounded excerpt artifact for operator evidence only; prompts get the complete diff.
     excerpt_path = ctrl / f"review-diff-{head[:12]}.excerpt.txt"
     excerpt_path.write_text(redact(diff_text, limit=12000), encoding="utf-8")
     return diff_path
@@ -476,6 +476,9 @@ def _prepare_pr_review_agent(
         selected = load_ai_accounts(store.home).for_lane(worker.session_id, role, vendor)
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
+    # Validate the exact binding this helper will use before any side effects.
+    if selected.account.lane_runtime is None:
+        raise CoordinatorError("AI account lane_runtime is unconfigured")
     ctrl = control_dir(worker, task["id"])
     spec_path = ctrl / f"{role}-{vendor}-{head[:7]}.md"
     write_spec(spec_path, role, spec_body)
@@ -622,19 +625,14 @@ def phase_pr_gates(
             pass
 
     diff_path = write_review_diff(store, worker, task, runner, head=head)
-    excerpt_path = diff_path.with_suffix(".excerpt.txt")
-    try:
-        excerpt = excerpt_path.read_text(encoding="utf-8")
-    except OSError:
-        excerpt = ""
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     prepared_list: list[dict[str, Any]] = []
     try:
         inventory = git(store, worker, runner, worktree, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
         require_git_ok(inventory, "source inventory")
         manifest = [p for p in inventory.stdout.split("\0") if p]
-        # Models receive the full static diff as data, never a host-path instruction.
-        excerpt = diff_path.read_text(encoding="utf-8")
+        # Models receive the complete static diff as data; host artifact paths stay script-only.
+        diff_text = diff_path.read_text(encoding="utf-8")
         for dimension, role in needed:
             if load_ai_accounts(store.home).for_lane(worker.session_id, role, vendor).account.lane_runtime is None:
                 raise CoordinatorError("AI account lane_runtime is unconfigured")
@@ -660,9 +658,8 @@ def phase_pr_gates(
                         f"PR {dimension} review on head {head}. Read-only. "
                         f"Independent of the author session.\n"
                         f"{scope}\n"
-                        f"Script-generated diff artifact (full): {diff_path}\n"
-                        f"Script-generated diff excerpt follows; do not run Git.\n"
-                        f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
+                        f"Script-generated complete base→head diff follows; do not run Git.\n"
+                        f"---- complete diff ----\n{diff_text}\n---- end diff ----\n"
                     ),
                 )
             )

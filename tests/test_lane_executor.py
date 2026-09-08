@@ -64,7 +64,10 @@ def test_script_serves_reads_and_applies_only_completed_implementation(tmp_path)
 
 
 @pytest.mark.parametrize("text", ["STATUS: partial\nRESULT: done", "STATUS: complete\nRESULT: blocked",
-                                  "STATUS: complete\nRESULT: ask", "done"])
+                                  "STATUS: complete\nRESULT: ask", "done",
+                                  "STATUS: complete\nRESULT: done\nVERDICT: approved",
+                                  "STATUS: complete\nRESULT: done\nRESULT: invalid",
+                                  "STATUS: complete\nSTATUS: invalid\nRESULT: done"])
 def test_partial_blocked_or_ambiguous_work_leaves_no_edits(tmp_path, text):
     (tmp_path / "file.py").write_text("old")
     Transport.responses = [json.dumps(r) for r in (

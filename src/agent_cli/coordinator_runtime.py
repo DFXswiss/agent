@@ -920,14 +920,13 @@ def phase_inner_review(
     if head and c.get("base_sha"):
         try:
             diff_path = write_review_diff(store, worker, task, runner, head=head)
-            excerpt_path = diff_path.with_suffix(".excerpt.txt")
-            excerpt = excerpt_path.read_text(encoding="utf-8")
-            if lane_runner is None:
-                excerpt = diff_path.read_text(encoding="utf-8")
+            # Complete static diff as prompt data for default and injected executors.
+            # Host artifact paths remain script-only evidence; do not instruct the model.
+            diff_text = diff_path.read_text(encoding="utf-8")
             diff_note = (
-                f"Script-generated diff artifact: {diff_path}\n"
                 f"Read CONTRIBUTING.md and attached skills first.\n"
-                f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
+                f"Script-generated complete base→head diff follows; do not run Git.\n"
+                f"---- complete diff ----\n{diff_text}\n---- end diff ----\n"
             )
         except (CoordinatorError, OSError) as exc:
             return publish_blocker(

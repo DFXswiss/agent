@@ -32,6 +32,15 @@ The script verifies its digest before each invocation. Missing/null runtime
 configuration refuses lane execution without selecting another account,
 provider, model or binary. Existing account/role counts remain unrestricted.
 
+`for_lane` validates fixed workflow review kinds (`reviewer`,
+`pr-reviewer-quality`, `pr-reviewer-logic`) as read-only before launch.
+Configured role names in `ai-accounts.json` are arbitrary operator labels, not
+those workflow kinds. The SourceSession then enforces the capability the
+trusted static caller supplies (`read-only` or `workspace-write`). Existing
+generic and coordinator callers already reject writable bindings for those
+review workflow kinds; this boundary does not invent further role-name
+restrictions or treat a trusted writable builder binding as a reviewer.
+
 The adapters recognize Grok 1.0.5/1.0.13 and Codex 0.147.0/0.153.4. Upgrading a
 CLI requires an explicit pin and adapter validation; an unknown version is
 refused. A configured profile must contain private regular `auth.json` login

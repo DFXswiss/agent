@@ -206,6 +206,11 @@ def parse_model_result(output: str, returncode: int) -> tuple[str, str]:
     """Return (status, result). Approval requires complete+approved only."""
     if returncode != 0:
         return ('timeout' if returncode == 124 else 'unavailable'), ''
+    # Count malformed/foreign verdict fields too, rather than silently
+    # accepting one valid line alongside a contradictory extra result.
+    if (len(re.findall(r"(?im)^STATUS:.*$", output or "")) != 1
+            or len(re.findall(r"(?im)^(?:RESULT|VERDICT):.*$", output or "")) != 1):
+        return 'partial', ''
     status_matches = list(_STATUS_RE.finditer(output or ""))
     result_matches = list(_RESULT_RE.finditer(output or ""))
     if len(status_matches) != 1 or len(result_matches) != 1:

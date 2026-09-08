@@ -56,6 +56,27 @@ def test_legacy_runner_cannot_receive_unrestricted_native_command(tmp_path):
     assert calls == []
 
 
+@pytest.mark.parametrize("verdict,expected", [
+    ("VERDICT: approved", "complete"), ("VERDICT: rejected", "complete"),
+    ("RESULT: approved", "complete"), ("RESULT: done", "partial"),
+    ("VERDICT: approved\nRESULT: rejected", "partial"), ("", "partial"),
+    ("VERDICT: approved\nRESULT: done", "partial"),
+])
+def test_generic_review_lane_preserves_its_verdict_contract(tmp_path, monkeypatch, verdict, expected):
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "task.md"
+    spec.write_text("Review and return STATUS and VERDICT.")
+    monkeypatch.setattr("agent_cli.lane_workspace.local_manifest", lambda cwd: [])
+    def executor(selected, **kwargs):
+        assert selected.access == "read-only"
+        return CompletedProcess([], 0, "STATUS: complete\n" + verdict, "")
+    monkeypatch.setattr("agent_cli.lane_executor.execute", executor)
+    result = launch(role="reviewer", vendor="grok", cwd=str(tmp_path), spec_file=str(spec),
+                    config_home=tmp_path, session_id=DEFAULT_SESSION)
+    assert result.status == expected
+    assert result.stdout == "STATUS: complete\n" + verdict
+
+
 def test_dry_run_selects_explicit_session_without_starting_transport(tmp_path, monkeypatch):
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "task.md"
