@@ -174,6 +174,12 @@ names (including expanded matrix names). When that workflow is required, each
 listed check must actually finish successfully in its latest check suite.
 Use this for workflows whose setup job can succeed while the test jobs skip;
 an overall workflow success must not hide a missing or skipped required test.
+The only exception is when the PR file inventory is independently README-only
+(exactly `README.md` or a path that ends with `/README.md`, case-sensitive,
+fail-closed): then a completed required check may conclude `success`,
+`skipped`, or `neutral`. Missing required checks still
+block. The guard does not trust a report's `readme_only` flag or
+`not_applicable` results without independently listing the pull request files.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
@@ -228,7 +234,7 @@ until the trusted installation is deployed.
 
 ## Author report
 
-The author runs the full local job list from a clean checkout of the exact head. Keep the policy copy, report and logs outside the checkout:
+The author processes the full local job list from a clean checkout of the exact head. Authorized README-only omissions are recorded without executing those jobs. Keep the policy copy, report and logs outside the checkout:
 
 ```sh
 agent a38 run --repo . --repository OWNER/NAME \
@@ -238,7 +244,7 @@ agent a38 run --repo . --repository OWNER/NAME \
 
 `--repository` identifies the target repository, especially when the checkout origin is a fork. Post the complete generated report as a PR comment using the **PR author's account**. Preserve its JSON and markers. The existing local-CI wire schema remains unchanged for compatibility.
 
-For the private opt-in process, the checkout must be clean at the final repository-required signed commit before Ready measurement. The draft may already exist under the [pull request lifecycle](pull-request-lifecycle.md). Run the full active policy and locally verify it before recording `local_check_pass` evidence; that verified SHA must be on the open draft with no intervening commit after measurement. Any fix, amend, or rebase creates a new SHA and requires the complete run and verification again. Execution roles follow the repository's orchestration rules; reviewers remain read-only. Job adapter commands are catalogued in [A38 job adapters](a38-job-adapters.md), without duplicating their schemas here.
+For the private opt-in process, the checkout must be clean at the final repository-required signed commit before Ready measurement. The draft may already exist under the [pull request lifecycle](pull-request-lifecycle.md). Run the active policy (executing non-omitted jobs; recording authorized README-only omissions as `not_applicable`) and locally verify it before recording `local_check_pass` evidence; that verified SHA must be on the open draft with no intervening commit after measurement. Any fix, amend, or rebase creates a new SHA and requires the complete run and verification again. Execution roles follow the repository's orchestration rules; reviewers remain read-only. Job adapter commands are catalogued in [A38 job adapters](a38-job-adapters.md), without duplicating their schemas here.
 
 The latest author report-like comment, ordered by `updated_at` and numeric comment ID, is authoritative. A newer malformed or failed report never falls back to an older success. Other authors' reports cannot satisfy the requirement. Matching repository, head, visibility, full job set, names, commands, timeouts and successful measured results are mandatory, including for public repositories.
 

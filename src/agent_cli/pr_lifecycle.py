@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
+from .readme_only import pull_is_readme_only
 from .workflow_approval import _field, _runs, _timestamp
 
 AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
@@ -141,12 +142,18 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     excluded = (ignored_suites | superseded_suites) - {None}
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
+    # Skipped/neutral required checks are accepted only when the PR file
+    # inventory is independently README-only. Missing checks still block.
+    readme_only = pull_is_readme_only(api, assessment.repo, assessment.pr)
+    accepted_required = (
+        {"success", "skipped", "neutral"} if readme_only else {"success"}
+    )
     for path in sorted(required):
         suite = _field(latest.get(path), "check_suite_id")
         for name in config.get("required_checks", {}).get(path, []):
             matches = [c for c in checks if suite is not None and _field(c, "check_suite", "id") == suite and c.get("name") == name]
             check = max(matches, key=lambda c: c["id"]) if matches else {}
-            if check.get("status") != "completed" or check.get("conclusion") != "success":
+            if check.get("status") != "completed" or check.get("conclusion") not in accepted_required:
                 reasons.append(f"Required CI check not green: {path} / {name}")
     newest: dict[tuple, Mapping] = {}
     for check in checks:

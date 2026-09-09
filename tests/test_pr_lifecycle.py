@@ -210,6 +210,26 @@ def test_successful_workflow_cannot_hide_a_missing_or_skipped_required_test(conc
     assert fake.transitions == ([] if conclusion == "success" else [True])
 
 
+def test_readme_only_accepts_skipped_required_test_for_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Test"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Test",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    fake.pull_files = [{"filename": "README.md", "status": "modified"}]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 def test_dry_run_is_read_only():
     fake = LifecycleAPI()
     fake.runs.clear()

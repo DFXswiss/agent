@@ -223,6 +223,53 @@ class LocalCiTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalCiError, "duplicate key"):
             parse_comment(body)
 
+    def test_missing_readme_only_parses_as_false(self) -> None:
+        report = parse_comment(_comment(_payload()))
+        self.assertFalse(report.readme_only)
+
+    def test_readme_only_true_with_not_applicable_passes(self) -> None:
+        payload = _payload(
+            readme_only=True,
+            required=["format"],
+            runs=[
+                _run(result="not_applicable", exit_code=0, duration_s=0),
+            ],
+        )
+        verdict = verify_comment(_comment(payload))
+        self.assertTrue(verdict.ok)
+        self.assertEqual(verdict.status, "pass")
+
+    def test_readme_only_false_with_not_applicable_fails(self) -> None:
+        payload = _payload(
+            required=["format"],
+            runs=[_run(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        verdict = verify_comment(_comment(payload))
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("not_applicable is not authorized" in r for r in verdict.reasons))
+
+    def test_not_applicable_exit_one_fails(self) -> None:
+        payload = _payload(
+            readme_only=True,
+            required=["format"],
+            runs=[_run(result="not_applicable", exit_code=1, duration_s=0)],
+        )
+        verdict = verify_comment(_comment(payload))
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("exit_code is 1" in r for r in verdict.reasons))
+
+    def test_render_block_keeps_readme_only_true(self) -> None:
+        payload = _payload(
+            readme_only=True,
+            required=["format"],
+            runs=[_run(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        report = parse_comment(_comment(payload))
+        self.assertTrue(report.readme_only)
+        again = parse_comment(render_block(report))
+        self.assertTrue(again.readme_only)
+        self.assertEqual(again.runs[0].result, "not_applicable")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,8 +70,14 @@ def _pr_guard_config(
     }
 
 
-def _policy(*, mode: str = "enforce", jobs: list | None = None, exclusions: list | None = None) -> dict:
-    return {
+def _policy(
+    *,
+    mode: str = "enforce",
+    jobs: list | None = None,
+    exclusions: list | None = None,
+    readme_only: dict | None = None,
+) -> dict:
+    payload = {
         "schema": "a38/v1",
         "standard": "A38",
         "documentation": "docs/a38.md",
@@ -89,6 +95,9 @@ def _policy(*, mode: str = "enforce", jobs: list | None = None, exclusions: list
         ],
         "exclusions": exclusions or [],
     }
+    if readme_only is not None:
+        payload["readme_only"] = readme_only
+    return payload
 
 
 def _workflow_yaml(jobs: list[str]) -> bytes:
@@ -108,8 +117,10 @@ def _report_comment(
     private: bool = False,
     result: str = "pass",
     exit_code: int = 0,
+    readme_only: bool = False,
+    duration_s: float = 1.0,
 ) -> str:
-    payload = {
+    payload: dict[str, Any] = {
         "schema": "dfx-local-ci/v1",
         "repo": repo,
         "head": head,
@@ -123,11 +134,13 @@ def _report_comment(
                 "command": "pytest",
                 "result": result,
                 "exit_code": exit_code,
-                "duration_s": 1.0,
+                "duration_s": duration_s,
                 "timeout_s": 600,
             }
         ],
     }
+    if readme_only:
+        payload["readme_only"] = True
     return (
         "EN: ready\n"
         f"{LOCAL_CI_BEGIN}\n```json\n{json.dumps(payload)}\n```\n{LOCAL_CI_END}\n"
@@ -164,6 +177,7 @@ class FakeAPI:
         self.open_pulls: list[int] = [1]
         self.reviews: list[dict[str, Any]] = []
         self.permissions: dict[str, dict[str, Any]] = {}
+        self.pull_files: list[dict[str, Any]] = []
         # Branch/tag ref → immutable commit SHA for GET /commits/{ref}.
         self.ref_commits: dict[str, str] = {
             "develop": DEFAULT_TIP,
@@ -228,6 +242,8 @@ class FakeAPI:
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1":
             return 200, self.pull, {}
+        if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1/files":
+            return 200, list(self.pull_files), {}
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1/reviews":
             return 200, self.reviews, {}
         if method_u == "GET" and "/collaborators/" in path_only:
@@ -1240,6 +1256,50 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
                 '{"schema":"pr-guard/v1","a38":{"enforce":["develop","develop"],'
                 '"exclude":[],"default":"enforce"}}'
             )
+
+    def test_readme_only_omit_rejected_without_independent_files(self) -> None:
+        fake = FakeAPI()
+        fake.files[(BASE, ".github/a38.json")] = json.dumps(
+            _policy(readme_only={"omit_jobs": ["pytest"]})
+        ).encode()
+        fake.add_author_report(
+            _report_comment(
+                result="not_applicable",
+                exit_code=0,
+                readme_only=True,
+                duration_s=0.0,
+            ),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=301,
+        )
+        fake.pull_files = []
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertTrue(
+            any("not independently confirmed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_readme_only_omit_accepted_when_files_confirm(self) -> None:
+        fake = FakeAPI()
+        fake.files[(BASE, ".github/a38.json")] = json.dumps(
+            _policy(readme_only={"omit_jobs": ["pytest"]})
+        ).encode()
+        fake.add_author_report(
+            _report_comment(
+                result="not_applicable",
+                exit_code=0,
+                readme_only=True,
+                duration_s=0.0,
+            ),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=302,
+        )
+        fake.pull_files = [{"filename": "README.md", "status": "modified"}]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
 
 
 if __name__ == "__main__":
