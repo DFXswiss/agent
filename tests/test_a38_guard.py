@@ -1380,6 +1380,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(result.status, "pass")
         self.assertTrue(result.write_ready)
         self.assertEqual(result.write_ready_reason, "markdown-only change set")
+        self.assertIn("optional for this markdown-only waiver", result.comment_body)
 
     def test_empty_pull_files_do_not_waive_for_markdown(self) -> None:
         fake = FakeAPI()
