@@ -347,6 +347,23 @@ def test_no_write_ready_with_in_progress_ci_still_drafts():
     ("in_progress", None),
     ("completed", "failure"),
 ])
+def test_markdown_only_ready_does_not_hold_against_red_or_pending_ci(status, conclusion):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = False
+    fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+    fake.runs[0].update(status=status, conclusion=conclusion)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.write_ready
+    assert result.write_ready_reason == "markdown-only change set"
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+
+
+@pytest.mark.parametrize("status,conclusion", [
+    ("in_progress", None),
+    ("completed", "failure"),
+])
 def test_write_author_ready_holds_against_red_or_pending_ci(status, conclusion):
     fake = LifecycleAPI()
     fake.comments.clear()
