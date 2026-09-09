@@ -1,8 +1,9 @@
-"""Fail-closed README-only detection for A38 job omission.
+"""Fail-closed README-only and markdown-only detection for A38.
 
 A change set is README-only only when every path is exactly ``README.md``
-or ends with ``/README.md`` (case-sensitive). Unknown git statuses, truncated
-GitHub inventories, or command/API errors are not README-only.
+or ends with ``/README.md`` (case-sensitive). A change set is markdown-only
+only when every path ends with ``.md`` (case-sensitive). Unknown git
+statuses, truncated GitHub inventories, or command/API errors are neither.
 """
 
 from __future__ import annotations
@@ -21,11 +22,22 @@ def is_readme_path(path: str) -> bool:
     return path == README or path.endswith("/" + README)
 
 
+def is_markdown_path(path: str) -> bool:
+    return path.endswith(".md")
+
+
 def paths_are_readme_only(paths: Sequence[str]) -> bool:
     # Empty inventory is not README-only (fail-closed).
     if not paths:
         return False
     return all(isinstance(p, str) and is_readme_path(p) for p in paths)
+
+
+def paths_are_markdown_only(paths: Sequence[str]) -> bool:
+    # Empty inventory is not markdown-only (fail-closed).
+    if not paths:
+        return False
+    return all(isinstance(p, str) and is_markdown_path(p) for p in paths)
 
 
 def parse_name_status_z(blob: bytes) -> list[str] | None:
@@ -111,6 +123,13 @@ def git_is_readme_only(repo: Path, base: str, head: str) -> bool:
     return paths_are_readme_only(paths)
 
 
+def git_is_markdown_only(repo: Path, base: str, head: str) -> bool:
+    paths = git_changed_paths(repo, base, head)
+    if paths is None or len(paths) > MAX_FILES:
+        return False
+    return paths_are_markdown_only(paths)
+
+
 def github_file_paths(entries: Sequence[Mapping[str, Any]]) -> list[str] | None:
     paths: list[str] = []
     for item in entries:
@@ -144,6 +163,17 @@ def github_is_readme_only(entries: Sequence[Mapping[str, Any]], *, truncated: bo
     return paths_are_readme_only(paths)
 
 
+def github_is_markdown_only(entries: Sequence[Mapping[str, Any]], *, truncated: bool) -> bool:
+    if truncated:
+        return False
+    if len(entries) > MAX_FILES:
+        return False
+    paths = github_file_paths(entries)
+    if paths is None:
+        return False
+    return paths_are_markdown_only(paths)
+
+
 def list_pull_files(api: Any, repo: str, number: int) -> list[Mapping[str, Any]] | None:
     """Return PR file entries, or None when the inventory is incomplete."""
     try:
@@ -162,3 +192,10 @@ def pull_is_readme_only(api: Any, repo: str, number: int) -> bool:
     if entries is None:
         return False
     return github_is_readme_only(entries, truncated=False)
+
+
+def pull_is_markdown_only(api: Any, repo: str, number: int) -> bool:
+    entries = list_pull_files(api, repo, number)
+    if entries is None:
+        return False
+    return github_is_markdown_only(entries, truncated=False)

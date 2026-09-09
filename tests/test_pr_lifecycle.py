@@ -261,6 +261,26 @@ def test_readme_only_accepts_skipped_required_test_for_auto_ready():
     assert fake.transitions == [False]
 
 
+def test_markdown_only_accepts_skipped_required_test_for_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Test"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Test",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 def test_dry_run_is_read_only():
     fake = LifecycleAPI()
     fake.runs.clear()
@@ -318,6 +338,23 @@ def test_no_write_ready_with_in_progress_ci_still_drafts():
     fake = LifecycleAPI()
     fake.runs[0].update(status="in_progress", conclusion=None)
     result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+
+
+@pytest.mark.parametrize("status,conclusion", [
+    ("in_progress", None),
+    ("completed", "failure"),
+])
+def test_markdown_only_ready_does_not_hold_against_red_or_pending_ci(status, conclusion):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = False
+    fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+    fake.runs[0].update(status=status, conclusion=conclusion)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.write_ready
+    assert result.write_ready_reason == "markdown-only change set"
     assert result.lifecycle["action"] == "draft"
     assert fake.transitions == [True]
     assert fake.pull["draft"]

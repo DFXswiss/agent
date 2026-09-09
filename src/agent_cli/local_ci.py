@@ -23,7 +23,7 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 RECORDED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 RESULTS = frozenset({"pass", "fail", "error", "timeout", "not_applicable"})
 PAYLOAD_KEYS = frozenset({"schema", "repo", "head", "private", "recorded_at", "required", "runs"})
-PAYLOAD_OPTIONAL = frozenset({"readme_only"})
+PAYLOAD_OPTIONAL = frozenset({"readme_only", "markdown_only"})
 RUN_KEYS = frozenset({"id", "name", "command", "result", "exit_code", "duration_s", "timeout_s"})
 
 
@@ -79,6 +79,7 @@ class LocalCiReport:
     required: tuple[str, ...]
     runs: tuple[LocalCiRun, ...]
     readme_only: bool = False
+    markdown_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,9 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
     readme_only = False
     if "readme_only" in raw:
         readme_only = _as_bool(raw["readme_only"], "readme_only")
+    markdown_only = False
+    if "markdown_only" in raw:
+        markdown_only = _as_bool(raw["markdown_only"], "markdown_only")
     return LocalCiReport(
         schema=schema,
         repo=repo,
@@ -248,6 +252,7 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
         required=tuple(required),
         runs=tuple(runs),
         readme_only=readme_only,
+        markdown_only=markdown_only,
     )
 
 
@@ -295,8 +300,9 @@ def evaluate(
             reasons.append(f"{ident}: missing run")
             continue
         if run.result == "not_applicable":
-            if not report.readme_only or run.exit_code != 0:
-                if not report.readme_only:
+            omit_authorized = report.readme_only or report.markdown_only
+            if not omit_authorized or run.exit_code != 0:
+                if not omit_authorized:
                     reasons.append(f"{ident}: not_applicable is not authorized")
                 else:
                     reasons.append(f"{ident}: exit_code is {run.exit_code}")
@@ -351,5 +357,7 @@ def render_block(report: LocalCiReport) -> str:
     }
     if report.readme_only:
         payload["readme_only"] = True
+    if report.markdown_only:
+        payload["markdown_only"] = True
     body = json.dumps(payload, indent=2, sort_keys=True)
     return f"{BEGIN_MARK}\n```json\n{body}\n```\n{END_MARK}\n"

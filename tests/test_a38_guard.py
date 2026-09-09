@@ -118,6 +118,7 @@ def _report_comment(
     result: str = "pass",
     exit_code: int = 0,
     readme_only: bool = False,
+    markdown_only: bool = False,
     duration_s: float = 1.0,
 ) -> str:
     payload: dict[str, Any] = {
@@ -141,6 +142,8 @@ def _report_comment(
     }
     if readme_only:
         payload["readme_only"] = True
+    if markdown_only:
+        payload["markdown_only"] = True
     return (
         "EN: ready\n"
         f"{LOCAL_CI_BEGIN}\n```json\n{json.dumps(payload)}\n```\n{LOCAL_CI_END}\n"
@@ -1365,6 +1368,92 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             cid=302,
         )
         fake.pull_files = [{"filename": "README.md", "status": "modified"}]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+
+    def test_markdown_only_waives_author_report(self) -> None:
+        fake = FakeAPI()
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+        self.assertTrue(result.write_ready)
+        self.assertEqual(result.write_ready_reason, "markdown-only change set")
+        self.assertIn("optional for this markdown-only waiver", result.comment_body)
+
+    def test_empty_pull_files_do_not_waive_for_markdown(self) -> None:
+        fake = FakeAPI()
+        fake.pull_files = []
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertFalse(result.write_ready)
+        self.assertTrue(
+            any("no author local-CI report" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_mixed_files_do_not_waive_for_markdown(self) -> None:
+        fake = FakeAPI()
+        fake.pull_files = [
+            {"filename": "docs/guide.md", "status": "modified"},
+            {"filename": "app.py", "status": "modified"},
+        ]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertFalse(result.write_ready)
+
+    def test_markdown_only_does_not_waive_policy_failure(self) -> None:
+        fake = FakeAPI()
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        fake.files[(BASE, ".github/a38.json")] = b'{"schema":"nope"}'
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertTrue(
+            result.status in {"not_configured", "invalid_policy", "fail"}
+            or any("maintainer config" in r for r in result.reasons),
+            msg=(result.status, result.reasons),
+        )
+
+    def test_markdown_only_omit_rejected_without_independent_files(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(
+                result="not_applicable",
+                exit_code=0,
+                markdown_only=True,
+                duration_s=0.0,
+            ),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=303,
+        )
+        fake.pull_files = []
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertTrue(
+            any(
+                "markdown-only omission is not independently confirmed" in r
+                for r in result.reasons
+            ),
+            msg=result.reasons,
+        )
+
+    def test_markdown_only_omit_accepted_when_files_confirm(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(
+                result="not_applicable",
+                exit_code=0,
+                markdown_only=True,
+                duration_s=0.0,
+            ),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=304,
+        )
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
         result = assess_pull(fake.api(), REPO, 1, dry_run=True)
         self.assertTrue(result.ok, msg=result.reasons)
         self.assertEqual(result.status, "pass")

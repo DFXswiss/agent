@@ -32,8 +32,8 @@ sit between the markers.
 
 ## Payload
 
-Every key below is required except the optional `readme_only` boolean. Unknown
-keys are rejected.
+Every key below is required except the optional `readme_only` and
+`markdown_only` booleans. Unknown keys are rejected.
 
 | Key | Rule |
 |---|---|
@@ -45,6 +45,7 @@ keys are rejected.
 | `required` | Unique kebab-case ids. This is the full `ci:full` job set. Empty only when the repository has no pull-request CI jobs |
 | `runs` | One object per required id (executed or authorized omitted). Empty only when `required` is empty |
 | `readme_only` (optional) | JSON boolean. When present and `true`, authorizes `result=not_applicable` runs with `exit_code=0` (A38 policy verify also requires the job id in `readme_only.omit_jobs`; the guard independently confirms the PR file inventory). Omit the key when false. |
+| `markdown_only` (optional) | JSON boolean. When present and `true`, authorizes `result=not_applicable` runs with `exit_code=0` for every required job (full local-suite skip when every changed path ends with `.md`; the guard independently confirms the PR file inventory). Omit the key when false. |
 
 Each run object:
 
@@ -69,10 +70,10 @@ There is no `verdict` field. The script computes it.
    run's `result=not_applicable`), **or**
 3. `private` is `true` and every `required` id has a run that is either
    `result=pass` with `exit_code=0` and `duration_s <= timeout_s`, or
-   `result=not_applicable` authorized by `readme_only: true` with
-   `exit_code=0` (duration versus timeout need not apply to those omitted
-   runs). An empty `required` list (no pull-request CI jobs in the
-   repository) is a pass.
+   `result=not_applicable` authorized by `readme_only: true` or
+   `markdown_only: true` with `exit_code=0` (duration versus timeout need
+   not apply to those omitted runs). An empty `required` list (no
+   pull-request CI jobs in the repository) is a pass.
 
 `--require-ids a,b,c` additionally demands that `required` is exactly that set.
 `--expect-head SHA` demands the payload head matches. `--expect-private` demands

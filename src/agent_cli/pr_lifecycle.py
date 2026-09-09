@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-from .readme_only import pull_is_readme_only
+from .readme_only import pull_is_markdown_only, pull_is_readme_only
 from .workflow_approval import _field, _runs, _timestamp
 
 AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
@@ -157,10 +157,15 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
     # Skipped/neutral required checks are accepted only when the PR file
-    # inventory is independently README-only. Missing checks still block.
-    readme_only = pull_is_readme_only(api, assessment.repo, assessment.pr)
+    # inventory is independently README-only or markdown-only. Missing checks
+    # still block.
+    accept_skipped_required = pull_is_readme_only(
+        api, assessment.repo, assessment.pr
+    ) or pull_is_markdown_only(api, assessment.repo, assessment.pr)
     accepted_required = (
-        {"success", "skipped", "neutral"} if readme_only else {"success"}
+        {"success", "skipped", "neutral"}
+        if accept_skipped_required
+        else {"success"}
     )
     for path in sorted(required):
         suite = _field(latest.get(path), "check_suite_id")
@@ -246,10 +251,15 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         and previous.get("base") == snap.base_sha
         and previous.get("phase") == "applied"
     )
-    restore_write_ready = bool(pull["draft"] and assessment.write_ready and we_drafted)
+    write_hold = getattr(assessment, "write_ready_reason", "") in {
+        "author has write",
+        "ready by write collaborator",
+    }
+    restore_write_ready = bool(pull["draft"] and write_hold and we_drafted)
     # Write collaborator Ready hold: do not auto-draft while author or the latest
     # ready_for_review actor has write/maintain/admin on the target repository.
-    if not pull["draft"] and reasons and assessment.write_ready:
+    # Markdown-only is a report waiver only — it does not hold Ready through red CI.
+    if not pull["draft"] and reasons and write_hold:
         hold = {
             "repo": assessment.repo,
             "pr": assessment.pr,

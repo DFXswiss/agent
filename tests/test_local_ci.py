@@ -226,6 +226,7 @@ class LocalCiTests(unittest.TestCase):
     def test_missing_readme_only_parses_as_false(self) -> None:
         report = parse_comment(_comment(_payload()))
         self.assertFalse(report.readme_only)
+        self.assertFalse(report.markdown_only)
 
     def test_readme_only_true_with_not_applicable_passes(self) -> None:
         payload = _payload(
@@ -239,8 +240,31 @@ class LocalCiTests(unittest.TestCase):
         self.assertTrue(verdict.ok)
         self.assertEqual(verdict.status, "pass")
 
+    def test_markdown_only_true_with_not_applicable_passes(self) -> None:
+        payload = _payload(
+            markdown_only=True,
+            required=["format"],
+            runs=[
+                _run(result="not_applicable", exit_code=0, duration_s=0),
+            ],
+        )
+        verdict = verify_comment(_comment(payload))
+        self.assertTrue(verdict.ok)
+        self.assertEqual(verdict.status, "pass")
+
     def test_readme_only_false_with_not_applicable_fails(self) -> None:
         payload = _payload(
+            required=["format"],
+            runs=[_run(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        verdict = verify_comment(_comment(payload))
+        self.assertFalse(verdict.ok)
+        self.assertTrue(any("not_applicable is not authorized" in r for r in verdict.reasons))
+
+    def test_not_applicable_unauthorized_when_both_flags_false(self) -> None:
+        payload = _payload(
+            readme_only=False,
+            markdown_only=False,
             required=["format"],
             runs=[_run(result="not_applicable", exit_code=0, duration_s=0)],
         )
@@ -269,6 +293,22 @@ class LocalCiTests(unittest.TestCase):
         again = parse_comment(render_block(report))
         self.assertTrue(again.readme_only)
         self.assertEqual(again.runs[0].result, "not_applicable")
+
+    def test_render_block_keeps_markdown_only_true(self) -> None:
+        payload = _payload(
+            markdown_only=True,
+            required=["format"],
+            runs=[_run(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        report = parse_comment(_comment(payload))
+        self.assertTrue(report.markdown_only)
+        self.assertFalse(report.readme_only)
+        again = parse_comment(render_block(report))
+        self.assertTrue(again.markdown_only)
+        self.assertFalse(again.readme_only)
+        self.assertEqual(again.runs[0].result, "not_applicable")
+        self.assertIn('"markdown_only": true', render_block(report))
+        self.assertNotIn('"readme_only"', render_block(report))
 
 
 if __name__ == "__main__":

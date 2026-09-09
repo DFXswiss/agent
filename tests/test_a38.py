@@ -93,6 +93,7 @@ def _report_comment(
     required: list[str] | None = None,
     runs: list[dict] | None = None,
     readme_only: bool = False,
+    markdown_only: bool = False,
 ) -> str:
     if recorded_at is None:
         recorded_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -111,6 +112,8 @@ def _report_comment(
     }
     if readme_only:
         payload["readme_only"] = True
+    if markdown_only:
+        payload["markdown_only"] = True
     return f"{BEGIN_MARK}\n```json\n{json.dumps(payload)}\n```\n{END_MARK}\n"
 
 
@@ -437,6 +440,58 @@ class VerifyTests(unittest.TestCase):
         )
         self.assertFalse(verdict["ok"])
         self.assertTrue(any("exit_code is 1" in r for r in verdict["reasons"]))
+
+    def test_markdown_only_authorizes_all_jobs_not_applicable(self) -> None:
+        jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        policy = load_policy(_policy_text(jobs=jobs))
+        comment = _report_comment(
+            required=["unit", "lint"],
+            runs=[
+                _run_payload(result="not_applicable", exit_code=0, duration_s=0),
+                _run_payload(
+                    ident="lint",
+                    name="Lint",
+                    result="not_applicable",
+                    exit_code=0,
+                    duration_s=0,
+                ),
+            ],
+            markdown_only=True,
+        )
+        verdict = verify_report(
+            comment, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertTrue(verdict["ok"], msg=verdict)
+
+    def test_markdown_only_without_flag_rejects_not_applicable(self) -> None:
+        policy = load_policy(_policy_text())
+        comment = _report_comment(
+            runs=[_run_payload(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        verdict = verify_report(
+            comment, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(
+            any("not_applicable is not authorized" in r for r in verdict["reasons"])
+        )
 
     def test_public_does_not_bypass_failed_run(self) -> None:
         policy = load_policy(_policy_text())
@@ -1137,6 +1192,8 @@ class RunnerTests(unittest.TestCase):
             self.assertIn(BEGIN_MARK, text)
 
     def test_readme_only_omits_configured_job(self) -> None:
+        # README.md is also markdown-only, so the broader markdown rule omits
+        # every required job. readme_only remains true when omit_jobs applied.
         two_jobs = [
             {
                 "id": "unit",
@@ -1194,15 +1251,15 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(verdict["ok"], msg=verdict)
             report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
             self.assertTrue(report.readme_only)
+            self.assertTrue(report.markdown_only)
             by_id = {run.id: run for run in report.runs}
-            self.assertEqual(by_id["unit"].result, "pass")
+            self.assertEqual(by_id["unit"].result, "not_applicable")
             self.assertEqual(by_id["lint"].result, "not_applicable")
             self.assertEqual(by_id["lint"].exit_code, 0)
             self.assertEqual(by_id["lint"].duration_s, 0.0)
-            lint_log = (logs / "lint.log").read_text(encoding="utf-8")
-            self.assertEqual(lint_log, "omitted: README-only change set\n")
-            unit_log = (logs / "unit.log").read_text(encoding="utf-8")
-            self.assertNotIn("omitted:", unit_log)
+            for ident in ("unit", "lint"):
+                text = (logs / f"{ident}.log").read_text(encoding="utf-8")
+                self.assertEqual(text, "omitted: markdown-only change set\n")
 
     def test_interrupt_after_readme_only_omit_invalidates_report(self) -> None:
         # Preflight is the first _require_clean_tree call; omit path skips
@@ -1346,12 +1403,82 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(verdict["ok"], msg=verdict)
             report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
             self.assertFalse(report.readme_only)
+            self.assertFalse(report.markdown_only)
             by_id = {run.id: run for run in report.runs}
             self.assertEqual(by_id["unit"].result, "pass")
             self.assertEqual(by_id["lint"].result, "pass")
             for ident in ("unit", "lint"):
                 text = (logs / f"{ident}.log").read_text(encoding="utf-8")
                 self.assertNotIn("omitted:", text)
+
+    def test_markdown_only_omits_all_jobs(self) -> None:
+        two_jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            logs = root / "logs"
+            logs.mkdir()
+            base = _init_repo(repo)
+            docs = repo / "docs"
+            docs.mkdir()
+            (docs / "guide.md").write_text("guide\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "docs/guide.md"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "commit",
+                    "-m",
+                    "markdown",
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            policy = load_policy(_policy_text(jobs=two_jobs))
+            verdict = run_policy(
+                repo,
+                policy,
+                output=root / "report.md",
+                logs_dir=logs,
+                base_sha=base,
+                private=True,
+            )
+            self.assertTrue(verdict["ok"], msg=verdict)
+            report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
+            self.assertTrue(report.markdown_only)
+            self.assertFalse(report.readme_only)
+            by_id = {run.id: run for run in report.runs}
+            self.assertEqual(by_id["unit"].result, "not_applicable")
+            self.assertEqual(by_id["lint"].result, "not_applicable")
+            for ident in ("unit", "lint"):
+                text = (logs / f"{ident}.log").read_text(encoding="utf-8")
+                self.assertEqual(text, "omitted: markdown-only change set\n")
 
     def test_strips_github_tokens_from_job_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
