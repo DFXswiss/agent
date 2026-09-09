@@ -161,9 +161,27 @@ class PrGuardConfigEvaluationTests(unittest.TestCase):
         self.assertEqual(evaluate_a38_scope(config, "release")[0], "exclude")
         self.assertEqual(evaluate_a38_scope(config, "feature/x")[0], "enforce")
         self.assertEqual(evaluate_a38_scope(None, "release")[0], "enforce")
+        self.assertEqual(evaluate_a38_scope(None, "Main")[0], "enforce")
         decision, reason = evaluate_a38_scope(config, "Release")
         self.assertEqual(decision, "enforce")
         self.assertIn("a38.default", reason)
+        main_decision, main_reason = evaluate_a38_scope(None, "main")
+        self.assertEqual(main_decision, "exclude")
+        self.assertEqual(main_reason, "target branch 'main' has nothing for A38 to check")
+        self.assertIn("nothing for A38 to check", main_reason)
+        enforce_main = load_pr_guard_config(
+            json.dumps(
+                {
+                    "schema": "pr-guard/v1",
+                    "a38": {
+                        "enforce": ["main"],
+                        "exclude": [],
+                        "default": "enforce",
+                    },
+                }
+            )
+        )
+        self.assertEqual(evaluate_a38_scope(enforce_main, "main")[0], "exclude")
 
 
 class RunnerGuardEndToEndTests(unittest.TestCase):

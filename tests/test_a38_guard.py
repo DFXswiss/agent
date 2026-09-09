@@ -688,7 +688,6 @@ class A38GuardE2ETests(unittest.TestCase):
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE2)
         fake.pull["base"]["ref"] = "main"
-        # In-scope only when the target equals the trusted repository default.
         fake.pull["base"]["repo"]["default_branch"] = "main"
         fake.tree_paths[BASE2] = [".github/workflows/test.yml"]
         fake.files[(BASE2, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]
@@ -700,9 +699,22 @@ class A38GuardE2ETests(unittest.TestCase):
         )
         result = reconcile_pull(fake.api(), REPO, 1, publish=True)
         self.assertTrue(result.ok)
-        self.assertEqual(result.status, "pass")
+        self.assertEqual(result.status, "not_applicable")
+        self.assertEqual(result.scope_decision, "exclude")
         self.assertEqual(result.context, status_context_enforce("main"))
+        self.assertFalse(any(w.startswith("comment:") for w in result.writes))
         self.assertTrue(any("(main)" in (s.get("context") or "") for s in fake.statuses))
+
+        # Same head SHA against an in-scope target still enforces with a distinct context.
+        fake.pull["base"]["ref"] = "develop"
+        fake.pull["base"]["repo"]["default_branch"] = "develop"
+        fake.pull["base"]["sha"] = BASE
+        enforced = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(enforced.ok)
+        self.assertEqual(enforced.status, "pass")
+        self.assertEqual(enforced.scope_decision, "enforce")
+        self.assertEqual(enforced.context, status_context_enforce("develop"))
+        self.assertNotEqual(enforced.context, result.context)
 
     def test_dry_run_no_writes(self) -> None:
         fake = FakeAPI()
@@ -897,7 +909,12 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(result.context, status_context_enforce("main"))
         self.assertEqual(result.state_for_status, "success")
         self.assertEqual(result.description, a38_guard.NOT_APPLICABLE_DESCRIPTION)
-        self.assertTrue(any("a38.exclude" in reason for reason in result.reasons))
+        self.assertEqual(
+            result.scope_reason, "target branch 'main' has nothing for A38 to check"
+        )
+        self.assertTrue(
+            any("nothing for A38 to check" in reason for reason in result.reasons)
+        )
         self.assertFalse(any(w.startswith("comment:") for w in result.writes))
         self.assertTrue(
             any(
@@ -992,7 +1009,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
     def test_absent_config_legacy_enforce_all(self) -> None:
         fake = FakeAPI()
         # No .github/pr-guard.json at trusted tip: legacy enforce-all.
-        fake.pull["base"]["ref"] = "main"
+        fake.pull["base"]["ref"] = "release"
         blocked = assess_pull(fake.api(), REPO, 1)
         self.assertEqual(blocked.scope_decision, "enforce")
         self.assertFalse(blocked.ok)
@@ -1004,6 +1021,27 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         )
         self.assertEqual(blocked.config_revision, DEFAULT_TIP)
         self.assertEqual(blocked.config_fingerprint, "missing")
+
+    def test_absent_config_main_is_built_in_exclude(self) -> None:
+        fake = FakeAPI()
+        fake.pull["base"]["ref"] = "main"
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "not_applicable")
+        self.assertEqual(result.scope_decision, "exclude")
+        self.assertEqual(
+            result.scope_reason, "target branch 'main' has nothing for A38 to check"
+        )
+        self.assertTrue(
+            any("nothing for A38 to check" in reason for reason in result.reasons)
+        )
+        self.assertEqual(result.lifecycle, {})
+        self.assertFalse(any(w.startswith("comment:") for w in result.writes))
+        self.assertFalse(
+            any("PR-GUARD:LIFECYCLE" in (c.get("body") or "") for c in fake.comments)
+        )
+        self.assertFalse(fake.pull["draft"])
+        self.assertEqual(result.config_fingerprint, "missing")
 
     def test_invalid_or_denied_config_cannot_exempt(self) -> None:
         fake = FakeAPI()

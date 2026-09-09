@@ -62,9 +62,9 @@ Rules enforced centrally by the Agent:
 - Branch entries are exact, case-sensitive names (same 1–75 character limits as status contexts). There is no glob DSL.
 - No duplicates within a list, and no overlap between `enforce` and `exclude`.
 - Unknown JSON keys and duplicate JSON keys fail closed. The schema string must match exactly.
-- There are **no** built-in branch-name rules. The repository default branch is used only to **locate** this file, never as an implicit enforce or exclude decision.
-- Evaluation order: exact `enforce` match, else exact `exclude` match, else `a38.default`.
-- When the entire file is missing on the trusted revision, legacy **enforce-all** applies (every target branch stays in scope). Malformed configuration, HTTP 403, or any non-404 configuration API error fails closed and cannot exempt a PR.
+- The only built-in branch-name rule is exact `main`: that target is always out of scope (nothing for A38 to check). Other names have no built-in meaning. The repository default branch is used only to **locate** this file, never as an implicit enforce.
+- Evaluation order: exact `main`, else exact `enforce` match, else exact `exclude` match, else `a38.default`.
+- When the entire file is missing on the trusted revision, legacy **enforce-all** applies for every target **except** `main`. Malformed configuration, HTTP 403, or any non-404 configuration API error fails closed and cannot exempt a PR.
 - The live PR's `base.repo.default_branch` metadata (never the head repository) is validated, resolved to an immutable commit via `GET /repos/{repo}/commits/{urlencoded_default_branch}` (lowercase 40-hex SHA), then the file is read from that revision in the **base** repository. Configuration from the PR head can never self-exempt.
 - Assessment JSON records `trusted_default_branch` and `config_revision` for audit. Closed PRs remain successful no-ops **before** any configuration lookup.
 

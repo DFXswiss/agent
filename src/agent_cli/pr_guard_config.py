@@ -1,9 +1,11 @@
 """Repository pr-guard configuration: schema, validation and scope evaluation.
 
 Optional `.github/pr-guard.json` controls which PR target branches A38 enforces.
-The default branch is only the trusted location used to *find* this file; it is
-not itself a built-in enforcement rule. Missing configuration retains legacy
-enforce-all. Malformed configuration fails closed.
+Exact target ``main`` is a built-in out-of-scope rule (nothing for A38 to check),
+even when the file is missing or ``a38.enforce`` lists ``main``. The repository
+default branch is only the trusted location used to *find* this file; it is not
+itself an implicit enforce. Missing configuration retains legacy enforce-all for
+every other target. Malformed configuration fails closed.
 """
 
 from __future__ import annotations
@@ -209,11 +211,16 @@ def evaluate_a38_scope(
 ) -> tuple[str, str]:
     """Return (decision, reason) for a PR target branch.
 
-    ``config is None`` means the file is absent on the trusted revision and
-    retains legacy enforce-all. Listed branches use exact case-sensitive match;
-    unlisted branches follow ``a38.default``. There are no built-in branch rules.
+    Exact ``main`` is always out of scope (built-in; nothing to check), before
+    legacy enforce-all and before ``a38.enforce`` / ``a38.exclude`` /
+    ``a38.default``. ``config is None`` means the file is absent on the trusted
+    revision and retains legacy enforce-all for every other name. Listed
+    branches use exact case-sensitive match; unlisted branches follow
+    ``a38.default``.
     """
     branch = validate_branch_name(base_ref, "base_ref")
+    if branch == "main":
+        return ("exclude", "target branch 'main' has nothing for A38 to check")
     if config is None:
         return (
             "enforce",
