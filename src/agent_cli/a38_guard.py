@@ -1113,8 +1113,14 @@ def build_comment_body(assessment: Assessment) -> str:
         f"`{POLICY_APPROVAL_PREFIX} head={assessment.head_sha} base={assessment.base_sha}`.\n"
         f"- Run (outside the repo output paths): `{run_cmd}`\n"
         + (
-            "- Publish: an author local-CI report is optional for this author-report waiver; "
-            "if posted, use the PR author's account and preserve the report block.\n"
+            (
+                "- Publish: an author local-CI report is optional for this markdown-only waiver; "
+                "if posted, use the PR author's account and preserve the report block.\n"
+                if assessment.write_ready_reason == "markdown-only change set"
+                else
+                "- Publish: an author local-CI report is optional for this write-collaborator waiver; "
+                "if posted, use the PR author's account and preserve the report block.\n"
+            )
             if waiver_report
             else
             "- Publish: post the complete generated report as a pull-request comment "
