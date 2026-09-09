@@ -1016,11 +1016,11 @@ def build_comment_body(assessment: Assessment) -> str:
         if waiver_only:
             extra_en = (
                 " An author local-CI report is not required because the author "
-                "or the Ready actor has write on this repository."
+                "has write on this repository."
             )
             extra_de = (
                 " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
-                "oder der Ready-Akteur Write auf diesem Repository hat."
+                "Write auf diesem Repository hat."
             )
         elif passing:
             extra_en = " An author local-CI report is accepted for this head."
@@ -1043,14 +1043,24 @@ def build_comment_body(assessment: Assessment) -> str:
             en_tail = "author local-CI report accepted for this head."
             de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
         elif waiver_only:
-            en_tail = (
-                "author local-CI report not required because the author "
-                "or the Ready actor has write on this repository."
-            )
-            de_tail = (
-                "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
-                "oder der Ready-Akteur Write auf diesem Repository hat."
-            )
+            if assessment.write_ready_reason == "author has write":
+                en_tail = (
+                    "author local-CI report not required because the author "
+                    "has write on this repository."
+                )
+                de_tail = (
+                    "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
+                    "Write auf diesem Repository hat."
+                )
+            else:
+                en_tail = (
+                    "author local-CI report not required because a write "
+                    "collaborator marked Ready."
+                )
+                de_tail = (
+                    "Autor-Local-CI-Report nicht erforderlich, weil ein "
+                    "Write-Collaborator Ready gesetzt hat."
+                )
         else:
             en_tail = "author local-CI report missing or invalid for this head."
             de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
@@ -1072,8 +1082,14 @@ def build_comment_body(assessment: Assessment) -> str:
         "- For a workflow/policy migration, another maintainer must submit an approved review with "
         f"`{POLICY_APPROVAL_PREFIX} head={assessment.head_sha} base={assessment.base_sha}`.\n"
         f"- Run (outside the repo output paths): `{run_cmd}`\n"
-        "- Publish: post the complete generated report as a pull-request comment "
-        "using the PR author's account, preserving its report block.\n"
+        + (
+            "- Publish: an author local-CI report is optional for this write-collaborator waiver; "
+            "if posted, use the PR author's account and preserve the report block.\n"
+            if waiver_only
+            else
+            "- Publish: post the complete generated report as a pull-request comment "
+            "using the PR author's account, preserving its report block.\n"
+        )
     )
     body = (
         f"{GUARD_MARKER}\n"
@@ -1392,12 +1408,13 @@ def collaborator_has_write(
     user = data.get("user")
     if not isinstance(user, Mapping):
         return False
-    if user.get("id") != expected_id:
+    payload_id = user.get("id")
+    if type(payload_id) is not int or payload_id != expected_id:
         return False
     if user.get("type") != "User":
         return False
     payload_login = user.get("login")
-    if isinstance(payload_login, str) and payload_login != login:
+    if not isinstance(payload_login, str) or payload_login != login:
         return False
     return True
 

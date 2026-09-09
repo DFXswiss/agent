@@ -222,6 +222,20 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertFalse(result.write_ready)
 
+    def test_ready_permission_missing_login_or_non_int_id_no_waiver(self) -> None:
+        cases = (
+            {"id": AUTHOR_ID, "type": "User"},
+            {"id": AUTHOR_ID, "login": "other", "type": "User"},
+            {"id": float(AUTHOR_ID), "login": "author", "type": "User"},
+        )
+        for user in cases:
+            with self.subTest(user=user):
+                fake = FakeAPI()
+                fake.permissions["author"] = {"permission": "write", "user": user}
+                result = reconcile_pull(fake.api(), REPO, 1)
+                self.assertFalse(result.ok)
+                self.assertFalse(result.write_ready)
+
     def test_draft_author_write_no_blocking_status_and_comment_waives_report(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)
@@ -246,8 +260,10 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertEqual(a38_guard._assessment_exit_code(result), 0)
         body = result.comment_body
         self.assertNotIn("still required before Ready", body)
+        self.assertNotIn("Ready actor", body)
         self.assertIn("not required", body)
         self.assertIn("write", body.lower())
+        self.assertIn("optional for this write-collaborator waiver", body)
 
     def test_author_write_does_not_waive_workflow_problems(self) -> None:
         fake = FakeAPI()

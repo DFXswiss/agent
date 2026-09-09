@@ -59,7 +59,7 @@ An open Ready PR on an enforced target returns to Draft with an explanatory comm
 is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts —
 **except** while a write collaborator holds Ready (author is a GitHub `User` with write on a Ready PR, or the latest `User` `ready_for_review` actor has write). In that hold, lifecycle leaves the PR Ready (`action: unchanged`) and still records the CI reasons for audit; it does not post a draft-intent comment or call the draft transition. No-write authors who mark Ready without a valid author report still fail A38 and are still auto-drafted.
 After the CI authorized by the bot succeeds, it can restore Ready only with
-current A38 evidence and confirmed mergeability (including a write-author enforce `pass` without a report). Required workflows, conditional
+current A38 evidence and confirmed mergeability (including a write-collaborator enforce `pass` without a report: author or latest `User` Ready actor). Required workflows, conditional
 CI scope, control-workflow exclusions and the polling schedule belong to the
 adopting repository. This does not rerun tests, submit review approvals or merge.
 
