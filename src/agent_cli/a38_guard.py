@@ -1011,9 +1011,9 @@ def build_comment_body(assessment: Assessment) -> str:
     if len(problems) > 800:
         problems = problems[:799] + "…"
     passing = assessment.ok and assessment.status == "pass"
-    waiver_only = passing and assessment.write_ready and not _report_accepted(assessment)
+    waiver_report = assessment.write_ready and not _report_accepted(assessment)
     if assessment.draft:
-        if waiver_only:
+        if waiver_report:
             extra_en = (
                 " An author local-CI report is not required because the author "
                 "has write on this repository."
@@ -1042,7 +1042,7 @@ def build_comment_body(assessment: Assessment) -> str:
         if passing and _report_accepted(assessment):
             en_tail = "author local-CI report accepted for this head."
             de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
-        elif waiver_only:
+        elif waiver_report:
             if assessment.write_ready_reason == "author has write":
                 en_tail = (
                     "author local-CI report not required because the author "
@@ -1085,7 +1085,7 @@ def build_comment_body(assessment: Assessment) -> str:
         + (
             "- Publish: an author local-CI report is optional for this write-collaborator waiver; "
             "if posted, use the PR author's account and preserve the report block.\n"
-            if waiver_only
+            if waiver_report
             else
             "- Publish: post the complete generated report as a pull-request comment "
             "using the PR author's account, preserving its report block.\n"

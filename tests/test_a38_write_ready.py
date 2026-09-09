@@ -280,6 +280,8 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertEqual(result.status, "fail")
         self.assertTrue(result.write_ready)
         self.assertTrue(any("unclassified" in r for r in result.reasons))
+        self.assertNotIn("still required before Ready", result.comment_body)
+        self.assertNotIn("missing or invalid for this head", result.comment_body)
 
 
 if __name__ == "__main__":

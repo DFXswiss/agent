@@ -33,7 +33,7 @@ The spine checklist key `pushed` remains **final validated push bookkeeping** af
 
 Work continues on the same draft. Proposal measurement for A38 migrations or bootstrap may follow publication; it is not a precondition for opening the draft.
 
-Applicable full tests, A38 author evidence, current-base policy checks, and the live join remain required for **Ready for review** on the exact clean signed final head. Independently required GitHub checks and repository review gates also remain required unless a separately granted deviation says otherwise. Do not encode a one-off session waiver as the standing rule. Completion still requires human merge.
+Applicable full tests, A38 author evidence unless the write-collaborator report waiver applies, current-base policy checks, and the live join remain required for **Ready for review** on the exact clean signed final head. Independently required GitHub checks and repository review gates also remain required unless a separately granted deviation says otherwise. Do not encode a one-off session waiver as the standing rule. Completion still requires human merge.
 
 ## CI while the draft is open
 
