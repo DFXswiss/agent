@@ -568,15 +568,20 @@ class A38GuardE2ETests(unittest.TestCase):
         )
         self.assertEqual(a38_guard._assessment_exit_code(result), 0)
         body = result.comment_body
+        self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
         self.assertIn("DE:", body)
-        self.assertRegex(body, r"(?i)draft")
-        self.assertRegex(body, r"(?i)Ready")
-        self.assertIn(
-            "no blocking A38 report status is published until Ready for review",
-            body,
-        )
-        self.assertIn("author local-CI report is still required before Ready", body)
+        self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("A38", body)
+        self.assertIn("Qualitätsregeln", body)
+        self.assertIn(result.standard_url, body)
+        self.assertNotIn("<details>", body)
+        self.assertNotIn("Problems:", body)
+        self.assertNotIn("local-CI report", body)
+        self.assertNotIn("no blocking A38 report status", body)
+        self.assertNotIn("tool-attribution", body)
+        self.assertNotIn("python -m agent_cli.a38 run", body)
+        self.assertNotIn("A38-POLICY-APPROVAL", body)
         self.assertNotIn("missing or invalid", body)
         self.assertNotRegex(body, r"A38 fail:")
         self.assertNotRegex(body, r"A38 pass:")
@@ -598,8 +603,20 @@ class A38GuardE2ETests(unittest.TestCase):
             [s["context"] for s in fake.statuses],
         )
         body = result.comment_body
-        self.assertRegex(body, r"(?i)tool-attribution")
-        self.assertRegex(body, r"(?i)draft")
+        self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
+        self.assertIn("EN:", body)
+        self.assertIn("DE:", body)
+        self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("A38", body)
+        self.assertIn("Qualitätsregeln", body)
+        self.assertIn(result.standard_url, body)
+        self.assertNotIn("<details>", body)
+        self.assertNotIn("Problems:", body)
+        self.assertNotIn("local-CI report", body)
+        self.assertNotIn("no blocking A38 report status", body)
+        self.assertNotIn("tool-attribution", body)
+        self.assertNotIn("python -m agent_cli.a38 run", body)
+        self.assertNotIn("A38-POLICY-APPROVAL", body)
         self.assertNotRegex(body, r"A38 fail:")
         self.assertNotRegex(body, r"A38 pass:")
 
@@ -624,7 +641,21 @@ class A38GuardE2ETests(unittest.TestCase):
             status_context_enforce("develop"),
             [s["context"] for s in fake.statuses],
         )
-        self.assertRegex(result.comment_body, r"(?i)tool-attribution")
+        body = result.comment_body
+        self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
+        self.assertIn("EN:", body)
+        self.assertIn("DE:", body)
+        self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("A38", body)
+        self.assertIn("Qualitätsregeln", body)
+        self.assertIn(result.standard_url, body)
+        self.assertNotIn("<details>", body)
+        self.assertNotIn("Problems:", body)
+        self.assertNotIn("local-CI report", body)
+        self.assertNotIn("no blocking A38 report status", body)
+        self.assertNotIn("tool-attribution", body)
+        self.assertNotIn("python -m agent_cli.a38 run", body)
+        self.assertNotIn("A38-POLICY-APPROVAL", body)
 
     def test_draft_human_coauthor_only_exits_zero(self) -> None:
         fake = FakeAPI()
@@ -727,11 +758,20 @@ class A38GuardE2ETests(unittest.TestCase):
         )
         self.assertEqual(a38_guard._assessment_exit_code(result), 0)
         body = result.comment_body
-        self.assertIn(
-            "no blocking A38 report status is published until Ready for review",
-            body,
-        )
-        self.assertIn("author local-CI report is accepted for this head", body)
+        self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
+        self.assertIn("EN:", body)
+        self.assertIn("DE:", body)
+        self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("A38", body)
+        self.assertIn("Qualitätsregeln", body)
+        self.assertIn(result.standard_url, body)
+        self.assertNotIn("<details>", body)
+        self.assertNotIn("Problems:", body)
+        self.assertNotIn("local-CI report", body)
+        self.assertNotIn("no blocking A38 report status", body)
+        self.assertNotIn("tool-attribution", body)
+        self.assertNotIn("python -m agent_cli.a38 run", body)
+        self.assertNotIn("A38-POLICY-APPROVAL", body)
         self.assertNotRegex(body, r"A38 fail:")
         self.assertNotRegex(body, r"A38 pass:")
 

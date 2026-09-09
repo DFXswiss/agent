@@ -1105,6 +1105,15 @@ def _report_accepted(assessment: Assessment) -> bool:
 
 
 def build_comment_body(assessment: Assessment) -> str:
+    if assessment.draft:
+        url = assessment.standard_url or "docs/a38.md"
+        return (
+            f"{GUARD_MARKER}\n\n"
+            "EN:\n"
+            f"Thanks for your contribution! This repository follows the A38 quality rules: {url}\n\n"
+            "DE:\n"
+            f"Danke für deinen Beitrag! In diesem Repository gelten die A38-Qualitätsregeln: {url}\n"
+        )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
     if len(problems) > 800:
@@ -1123,98 +1132,50 @@ def build_comment_body(assessment: Assessment) -> str:
         if assessment.hard_fail
         else ""
     )
-    if assessment.draft:
-        if waiver_report:
-            if assessment.write_ready_reason == "author has write":
-                extra_en = (
-                    " An author local-CI report is not required because the author "
-                    "has write on this repository."
-                )
-                extra_de = (
-                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
-                    "Write auf diesem Repository hat."
-                )
-            elif assessment.write_ready_reason == "markdown-only change set":
-                extra_en = (
-                    " An author local-CI report is not required because every changed "
-                    "path is a markdown file."
-                )
-                extra_de = (
-                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil jede "
-                    "geänderte Datei eine Markdown-Datei ist."
-                )
-            else:
-                extra_en = (
-                    " An author local-CI report is not required because a write "
-                    "collaborator marked Ready."
-                )
-                extra_de = (
-                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil ein "
-                    "Write-Collaborator Ready gesetzt hat."
-                )
-        elif passing:
-            extra_en = " An author local-CI report is accepted for this head."
-            extra_de = " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."
+    if passing and _report_accepted(assessment):
+        en_tail = "author local-CI report accepted for this head."
+        de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
+    elif waiver_report:
+        if assessment.write_ready_reason == "author has write":
+            en_tail = (
+                "author local-CI report not required because the author "
+                "has write on this repository."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
+                "Write auf diesem Repository hat."
+            )
+        elif assessment.write_ready_reason == "markdown-only change set":
+            en_tail = (
+                "author local-CI report not required because every changed "
+                "path is a markdown file."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil jede "
+                "geänderte Datei eine Markdown-Datei ist."
+            )
         else:
-            extra_en = " An author local-CI report is still required before Ready."
-            extra_de = " Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
-        en = (
-            "A38: this pull request is a draft; "
-            "no blocking A38 report status is published until Ready for review."
-            + hard_fail_en
-            + extra_en
-        )
-        de = (
-            "A38: dieser Pull Request ist ein Draft; "
-            "bis Ready for review wird kein blockierender A38-Report-Status veröffentlicht."
-            + hard_fail_de
-            + extra_de
-        )
+            en_tail = (
+                "author local-CI report not required because a write "
+                "collaborator marked Ready."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil ein "
+                "Write-Collaborator Ready gesetzt hat."
+            )
     else:
-        if passing and _report_accepted(assessment):
-            en_tail = "author local-CI report accepted for this head."
-            de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
-        elif waiver_report:
-            if assessment.write_ready_reason == "author has write":
-                en_tail = (
-                    "author local-CI report not required because the author "
-                    "has write on this repository."
-                )
-                de_tail = (
-                    "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
-                    "Write auf diesem Repository hat."
-                )
-            elif assessment.write_ready_reason == "markdown-only change set":
-                en_tail = (
-                    "author local-CI report not required because every changed "
-                    "path is a markdown file."
-                )
-                de_tail = (
-                    "Autor-Local-CI-Report nicht erforderlich, weil jede "
-                    "geänderte Datei eine Markdown-Datei ist."
-                )
-            else:
-                en_tail = (
-                    "author local-CI report not required because a write "
-                    "collaborator marked Ready."
-                )
-                de_tail = (
-                    "Autor-Local-CI-Report nicht erforderlich, weil ein "
-                    "Write-Collaborator Ready gesetzt hat."
-                )
-        else:
-            en_tail = "author local-CI report missing or invalid for this head."
-            de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
-        en = (
-            (hard_fail_en.lstrip() + " " if hard_fail_en else "")
-            + f"A38 {assessment.status}: "
-            + en_tail
-        )
-        de = (
-            (hard_fail_de.lstrip() + " " if hard_fail_de else "")
-            + f"A38 {assessment.status}: "
-            + de_tail
-        )
+        en_tail = "author local-CI report missing or invalid for this head."
+        de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
+    en = (
+        (hard_fail_en.lstrip() + " " if hard_fail_en else "")
+        + f"A38 {assessment.status}: "
+        + en_tail
+    )
+    de = (
+        (hard_fail_de.lstrip() + " " if hard_fail_de else "")
+        + f"A38 {assessment.status}: "
+        + de_tail
+    )
     if assessment.mode == "observe":
         en = "Observe mode (advisory, not branch-required). " + en
         de = "Observe-Modus (Hinweis, nicht branch-pflichtig). " + de
