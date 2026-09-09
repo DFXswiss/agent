@@ -72,7 +72,7 @@ Excluded targets return `ok: true`, `status: not_applicable`, `closed: false`, w
 
 Edits to `.github/pr-guard.json` on an enforced PR (add, remove or change bytes versus the immutable base) are policy migrations: they require the same exact head/base maintainer `A38-POLICY-APPROVAL:v1` declaration as workflow or manifest changes. Even after approval, the proposed head configuration is **not** activated for the current PR; scope continues to come from the trusted default-branch revision until merge. Base A38 mode, security rules and the pinned executable remain unchanged.
 
-Before any publication and again immediately before a success status, the guard re-fetches the PR snapshot and the trusted configuration revision/content. Changed target branch, default branch, config revision, config bytes, head, base or state reject the stale verdict and retry assessment. Event, explicit PR and all-open routes share this same central resolver.
+Before any publication and again immediately before a success status, the guard re-fetches the PR snapshot and the trusted configuration revision/content. Changed target branch, default branch, config revision, config bytes, head, base, state, title or body reject the stale verdict and retry assessment. Event, explicit PR and all-open routes share this same central resolver.
 
 ### A38 manifest and workflows
 
@@ -293,7 +293,7 @@ On an open **draft** in `enforce` mode the guard still publishes or updates its 
 
 The bot marker is `<!-- PR-GUARD:A38:v1 -->`. Only comments owned by the numeric acting user may be updated. `/user` resolves normal tokens; fallback to the verified official Actions bot is allowed only when `GITHUB_ACTIONS=true`. Failed authentication outside Actions does not impersonate that bot. Existing identical comments/statuses are not reposted.
 
-Before publication, the guard re-fetches head/base/branch/state, the trusted pr-guard configuration revision and bytes, the latest author report and any active migration approval. It checks again immediately before a success status and reassesses if evidence changed. GitHub offers no atomic transaction across comments, reviews and statuses: an edit after the final read is corrected by the next event or scheduled reconciliation.
+Before publication, the guard re-fetches head/base/branch/state/title/body, the trusted pr-guard configuration revision and bytes, the latest author report and any active migration approval. It checks again immediately before a success status and reassesses if evidence changed. GitHub offers no atomic transaction across comments, reviews and statuses: an edit after the final read is corrected by the next event or scheduled reconciliation.
 
 API or assessment errors terminate with failure. If the head is known and status writes remain available, the guard posts an `error` status to invalidate prior success. If GitHub denies or cannot perform that write, the CLI explicitly reports that invalidation failed; an old remote status may remain until a successful reconcile. Treat the failed guard run as an operational failure and rerun before merging. No implementation can invalidate remote state during a complete API outage.
 
