@@ -260,6 +260,14 @@ def load_policy(text: str) -> dict:
     payload = _loads_policy_json(text)
     if not isinstance(payload, dict):
         raise A38Error("policy must be a JSON object")
+    payload = dict(payload)
+    # Normalized output uses readme_only_omit; reloading that dict must work.
+    if "readme_only_omit" in payload:
+        if "readme_only" in payload:
+            raise A38Error("readme_only and readme_only_omit cannot both be set")
+        omit_norm = payload.pop("readme_only_omit")
+        if omit_norm:
+            payload["readme_only"] = {"omit_jobs": list(omit_norm)}
     extra = set(payload) - POLICY_KEYS - {"readme_only"}
     missing = POLICY_KEYS - set(payload)
     if extra:

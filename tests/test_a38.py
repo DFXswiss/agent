@@ -169,6 +169,12 @@ class PolicyTests(unittest.TestCase):
             _policy_text(readme_only={"omit_jobs": ["unit"]})
         )
         self.assertEqual(policy["readme_only_omit"], ["unit"])
+        self.assertEqual(load_policy(json.dumps(policy)), policy)
+
+    def test_normalized_policy_without_omit_reloads(self) -> None:
+        policy = load_policy(_policy_text())
+        self.assertEqual(policy["readme_only_omit"], [])
+        self.assertEqual(load_policy(json.dumps(policy)), policy)
 
     def test_readme_only_rejects_unknown_job_id(self) -> None:
         with self.assertRaisesRegex(A38Error, "unknown id"):
