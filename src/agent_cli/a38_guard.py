@@ -52,11 +52,9 @@ HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 WORKFLOW_FILE_RE = re.compile(r"^\.github/workflows/[^/]+\.(yml|yaml)$")
 _AI_TOOL_TOKEN = r"claude|anthropic|copilot|cursor|chatgpt|openai|gemini|grok|codex"
-_COAUTHOR_TRAILER_RE = re.compile(
-    rf"(?im)^[ \t]*Co-Authored-By:.*(?:noreply@anthropic\.com|\b(?:{_AI_TOOL_TOKEN})\b)"
-)
+_COAUTHOR_LINE_RE = re.compile(r"(?im)^[ \t]*Co-Authored-By:\s*(.+?)\s*$")
+_TRAILER_EMAIL_RE = re.compile(r"<([^>]+)>")
 _SESSION_HEADER_RE = re.compile(r"(?im)^[ \t]*Claude-Session:")
-_GENERATED_WITH_MD_RE = re.compile(r"(?i)generated with\s*\[")
 _GENERATED_WITH_TOKEN_RE = re.compile(
     rf"(?i)generated with[^\n]*\b(?:{_AI_TOOL_TOKEN})\b"
 )
@@ -373,6 +371,23 @@ def looks_like_report(body: str | None) -> bool:
     return LOCAL_CI_HINT_RE.search(body) is not None
 
 
+def _coauthor_line_is_ai(text: str) -> bool:
+    """True when a Co-Authored-By line names an AI tool or the Anthropic noreply mail.
+
+    Tool tokens are matched in the display-name portion only, not in mailbox domains.
+    """
+    for match in _COAUTHOR_LINE_RE.finditer(text):
+        rest = match.group(1)
+        email_m = _TRAILER_EMAIL_RE.search(rest)
+        email = email_m.group(1) if email_m else ""
+        name = rest[: email_m.start()].strip() if email_m else rest.strip()
+        if email and _ANTHROPIC_EMAIL_RE.search(email):
+            return True
+        if name and _AI_TOOL_WORD_RE.search(name):
+            return True
+    return False
+
+
 def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
     """Return reason strings for AI tool-attribution markers in ``text``.
 
@@ -383,11 +398,11 @@ def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
     if not isinstance(text, str):
         return []
     reasons: list[str] = []
-    if _COAUTHOR_TRAILER_RE.search(text):
+    if _coauthor_line_is_ai(text):
         reasons.append(f"{source}: AI co-author trailer")
     if _SESSION_HEADER_RE.search(text):
         reasons.append(f"{source}: AI session header")
-    if _GENERATED_WITH_MD_RE.search(text) or _GENERATED_WITH_TOKEN_RE.search(text):
+    if _GENERATED_WITH_TOKEN_RE.search(text):
         reasons.append(f"{source}: generated-with banner")
     source_l = source.lower()
     is_identity = "author" in source_l or "committer" in source_l
@@ -2436,8 +2451,9 @@ def _load_event(
 
 
 def _assessment_exit_code(assessment: Assessment) -> int:
-    """Closed no-ops exit 0. Tool-attribution hard-fails exit 1 even on draft/observe.
-    Missing draft reports still exit 0. Ready enforce failure exits 1."""
+    """Closed no-ops exit 0. Attribution and unscannable-message hard-fails exit 1
+    even on draft/observe. Missing draft reports still exit 0. Ready enforce
+    failure exits 1."""
     if assessment.closed:
         return 0
     if assessment.hard_fail:

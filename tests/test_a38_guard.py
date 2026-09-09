@@ -503,6 +503,12 @@ class A38GuardUnitTests(unittest.TestCase):
             "<315477232+TaprootFreakAI@users.noreply.github.com>"
         )
         self.assertEqual(find_tool_attribution(text, source="commit abcdef0 message"), [])
+        human_vendor = (
+            "Co-authored-by: Alice <alice@openai.com>"
+        )
+        self.assertEqual(
+            find_tool_attribution(human_vendor, source="commit abcdef0 message"), []
+        )
 
     def test_find_tool_attribution_prose_negatives(self) -> None:
         self.assertEqual(
@@ -510,6 +516,10 @@ class A38GuardUnitTests(unittest.TestCase):
         )
         self.assertEqual(
             find_tool_attribution("generated with a unique id", source="PR body"), []
+        )
+        self.assertEqual(
+            find_tool_attribution("generated with [our makefile]", source="PR body"),
+            [],
         )
         self.assertEqual(
             find_tool_attribution(
@@ -822,6 +832,15 @@ class A38GuardE2ETests(unittest.TestCase):
         body = result.comment_body
         self.assertIn("unscannable or empty commit message", body)
         self.assertNotIn("Remove those attribution markers", body)
+
+    def test_ready_blank_message_and_attribution_comment(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(message="", login="claude")]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        body = result.comment_body
+        self.assertIn("Tool-attribution or an unscannable commit message", body)
+        self.assertIn("non-empty commit message", body)
 
     def test_draft_valid_report_omits_enforce_status(self) -> None:
         fake = FakeAPI()
