@@ -176,10 +176,12 @@ Use this for workflows whose setup job can succeed while the test jobs skip;
 an overall workflow success must not hide a missing or skipped required test.
 The only exception is when the PR file inventory is independently README-only
 (exactly `README.md` or a path that ends with `/README.md`, case-sensitive,
-fail-closed): then a completed required check may conclude `success`,
-`skipped`, or `neutral`. Missing required checks still
-block. The guard does not trust a report's `readme_only` flag or
-`not_applicable` results without independently listing the pull request files.
+fail-closed) **or** independently markdown-only (every path ends with `.md`,
+case-sensitive, same fail-closed inventory rules): then a completed required
+check may conclude `success`, `skipped`, or `neutral`. Missing required checks
+still block. The guard does not trust a report's `readme_only` /
+`markdown_only` flags or `not_applicable` results without independently listing
+the pull request files.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
@@ -239,7 +241,7 @@ until the trusted installation is deployed.
 
 ## Author report
 
-The author processes the full local job list from a clean checkout of the exact head. Authorized README-only omissions are recorded without executing those jobs. Keep the policy copy, report and logs outside the checkout:
+The author processes the full local job list from a clean checkout of the exact head. When every changed path ends with `.md` (case-sensitive) and the inventory is complete and trustworthy, the local suite is skipped entirely and no author report is required: the guard independently confirms the GitHub file list and waives the report gate with reason `markdown-only change set` (status pass, same author-report waiver path as write-ready). That full skip is distinct from optional policy `readme_only.omit_jobs`, which remains a subset omission for README.md-only change sets. Authorized README-only subset omissions and markdown-only full omissions are recorded as `not_applicable` without executing those jobs. Empty inventories, truncated lists, unknown statuses, renames involving a non-`.md` path, more than 500 files, or API/git errors are not markdown-only. Keep the policy copy, report and logs outside the checkout:
 
 ```sh
 agent a38 run --repo . --repository OWNER/NAME \
@@ -249,11 +251,11 @@ agent a38 run --repo . --repository OWNER/NAME \
 
 `--repository` identifies the target repository, especially when the checkout origin is a fork. Post the complete generated report as a PR comment using the **PR author's account**. Preserve its JSON and markers. The existing local-CI wire schema remains unchanged for compatibility.
 
-For the private opt-in process, the checkout must be clean at the final repository-required signed commit before Ready measurement. The draft may already exist under the [pull request lifecycle](pull-request-lifecycle.md). Run the active policy (executing non-omitted jobs; recording authorized README-only omissions as `not_applicable`) and locally verify it before recording `local_check_pass` evidence; that verified SHA must be on the open draft with no intervening commit after measurement. Any fix, amend, or rebase creates a new SHA and requires the complete run and verification again. Execution roles follow the repository's orchestration rules; reviewers remain read-only. Job adapter commands are catalogued in [A38 job adapters](a38-job-adapters.md), without duplicating their schemas here.
+For the private opt-in process, the checkout must be clean at the final repository-required signed commit before Ready measurement. The draft may already exist under the [pull request lifecycle](pull-request-lifecycle.md). Run the active policy (executing non-omitted jobs; recording authorized README-only subset omissions or markdown-only full omissions as `not_applicable`) and locally verify it before recording `local_check_pass` evidence; that verified SHA must be on the open draft with no intervening commit after measurement. Independently confirmed markdown-only change sets need no author report for the report gate. Any fix, amend, or rebase creates a new SHA and requires the complete run and verification again. Execution roles follow the repository's orchestration rules; reviewers remain read-only. Job adapter commands are catalogued in [A38 job adapters](a38-job-adapters.md), without duplicating their schemas here.
 
 The latest author report-like comment, ordered by `updated_at` and numeric comment ID, is authoritative. A newer malformed or failed report never falls back to an older success. Other authors' reports cannot satisfy the requirement. Matching repository, head, visibility, full job set, names, commands, timeouts and successful measured results are mandatory, including for public repositories.
 
-**Write-collaborator Ready waiver (author report only):** When the PR author is a GitHub `User` who currently has `write`, `maintain`, or `admin` on the target repository, or when a GitHub `User` with one of those roles is the latest `ready_for_review` timeline actor **or** the `ready_for_review` webhook sender, the author-report gate is waived and enforce status may succeed with an explicit waiver description. Draft does not skip the Ready-actor path. A valid passing author report still takes the normal “report accepted” path when present. Only `User` actors can grant the waiver (allowlist); bots and apps cannot, even with write/admin. `MEMBER` / association is not write; 404 or denied permission lookups do not grant it; timeline pagination 401/403/404 yields no waiver and does not crash assessment. Invalid policy, unclassified workflows, and pr-guard migration failures are not waived. No-write authors who mark Ready without a valid report still fail and are still auto-drafted by lifecycle; lifecycle does not override Ready back to Draft while the write hold applies, and it restores Ready after an auto-draft if the Ready actor still has write.
+**Author-report Ready waivers:** When the PR author is a GitHub `User` who currently has `write`, `maintain`, or `admin` on the target repository, or when a GitHub `User` with one of those roles is the latest `ready_for_review` timeline actor **or** the `ready_for_review` webhook sender, the author-report gate is waived and enforce status may succeed with an explicit waiver description. Independently confirmed markdown-only change sets (every changed path ends with `.md`, fail-closed) also waive the author-report gate with reason `markdown-only change set`, reusing the same status-pass path so fork workflow approval and auto-ready can proceed without a local suite. Draft does not skip the Ready-actor path. A valid passing author report still takes the normal “report accepted” path when present. Only `User` actors can grant the write waiver (allowlist); bots and apps cannot, even with write/admin. `MEMBER` / association is not write; 404 or denied permission lookups do not grant it; timeline pagination 401/403/404 yields no waiver and does not crash assessment. Invalid policy, unclassified workflows, and pr-guard migration failures are not waived by write access or by markdown-only detection. No-write authors who mark Ready without a valid report still fail and are still auto-drafted by lifecycle unless the markdown-only waiver applies; lifecycle does not override Ready back to Draft while the write hold applies, and it restores Ready after an auto-draft if the Ready actor still has write.
 
 ## Statuses and events
 

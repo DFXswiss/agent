@@ -16,12 +16,17 @@ except ImportError:
 
 from agent_cli.readme_only import (
     github_file_paths,
+    github_is_markdown_only,
     github_is_readme_only,
     git_changed_paths,
+    git_is_markdown_only,
     git_is_readme_only,
+    is_markdown_path,
     is_readme_path,
     parse_name_status_z,
+    paths_are_markdown_only,
     paths_are_readme_only,
+    pull_is_markdown_only,
 )
 
 
@@ -100,6 +105,15 @@ class PathHelperTests(unittest.TestCase):
         self.assertFalse(is_readme_path("README.md.bak"))
         self.assertFalse(is_readme_path(""))
 
+    def test_is_markdown_path(self) -> None:
+        self.assertTrue(is_markdown_path("README.md"))
+        self.assertTrue(is_markdown_path("docs/a.md"))
+        self.assertTrue(is_markdown_path("docs/guide.md"))
+        self.assertFalse(is_markdown_path("readme.MD"))
+        self.assertFalse(is_markdown_path("foo.md.bak"))
+        self.assertFalse(is_markdown_path("app.py"))
+        self.assertFalse(is_markdown_path(""))
+
     def test_paths_are_readme_only_fail_closed(self) -> None:
         self.assertFalse(paths_are_readme_only([]))
         self.assertTrue(paths_are_readme_only(["README.md"]))
@@ -107,6 +121,16 @@ class PathHelperTests(unittest.TestCase):
         self.assertFalse(paths_are_readme_only(["README.md", "src/main.py"]))
         self.assertFalse(paths_are_readme_only(["readme.md"]))
         self.assertFalse(paths_are_readme_only([123]))  # type: ignore[list-item]
+
+    def test_paths_are_markdown_only_fail_closed(self) -> None:
+        self.assertFalse(paths_are_markdown_only([]))
+        self.assertTrue(paths_are_markdown_only(["README.md"]))
+        self.assertTrue(paths_are_markdown_only(["docs/x.md"]))
+        self.assertTrue(paths_are_markdown_only(["README.md", "docs/guide.md"]))
+        self.assertFalse(paths_are_markdown_only(["docs/x.md", "src/main.py"]))
+        self.assertFalse(paths_are_markdown_only(["readme.MD"]))
+        self.assertFalse(paths_are_markdown_only(["foo.md.bak"]))
+        self.assertFalse(paths_are_markdown_only([123]))  # type: ignore[list-item]
 
 
 class ParseNameStatusTests(unittest.TestCase):
@@ -226,29 +250,86 @@ class GitDetectionTests(unittest.TestCase):
             head = _init_repo(repo)
             self.assertEqual(git_changed_paths(repo, head, head), [])
             self.assertFalse(git_is_readme_only(repo, head, head))
+            self.assertFalse(git_is_markdown_only(repo, head, head))
+
+    def test_only_markdown_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo)
+            docs = repo / "docs"
+            docs.mkdir()
+            (docs / "guide.md").write_text("guide\n", encoding="utf-8")
+            (repo / "NOTES.md").write_text("notes\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "docs/guide.md", "NOTES.md"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            head = _commit(repo, "markdown only")
+            self.assertTrue(git_is_markdown_only(repo, base, head))
+            self.assertFalse(git_is_readme_only(repo, base, head))
+
+    def test_markdown_plus_other_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo)
+            (repo / "docs.md").write_text("doc\n", encoding="utf-8")
+            (repo / "app.py").write_text("print(1)\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "docs.md", "app.py"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            head = _commit(repo, "mixed")
+            self.assertFalse(git_is_markdown_only(repo, base, head))
+
+
+class _FakePullFilesAPI:
+    def __init__(self, entries: list[dict] | None, *, error: bool = False) -> None:
+        self.entries = entries
+        self.error = error
+
+    def paginate(self, path: str):  # noqa: ANN201
+        if self.error:
+            raise RuntimeError("api error")
+        assert "/pulls/" in path and path.endswith("/files")
+        assert self.entries is not None
+        return list(self.entries)
 
 
 class GitHubHelperTests(unittest.TestCase):
     def test_added_readme(self) -> None:
         entries = [{"filename": "README.md", "status": "added"}]
         self.assertTrue(github_is_readme_only(entries, truncated=False))
+        self.assertTrue(github_is_markdown_only(entries, truncated=False))
+
+    def test_added_markdown_non_readme(self) -> None:
+        entries = [{"filename": "docs/guide.md", "status": "modified"}]
+        self.assertFalse(github_is_readme_only(entries, truncated=False))
+        self.assertTrue(github_is_markdown_only(entries, truncated=False))
 
     def test_empty_entries(self) -> None:
         self.assertFalse(github_is_readme_only([], truncated=False))
+        self.assertFalse(github_is_markdown_only([], truncated=False))
 
     def test_truncated(self) -> None:
         entries = [{"filename": "README.md", "status": "modified"}]
         self.assertFalse(github_is_readme_only(entries, truncated=True))
+        self.assertFalse(github_is_markdown_only(entries, truncated=True))
 
     def test_unknown_status(self) -> None:
         entries = [{"filename": "README.md", "status": "weird"}]
         self.assertIsNone(github_file_paths(entries))
         self.assertFalse(github_is_readme_only(entries, truncated=False))
+        self.assertFalse(github_is_markdown_only(entries, truncated=False))
 
     def test_renamed_missing_previous(self) -> None:
         entries = [{"filename": "README.md", "status": "renamed"}]
         self.assertIsNone(github_file_paths(entries))
         self.assertFalse(github_is_readme_only(entries, truncated=False))
+        self.assertFalse(github_is_markdown_only(entries, truncated=False))
 
     def test_renamed_includes_both(self) -> None:
         entries = [
@@ -262,6 +343,34 @@ class GitHubHelperTests(unittest.TestCase):
             github_file_paths(entries), ["README.md", "docs/README.md"]
         )
         self.assertTrue(github_is_readme_only(entries, truncated=False))
+        self.assertTrue(github_is_markdown_only(entries, truncated=False))
+
+    def test_rename_markdown_to_non_markdown_not_markdown_only(self) -> None:
+        entries = [
+            {
+                "filename": "guide.txt",
+                "status": "renamed",
+                "previous_filename": "guide.md",
+            }
+        ]
+        self.assertFalse(github_is_markdown_only(entries, truncated=False))
+
+    def test_pull_is_markdown_only_fail_closed(self) -> None:
+        ok_api = _FakePullFilesAPI(
+            [{"filename": "docs/guide.md", "status": "modified"}]
+        )
+        self.assertTrue(pull_is_markdown_only(ok_api, "example/app", 1))
+        empty_api = _FakePullFilesAPI([])
+        self.assertFalse(pull_is_markdown_only(empty_api, "example/app", 1))
+        mixed_api = _FakePullFilesAPI(
+            [
+                {"filename": "docs/guide.md", "status": "modified"},
+                {"filename": "app.py", "status": "modified"},
+            ]
+        )
+        self.assertFalse(pull_is_markdown_only(mixed_api, "example/app", 1))
+        err_api = _FakePullFilesAPI(None, error=True)
+        self.assertFalse(pull_is_markdown_only(err_api, "example/app", 1))
 
 
 if __name__ == "__main__":

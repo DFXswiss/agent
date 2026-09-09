@@ -261,6 +261,26 @@ def test_readme_only_accepts_skipped_required_test_for_auto_ready():
     assert fake.transitions == [False]
 
 
+def test_markdown_only_accepts_skipped_required_test_for_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Test"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Test",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 def test_dry_run_is_read_only():
     fake = LifecycleAPI()
     fake.runs.clear()

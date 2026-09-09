@@ -36,7 +36,7 @@ from .pr_guard_config import (
     evaluate_a38_scope,
     load_pr_guard_config,
 )
-from .readme_only import pull_is_readme_only
+from .readme_only import pull_is_markdown_only, pull_is_readme_only
 
 API_ORIGIN = "https://api.github.com"
 API_HOST = "api.github.com"
@@ -1025,6 +1025,15 @@ def build_comment_body(assessment: Assessment) -> str:
                     " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
                     "Write auf diesem Repository hat."
                 )
+            elif assessment.write_ready_reason == "markdown-only change set":
+                extra_en = (
+                    " An author local-CI report is not required because every changed "
+                    "path is a markdown file."
+                )
+                extra_de = (
+                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil jede "
+                    "geänderte Datei eine Markdown-Datei ist."
+                )
             else:
                 extra_en = (
                     " An author local-CI report is not required because a write "
@@ -1064,6 +1073,15 @@ def build_comment_body(assessment: Assessment) -> str:
                     "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
                     "Write auf diesem Repository hat."
                 )
+            elif assessment.write_ready_reason == "markdown-only change set":
+                en_tail = (
+                    "author local-CI report not required because every changed "
+                    "path is a markdown file."
+                )
+                de_tail = (
+                    "Autor-Local-CI-Report nicht erforderlich, weil jede "
+                    "geänderte Datei eine Markdown-Datei ist."
+                )
             else:
                 en_tail = (
                     "author local-CI report not required because a write "
@@ -1095,7 +1113,7 @@ def build_comment_body(assessment: Assessment) -> str:
         f"`{POLICY_APPROVAL_PREFIX} head={assessment.head_sha} base={assessment.base_sha}`.\n"
         f"- Run (outside the repo output paths): `{run_cmd}`\n"
         + (
-            "- Publish: an author local-CI report is optional for this write-collaborator waiver; "
+            "- Publish: an author local-CI report is optional for this author-report waiver; "
             "if posted, use the PR author's account and preserve the report block.\n"
             if waiver_report
             else
@@ -1146,6 +1164,10 @@ def _status_bits(assessment: Assessment) -> None:
             if assessment.write_ready_reason == "author has write":
                 assessment.description = truncate_desc(
                     "pass: author has write; A38 report not required"
+                )
+            elif assessment.write_ready_reason == "markdown-only change set":
+                assessment.description = truncate_desc(
+                    "pass: markdown-only change set; A38 report not required"
                 )
             else:
                 assessment.description = truncate_desc(
@@ -1319,7 +1341,7 @@ def assess_from_parts(
         ok = False
         status = "fail"
 
-    # Do not trust a report's readme_only / not_applicable without an
+    # Do not trust a report's omit flags / not_applicable without an
     # independent PR file inventory from GitHub.
     if ok:
         try:
@@ -1329,15 +1351,28 @@ def assess_from_parts(
             status = "fail"
             reasons = [f"report parse error: {exc}"]
         else:
-            claims_omit = report.readme_only or any(
-                run.result == "not_applicable" for run in report.runs
+            claims_omit = (
+                report.readme_only
+                or report.markdown_only
+                or any(run.result == "not_applicable" for run in report.runs)
             )
-            if claims_omit and (
-                api is None or not pull_is_readme_only(api, pull.repo, pull.number)
-            ):
-                ok = False
-                status = "fail"
-                reasons = ["README-only omission is not independently confirmed"]
+            if claims_omit:
+                confirmed = False
+                if api is not None:
+                    confirmed = pull_is_readme_only(
+                        api, pull.repo, pull.number
+                    ) or pull_is_markdown_only(api, pull.repo, pull.number)
+                if not confirmed:
+                    ok = False
+                    status = "fail"
+                    if report.markdown_only:
+                        reasons = [
+                            "markdown-only omission is not independently confirmed"
+                        ]
+                    else:
+                        reasons = [
+                            "README-only omission is not independently confirmed"
+                        ]
 
     assessment.report_status = status
     if ok:
@@ -1749,6 +1784,9 @@ def assess_pull(
     write_ready, write_ready_reason = resolve_write_ready(
         api, snap, event_actor=event_actor
     )
+    if not write_ready and pull_is_markdown_only(api, snap.repo, snap.number):
+        write_ready = True
+        write_ready_reason = "markdown-only change set"
     assessment = assess_from_parts(
         pull=snap,
         policy=policy,
@@ -1874,7 +1912,13 @@ def publish_assessment(
                 still_ready, _ = resolve_write_ready(
                     api, latest_pull, event_actor=assessment.event_actor
                 )
-                if not still_ready:
+                markdown_only = (
+                    assessment.write_ready_reason == "markdown-only change set"
+                    and pull_is_markdown_only(
+                        api, latest_pull.repo, latest_pull.number
+                    )
+                )
+                if not still_ready and not markdown_only:
                     raise GuardError(
                         "write-ready waiver changed before publish; retry assessment"
                     )

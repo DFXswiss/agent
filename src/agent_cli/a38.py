@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
-from .readme_only import git_is_readme_only
+from .readme_only import git_is_markdown_only, git_is_readme_only
 from .a38_job_adapters.commands import parse_commands_config
 from .a38_job_adapters.common import JobError
 from .a38_job_adapters.compose import parse_compose_config
@@ -490,6 +490,7 @@ def verify_report(
 
     omit = set(policy.get("readme_only_omit") or [])
     report_only = bool(getattr(report, "readme_only", False))
+    markdown_only = bool(getattr(report, "markdown_only", False))
     run_by_id = {run.id: run for run in report.runs}
     for ident in required:
         job = by_id[ident]
@@ -504,8 +505,10 @@ def verify_report(
         if not _timeout_equal(run.timeout_s, float(job["timeout_s"])):
             reasons.append(f"{ident}: timeout_s does not match policy")
         if run.result == "not_applicable":
-            if ident not in omit or not report_only or run.exit_code != 0:
-                if ident not in omit or not report_only:
+            readme_authorized = ident in omit and report_only
+            markdown_authorized = markdown_only
+            if (not readme_authorized and not markdown_authorized) or run.exit_code != 0:
+                if not readme_authorized and not markdown_authorized:
                     reasons.append(f"{ident}: not_applicable is not authorized")
                 else:
                     reasons.append(f"{ident}: exit_code is {run.exit_code}")
@@ -730,6 +733,7 @@ def _build_report_dict(
     required: Sequence[str],
     runs: Sequence[Mapping[str, Any]],
     readme_only: bool = False,
+    markdown_only: bool = False,
 ) -> dict[str, Any]:
     payload = {
         "schema": "dfx-local-ci/v1",
@@ -742,6 +746,8 @@ def _build_report_dict(
     }
     if readme_only:
         payload["readme_only"] = True
+    if markdown_only:
+        payload["markdown_only"] = True
     return payload
 
 
@@ -976,12 +982,20 @@ def run_policy(
     readme_only = bool(omit) and git_is_readme_only(root, base, head)
     if omit and not readme_only:
         omit = set()
+    markdown_only = git_is_markdown_only(root, base, head)
+    if markdown_only:
+        omit = set(required)
 
     env = _job_env(head, base)
     runs: list[dict[str, Any]] = []
     reasons: list[str] = []
     interrupted = False
     drift = False
+    omit_log = (
+        "omitted: markdown-only change set\n"
+        if markdown_only
+        else "omitted: README-only change set\n"
+    )
 
     previous_sigterm = None
     if threading.current_thread() is threading.main_thread():
@@ -996,7 +1010,7 @@ def run_policy(
             log_path = logs_dir / f"{ident}.log"
             started = time.monotonic()
             if ident in omit:
-                log_path.write_text("omitted: README-only change set\n", encoding="utf-8")
+                log_path.write_text(omit_log, encoding="utf-8")
                 runs.append(
                     _run_entry(
                         ident=ident,
@@ -1128,6 +1142,7 @@ def run_policy(
         required=required,
         runs=runs,
         readme_only=readme_only,
+        markdown_only=markdown_only,
     )
     try:
         _write_report(output, payload)
