@@ -311,3 +311,27 @@ def test_write_author_ready_holds_against_red_or_pending_ci(status, conclusion):
     assert result.lifecycle["reasons"]
     assert fake.transitions == []
     assert not fake.pull["draft"]
+
+
+def test_draft_restores_ready_when_write_collaborator_was_the_ready_actor():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.pull["draft"] = True
+    fake.timeline = [
+        {
+            "event": "ready_for_review",
+            "id": 2,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": "User"},
+        }
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": 3003, "login": "maintainer", "type": "User"},
+    }
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.ok and result.write_ready_reason == "ready by write collaborator"
+    assert result.lifecycle["action"] == "ready"
+    assert fake.transitions == [False]
+    assert not fake.pull["draft"]

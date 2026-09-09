@@ -226,19 +226,27 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if pull.get("mergeable") is False:
         reasons.insert(0, "Merge conflicts")
     target = None
+    restore_write_ready = assessment.write_ready_reason == "ready by write collaborator"
     # Write collaborator Ready hold: do not auto-draft while author or the latest
     # ready_for_review actor has write/maintain/admin on the target repository.
     if not pull["draft"] and reasons and assessment.write_ready:
         return {"action": "unchanged", "reasons": reasons, "dry_run": dry_run}
     if not pull["draft"] and reasons:
         target = "draft"
+    elif pull["draft"] and restore_write_ready:
+        # Recover from a lagged timeline or a draft that undid an explicit
+        # write-collaborator Ready click, even when CI is still red.
+        target = "ready"
     elif pull["draft"] and not reasons and pull.get("mergeable") is True and config["auto_ready"]:
         _, authorization = _own_record(api, assessment, AUTH_MARKER)
         identity = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha, "base": snap.base_sha}
         owned = authorization.get("runs", [])
         if (all(authorization.get(k) == v for k, v in identity.items()) and owned
                 and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id") for r in owned)):
-            fresh = assess_pull(api, assessment.repo, assessment.pr, dry_run=True)
+            fresh = assess_pull(
+                api, assessment.repo, assessment.pr, dry_run=True,
+                event_actor=assessment.event_actor,
+            )
             if fresh.ok and fresh.status == "pass" and fresh.mode == "enforce" and fresh.head_sha == snap.head_sha and fresh.base_sha == snap.base_sha:
                 target = "ready"
     result = {"action": target or "unchanged", "reasons": reasons, "dry_run": dry_run}
@@ -255,7 +263,11 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     final_reasons, _ = ci_state(api, assessment, config, final_pull)
     if final_pull.get("mergeable") is False:
         final_reasons.insert(0, "Merge conflicts")
-    if target == "ready" and (final_reasons or final_pull.get("mergeable") is not True):
+    if (
+        target == "ready"
+        and not restore_write_ready
+        and (final_reasons or final_pull.get("mergeable") is not True)
+    ):
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     if target == "draft" and not final_reasons:
         return {"action": "unchanged", "reasons": [], "dry_run": False}
@@ -267,7 +279,10 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if fetch_pull(api, assessment.repo, assessment.pr) != snap:
         raise GuardError("pull changed after lifecycle intent; no readiness change")
     if target == "ready":
-        fresh = assess_pull(api, assessment.repo, assessment.pr, dry_run=True)
+        fresh = assess_pull(
+            api, assessment.repo, assessment.pr, dry_run=True,
+            event_actor=assessment.event_actor,
+        )
         fields = ("head_sha", "base_sha", "config_revision", "config_fingerprint", "report_fingerprint", "approval_fingerprint")
         if (not fresh.ok or fresh.status != "pass" or fresh.mode != "enforce"
                 or any(getattr(fresh, f) != getattr(assessment, f) for f in fields)):

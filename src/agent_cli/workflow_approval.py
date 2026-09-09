@@ -183,7 +183,13 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
     paths = config["workflows"]
 
     def fresh_pull() -> Mapping[str, Any]:
-        fresh = assess_pull(api, assessment.repo, assessment.pr, dry_run=True)
+        fresh = assess_pull(
+            api,
+            assessment.repo,
+            assessment.pr,
+            dry_run=True,
+            event_actor=assessment.event_actor,
+        )
         fields = ("head_sha", "base_sha", "base_ref", "head_repo", "config_revision", "config_fingerprint",
                   "report_fingerprint", "approval_fingerprint", "policy_sha")
         if (not fresh.ok or fresh.closed or fresh.status != "pass" or fresh.mode != "enforce"

@@ -167,6 +167,8 @@ class Assessment:
     # Author-report waiver when a write collaborator holds Ready (or drafts as write author).
     write_ready: bool = False
     write_ready_reason: str = ""
+    # In-memory webhook sender for this reconcile; not serialized.
+    event_actor: tuple[int, str] | None = None
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -1467,21 +1469,60 @@ def latest_ready_for_review_actor(
     return best[2], best[3]
 
 
+def ready_event_actor(
+    event_name: str, payload: Mapping[str, Any]
+) -> tuple[int, str] | None:
+    """User who just marked Ready, from the webhook payload, or None.
+
+    Used so a write collaborator's Ready click is not lost when the issue
+    timeline has not yet recorded the ``ready_for_review`` event.
+    """
+    if event_name not in {"pull_request", "pull_request_target"}:
+        return None
+    if payload.get("action") != "ready_for_review":
+        return None
+    sender = payload.get("sender")
+    if not isinstance(sender, Mapping):
+        return None
+    if sender.get("type") != "User":
+        return None
+    login = sender.get("login")
+    uid = sender.get("id")
+    if not isinstance(login, str) or type(uid) is not int:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+        return None
+    return uid, login
+
+
+def _actor_has_write(
+    api: GitHubApi, snap: PullSnapshot, actor: tuple[int, str] | None
+) -> bool:
+    if actor is None:
+        return False
+    actor_id, actor_login = actor
+    return collaborator_has_write(api, snap.repo, actor_login, actor_id)
+
+
 def resolve_write_ready(
-    api: GitHubApi, snap: PullSnapshot
+    api: GitHubApi,
+    snap: PullSnapshot,
+    *,
+    event_actor: tuple[int, str] | None = None,
 ) -> tuple[bool, str]:
-    """Whether the author-report gate is waived for this snapshot."""
+    """Whether the author-report gate is waived for this snapshot.
+
+    Draft does not skip the Ready-actor path: after a write collaborator
+    marks Ready, a lagged timeline or an auto-draft must still see them.
+    """
     if snap.author_type == "User" and collaborator_has_write(
         api, snap.repo, snap.author_login, snap.author_id
     ):
         return True, "author has write"
-    if snap.draft:
-        return False, ""
+    if _actor_has_write(api, snap, event_actor):
+        return True, "ready by write collaborator"
     ready_actor = latest_ready_for_review_actor(api, snap.repo, snap.number)
-    if ready_actor is None:
-        return False, ""
-    actor_id, actor_login = ready_actor
-    if collaborator_has_write(api, snap.repo, actor_login, actor_id):
+    if _actor_has_write(api, snap, ready_actor):
         return True, "ready by write collaborator"
     return False, ""
 
@@ -1642,6 +1683,7 @@ def assess_pull(
     pull: PullSnapshot | None = None,
     runtime_revision: str | None = None,
     runtime_env: Mapping[str, str] | None = None,
+    event_actor: tuple[int, str] | None = None,
 ) -> Assessment:
     snap = pull or fetch_pull(api, repo, number)
     # Closed no-op happens before trusted config lookup.
@@ -1691,7 +1733,9 @@ def assess_pull(
     )
     comments = collect_comments(api, snap.repo, snap.number)
     author_comment = pick_latest_author_report(comments, snap.author_id)
-    write_ready, write_ready_reason = resolve_write_ready(api, snap)
+    write_ready, write_ready_reason = resolve_write_ready(
+        api, snap, event_actor=event_actor
+    )
     assessment = assess_from_parts(
         pull=snap,
         policy=policy,
@@ -1708,6 +1752,7 @@ def assess_pull(
         write_ready_reason=write_ready_reason,
     )
     assessment.approval_fingerprint = approval
+    assessment.event_actor = event_actor
     _attach_trusted_config(assessment, trusted)
     return assessment
 
@@ -1813,7 +1858,9 @@ def publish_assessment(
                 and assessment.status == "pass"
                 and not _report_accepted(assessment)
             ):
-                still_ready, _ = resolve_write_ready(api, latest_pull)
+                still_ready, _ = resolve_write_ready(
+                    api, latest_pull, event_actor=assessment.event_actor
+                )
                 if not still_ready:
                     raise GuardError(
                         "write-ready waiver changed before publish; retry assessment"
@@ -1926,6 +1973,7 @@ def reconcile_pull(
     publish: bool = True,
     runtime_revision: str | None = None,
     runtime_env: Mapping[str, str] | None = None,
+    event_actor: tuple[int, str] | None = None,
 ) -> Assessment:
     last_err: Exception | None = None
     snap: PullSnapshot | None = None
@@ -1940,6 +1988,7 @@ def reconcile_pull(
                 pull=snap,
                 runtime_revision=runtime_revision,
                 runtime_env=runtime_env,
+                event_actor=event_actor,
             )
             if dry_run or not publish or assessment.closed:
                 if assessment.closed and not dry_run:
@@ -2108,6 +2157,7 @@ def reconcile_event(
         publish=publish,
         runtime_revision=runtime_revision,
         runtime_env=runtime_env,
+        event_actor=ready_event_actor(event_name, payload),
     )
 
 

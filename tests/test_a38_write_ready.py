@@ -13,7 +13,7 @@ except ImportError:
     pass
 
 from agent_cli import a38_guard
-from agent_cli.a38_guard import reconcile_pull, status_context_enforce
+from agent_cli.a38_guard import ready_event_actor, reconcile_pull, status_context_enforce
 from test_a38_guard import (
     AUTHOR_ID,
     BOT_ID,
@@ -98,6 +98,58 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertIn("write collaborator", result.description)
         self.assertEqual(result.lifecycle.get("action"), "unchanged")
         self.assertEqual(fake.transitions, [])
+
+    def test_draft_still_sees_timeline_ready_actor(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.timeline = [_ready_event(login="maintainer", uid=MAINTAINER_ID)]
+        fake.permissions["maintainer"] = {
+            "permission": "admin",
+            "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+        }
+        result = reconcile_pull(fake.api(), REPO, 1)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "pass")
+        self.assertTrue(result.draft)
+        self.assertEqual(result.write_ready_reason, "ready by write collaborator")
+
+    def test_empty_timeline_event_sender_grants_waiver(self) -> None:
+        fake = LifecycleAPI()
+        fake.comments.clear()
+        fake.timeline = []
+        fake.permissions["maintainer"] = {
+            "permission": "admin",
+            "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+        }
+        fake.runs[0].update(status="in_progress", conclusion=None)
+        result = reconcile_pull(
+            fake.api(), REPO, 1, event_actor=(MAINTAINER_ID, "maintainer")
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.write_ready_reason, "ready by write collaborator")
+        self.assertEqual(result.lifecycle.get("action"), "unchanged")
+        self.assertEqual(fake.transitions, [])
+        self.assertFalse(fake.pull["draft"])
+
+    def test_ready_event_actor_only_from_ready_for_review_user(self) -> None:
+        payload = {
+            "action": "ready_for_review",
+            "sender": {
+                "id": MAINTAINER_ID,
+                "login": "maintainer",
+                "type": "User",
+            },
+        }
+        self.assertEqual(
+            ready_event_actor("pull_request_target", payload),
+            (MAINTAINER_ID, "maintainer"),
+        )
+        self.assertIsNone(ready_event_actor("issue_comment", payload))
+        payload["action"] = "synchronize"
+        self.assertIsNone(ready_event_actor("pull_request_target", payload))
+        payload["action"] = "ready_for_review"
+        payload["sender"]["type"] = "Bot"
+        self.assertIsNone(ready_event_actor("pull_request_target", payload))
 
     def test_ready_bot_ready_actor_cannot_grant_waiver(self) -> None:
         fake = FakeAPI()
