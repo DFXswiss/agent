@@ -509,6 +509,13 @@ class A38GuardUnitTests(unittest.TestCase):
         self.assertEqual(
             find_tool_attribution(human_vendor, source="commit abcdef0 message"), []
         )
+        self.assertEqual(
+            find_tool_attribution(
+                "Co-authored-by: alice@openai.com",
+                source="commit abcdef0 message",
+            ),
+            [],
+        )
 
     def test_find_tool_attribution_prose_negatives(self) -> None:
         self.assertEqual(

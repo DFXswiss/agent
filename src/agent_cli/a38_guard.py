@@ -379,9 +379,15 @@ def _coauthor_line_is_ai(text: str) -> bool:
     for match in _COAUTHOR_LINE_RE.finditer(text):
         rest = match.group(1)
         email_m = _TRAILER_EMAIL_RE.search(rest)
-        email = email_m.group(1) if email_m else ""
-        name = rest[: email_m.start()].strip() if email_m else rest.strip()
-        if email and _ANTHROPIC_EMAIL_RE.fullmatch(email.strip()):
+        if email_m:
+            email = email_m.group(1).strip()
+            name = rest[: email_m.start()].strip()
+        else:
+            stripped = rest.strip()
+            looks_like_email = "@" in stripped and " " not in stripped
+            email = stripped if looks_like_email else ""
+            name = "" if looks_like_email else stripped
+        if email and _ANTHROPIC_EMAIL_RE.fullmatch(email):
             return True
         if name and _AI_TOOL_WORD_RE.search(name):
             return True
