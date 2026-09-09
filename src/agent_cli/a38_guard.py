@@ -92,6 +92,9 @@ class PullSnapshot:
     private: bool
     author_id: int
     author_login: str
+    # GitHub user.type string from the pull author; empty when missing.
+    # Write-ready waiver requires exactly "User" (bots/apps cannot grant it).
+    author_type: str = ""
     head_repo: str = ""
     # Trusted repository default branch from base.repo.default_branch only.
     # Used to locate configuration; never a built-in scope rule by itself.
@@ -640,6 +643,8 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         raise GuardError("pull author id must be numeric")
     if not isinstance(author_login, str):
         author_login = ""
+    author_type_raw = user.get("type")
+    author_type = author_type_raw if isinstance(author_type_raw, str) else ""
     private = base_repo.get("private")
     if type(private) is not bool:
         raise GuardError("pull repository visibility must be a JSON boolean")
@@ -663,6 +668,7 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         private=private,
         author_id=author_id,
         author_login=author_login,
+        author_type=author_type,
         head_repo=head_repository,
         default_branch=default_branch,
         draft=draft,
@@ -1362,11 +1368,12 @@ def _report_fingerprint(comment: Mapping[str, Any] | None) -> str:
 def collaborator_has_write(
     api: GitHubApi, repo: str, login: str, expected_id: int
 ) -> bool:
-    """True when login currently has write/maintain/admin on repo and matches expected_id.
+    """True when a GitHub User login currently has write/maintain/admin on repo.
 
     Fail-closed for the exemption only: malformed logins, 404, 401/403 and other
-    non-2xx responses, identity mismatch or non-write roles return False without
-    raising so assessment can continue without the waiver.
+    non-2xx responses, missing/non-User type, identity mismatch or non-write
+    roles return False without raising so assessment can continue without the
+    waiver. Bots and Apps never qualify even with admin and an alphanumeric login.
     """
     if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
         return False
@@ -1383,7 +1390,14 @@ def collaborator_has_write(
     if data.get("permission") not in {"write", "maintain", "admin"}:
         return False
     user = data.get("user")
-    if not isinstance(user, Mapping) or user.get("id") != expected_id:
+    if not isinstance(user, Mapping):
+        return False
+    if user.get("id") != expected_id:
+        return False
+    if user.get("type") != "User":
+        return False
+    payload_login = user.get("login")
+    if isinstance(payload_login, str) and payload_login != login:
         return False
     return True
 
@@ -1391,16 +1405,22 @@ def collaborator_has_write(
 def latest_ready_for_review_actor(
     api: GitHubApi, repo: str, number: int
 ) -> tuple[int, str] | None:
-    """Latest human User actor of a ready_for_review timeline event, or None.
+    """Latest GitHub User actor of a ready_for_review timeline event, or None.
 
-    A first-page HTTP 404 means no timeline (some fakes/API variants); other
-    pagination errors still raise.
+    Allowlist: only ``actor.type == "User"`` (missing type is skipped). Timeline
+    pagination 401, 403, or 404 returns None without raising so assessment
+    continues without the waiver; other pagination/integrity errors still raise.
     """
     path = f"/repos/{repo}/issues/{number}/timeline"
     try:
         events = api.paginate(path)
     except GuardError as exc:
-        if "HTTP 404 while paginating" in str(exc):
+        message = str(exc)
+        if (
+            "denied (401)" in message
+            or "denied (403)" in message
+            or "HTTP 404 while paginating" in message
+        ):
             return None
         raise
     best: tuple[str, int, int, str] | None = None
@@ -1416,7 +1436,7 @@ def latest_ready_for_review_actor(
         actor = event.get("actor")
         if not isinstance(actor, Mapping):
             continue
-        if actor.get("type") in {"Bot", "App"}:
+        if actor.get("type") != "User":
             continue
         login = actor.get("login")
         actor_id = actor.get("id")
@@ -1434,7 +1454,9 @@ def resolve_write_ready(
     api: GitHubApi, snap: PullSnapshot
 ) -> tuple[bool, str]:
     """Whether the author-report gate is waived for this snapshot."""
-    if collaborator_has_write(api, snap.repo, snap.author_login, snap.author_id):
+    if snap.author_type == "User" and collaborator_has_write(
+        api, snap.repo, snap.author_login, snap.author_id
+    ):
         return True, "author has write"
     if snap.draft:
         return False, ""

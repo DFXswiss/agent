@@ -299,7 +299,10 @@ def test_no_write_ready_with_in_progress_ci_still_drafts():
 def test_write_author_ready_holds_against_red_or_pending_ci(status, conclusion):
     fake = LifecycleAPI()
     fake.comments.clear()
-    fake.permissions["author"] = {"permission": "write", "user": {"id": AUTHOR_ID}}
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
     fake.runs[0].update(status=status, conclusion=conclusion)
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.ok and result.status == "pass"

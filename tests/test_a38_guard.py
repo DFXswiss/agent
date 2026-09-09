@@ -178,6 +178,8 @@ class FakeAPI:
         self.reviews: list[dict[str, Any]] = []
         self.permissions: dict[str, dict[str, Any]] = {}
         self.pull_files: list[dict[str, Any]] = []
+        # Logins that return HTTP 404 from the collaborator permission endpoint.
+        self.permission_404: set[str] = set()
         self.timeline: list[dict[str, Any]] = []
         # Branch/tag ref → immutable commit SHA for GET /commits/{ref}.
         self.ref_commits: dict[str, str] = {
@@ -205,7 +207,7 @@ class FakeAPI:
             "number": 1,
             "state": state,
             "draft": draft,
-            "user": {"id": AUTHOR_ID, "login": "author"},
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
             "head": {"sha": head, "repo": {"full_name": REPO, "default_branch": "feature"}},
             "base": {
                 "sha": base,
@@ -251,7 +253,15 @@ class FakeAPI:
             from urllib.parse import unquote
 
             login = unquote(path_only.split("/collaborators/")[1].split("/")[0])
-            return 200, self.permissions.get(login, {"permission": "read", "user": {"id": OUTSIDER_ID}}), {}
+            if login in self.permission_404:
+                return 404, {"message": "Not Found"}, {}
+            return 200, self.permissions.get(
+                login,
+                {
+                    "permission": "read",
+                    "user": {"id": OUTSIDER_ID, "type": "User"},
+                },
+            ), {}
 
         if method_u == "GET" and path_only.startswith(f"/repos/{REPO}/issues/1/timeline"):
             page = int(parse_qs(urlparse(path).query).get("page", ["1"])[0])

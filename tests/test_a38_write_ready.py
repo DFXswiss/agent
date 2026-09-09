@@ -27,6 +27,8 @@ from test_pr_lifecycle import LifecycleAPI  # noqa: E402
 
 
 MAINTAINER_ID = 3003
+GUARDBOT_ID = 4004
+APP_ID = 5005
 
 
 def _ready_event(
@@ -63,7 +65,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
         fake.comments.clear()
         fake.permissions["author"] = {
             "permission": "write",
-            "user": {"id": AUTHOR_ID},
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
         }
         fake.runs[0].update(status="in_progress", conclusion=None)
         result = reconcile_pull(fake.api(), REPO, 1)
@@ -85,7 +87,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
         ]
         fake.permissions["maintainer"] = {
             "permission": "admin",
-            "user": {"id": MAINTAINER_ID},
+            "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
         }
         fake.runs[0].update(status="completed", conclusion="failure")
         result = reconcile_pull(fake.api(), REPO, 1)
@@ -109,7 +111,75 @@ class WriteReadyWaiverTests(unittest.TestCase):
         # Even a forged permission map must not grant the waiver for bot logins.
         fake.permissions["github-actions[bot]"] = {
             "permission": "admin",
-            "user": {"id": BOT_ID},
+            "user": {"id": BOT_ID, "login": "github-actions[bot]", "type": "Bot"},
+        }
+        result = reconcile_pull(fake.api(), REPO, 1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertFalse(result.write_ready)
+        self.assertIn(
+            "no author local-CI report comment on this pull request",
+            result.reasons,
+        )
+
+    def test_ready_alphanumeric_bot_author_cannot_grant_waiver(self) -> None:
+        """Bot author with alphanumeric login and admin still fails closed."""
+        fake = FakeAPI()
+        fake.pull["user"] = {
+            "id": GUARDBOT_ID,
+            "login": "guardbot",
+            "type": "Bot",
+        }
+        fake.permissions["guardbot"] = {
+            "permission": "admin",
+            "user": {"id": GUARDBOT_ID, "login": "guardbot", "type": "Bot"},
+        }
+        result = reconcile_pull(fake.api(), REPO, 1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertFalse(result.write_ready)
+        self.assertIn(
+            "no author local-CI report comment on this pull request",
+            result.reasons,
+        )
+
+    def test_ready_app_ready_actor_cannot_grant_waiver(self) -> None:
+        fake = FakeAPI()
+        fake.timeline = [
+            _ready_event(login="myapp", uid=APP_ID, actor_type="App"),
+        ]
+        fake.permissions["myapp"] = {
+            "permission": "admin",
+            "user": {"id": APP_ID, "login": "myapp", "type": "App"},
+        }
+        result = reconcile_pull(fake.api(), REPO, 1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertFalse(result.write_ready)
+        self.assertIn(
+            "no author local-CI report comment on this pull request",
+            result.reasons,
+        )
+
+    def test_ready_timeline_403_no_waiver_without_guard_error(self) -> None:
+        fake = FakeAPI()
+        fake.denied_prefixes.append(f"/repos/{REPO}/issues/1/timeline")
+        result = reconcile_pull(fake.api(), REPO, 1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertFalse(result.write_ready)
+        self.assertIn(
+            "no author local-CI report comment on this pull request",
+            result.reasons,
+        )
+
+    def test_ready_author_permission_404_no_waiver(self) -> None:
+        fake = FakeAPI()
+        fake.permission_404.add("author")
+        # Even with a forged map entry, the endpoint 404 must win.
+        fake.permissions["author"] = {
+            "permission": "admin",
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
         }
         result = reconcile_pull(fake.api(), REPO, 1)
         self.assertFalse(result.ok)
@@ -129,7 +199,11 @@ class WriteReadyWaiverTests(unittest.TestCase):
                 ]
                 fake.permissions["maintainer"] = {
                     "permission": role,
-                    "user": {"id": MAINTAINER_ID},
+                    "user": {
+                        "id": MAINTAINER_ID,
+                        "login": "maintainer",
+                        "type": "User",
+                    },
                 }
                 result = reconcile_pull(fake.api(), REPO, 1)
                 self.assertFalse(result.ok)
@@ -142,7 +216,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
         ]
         fake.permissions["maintainer"] = {
             "permission": "admin",
-            "user": {"id": 9999},
+            "user": {"id": 9999, "login": "maintainer", "type": "User"},
         }
         result = reconcile_pull(fake.api(), REPO, 1)
         self.assertFalse(result.ok)
@@ -153,7 +227,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
         fake.pull = fake._pull(HEAD, BASE, draft=True)
         fake.permissions["author"] = {
             "permission": "write",
-            "user": {"id": AUTHOR_ID},
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
         }
         result = reconcile_pull(fake.api(), REPO, 1)
         self.assertTrue(result.ok)
@@ -179,7 +253,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
         fake = FakeAPI()
         fake.permissions["author"] = {
             "permission": "write",
-            "user": {"id": AUTHOR_ID},
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
         }
         # Head introduces an unclassified workflow job → inventory failure.
         fake.files[(HEAD, ".github/workflows/test.yml")] = _workflow_yaml(
