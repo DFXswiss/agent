@@ -164,7 +164,8 @@ class Assessment:
     lifecycle_enabled: bool = False
     lifecycle: dict[str, Any] = field(default_factory=dict)
     draft: bool = False
-    # Author-report waiver when a write collaborator holds Ready (or drafts as write author).
+    # Author-report waiver: write collaborator (also holds Ready) or markdown-only
+    # (report/suite only; does not hold Ready through red CI).
     write_ready: bool = False
     write_ready_reason: str = ""
     # In-memory webhook sender for this reconcile; not serialized.
