@@ -49,16 +49,17 @@ Hosted CI and other applicable checks may fail. There is no promise that CI neve
 
 Pending checks must be labeled **pending**. Do not fabricate a pass.
 
-The blocking `A38 / report (<target>)` commit status is **omitted** on drafts (not pending, not failure, and not a fabricated pass). `observe` stays advisory and unchanged. Configured `not_applicable` exclusions may still write success on that context only to clear a wrong prior status; that is not a test-pass claim. Real red hosted CI remains a blocker. Once the pull request is Ready for review, A38 publishes success only for valid evidence and failure otherwise.
+The blocking `A38 / report (<target>)` commit status is **omitted** on drafts (not pending, not failure, and not a fabricated pass). `observe` stays advisory and unchanged. Configured `not_applicable` exclusions may still write success on that context only to clear a wrong prior status; that is not a test-pass claim. Real red hosted CI remains a blocker. Once the pull request is Ready for review, A38 publishes success for valid author-report evidence, or for the write-collaborator author-report waiver (author currently has `write`/`maintain`/`admin` on the target, or the latest human `ready_for_review` actor does); otherwise failure. That waiver covers only the author-report gate—not policy, workflow inventory, or migration failures. Bots/apps and association strings cannot grant it.
 
 Ready for review does **not** start GitHub Actions. Where the repository opts in to [bot-owned fork workflow approval](a38-guard.md#how-fork-github-actions-are-meant-to-work), the trusted guard approves held fork runs only after a fresh A38 **enforce pass** on this head. That approval starts execution; it is not itself a green check. The merger does not click **Approve and run workflows**.
 
 Repositories can enable the [guard's continuous readiness reconciliation](a38-guard.md#optional-continuous-readiness).
 Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded bases (for example a develop→main release PR) are left untouched.
 An open Ready PR on an enforced target returns to Draft with an explanatory comment when required CI
-is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts.
+is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts —
+**except** while a write collaborator holds Ready (author has write on a Ready PR, or the latest human `ready_for_review` actor has write). In that hold, lifecycle leaves the PR Ready (`action: unchanged`) and still records the CI reasons for audit; it does not post a draft-intent comment or call the draft transition. No-write authors who mark Ready without a valid author report still fail A38 and are still auto-drafted.
 After the CI authorized by the bot succeeds, it can restore Ready only with
-current A38 evidence and confirmed mergeability. Required workflows, conditional
+current A38 evidence and confirmed mergeability (including a write-author enforce `pass` without a report). Required workflows, conditional
 CI scope, control-workflow exclusions and the polling schedule belong to the
 adopting repository. This does not rerun tests, submit review approvals or merge.
 
@@ -69,7 +70,7 @@ If the repository's guard integration is known to be defective, require a **veri
 Stay draft until Ready for review is earned on the **exact clean signed final head**:
 
 1. Full applicable tests for that head (repository rules and, when adopted, the complete A38 policy run and local verification).
-2. For A38 adopters: author report publication, current-base (or exact approved head) policy checks, and the live join required by [a38.md](a38.md) and [a38-guard.md](a38-guard.md).
+2. For A38 adopters: author report publication (unless waived because the author or the latest human Ready actor currently has write/maintain/admin on the target), current-base (or exact approved head) policy checks, and the live join required by [a38.md](a38.md) and [a38-guard.md](a38-guard.md).
 3. Independently required GitHub checks on this head (`skipped` and `cancelled` are not green unless the workflow documents that skip). Inspect both the PR check rollup and the current-head workflow-run inventory: `action_required` runs may be absent from the check rollup. A38 equivalence covers only the jobs in its active policy; it does not replace independently required security or other GitHub-only checks. Bot authorization to start a run is not a successful run.
 4. Independent required reviews and approvals per the attached skills and the target repository's written rules.
 5. Then the Ready comment / leave-draft steps those rules define (`isDraft=false`).

@@ -226,6 +226,10 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if pull.get("mergeable") is False:
         reasons.insert(0, "Merge conflicts")
     target = None
+    # Write collaborator Ready hold: do not auto-draft while author or the latest
+    # ready_for_review actor has write/maintain/admin on the target repository.
+    if not pull["draft"] and reasons and assessment.write_ready:
+        return {"action": "unchanged", "reasons": reasons, "dry_run": dry_run}
     if not pull["draft"] and reasons:
         target = "draft"
     elif pull["draft"] and not reasons and pull.get("mergeable") is True and config["auto_ready"]:

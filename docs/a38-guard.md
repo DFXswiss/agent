@@ -183,9 +183,14 @@ block. The guard does not trust a report's `readme_only` flag or
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
-or failed cause a Draft transition. Lifecycle Draft/Ready writes run only on
-A38-enforced targets; excluded bases (for example a develop→main release PR)
-are left untouched. Missing required workflows are not an empty green result.
+or failed cause a Draft transition, **except** while a write collaborator holds
+Ready: the PR author currently has `write`/`maintain`/`admin` on the target, or
+the latest human `ready_for_review` timeline actor does. That hold skips
+auto-draft only; it does not waive policy, workflow inventory, or migration
+failures, and it does not skip auto-ready when A38 is already a fresh enforce
+`pass`. Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded
+bases (for example a develop→main release PR) are left untouched. Missing
+required workflows are not an empty green result.
 Only completed, successful required workflows satisfy CI. Optional workflows
 that intentionally skip are not counted as successful required tests. Pending
 or failed independent check runs and commit statuses also block Ready. The
@@ -248,11 +253,13 @@ For the private opt-in process, the checkout must be clean at the final reposito
 
 The latest author report-like comment, ordered by `updated_at` and numeric comment ID, is authoritative. A newer malformed or failed report never falls back to an older success. Other authors' reports cannot satisfy the requirement. Matching repository, head, visibility, full job set, names, commands, timeouts and successful measured results are mandatory, including for public repositories.
 
+**Write-collaborator Ready waiver (author report only):** When the PR author currently has `write`, `maintain`, or `admin` on the target repository, or when a human User with one of those roles is the latest `ready_for_review` timeline actor, the author-report gate is waived and enforce status may succeed with an explicit waiver description. A valid passing author report still takes the normal “report accepted” path when present. Bots and apps cannot grant the waiver; `MEMBER` / association is not write; 404 or denied permission lookups do not grant it. Invalid policy, unclassified workflows, and pr-guard migration failures are not waived. No-write authors who mark Ready without a valid report still fail and are still auto-drafted by lifecycle; lifecycle does not override Ready back to Draft while the write hold applies.
+
 ## Statuses and events
 
 | Mode | Stable status context | Meaning |
 | --- | --- | --- |
-| `enforce` | `A38 / report (develop)` for target branch `develop` | On a draft PR: omit the **blocking** commit status (not failure, not pending, not a fabricated pass); see the `not_applicable` success-clear carve-out below. The guard process exits 0 so `dfx pr guard` is not red merely for a missing draft report. An author report is still required before Ready. Once Ready (`draft=false`): success only for valid evidence; otherwise failure. |
+| `enforce` | `A38 / report (develop)` for target branch `develop` | On a draft PR: omit the **blocking** commit status (not failure, not pending, not a fabricated pass); see the `not_applicable` success-clear carve-out below. The guard process exits 0 so `dfx pr guard` is not red merely for a missing draft report. An author report is still required before Ready **unless** the author currently has `write`/`maintain`/`admin` on the target (then the draft comment states the report is not required). Once Ready (`draft=false`): success for a valid author report, or for the write-collaborator report waiver (author has write, or latest human `ready_for_review` actor has write); otherwise failure. Bots/apps, association strings, and denied/404 permission lookups do not grant the waiver. Policy/workflow/migration failures are never waived. |
 | `observe` | `A38 / report (observe: develop)` | Advisory status only; do not require this context for merging. Unchanged on drafts. |
 
 Configured `not_applicable` exclusions still publish success on the target enforce context to clear a wrong prior status, including on drafts; that success is not a test-pass claim.
@@ -280,7 +287,7 @@ Issue-only events and the bot's own comments are ignored. The installed workflow
 
 Closed PRs return `status: closed` and process exit zero without reading policy, pr-guard configuration or publishing comments/statuses, including when a PR closes during an all-open scan. Ignored events and empty all-open scans are also successful no-ops.
 
-On an open **draft** in `enforce` mode the guard still publishes or updates its educational comment, but it does **not** create or update a blocking `A38 / report (<target>)` commit status (and does not post an invalidating `error` status on draft). Configured `not_applicable` exclusions may still write success on that context only to clear a wrong prior status; that is not a test-pass claim. Process exit is 0 so `dfx pr guard` is not red merely because a draft lacks an author report. Ready (`draft=false`) keeps success-only-for-valid-evidence and failure otherwise.
+On an open **draft** in `enforce` mode the guard still publishes or updates its educational comment, but it does **not** create or update a blocking `A38 / report (<target>)` commit status (and does not post an invalidating `error` status on draft). Configured `not_applicable` exclusions may still write success on that context only to clear a wrong prior status; that is not a test-pass claim. Process exit is 0 so `dfx pr guard` is not red merely because a draft lacks an author report. When the draft author has write on the target, the comment must not claim a report is still required before Ready. Ready (`draft=false`) publishes success for valid author-report evidence or for the write-collaborator report waiver; missing or invalid evidence without that waiver is failure.
 
 The bot marker is `<!-- PR-GUARD:A38:v1 -->`. Only comments owned by the numeric acting user may be updated. `/user` resolves normal tokens; fallback to the verified official Actions bot is allowed only when `GITHUB_ACTIONS=true`. Failed authentication outside Actions does not impersonate that bot. Existing identical comments/statuses are not reposted.
 
