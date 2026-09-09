@@ -735,6 +735,9 @@ def test_ineligible_reviewer_does_not_invalidate_report(reviewer: str, review_st
 
     def request(method, url, body=None):
         if method == "GET" and "/collaborators/" in url:
+            # Author write-ready lookup is independent of reviewer eligibility.
+            if "/collaborators/author/" in url:
+                return original(method, url, body)
             assert reviewer == "community-user", "bot must never reach permission lookup"
             return 404, {"message": "Not Found"}, {}
         return original(method, url, body)

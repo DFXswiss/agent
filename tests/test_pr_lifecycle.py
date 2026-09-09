@@ -8,7 +8,7 @@ import pytest
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from agent_cli.pr_lifecycle import AUTH_MARKER, STATE_MARKER
-from test_a38_guard import HEAD, BASE, BASE2, BOT_ID, REPO
+from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO
 from test_workflow_approval_core import ApprovalAPI, PATH
 
 pytestmark = pytest.mark.no_pg
@@ -281,3 +281,115 @@ def test_lifecycle_config_is_strict(change):
     fake.config["lifecycle"].update(change)
     with pytest.raises(PrGuardConfigError):
         load_pr_guard_config(json.dumps(fake.config))
+
+
+def test_no_write_ready_with_in_progress_ci_still_drafts():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+
+
+@pytest.mark.parametrize("status,conclusion", [
+    ("in_progress", None),
+    ("completed", "failure"),
+])
+def test_write_author_ready_holds_against_red_or_pending_ci(status, conclusion):
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    fake.runs[0].update(status=status, conclusion=conclusion)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.ok and result.status == "pass"
+    assert result.write_ready
+    assert result.lifecycle["action"] == "unchanged"
+    assert result.lifecycle["reasons"]
+    assert fake.transitions == []
+    assert not fake.pull["draft"]
+
+
+def test_auto_draft_then_timeline_restores_write_ready():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.pull["draft"]
+    fake.timeline = [
+        {
+            "event": "ready_for_review",
+            "id": 2,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": "User"},
+        }
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": 3003, "login": "maintainer", "type": "User"},
+    }
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.ok and second.write_ready_reason == "ready by write collaborator"
+    assert second.lifecycle["action"] == "ready"
+    assert fake.transitions[-1] is False
+    assert not fake.pull["draft"]
+    bodies = [c["body"] for c in fake.comments]
+    assert any("write collaborator marked Ready" in b for b in bodies)
+
+
+def test_human_draft_with_ready_timeline_does_not_restore():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.pull["draft"] = True
+    fake.timeline = [
+        {
+            "event": "ready_for_review",
+            "id": 2,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": "User"},
+        }
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": 3003, "login": "maintainer", "type": "User"},
+    }
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.write_ready
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.transitions == []
+    assert fake.pull["draft"]
+
+
+def test_hold_clears_draft_record_so_later_human_draft_does_not_restore():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.pull["draft"]
+    fake.pull["draft"] = False
+    fake.timeline = [
+        {
+            "event": "ready_for_review",
+            "id": 2,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": "User"},
+        }
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": 3003, "login": "maintainer", "type": "User"},
+    }
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.lifecycle["action"] == "unchanged"
+    assert not fake.pull["draft"]
+    fake.pull["draft"] = True
+    third = reconcile_pull(fake.api(), REPO, 1)
+    assert third.write_ready
+    assert third.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"]

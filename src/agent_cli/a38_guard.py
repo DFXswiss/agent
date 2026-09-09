@@ -92,6 +92,9 @@ class PullSnapshot:
     private: bool
     author_id: int
     author_login: str
+    # GitHub user.type string from the pull author; empty when missing.
+    # Write-ready waiver requires exactly "User" (bots/apps cannot grant it).
+    author_type: str = ""
     head_repo: str = ""
     # Trusted repository default branch from base.repo.default_branch only.
     # Used to locate configuration; never a built-in scope rule by itself.
@@ -161,6 +164,11 @@ class Assessment:
     lifecycle_enabled: bool = False
     lifecycle: dict[str, Any] = field(default_factory=dict)
     draft: bool = False
+    # Author-report waiver when a write collaborator holds Ready (or drafts as write author).
+    write_ready: bool = False
+    write_ready_reason: str = ""
+    # In-memory webhook sender for this reconcile; not serialized.
+    event_actor: tuple[int, str] | None = None
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -191,6 +199,8 @@ class Assessment:
             "description": self.description,
             "closed": self.closed,
             "draft": self.draft,
+            "write_ready": self.write_ready,
+            "write_ready_reason": self.write_ready_reason,
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
             "writes": list(self.writes),
@@ -635,6 +645,8 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         raise GuardError("pull author id must be numeric")
     if not isinstance(author_login, str):
         author_login = ""
+    author_type_raw = user.get("type")
+    author_type = author_type_raw if isinstance(author_type_raw, str) else ""
     private = base_repo.get("private")
     if type(private) is not bool:
         raise GuardError("pull repository visibility must be a JSON boolean")
@@ -658,6 +670,7 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         private=private,
         author_id=author_id,
         author_login=author_login,
+        author_type=author_type,
         head_repo=head_repository,
         default_branch=default_branch,
         draft=draft,
@@ -989,23 +1002,44 @@ def build_run_instructions(base_sha: str) -> str:
     )
 
 
+def _report_accepted(assessment: Assessment) -> bool:
+    """True when a verified author report is the pass evidence (not only a write waiver)."""
+    return assessment.report_status == "pass"
+
+
 def build_comment_body(assessment: Assessment) -> str:
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
     if len(problems) > 800:
         problems = problems[:799] + "…"
     passing = assessment.ok and assessment.status == "pass"
+    waiver_report = assessment.write_ready and not _report_accepted(assessment)
     if assessment.draft:
-        extra_en = (
-            " An author local-CI report is accepted for this head."
-            if passing
-            else " An author local-CI report is still required before Ready."
-        )
-        extra_de = (
-            " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."
-            if passing
-            else " Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
-        )
+        if waiver_report:
+            if assessment.write_ready_reason == "author has write":
+                extra_en = (
+                    " An author local-CI report is not required because the author "
+                    "has write on this repository."
+                )
+                extra_de = (
+                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
+                    "Write auf diesem Repository hat."
+                )
+            else:
+                extra_en = (
+                    " An author local-CI report is not required because a write "
+                    "collaborator marked Ready."
+                )
+                extra_de = (
+                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil ein "
+                    "Write-Collaborator Ready gesetzt hat."
+                )
+        elif passing:
+            extra_en = " An author local-CI report is accepted for this head."
+            extra_de = " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."
+        else:
+            extra_en = " An author local-CI report is still required before Ready."
+            extra_de = " Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
         en = (
             "A38: this pull request is a draft; "
             "no blocking A38 report status is published until Ready for review."
@@ -1017,22 +1051,33 @@ def build_comment_body(assessment: Assessment) -> str:
             + extra_de
         )
     else:
-        en = (
-            f"A38 {assessment.status}: "
-            + (
-                "author local-CI report accepted for this head."
-                if passing
-                else "author local-CI report missing or invalid for this head."
-            )
-        )
-        de = (
-            f"A38 {assessment.status}: "
-            + (
-                "Autor-Local-CI-Report für diesen Head akzeptiert."
-                if passing
-                else "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
-            )
-        )
+        if passing and _report_accepted(assessment):
+            en_tail = "author local-CI report accepted for this head."
+            de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
+        elif waiver_report:
+            if assessment.write_ready_reason == "author has write":
+                en_tail = (
+                    "author local-CI report not required because the author "
+                    "has write on this repository."
+                )
+                de_tail = (
+                    "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
+                    "Write auf diesem Repository hat."
+                )
+            else:
+                en_tail = (
+                    "author local-CI report not required because a write "
+                    "collaborator marked Ready."
+                )
+                de_tail = (
+                    "Autor-Local-CI-Report nicht erforderlich, weil ein "
+                    "Write-Collaborator Ready gesetzt hat."
+                )
+        else:
+            en_tail = "author local-CI report missing or invalid for this head."
+            de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
+        en = f"A38 {assessment.status}: " + en_tail
+        de = f"A38 {assessment.status}: " + de_tail
     if assessment.mode == "observe":
         en = "Observe mode (advisory, not branch-required). " + en
         de = "Observe-Modus (Hinweis, nicht branch-pflichtig). " + de
@@ -1049,8 +1094,14 @@ def build_comment_body(assessment: Assessment) -> str:
         "- For a workflow/policy migration, another maintainer must submit an approved review with "
         f"`{POLICY_APPROVAL_PREFIX} head={assessment.head_sha} base={assessment.base_sha}`.\n"
         f"- Run (outside the repo output paths): `{run_cmd}`\n"
-        "- Publish: post the complete generated report as a pull-request comment "
-        "using the PR author's account, preserving its report block.\n"
+        + (
+            "- Publish: an author local-CI report is optional for this write-collaborator waiver; "
+            "if posted, use the PR author's account and preserve the report block.\n"
+            if waiver_report
+            else
+            "- Publish: post the complete generated report as a pull-request comment "
+            "using the PR author's account, preserving its report block.\n"
+        )
     )
     body = (
         f"{GUARD_MARKER}\n"
@@ -1091,11 +1142,30 @@ def _status_bits(assessment: Assessment) -> None:
         return
     if assessment.ok and assessment.status == "pass":
         assessment.state_for_status = "success"
-        assessment.description = truncate_desc(f"pass for {assessment.head_sha[:7]}")
+        if assessment.write_ready and not _report_accepted(assessment):
+            if assessment.write_ready_reason == "author has write":
+                assessment.description = truncate_desc(
+                    "pass: author has write; A38 report not required"
+                )
+            else:
+                assessment.description = truncate_desc(
+                    "pass: ready by write collaborator; A38 report not required"
+                )
+        else:
+            assessment.description = truncate_desc(f"pass for {assessment.head_sha[:7]}")
     else:
         assessment.state_for_status = "failure"
         reason = assessment.reasons[0] if assessment.reasons else assessment.status
         assessment.description = truncate_desc(f"{assessment.status}: {reason}")
+
+
+def _apply_write_ready_pass(assessment: Assessment) -> None:
+    """Author-report gate only: policy/workflow failures must not call this."""
+    assessment.ok = True
+    assessment.status = "pass"
+    assessment.reasons = []
+    _status_bits(assessment)
+    assessment.comment_body = build_comment_body(assessment)
 
 
 def assess_from_parts(
@@ -1111,6 +1181,8 @@ def assess_from_parts(
     policy_repo: str | None = None,
     policy_sha: str | None = None,
     api: GitHubApi | None = None,
+    write_ready: bool = False,
+    write_ready_reason: str = "",
 ) -> Assessment:
     active_policy_repo = policy_repo or pull.repo
     active_policy_sha = policy_sha or pull.base_sha
@@ -1135,6 +1207,8 @@ def assess_from_parts(
         closed=pull.state != "open",
         dry_run=dry_run,
         draft=pull.draft,
+        write_ready=bool(write_ready),
+        write_ready_reason=write_ready_reason if write_ready else "",
         standard_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, POLICY_DOCS),
         policy_url=blob_url(active_policy_repo, active_policy_sha, POLICY_PATH),
         guard_docs_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, GUARD_DOCS),
@@ -1184,6 +1258,9 @@ def assess_from_parts(
         return assessment
 
     if author_comment is None:
+        if assessment.write_ready:
+            _apply_write_ready_pass(assessment)
+            return assessment
         assessment.status = "fail"
         assessment.reasons = ["no author local-CI report comment on this pull request"]
         assessment.ok = False
@@ -1193,6 +1270,9 @@ def assess_from_parts(
 
     body = author_comment.get("body")
     if not isinstance(body, str):
+        if assessment.write_ready:
+            _apply_write_ready_pass(assessment)
+            return assessment
         assessment.status = "fail"
         assessment.reasons = ["author report comment body missing"]
         _status_bits(assessment)
@@ -1208,6 +1288,9 @@ def assess_from_parts(
             private=pull.private,
         )
     except Exception as exc:  # noqa: BLE001 — treat validator crashes as fail
+        if assessment.write_ready:
+            _apply_write_ready_pass(assessment)
+            return assessment
         assessment.status = "fail"
         assessment.reasons = [f"report verification error: {exc}"]
         _status_bits(assessment)
@@ -1215,6 +1298,9 @@ def assess_from_parts(
         return assessment
 
     if not isinstance(verdict, Mapping):
+        if assessment.write_ready:
+            _apply_write_ready_pass(assessment)
+            return assessment
         assessment.status = "fail"
         assessment.reasons = ["verify_report returned a non-object"]
         _status_bits(assessment)
@@ -1253,10 +1339,22 @@ def assess_from_parts(
                 status = "fail"
                 reasons = ["README-only omission is not independently confirmed"]
 
-    assessment.ok = ok
+    assessment.report_status = status
+    if ok:
+        assessment.ok = True
+        assessment.status = status
+        assessment.reasons = reasons
+        _status_bits(assessment)
+        assessment.comment_body = build_comment_body(assessment)
+        return assessment
+
+    if assessment.write_ready:
+        _apply_write_ready_pass(assessment)
+        return assessment
+
+    assessment.ok = False
     assessment.status = status
     assessment.reasons = reasons
-    assessment.report_status = status
     _status_bits(assessment)
     assessment.comment_body = build_comment_body(assessment)
     return assessment
@@ -1293,6 +1391,153 @@ def _report_fingerprint(comment: Mapping[str, Any] | None) -> str:
         return ""
     payload = [comment.get("id"), comment.get("updated_at"), comment.get("body")]
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def collaborator_has_write(
+    api: GitHubApi, repo: str, login: str, expected_id: int
+) -> bool:
+    """True when a GitHub User login currently has write/maintain/admin on repo.
+
+    Fail-closed for the exemption only: malformed logins, 404, 401/403 and other
+    non-2xx responses, missing/non-User type, identity mismatch or non-write
+    roles return False without raising so assessment can continue without the
+    waiver. Bots and Apps never qualify even with admin and an alphanumeric login.
+    """
+    if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+        return False
+    if type(expected_id) is not int:
+        return False
+    status, data, _ = api.request(
+        "GET",
+        f"/repos/{repo}/collaborators/{urllib.parse.quote(login)}/permission",
+    )
+    if status == 404 or not 200 <= status < 300:
+        return False
+    if not isinstance(data, Mapping):
+        return False
+    if data.get("permission") not in {"write", "maintain", "admin"}:
+        return False
+    user = data.get("user")
+    if not isinstance(user, Mapping):
+        return False
+    payload_id = user.get("id")
+    if type(payload_id) is not int or payload_id != expected_id:
+        return False
+    if user.get("type") != "User":
+        return False
+    payload_login = user.get("login")
+    if not isinstance(payload_login, str) or payload_login != login:
+        return False
+    return True
+
+
+def load_ready_timeline(
+    api: GitHubApi, repo: str, number: int
+) -> tuple[str, tuple[int, str] | None]:
+    """Return ``("ok", actor_or_none)`` or ``("unavailable", None)``.
+
+    HTTP 404 is an empty timeline (``ok``, None). 401/403 are unavailable.
+    Other pagination errors still raise.
+    """
+    path = f"/repos/{repo}/issues/{number}/timeline"
+    try:
+        events = api.paginate(path)
+    except GuardError as exc:
+        message = str(exc)
+        if (
+            "denied (401)" in message
+            or "denied (403)" in message
+            or "HTTP 404 while paginating" in message
+        ):
+            return "unavailable", None
+        raise
+    best: tuple[str, int, int, str] | None = None
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        if event.get("event") != "ready_for_review":
+            continue
+        created_at = event.get("created_at")
+        event_id = event.get("id")
+        if not isinstance(created_at, str) or type(event_id) is not int:
+            continue
+        actor = event.get("actor")
+        if not isinstance(actor, Mapping):
+            continue
+        if actor.get("type") != "User":
+            continue
+        login = actor.get("login")
+        actor_id = actor.get("id")
+        if not isinstance(login, str) or type(actor_id) is not int:
+            continue
+        key = (created_at, event_id, actor_id, login)
+        if best is None or (created_at, event_id) > (best[0], best[1]):
+            best = key
+    if best is None:
+        return "ok", None
+    return "ok", (best[2], best[3])
+
+
+def ready_event_actor(
+    event_name: str, payload: Mapping[str, Any]
+) -> tuple[int, str] | None:
+    """User who just marked Ready, from the webhook payload, or None.
+
+    Used so a write collaborator's Ready click is not lost when the issue
+    timeline has not yet recorded the ``ready_for_review`` event.
+    """
+    if event_name not in {"pull_request", "pull_request_target"}:
+        return None
+    if payload.get("action") != "ready_for_review":
+        return None
+    sender = payload.get("sender")
+    if not isinstance(sender, Mapping):
+        return None
+    if sender.get("type") != "User":
+        return None
+    login = sender.get("login")
+    uid = sender.get("id")
+    if not isinstance(login, str) or type(uid) is not int:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
+        return None
+    return uid, login
+
+
+def _actor_has_write(
+    api: GitHubApi, snap: PullSnapshot, actor: tuple[int, str] | None
+) -> bool:
+    if actor is None:
+        return False
+    actor_id, actor_login = actor
+    return collaborator_has_write(api, snap.repo, actor_login, actor_id)
+
+
+def resolve_write_ready(
+    api: GitHubApi,
+    snap: PullSnapshot,
+    *,
+    event_actor: tuple[int, str] | None = None,
+) -> tuple[bool, str]:
+    """Whether the author-report gate is waived for this snapshot.
+
+    Draft does not skip the Ready-actor path: after a write collaborator
+    marks Ready, a lagged timeline or an auto-draft must still see them.
+    """
+    if snap.author_type == "User" and collaborator_has_write(
+        api, snap.repo, snap.author_login, snap.author_id
+    ):
+        return True, "author has write"
+    status, ready_actor = load_ready_timeline(api, snap.repo, snap.number)
+    if status == "unavailable":
+        return False, ""
+    if ready_actor is not None:
+        if _actor_has_write(api, snap, ready_actor):
+            return True, "ready by write collaborator"
+        return False, ""
+    if _actor_has_write(api, snap, event_actor):
+        return True, "ready by write collaborator"
+    return False, ""
 
 
 def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
@@ -1451,6 +1696,7 @@ def assess_pull(
     pull: PullSnapshot | None = None,
     runtime_revision: str | None = None,
     runtime_env: Mapping[str, str] | None = None,
+    event_actor: tuple[int, str] | None = None,
 ) -> Assessment:
     snap = pull or fetch_pull(api, repo, number)
     # Closed no-op happens before trusted config lookup.
@@ -1500,6 +1746,9 @@ def assess_pull(
     )
     comments = collect_comments(api, snap.repo, snap.number)
     author_comment = pick_latest_author_report(comments, snap.author_id)
+    write_ready, write_ready_reason = resolve_write_ready(
+        api, snap, event_actor=event_actor
+    )
     assessment = assess_from_parts(
         pull=snap,
         policy=policy,
@@ -1512,8 +1761,11 @@ def assess_pull(
         policy_repo=policy_repo,
         policy_sha=policy_sha,
         api=api,
+        write_ready=write_ready,
+        write_ready_reason=write_ready_reason,
     )
     assessment.approval_fingerprint = approval
+    assessment.event_actor = event_actor
     _attach_trusted_config(assessment, trusted)
     return assessment
 
@@ -1612,6 +1864,19 @@ def publish_assessment(
                 if migration_approval(api, fresh) != assessment.approval_fingerprint:
                     raise GuardError(
                         "maintainer approval changed before publish; retry assessment"
+                    )
+            if (
+                state == "success"
+                and assessment.write_ready
+                and assessment.status == "pass"
+                and not _report_accepted(assessment)
+            ):
+                still_ready, _ = resolve_write_ready(
+                    api, latest_pull, event_actor=assessment.event_actor
+                )
+                if not still_ready:
+                    raise GuardError(
+                        "write-ready waiver changed before publish; retry assessment"
                     )
         if (
             prev is not None
@@ -1721,6 +1986,7 @@ def reconcile_pull(
     publish: bool = True,
     runtime_revision: str | None = None,
     runtime_env: Mapping[str, str] | None = None,
+    event_actor: tuple[int, str] | None = None,
 ) -> Assessment:
     last_err: Exception | None = None
     snap: PullSnapshot | None = None
@@ -1735,6 +2001,7 @@ def reconcile_pull(
                 pull=snap,
                 runtime_revision=runtime_revision,
                 runtime_env=runtime_env,
+                event_actor=event_actor,
             )
             if dry_run or not publish or assessment.closed:
                 if assessment.closed and not dry_run:
@@ -1893,16 +2160,19 @@ def reconcile_event(
         )
 
     event_repo, event_pr = extract_repo_pr_from_event(event_name, payload)
-    use_repo = repo or event_repo
-    use_pr = pr if pr is not None else event_pr
+    if repo is not None and _validate_repo(repo) != event_repo:
+        raise GuardError("event repository does not match --repo")
+    if pr is not None and pr != event_pr:
+        raise GuardError("event pull request does not match --pr")
     return reconcile_pull(
         api,
-        use_repo,
-        use_pr,
+        event_repo,
+        event_pr,
         dry_run=dry_run,
         publish=publish,
         runtime_revision=runtime_revision,
         runtime_env=runtime_env,
+        event_actor=ready_event_actor(event_name, payload),
     )
 
 
