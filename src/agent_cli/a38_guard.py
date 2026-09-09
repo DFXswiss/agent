@@ -1120,7 +1120,6 @@ def build_comment_body(assessment: Assessment) -> str:
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
     if len(problems) > 800:
         problems = problems[:799] + "…"
-    passing = assessment.ok and assessment.status == "pass"
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
     hard_fail_en = (
         " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "

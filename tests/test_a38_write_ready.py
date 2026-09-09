@@ -333,7 +333,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertFalse(result.write_ready)
 
-    def test_draft_author_write_no_blocking_status_and_comment_waives_report(self) -> None:
+    def test_draft_author_write_no_blocking_status_and_comment_is_greeting_only(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)
         fake.permissions["author"] = {
