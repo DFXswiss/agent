@@ -363,3 +363,33 @@ def test_human_draft_with_ready_timeline_does_not_restore():
     assert result.lifecycle["action"] == "unchanged"
     assert fake.transitions == []
     assert fake.pull["draft"]
+
+
+def test_hold_clears_draft_record_so_later_human_draft_does_not_restore():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.pull["draft"]
+    fake.pull["draft"] = False
+    fake.timeline = [
+        {
+            "event": "ready_for_review",
+            "id": 2,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": "User"},
+        }
+    ]
+    fake.permissions["maintainer"] = {
+        "permission": "admin",
+        "user": {"id": 3003, "login": "maintainer", "type": "User"},
+    }
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.lifecycle["action"] == "unchanged"
+    assert not fake.pull["draft"]
+    fake.pull["draft"] = True
+    third = reconcile_pull(fake.api(), REPO, 1)
+    assert third.write_ready
+    assert third.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"]

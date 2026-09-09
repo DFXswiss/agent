@@ -238,12 +238,35 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         previous.get("state") == "draft"
         and previous.get("head") == snap.head_sha
         and previous.get("base") == snap.base_sha
-        and previous.get("phase") in {"planned", "applied"}
+        and previous.get("phase") == "applied"
     )
     restore_write_ready = bool(pull["draft"] and assessment.write_ready and we_drafted)
     # Write collaborator Ready hold: do not auto-draft while author or the latest
     # ready_for_review actor has write/maintain/admin on the target repository.
     if not pull["draft"] and reasons and assessment.write_ready:
+        hold = {
+            "repo": assessment.repo,
+            "pr": assessment.pr,
+            "head": snap.head_sha,
+            "base": snap.base_sha,
+            "state": "ready",
+            "reasons": reasons,
+            "phase": "applied",
+        }
+        if not dry_run and (
+            previous.get("phase") != "applied"
+            or previous.get("state") != "ready"
+            or previous.get("head") != snap.head_sha
+            or previous.get("base") != snap.base_sha
+        ):
+            _save_record(
+                api,
+                assessment,
+                STATE_MARKER,
+                hold,
+                "A write collaborator holds Ready; this pull request stays ready for review.",
+                "Ein Write-Collaborator hält Ready; dieser Pull Request bleibt bereit zum Review.",
+            )
         return {"action": "unchanged", "reasons": reasons, "dry_run": dry_run}
     if not pull["draft"] and reasons:
         target = "draft"

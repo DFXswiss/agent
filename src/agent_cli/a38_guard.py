@@ -1476,14 +1476,6 @@ def load_ready_timeline(
     return "ok", (best[2], best[3])
 
 
-def latest_ready_for_review_actor(
-    api: GitHubApi, repo: str, number: int
-) -> tuple[int, str] | None:
-    """Latest GitHub User actor of a ready_for_review timeline event, or None."""
-    _status, actor = load_ready_timeline(api, repo, number)
-    return actor
-
-
 def ready_event_actor(
     event_name: str, payload: Mapping[str, Any]
 ) -> tuple[int, str] | None:
@@ -1534,7 +1526,9 @@ def resolve_write_ready(
         api, snap.repo, snap.author_login, snap.author_id
     ):
         return True, "author has write"
-    _status, ready_actor = load_ready_timeline(api, snap.repo, snap.number)
+    status, ready_actor = load_ready_timeline(api, snap.repo, snap.number)
+    if status == "unavailable":
+        return False, ""
     if ready_actor is not None:
         if _actor_has_write(api, snap, ready_actor):
             return True, "ready by write collaborator"
