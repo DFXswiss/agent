@@ -184,6 +184,8 @@ class Assessment:
     # In-memory webhook sender for this reconcile; not serialized.
     event_actor: tuple[int, str] | None = None
     hard_fail: bool = False
+    title: str = ""
+    body: str = ""
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -1121,18 +1123,18 @@ def build_comment_body(assessment: Assessment) -> str:
     passing = assessment.ok and assessment.status == "pass"
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
     hard_fail_en = (
-        " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard "
-        "even while this pull request is a draft. Remove those trailers."
+        " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "
+        "Remove those attribution markers."
         if assessment.hard_fail
         else ""
     )
     hard_fail_de = (
         " Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
-        "auch im Draft fehlschlagen. Diese Trailer müssen entfernt werden."
+        "fehlschlagen. Diese Attribution-Marker müssen entfernt werden."
         if assessment.hard_fail
         else ""
     )
-    if passing and _report_accepted(assessment):
+    if _report_accepted(assessment):
         en_tail = "author local-CI report accepted for this head."
         de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
     elif waiver_report:
@@ -1317,6 +1319,8 @@ def assess_from_parts(
         draft=pull.draft,
         write_ready=bool(write_ready),
         write_ready_reason=write_ready_reason if write_ready else "",
+        title=pull.title,
+        body=pull.body,
         standard_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, POLICY_DOCS),
         policy_url=blob_url(active_policy_repo, active_policy_sha, POLICY_PATH),
         guard_docs_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, GUARD_DOCS),
@@ -1772,6 +1776,8 @@ def _out_of_scope_assessment(
         skip_publish=False,
         dry_run=dry_run,
         draft=snap.draft,
+        title=snap.title,
+        body=snap.body,
     )
     _attach_trusted_config(assessment, trusted)
     return assessment
@@ -1789,6 +1795,8 @@ def _snapshot_matches_assessment(fresh: PullSnapshot, assessment: Assessment) ->
         and fresh.private == assessment.private
         and fresh.state == expected_state
         and fresh.draft == assessment.draft
+        and fresh.title == assessment.title
+        and fresh.body == assessment.body
     )
 
 

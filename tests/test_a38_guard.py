@@ -695,6 +695,39 @@ class A38GuardE2ETests(unittest.TestCase):
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "failure")
+        body = result.comment_body
+        self.assertTrue(
+            "Tool-attribution" in body or "attribution markers" in body
+            or "Attribution-Marker" in body or "Tool-Attribution" in body
+        )
+        self.assertNotIn("even while this pull request is a draft", body)
+        self.assertNotIn("auch im Draft", body)
+
+    def test_ready_ai_commit_trailer_with_valid_report(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=74
+        )
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        body = result.comment_body
+        self.assertNotIn("missing or invalid", body)
+        self.assertNotIn("fehlt oder ist ungültig", body)
+        self.assertIn("author local-CI report accepted for this head", body)
+        self.assertIn("Autor-Local-CI-Report für diesen Head akzeptiert", body)
+        self.assertTrue(
+            "Tool-attribution" in body or "attribution markers" in body
+            or "Attribution-Marker" in body or "Tool-Attribution" in body
+        )
+        self.assertNotIn("even while this pull request is a draft", body)
+        self.assertNotIn("auch im Draft", body)
 
     def test_draft_title_only_generated_with_hard_fails(self) -> None:
         fake = FakeAPI()
@@ -931,6 +964,24 @@ class A38GuardE2ETests(unittest.TestCase):
         with self.assertRaisesRegex(GuardError, "changed before publish"):
             publish_assessment(api, assessment)
 
+    def test_changed_title_body_midpublish_retries(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=71
+        )
+        api = fake.api()
+        assessment = assess_pull(api, REPO, 1)
+        self.assertTrue(assessment.ok)
+        self.assertFalse(assessment.hard_fail)
+        # Title/body change after assessment, before publish (same SHAs).
+        fake.pull = fake._pull(HEAD, BASE, body=GENERATED_WITH_BANNER)
+        with self.assertRaisesRegex(GuardError, "changed before publish"):
+            publish_assessment(api, assessment)
+        result = reconcile_pull(api, REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+
     def test_unknown_policy_not_configured(self) -> None:
         fake = FakeAPI()
         del fake.files[(BASE, ".github/a38.json")]
@@ -1066,6 +1117,19 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(result.state_for_status, "success")
         self.assertTrue(result.observe_context.startswith("A38 / report (observe:"))
         self.assertEqual(result.context, "")
+        contexts = [s["context"] for s in fake.statuses]
+        self.assertTrue(any("observe:" in c for c in contexts))
+        self.assertFalse(any(c == status_context_enforce("develop") for c in contexts))
+
+    def test_observe_mode_attribution_hard_fails_exit_one(self) -> None:
+        fake = FakeAPI()
+        fake.files[(BASE, ".github/a38.json")] = json.dumps(
+            _policy(mode="observe")
+        ).encode()
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
         contexts = [s["context"] for s in fake.statuses]
         self.assertTrue(any("observe:" in c for c in contexts))
         self.assertFalse(any(c == status_context_enforce("develop") for c in contexts))
