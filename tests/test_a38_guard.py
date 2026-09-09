@@ -792,6 +792,20 @@ class A38GuardE2ETests(unittest.TestCase):
         with self.assertRaisesRegex(GuardError, "denied"):
             reconcile_pull(fake.api(), REPO, 1, publish=True)
 
+    def test_truncated_pull_commits_list_raises(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(sha=f"{i:040x}") for i in range(250)]
+        with self.assertRaisesRegex(GuardError, "250-commit cap"):
+            reconcile_pull(fake.api(), REPO, 1, publish=True)
+
+    def test_just_under_pull_commits_cap_scans(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [_clean_commit(sha=f"{i:040x}") for i in range(249)]
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertFalse(result.hard_fail)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+
     def test_missing_commit_message_hard_fails(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)

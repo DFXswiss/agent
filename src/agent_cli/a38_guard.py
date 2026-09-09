@@ -64,6 +64,9 @@ GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 # Public numeric id for github-actions[bot]; used only after /user is unavailable.
 GITHUB_ACTIONS_BOT_ID = 41898282
 MAX_COMMENT_PAGES_ITEMS = 2000
+# GitHub's "List commits on a pull request" endpoint returns at most 250
+# commits. Hitting the cap is treated as truncation (fail closed).
+PULL_COMMITS_API_CAP = 250
 MAX_STATUS_DESC = 140
 MAX_COMMENT_BODY = 12000
 MAX_FILE_BYTES = 1024 * 1024
@@ -754,9 +757,17 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
 
 
 def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str, Any]]:
-    """Return every commit object on the pull request (data only; never execute)."""
+    """Return every commit object on the pull request (data only; never execute).
+
+    GitHub lists at most 250 pull-request commits. Reaching that cap is
+    treated as a truncated list: fail closed instead of scanning a prefix.
+    """
     repo = _validate_repo(repo)
     items = api.paginate(f"/repos/{repo}/pulls/{number}/commits")
+    if len(items) >= PULL_COMMITS_API_CAP:
+        raise GuardError(
+            "pull commit list truncated at GitHub 250-commit cap; refusing partial scan"
+        )
     commits: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
