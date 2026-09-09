@@ -942,11 +942,7 @@ def run_policy(
 
     # Revalidate the complete manifest for programmatic callers too.
     try:
-        raw_policy = dict(policy)
-        omit_jobs = raw_policy.pop("readme_only_omit", None)
-        if omit_jobs and "readme_only" not in raw_policy:
-            raw_policy["readme_only"] = {"omit_jobs": list(omit_jobs)}
-        policy = load_policy(json.dumps(raw_policy))
+        policy = load_policy(json.dumps(dict(policy)))
     except (TypeError, ValueError) as exc:
         raise A38Error(f"invalid policy: {exc}") from exc
     required = _policy_required_ids(policy)

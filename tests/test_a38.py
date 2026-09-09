@@ -194,6 +194,12 @@ class PolicyTests(unittest.TestCase):
                 _policy_text(readme_only={"omit_jobs": ["unit"], "extra": True})
             )
 
+    def test_readme_only_rejects_normalized_and_wire_together(self) -> None:
+        raw = _policy_dict(readme_only={"omit_jobs": ["unit"]})
+        raw["readme_only_omit"] = ["unit"]
+        with self.assertRaisesRegex(A38Error, "cannot both be set"):
+            load_policy(json.dumps(raw))
+
     def test_rejects_unknown_key(self) -> None:
         raw = _policy_dict()
         raw["extra"] = 1
