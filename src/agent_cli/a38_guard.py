@@ -392,7 +392,10 @@ def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
     source_l = source.lower()
     is_identity = "author" in source_l or "committer" in source_l
     if is_identity:
-        if _ANTHROPIC_EMAIL_RE.search(text) or _AI_TOOL_WORD_RE.search(text):
+        if "@" in text:
+            if _ANTHROPIC_EMAIL_RE.search(text):
+                reasons.append(f"{source}: AI author identity")
+        elif _AI_TOOL_WORD_RE.search(text):
             reasons.append(f"{source}: AI author identity")
     return reasons
 
@@ -761,11 +764,14 @@ def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
             if isinstance(person, dict):
                 name = person.get("name") if isinstance(person.get("name"), str) else ""
                 email = person.get("email") if isinstance(person.get("email"), str) else ""
-                reasons.extend(
-                    find_tool_attribution(
-                        f"{name} {email}", source=f"commit {sha7} {role}"
+                if name:
+                    reasons.extend(
+                        find_tool_attribution(name, source=f"commit {sha7} {role}")
                     )
-                )
+                if email:
+                    reasons.extend(
+                        find_tool_attribution(email, source=f"commit {sha7} {role}")
+                    )
     for role in ("author", "committer"):
         person = commit.get(role)
         if isinstance(person, dict):
@@ -1122,18 +1128,44 @@ def build_comment_body(assessment: Assessment) -> str:
     if len(problems) > 800:
         problems = problems[:799] + "…"
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
-    hard_fail_en = (
-        " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "
-        "Remove those attribution markers."
-        if assessment.hard_fail
-        else ""
+    missing_msg = any("message missing" in r for r in assessment.reasons)
+    attr_hit = any(
+        "AI co-author" in r
+        or "AI session" in r
+        or "generated-with" in r
+        or "AI author identity" in r
+        for r in assessment.reasons
     )
-    hard_fail_de = (
-        " Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
-        "fehlschlagen. Diese Attribution-Marker müssen entfernt werden."
-        if assessment.hard_fail
-        else ""
-    )
+    if assessment.hard_fail and missing_msg and attr_hit:
+        hard_fail_en = (
+            " Tool-attribution or an unscannable commit message fails dfx pr guard. "
+            "Remove those attribution markers or supply a non-empty commit message."
+        )
+        hard_fail_de = (
+            " Tool-Attribution oder eine nicht lesbare Commit-Message lässt dfx pr guard "
+            "fehlschlagen. Attribution-Marker entfernen oder eine nicht-leere Commit-Message liefern."
+        )
+    elif assessment.hard_fail and missing_msg:
+        hard_fail_en = (
+            " An unscannable or empty commit message fails dfx pr guard. "
+            "Supply a non-empty commit message."
+        )
+        hard_fail_de = (
+            " Eine nicht lesbare oder leere Commit-Message lässt dfx pr guard fehlschlagen. "
+            "Eine nicht-leere Commit-Message liefern."
+        )
+    elif assessment.hard_fail:
+        hard_fail_en = (
+            " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "
+            "Remove those attribution markers."
+        )
+        hard_fail_de = (
+            " Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
+            "fehlschlagen. Diese Attribution-Marker müssen entfernt werden."
+        )
+    else:
+        hard_fail_en = ""
+        hard_fail_de = ""
     if _report_accepted(assessment):
         en_tail = "author local-CI report accepted for this head."
         de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."

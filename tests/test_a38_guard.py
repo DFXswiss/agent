@@ -526,9 +526,15 @@ class A38GuardUnitTests(unittest.TestCase):
         reasons = find_tool_attribution("claude", source="commit abcdef0 author")
         self.assertTrue(any("AI author identity" in r for r in reasons))
         reasons = find_tool_attribution(
-            "bot <noreply@anthropic.com>", source="commit abcdef0 committer"
+            "noreply@anthropic.com", source="commit abcdef0 committer"
         )
         self.assertTrue(any("AI author identity" in r for r in reasons))
+        self.assertEqual(
+            find_tool_attribution(
+                "alice@openai.com", source="commit abcdef0 author"
+            ),
+            [],
+        )
 
 
 class A38GuardE2ETests(unittest.TestCase):
@@ -784,6 +790,38 @@ class A38GuardE2ETests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertEqual(a38_guard._assessment_exit_code(result), 1)
                 self.assertTrue(any("message missing" in r for r in result.reasons))
+
+    def test_ai_author_identity_hard_fails(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [
+            _clean_commit(message="feat: ok\n", login="claude")
+        ]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertTrue(any("AI author identity" in r for r in result.reasons))
+
+    def test_human_vendor_email_is_not_ai_identity(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [
+            _clean_commit(
+                message="feat: ok\n",
+                author_name="Alice",
+                author_email="alice@openai.com",
+            )
+        ]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.hard_fail)
+
+    def test_ready_blank_commit_message_comment(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(message="")]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.draft)
+        body = result.comment_body
+        self.assertIn("unscannable or empty commit message", body)
+        self.assertNotIn("Remove those attribution markers", body)
 
     def test_draft_valid_report_omits_enforce_status(self) -> None:
         fake = FakeAPI()
