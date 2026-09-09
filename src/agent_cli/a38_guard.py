@@ -745,8 +745,8 @@ def resolve_trusted_guard_config(
     """Load and evaluate `.github/pr-guard.json` from the trusted default revision.
 
     Always reads the base repository. PR-head configuration can never self-exempt.
-    A missing file retains legacy enforce-all. API denial, non-404 errors and
-    malformed JSON fail closed.
+    A missing file retains legacy enforce-all for every target except exact `main`.
+    API denial, non-404 errors and malformed JSON fail closed.
     """
     if not snap.default_branch:
         raise GuardError("pull repository default_branch missing or invalid")

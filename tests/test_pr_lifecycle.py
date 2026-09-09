@@ -129,6 +129,22 @@ def test_main_target_without_config_skips_lifecycle_even_with_red_ci():
     assert fake.pull["draft"] is False
 
 
+def test_main_target_with_enforce_list_and_lifecycle_skips_red_ci():
+    fake = LifecycleAPI()
+    fake.pull["base"]["ref"] = "main"
+    fake.config["a38"]["enforce"] = ["main"]
+    fake.set_pr_guard_config(fake.config)
+    fake.runs[0].update(status="in_progress", conclusion=None)
+    fake.pull["mergeable"] = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.status == "not_applicable"
+    assert result.scope_decision == "exclude"
+    assert fake.transitions == []
+    assert result.lifecycle == {}
+    assert not [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert fake.pull["draft"] is False
+
+
 def test_unknown_mergeability_never_promotes_or_invents_conflicts():
     fake = LifecycleAPI()
     fake.pull["mergeable"] = None

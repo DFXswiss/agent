@@ -37,7 +37,7 @@ The authoritative PR API supplies the target repository, exact head SHA, exact b
 
 ### Target-branch scope (`.github/pr-guard.json`)
 
-A38 applicability is **repository configuration**, not a built-in default-branch rule. Optional [`.github/pr-guard.json`](../examples/pr-guard.json) on the trusted default-branch revision selects which PR **target** branches enforce A38:
+A38 applicability is **repository configuration**, except for the built-in exact-`main` rule. The repository default branch is not itself a built-in enforce/exclude decision; it is only the trusted location of the file. Optional [`.github/pr-guard.json`](../examples/pr-guard.json) on the trusted default-branch revision selects which PR **target** branches enforce A38:
 
 ```json
 {
@@ -68,7 +68,7 @@ Rules enforced centrally by the Agent:
 - The live PR's `base.repo.default_branch` metadata (never the head repository) is validated, resolved to an immutable commit via `GET /repos/{repo}/commits/{urlencoded_default_branch}` (lowercase 40-hex SHA), then the file is read from that revision in the **base** repository. Configuration from the PR head can never self-exempt.
 - Assessment JSON records `trusted_default_branch` and `config_revision` for audit. Closed PRs remain successful no-ops **before** any configuration lookup.
 
-Excluded targets return `ok: true`, `status: not_applicable`, `closed: false`, with a reason from the configuration. The guard does not load A38 policy, author reports, migration approvals or provenance for those PRs, and does not publish comments. It publishes only the stable `A38 / report (<target>)` success status with an explicit not-applicable description (to clear prior erroneous red statuses), deduplicated; that success is not a test-pass claim and does not touch another target context. `--dry-run` writes nothing. In-scope targets keep the full original report, policy and migration behaviour.
+Excluded targets return `ok: true`, `status: not_applicable`, `closed: false`, with a reason from the configuration or the built-in exact-`main` rule. The guard does not load A38 policy, author reports, migration approvals or provenance for those PRs, and does not publish comments. It publishes only the stable `A38 / report (<target>)` success status with an explicit not-applicable description (to clear prior erroneous red statuses), deduplicated; that success is not a test-pass claim and does not touch another target context. `--dry-run` writes nothing. In-scope targets keep the full original report, policy and migration behaviour.
 
 Edits to `.github/pr-guard.json` on an enforced PR (add, remove or change bytes versus the immutable base) are policy migrations: they require the same exact head/base maintainer `A38-POLICY-APPROVAL:v1` declaration as workflow or manifest changes. Even after approval, the proposed head configuration is **not** activated for the current PR; scope continues to come from the trusted default-branch revision until merge. Base A38 mode, security rules and the pinned executable remain unchanged.
 
