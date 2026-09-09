@@ -56,9 +56,9 @@ _COAUTHOR_LINE_RE = re.compile(r"(?im)^[ \t]*Co-Authored-By:\s*(.+?)\s*$")
 _TRAILER_EMAIL_RE = re.compile(r"<([^>]+)>")
 _SESSION_HEADER_RE = re.compile(r"(?im)^[ \t]*Claude-Session:")
 _GENERATED_WITH_TOKEN_RE = re.compile(
-    rf"(?i)generated with[^\n]*\b(?:{_AI_TOOL_TOKEN})\b"
+    rf"(?i)(?<![A-Za-z0-9_])generated[ \t]+with\b[^\n]*\b(?:{_AI_TOOL_TOKEN})\b"
 )
-_ANTHROPIC_EMAIL_RE = re.compile(r"(?i)noreply@anthropic\.com")
+_ANTHROPIC_EMAIL_RE = re.compile(r"(?i)noreply@anthropic\.com\Z")
 _AI_TOOL_WORD_RE = re.compile(rf"(?i)\b(?:{_AI_TOOL_TOKEN})\b")
 GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 # Public numeric id for github-actions[bot]; used only after /user is unavailable.
@@ -381,7 +381,7 @@ def _coauthor_line_is_ai(text: str) -> bool:
         email_m = _TRAILER_EMAIL_RE.search(rest)
         email = email_m.group(1) if email_m else ""
         name = rest[: email_m.start()].strip() if email_m else rest.strip()
-        if email and _ANTHROPIC_EMAIL_RE.search(email):
+        if email and _ANTHROPIC_EMAIL_RE.fullmatch(email.strip()):
             return True
         if name and _AI_TOOL_WORD_RE.search(name):
             return True
@@ -407,8 +407,10 @@ def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
     source_l = source.lower()
     is_identity = "author" in source_l or "committer" in source_l
     if is_identity:
-        if "@" in text:
-            if _ANTHROPIC_EMAIL_RE.search(text):
+        stripped = text.strip()
+        looks_like_email = "@" in stripped and " " not in stripped and "<" not in stripped
+        if looks_like_email:
+            if _ANTHROPIC_EMAIL_RE.fullmatch(stripped):
                 reasons.append(f"{source}: AI author identity")
         elif _AI_TOOL_WORD_RE.search(text):
             reasons.append(f"{source}: AI author identity")

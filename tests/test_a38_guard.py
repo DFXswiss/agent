@@ -523,6 +523,12 @@ class A38GuardUnitTests(unittest.TestCase):
         )
         self.assertEqual(
             find_tool_attribution(
+                "regenerated without Claude", source="PR body"
+            ),
+            [],
+        )
+        self.assertEqual(
+            find_tool_attribution(
                 "this change does not mention vendors", source="PR body"
             ),
             [],
@@ -542,6 +548,16 @@ class A38GuardUnitTests(unittest.TestCase):
         self.assertEqual(
             find_tool_attribution(
                 "alice@openai.com", source="commit abcdef0 author"
+            ),
+            [],
+        )
+        reasons = find_tool_attribution(
+            "Claude @ DFX", source="commit abcdef0 author"
+        )
+        self.assertTrue(any("AI author identity" in r for r in reasons))
+        self.assertEqual(
+            find_tool_attribution(
+                "notnoreply@anthropic.com", source="commit abcdef0 author"
             ),
             [],
         )
