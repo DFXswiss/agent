@@ -1149,7 +1149,7 @@ def _status_bits(assessment: Assessment) -> None:
                 )
             else:
                 assessment.description = truncate_desc(
-                    "pass: ready by write collaborator"
+                    "pass: ready by write collaborator; A38 report not required"
                 )
         else:
             assessment.description = truncate_desc(f"pass for {assessment.head_sha[:7]}")
@@ -1444,10 +1444,12 @@ def load_ready_timeline(
         events = api.paginate(path)
     except GuardError as exc:
         message = str(exc)
-        if "denied (401)" in message or "denied (403)" in message:
+        if (
+            "denied (401)" in message
+            or "denied (403)" in message
+            or "HTTP 404 while paginating" in message
+        ):
             return "unavailable", None
-        if "HTTP 404 while paginating" in message:
-            return "ok", None
         raise
     best: tuple[str, int, int, str] | None = None
     for event in events:

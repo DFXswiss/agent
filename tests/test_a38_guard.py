@@ -181,6 +181,7 @@ class FakeAPI:
         # Logins that return HTTP 404 from the collaborator permission endpoint.
         self.permission_404: set[str] = set()
         self.timeline: list[dict[str, Any]] = []
+        self.timeline_404 = False
         # Branch/tag ref → immutable commit SHA for GET /commits/{ref}.
         self.ref_commits: dict[str, str] = {
             "develop": DEFAULT_TIP,
@@ -264,6 +265,8 @@ class FakeAPI:
             ), {}
 
         if method_u == "GET" and path_only.startswith(f"/repos/{REPO}/issues/1/timeline"):
+            if self.timeline_404:
+                return 404, {"message": "Not Found"}, {}
             page = int(parse_qs(urlparse(path).query).get("page", ["1"])[0])
             per_page = 100
             start = (page - 1) * per_page

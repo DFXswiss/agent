@@ -60,10 +60,16 @@ def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> Non
         en = "This pull request is back in Draft because CI is not fully green or merge conflicts exist."
         de = "Dieser Pull Request steht wieder auf Draft, weil die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen."
     elif restore:
-        en = ("A write collaborator marked Ready; this pull request is ready for review "
-              "even though CI is not fully green or merge conflicts exist.")
-        de = ("Ein Write-Collaborator hat Ready gesetzt; dieser Pull Request ist bereit zum Review, "
-              "auch wenn die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen.")
+        if assessment.write_ready_reason == "author has write":
+            en = ("The author has write; this pull request is ready for review "
+                  "even though CI is not fully green or merge conflicts exist.")
+            de = ("Der Autor hat Write; dieser Pull Request ist bereit zum Review, "
+                  "auch wenn die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen.")
+        else:
+            en = ("A write collaborator marked Ready; this pull request is ready for review "
+                  "even though CI is not fully green or merge conflicts exist.")
+            de = ("Ein Write-Collaborator hat Ready gesetzt; dieser Pull Request ist bereit zum Review, "
+                  "auch wenn die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen.")
     else:
         en = "The authorized CI runs are green and no merge conflicts exist; this pull request is ready for review."
         de = "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit zum Review."
@@ -324,6 +330,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         if (not fresh.ok or fresh.status != "pass" or fresh.mode != "enforce"
                 or any(getattr(fresh, f) != getattr(assessment, f) for f in fields)):
             raise GuardError("A38 evidence changed before Ready transition")
+        if restore_write_ready and not fresh.write_ready:
+            raise GuardError("write-ready waiver changed before Ready transition")
     changed = _transition(api, pull["node_id"], target == "draft")
     assessment.writes.append(f"pull:{target}")
     if target == "ready" and (changed.get("headRefOid") != snap.head_sha or changed.get("baseRefOid") != snap.base_sha):

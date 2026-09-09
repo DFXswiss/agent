@@ -253,6 +253,19 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertFalse(result.write_ready)
         self.assertFalse(result.ok)
 
+    def test_timeline_404_blocks_event_actor_waiver(self) -> None:
+        fake = FakeAPI()
+        fake.timeline_404 = True
+        fake.permissions["maintainer"] = {
+            "permission": "admin",
+            "user": {"id": MAINTAINER_ID, "login": "maintainer", "type": "User"},
+        }
+        result = reconcile_pull(
+            fake.api(), REPO, 1, event_actor=(MAINTAINER_ID, "maintainer")
+        )
+        self.assertFalse(result.write_ready)
+        self.assertFalse(result.ok)
+
     def test_ready_author_permission_404_no_waiver(self) -> None:
         fake = FakeAPI()
         fake.permission_404.add("author")
