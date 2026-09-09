@@ -1162,7 +1162,6 @@ class RunnerTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
-            _git(repo, "rev-parse", "HEAD")
             policy = load_policy(
                 _policy_text(jobs=two_jobs, readme_only={"omit_jobs": ["lint"]})
             )
@@ -1186,6 +1185,86 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(lint_log, "omitted: README-only change set\n")
             unit_log = (logs / "unit.log").read_text(encoding="utf-8")
             self.assertNotIn("omitted:", unit_log)
+
+    def test_interrupt_after_readme_only_omit_invalidates_report(self) -> None:
+        # Preflight is the first _require_clean_tree call; omit path skips
+        # per-job checks, so the second call is the final integrity check.
+        two_jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            logs = root / "logs"
+            logs.mkdir()
+            base = _init_repo(repo)
+            (repo / "README.md").write_text("docs\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "README.md"], cwd=repo, check=True, capture_output=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "commit",
+                    "-m",
+                    "readme",
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            head = _git(repo, "rev-parse", "HEAD").lower()
+            output = root / "report.md"
+            policy = load_policy(
+                _policy_text(
+                    jobs=two_jobs,
+                    readme_only={"omit_jobs": ["unit", "lint"]},
+                )
+            )
+            with mock.patch(
+                "agent_cli.a38._require_clean_tree",
+                side_effect=[None, KeyboardInterrupt()],
+            ):
+                verdict = run_policy(
+                    repo,
+                    policy,
+                    output=output,
+                    logs_dir=logs,
+                    base_sha=base,
+                    private=True,
+                )
+            self.assertFalse(verdict["ok"])
+            report = parse_comment(output.read_text(encoding="utf-8"))
+            self.assertEqual(len(report.runs), 2)
+            for run in report.runs:
+                self.assertNotIn(run.result, {"pass", "not_applicable"})
+            checked = verify_report(
+                output.read_text(encoding="utf-8"),
+                policy,
+                repo=report.repo,
+                head=head,
+                private=True,
+            )
+            self.assertFalse(checked["ok"], "an interrupted omit run produced acceptable evidence")
 
     def test_readme_only_mixed_files_runs_all_jobs(self) -> None:
         two_jobs = [
@@ -1235,7 +1314,6 @@ class RunnerTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
-            _git(repo, "rev-parse", "HEAD")
             policy = load_policy(
                 _policy_text(jobs=two_jobs, readme_only={"omit_jobs": ["lint"]})
             )

@@ -1109,7 +1109,7 @@ def run_policy(
     # integrity check finished. Never serialize those rows as usable evidence.
     if interrupted:
         for run_item in runs:
-            if run_item["result"] == "pass":
+            if run_item["result"] in {"pass", "not_applicable"}:
                 run_item["result"] = "error"
                 run_item["exit_code"] = -1
 
