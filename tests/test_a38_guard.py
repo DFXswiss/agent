@@ -32,6 +32,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     assess_pull,
     event_should_ignore,
     fetch_pull,
+    find_tool_attribution,
     looks_like_report,
     main,
     pick_latest_author_report,
@@ -52,6 +53,33 @@ REPO = "example/public-app"
 AUTHOR_ID = 1001
 BOT_ID = GITHUB_ACTIONS_BOT_ID
 OUTSIDER_ID = 2002
+AI_COMMIT_MESSAGE = (
+    "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n"
+    "Claude-Session: https://claude.ai/code/session_01ELTd6i5zDSC7RzsVV8DsxK"
+)
+GENERATED_WITH_BANNER = (
+    "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+)
+
+
+def _clean_commit(
+    *,
+    sha: str = HEAD,
+    message: str = "feat: ok\n",
+    author_name: str = "author",
+    author_email: str = "author@example.com",
+    login: str = "author",
+) -> dict[str, Any]:
+    return {
+        "sha": sha,
+        "commit": {
+            "message": message,
+            "author": {"name": author_name, "email": author_email},
+            "committer": {"name": author_name, "email": author_email},
+        },
+        "author": {"id": AUTHOR_ID, "login": login},
+        "committer": {"id": AUTHOR_ID, "login": login},
+    }
 
 
 def _pr_guard_config(
@@ -192,6 +220,7 @@ class FakeAPI:
             "integration": DEFAULT_TIP,
             "release": DEFAULT_TIP,
         }
+        self.commits: list[dict[str, Any]] = [_clean_commit()]
         wf = _workflow_yaml(["pytest"])
         self.files[(BASE, ".github/a38.json")] = json.dumps(_policy()).encode()
         self.files[(BASE, ".github/workflows/test.yml")] = wf
@@ -205,12 +234,21 @@ class FakeAPI:
         self.files[key] = json.dumps(config).encode()
 
     def _pull(
-        self, head: str, base: str, *, state: str = "open", draft: bool = False
+        self,
+        head: str,
+        base: str,
+        *,
+        state: str = "open",
+        draft: bool = False,
+        title: str = "",
+        body: str = "",
     ) -> dict[str, Any]:
         return {
             "number": 1,
             "state": state,
             "draft": draft,
+            "title": title,
+            "body": body,
             "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
             "head": {"sha": head, "repo": {"full_name": REPO, "default_branch": "feature"}},
             "base": {
@@ -249,6 +287,8 @@ class FakeAPI:
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1":
             return 200, self.pull, {}
+        if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1/commits":
+            return 200, list(self.commits), {}
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1/files":
             return 200, list(self.pull_files), {}
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1/reviews":
@@ -440,6 +480,56 @@ class A38GuardUnitTests(unittest.TestCase):
         )
         self.assertNotEqual(status_context_enforce("develop"), status_context_enforce("main"))
 
+    def test_find_tool_attribution_coauthor_and_session(self) -> None:
+        reasons = find_tool_attribution(AI_COMMIT_MESSAGE, source="commit abcdef0 message")
+        self.assertTrue(any("AI co-author trailer" in r for r in reasons))
+        self.assertTrue(any("AI session header" in r for r in reasons))
+        self.assertTrue(any("commit abcdef0 message" in r for r in reasons))
+        self.assertFalse(any("session_01ELTd6i5zDSC7RzsVV8DsxK" in r for r in reasons))
+        self.assertFalse(any("https://claude.ai" in r for r in reasons))
+
+    def test_find_tool_attribution_generated_with_banner(self) -> None:
+        reasons = find_tool_attribution(GENERATED_WITH_BANNER, source="PR body")
+        self.assertTrue(any("generated-with banner" in r for r in reasons))
+        self.assertTrue(any(r.startswith("PR body:") for r in reasons))
+
+    def test_find_tool_attribution_generated_with_token_no_brackets(self) -> None:
+        reasons = find_tool_attribution("generated with Claude", source="PR body")
+        self.assertTrue(any("generated-with banner" in r for r in reasons))
+
+    def test_find_tool_attribution_human_coauthor_clean(self) -> None:
+        text = (
+            "Co-authored-by: TaprootFreakAI "
+            "<315477232+TaprootFreakAI@users.noreply.github.com>"
+        )
+        self.assertEqual(find_tool_attribution(text, source="commit abcdef0 message"), [])
+
+    def test_find_tool_attribution_prose_negatives(self) -> None:
+        self.assertEqual(
+            find_tool_attribution("generated files", source="PR body"), []
+        )
+        self.assertEqual(
+            find_tool_attribution("generated with a unique id", source="PR body"), []
+        )
+        self.assertEqual(
+            find_tool_attribution(
+                "this change does not mention vendors", source="PR body"
+            ),
+            [],
+        )
+        self.assertEqual(
+            find_tool_attribution("contact noreply@anthropic.com", source="PR body"),
+            [],
+        )
+
+    def test_find_tool_attribution_identity_surfaces(self) -> None:
+        reasons = find_tool_attribution("claude", source="commit abcdef0 author")
+        self.assertTrue(any("AI author identity" in r for r in reasons))
+        reasons = find_tool_attribution(
+            "bot <noreply@anthropic.com>", source="commit abcdef0 committer"
+        )
+        self.assertTrue(any("AI author identity" in r for r in reasons))
+
 
 class A38GuardE2ETests(unittest.TestCase):
     def test_opened_no_report(self) -> None:
@@ -490,6 +580,134 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertNotIn("missing or invalid", body)
         self.assertNotRegex(body, r"A38 fail:")
         self.assertNotRegex(body, r"A38 pass:")
+
+    def test_draft_ai_commit_trailer_hard_fails_exit_one(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertTrue(
+            any(w == "status:skipped:draft" for w in result.writes)
+            or not any(w.startswith("status:create:") for w in result.writes)
+        )
+        self.assertNotIn(
+            status_context_enforce("develop"),
+            [s["context"] for s in fake.statuses],
+        )
+        body = result.comment_body
+        self.assertRegex(body, r"(?i)tool-attribution")
+        self.assertRegex(body, r"(?i)draft")
+        self.assertNotRegex(body, r"A38 fail:")
+        self.assertNotRegex(body, r"A38 pass:")
+
+    def test_draft_generated_with_banner_hard_fails_exit_one(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(
+            HEAD,
+            BASE,
+            draft=True,
+            title="Normal summary",
+            body=f"Normal summary\n\n{GENERATED_WITH_BANNER}\n",
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertTrue(
+            any(w == "status:skipped:draft" for w in result.writes)
+            or not any(w.startswith("status:create:") for w in result.writes)
+        )
+        self.assertNotIn(
+            status_context_enforce("develop"),
+            [s["context"] for s in fake.statuses],
+        )
+        self.assertRegex(result.comment_body, r"(?i)tool-attribution")
+
+    def test_draft_human_coauthor_only_exits_zero(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [
+            _clean_commit(
+                message=(
+                    "feat: ok\n\n"
+                    "Co-authored-by: TaprootFreakAI "
+                    "<315477232+TaprootFreakAI@users.noreply.github.com>\n"
+                )
+            )
+        ]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+        self.assertTrue(
+            any(w == "status:skipped:draft" for w in result.writes)
+            or not any(w.startswith("status:create:") for w in result.writes)
+        )
+        self.assertNotIn(
+            status_context_enforce("develop"),
+            [s["context"] for s in fake.statuses],
+        )
+
+    def test_ready_ai_commit_trailer_posts_failure_status(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.draft)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+
+    def test_draft_title_only_generated_with_hard_fails(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(
+            HEAD,
+            BASE,
+            draft=True,
+            title="Generated with [Claude Code]",
+            body="clean summary",
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertNotIn(
+            status_context_enforce("develop"),
+            [s["context"] for s in fake.statuses],
+        )
+
+    def test_denied_commits_list_raises(self) -> None:
+        fake = FakeAPI()
+        fake.denied_prefixes.append(f"/repos/{REPO}/pulls/1/commits")
+        with self.assertRaisesRegex(GuardError, "denied"):
+            reconcile_pull(fake.api(), REPO, 1, publish=True)
+
+    def test_missing_commit_message_hard_fails(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [
+            {
+                "sha": HEAD,
+                "commit": {
+                    "author": {"name": "author", "email": "author@example.com"},
+                    "committer": {"name": "author", "email": "author@example.com"},
+                },
+                "author": {"id": AUTHOR_ID, "login": "author"},
+                "committer": {"id": AUTHOR_ID, "login": "author"},
+            }
+        ]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertTrue(any("message missing" in r for r in result.reasons))
 
     def test_draft_valid_report_omits_enforce_status(self) -> None:
         fake = FakeAPI()

@@ -51,6 +51,17 @@ LOCAL_CI_HINT_RE = re.compile(r"DFX-LOCAL-CI", re.IGNORECASE)
 HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 WORKFLOW_FILE_RE = re.compile(r"^\.github/workflows/[^/]+\.(yml|yaml)$")
+_AI_TOOL_TOKEN = r"claude|anthropic|copilot|cursor|chatgpt|openai|gemini|grok|codex"
+_COAUTHOR_TRAILER_RE = re.compile(
+    rf"(?im)^[ \t]*Co-Authored-By:.*(?:noreply@anthropic\.com|\b(?:{_AI_TOOL_TOKEN})\b)"
+)
+_SESSION_HEADER_RE = re.compile(r"(?im)^[ \t]*Claude-Session:")
+_GENERATED_WITH_MD_RE = re.compile(r"(?i)generated with\s*\[")
+_GENERATED_WITH_TOKEN_RE = re.compile(
+    rf"(?i)generated with[^\n]*\b(?:{_AI_TOOL_TOKEN})\b"
+)
+_ANTHROPIC_EMAIL_RE = re.compile(r"(?i)noreply@anthropic\.com")
+_AI_TOOL_WORD_RE = re.compile(rf"(?i)\b(?:{_AI_TOOL_TOKEN})\b")
 GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 # Public numeric id for github-actions[bot]; used only after /user is unavailable.
 GITHUB_ACTIONS_BOT_ID = 41898282
@@ -102,6 +113,8 @@ class PullSnapshot:
     default_branch: str = ""
     # True only when GitHub reports draft is JSON true; missing/None/False → not draft.
     draft: bool = False
+    title: str = ""
+    body: str = ""
 
 
 @dataclass(frozen=True)
@@ -170,6 +183,7 @@ class Assessment:
     write_ready_reason: str = ""
     # In-memory webhook sender for this reconcile; not serialized.
     event_actor: tuple[int, str] | None = None
+    hard_fail: bool = False
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -202,6 +216,7 @@ class Assessment:
             "draft": self.draft,
             "write_ready": self.write_ready,
             "write_ready_reason": self.write_ready_reason,
+            "hard_fail": self.hard_fail,
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
             "writes": list(self.writes),
@@ -354,6 +369,30 @@ def looks_like_report(body: str | None) -> bool:
     if LOCAL_CI_BEGIN in body or LOCAL_CI_END in body:
         return True
     return LOCAL_CI_HINT_RE.search(body) is not None
+
+
+def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
+    """Return reason strings for AI tool-attribution markers in ``text``.
+
+    Pure: no I/O. Empty when ``text`` is missing or clean. ``source`` is a short
+    location label included in each reason (e.g. ``PR body``, ``commit abcdef0
+    message``).
+    """
+    if not isinstance(text, str):
+        return []
+    reasons: list[str] = []
+    if _COAUTHOR_TRAILER_RE.search(text):
+        reasons.append(f"{source}: AI co-author trailer")
+    if _SESSION_HEADER_RE.search(text):
+        reasons.append(f"{source}: AI session header")
+    if _GENERATED_WITH_MD_RE.search(text) or _GENERATED_WITH_TOKEN_RE.search(text):
+        reasons.append(f"{source}: generated-with banner")
+    source_l = source.lower()
+    is_identity = "author" in source_l or "committer" in source_l
+    if is_identity:
+        if _ANTHROPIC_EMAIL_RE.search(text) or _AI_TOOL_WORD_RE.search(text):
+            reasons.append(f"{source}: AI author identity")
+    return reasons
 
 
 def pick_latest_author_report(
@@ -661,6 +700,12 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
     )
     # Fail closed for the draft exemption: only JSON true is draft.
     draft = data.get("draft") is True
+    title = data.get("title")
+    body = data.get("body")
+    if not isinstance(title, str):
+        title = ""
+    if not isinstance(body, str):
+        body = ""
     return PullSnapshot(
         repo=repo,
         number=number,
@@ -675,7 +720,58 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         head_repo=head_repository,
         default_branch=default_branch,
         draft=draft,
+        title=title,
+        body=body,
     )
+
+
+def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str, Any]]:
+    """Return every commit object on the pull request (data only; never execute)."""
+    repo = _validate_repo(repo)
+    items = api.paginate(f"/repos/{repo}/pulls/{number}/commits")
+    commits: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise GuardError("commit payload is not an object")
+        commits.append(item)
+    return commits
+
+
+def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
+    """Collect tool-attribution reasons from one commits-API payload item."""
+    sha_raw = commit.get("sha")
+    sha7 = sha_raw[:7] if isinstance(sha_raw, str) and sha_raw else "unknown"
+    reasons: list[str] = []
+    inner = commit.get("commit")
+    inner_dict: Mapping[str, Any] | None
+    if not isinstance(inner, dict) or not isinstance(inner.get("message"), str):
+        reasons.append(f"commit {sha7} message missing")
+        inner_dict = inner if isinstance(inner, dict) else None
+    else:
+        reasons.extend(
+            find_tool_attribution(inner["message"], source=f"commit {sha7} message")
+        )
+        inner_dict = inner
+    if isinstance(inner_dict, Mapping):
+        for role in ("author", "committer"):
+            person = inner_dict.get(role)
+            if isinstance(person, dict):
+                name = person.get("name") if isinstance(person.get("name"), str) else ""
+                email = person.get("email") if isinstance(person.get("email"), str) else ""
+                reasons.extend(
+                    find_tool_attribution(
+                        f"{name} {email}", source=f"commit {sha7} {role}"
+                    )
+                )
+    for role in ("author", "committer"):
+        person = commit.get(role)
+        if isinstance(person, dict):
+            login = person.get("login")
+            if isinstance(login, str):
+                reasons.extend(
+                    find_tool_attribution(login, source=f"commit {sha7} {role}")
+                )
+    return reasons
 
 
 def _parse_default_branch(raw: Any, *, required: bool) -> str:
@@ -1015,6 +1111,18 @@ def build_comment_body(assessment: Assessment) -> str:
         problems = problems[:799] + "…"
     passing = assessment.ok and assessment.status == "pass"
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
+    hard_fail_en = (
+        " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard "
+        "even while this pull request is a draft. Remove those trailers."
+        if assessment.hard_fail
+        else ""
+    )
+    hard_fail_de = (
+        " Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
+        "auch im Draft fehlschlagen. Diese Trailer müssen entfernt werden."
+        if assessment.hard_fail
+        else ""
+    )
     if assessment.draft:
         if waiver_report:
             if assessment.write_ready_reason == "author has write":
@@ -1053,11 +1161,13 @@ def build_comment_body(assessment: Assessment) -> str:
         en = (
             "A38: this pull request is a draft; "
             "no blocking A38 report status is published until Ready for review."
+            + hard_fail_en
             + extra_en
         )
         de = (
             "A38: dieser Pull Request ist ein Draft; "
             "bis Ready for review wird kein blockierender A38-Report-Status veröffentlicht."
+            + hard_fail_de
             + extra_de
         )
     else:
@@ -1095,8 +1205,16 @@ def build_comment_body(assessment: Assessment) -> str:
         else:
             en_tail = "author local-CI report missing or invalid for this head."
             de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
-        en = f"A38 {assessment.status}: " + en_tail
-        de = f"A38 {assessment.status}: " + de_tail
+        en = (
+            (hard_fail_en.lstrip() + " " if hard_fail_en else "")
+            + f"A38 {assessment.status}: "
+            + en_tail
+        )
+        de = (
+            (hard_fail_de.lstrip() + " " if hard_fail_de else "")
+            + f"A38 {assessment.status}: "
+            + de_tail
+        )
     if assessment.mode == "observe":
         en = "Observe mode (advisory, not branch-required). " + en
         de = "Observe-Modus (Hinweis, nicht branch-pflichtig). " + de
@@ -1812,6 +1930,19 @@ def assess_pull(
     assessment.approval_fingerprint = approval
     assessment.event_actor = event_actor
     _attach_trusted_config(assessment, trusted)
+    commits = fetch_pull_commits(api, snap.repo, snap.number)
+    attribution: list[str] = []
+    attribution.extend(find_tool_attribution(snap.title, source="PR title"))
+    attribution.extend(find_tool_attribution(snap.body, source="PR body"))
+    for commit in commits:
+        attribution.extend(_commit_attribution_reasons(commit))
+    if attribution:
+        assessment.ok = False
+        assessment.status = "fail"
+        assessment.reasons = attribution + list(assessment.reasons)
+        assessment.hard_fail = True
+        _status_bits(assessment)
+        assessment.comment_body = build_comment_body(assessment)
     return assessment
 
 
@@ -2304,10 +2435,14 @@ def _load_event(
 
 
 def _assessment_exit_code(assessment: Assessment) -> int:
-    """Closed, observe, and draft enforce skips exit 0; Ready enforce failure exits 1."""
+    """Closed no-ops exit 0. Tool-attribution hard-fails exit 1 even on draft/observe.
+    Missing draft reports still exit 0. Ready enforce failure exits 1."""
+    if assessment.closed:
+        return 0
+    if assessment.hard_fail:
+        return 1
     return 0 if (
-        assessment.closed
-        or assessment.ok
+        assessment.ok
         or assessment.mode == "observe"
         or assessment.draft
     ) else 1
