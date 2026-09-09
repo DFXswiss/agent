@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
+from .readme_only import git_is_readme_only
 from .a38_job_adapters.commands import parse_commands_config
 from .a38_job_adapters.common import JobError
 from .a38_job_adapters.compose import parse_compose_config
@@ -259,7 +260,12 @@ def load_policy(text: str) -> dict:
     payload = _loads_policy_json(text)
     if not isinstance(payload, dict):
         raise A38Error("policy must be a JSON object")
-    _require_keys(payload, POLICY_KEYS, "policy")
+    extra = set(payload) - POLICY_KEYS - {"readme_only"}
+    missing = POLICY_KEYS - set(payload)
+    if extra:
+        raise A38Error(f"policy has unknown keys: {', '.join(sorted(extra))}")
+    if missing:
+        raise A38Error(f"policy missing keys: {', '.join(sorted(missing))}")
     schema = _as_str(payload["schema"], "schema")
     if schema != SCHEMA_ID:
         raise A38Error(f"schema must be {SCHEMA_ID}")
@@ -345,6 +351,27 @@ def load_policy(text: str) -> dict:
             }
         )
 
+    omit: list[str] = []
+    if "readme_only" in payload:
+        block = payload["readme_only"]
+        if not isinstance(block, dict):
+            raise A38Error("readme_only must be an object")
+        extra_ro = set(block) - {"omit_jobs"}
+        if extra_ro:
+            raise A38Error(f"readme_only has unknown keys: {', '.join(sorted(extra_ro))}")
+        omit_raw = block.get("omit_jobs")
+        if not isinstance(omit_raw, list) or not omit_raw or len(omit_raw) > MAX_JOBS:
+            raise A38Error("readme_only.omit_jobs must be a non-empty bounded array")
+        seen_omit: set[str] = set()
+        for item in omit_raw:
+            ident = _validate_job_id(item, "readme_only.omit_jobs")
+            if ident not in job_ids:
+                raise A38Error(f"readme_only.omit_jobs unknown id: {ident}")
+            if ident in seen_omit:
+                raise A38Error(f"readme_only.omit_jobs duplicate id: {ident}")
+            seen_omit.add(ident)
+            omit.append(ident)
+
     return {
         "schema": SCHEMA_ID,
         "standard": STANDARD_ID,
@@ -352,6 +379,7 @@ def load_policy(text: str) -> dict:
         "mode": mode,
         "jobs": jobs,
         "exclusions": exclusions,
+        "readme_only_omit": omit,
     }
 
 
@@ -450,6 +478,8 @@ def verify_report(
     if list(report.required) != required:
         reasons.append("required ids do not match policy")
 
+    omit = set(policy.get("readme_only_omit") or [])
+    report_only = bool(getattr(report, "readme_only", False))
     run_by_id = {run.id: run for run in report.runs}
     for ident in required:
         job = by_id[ident]
@@ -463,6 +493,13 @@ def verify_report(
             reasons.append(f"{ident}: command does not match policy")
         if not _timeout_equal(run.timeout_s, float(job["timeout_s"])):
             reasons.append(f"{ident}: timeout_s does not match policy")
+        if run.result == "not_applicable":
+            if ident not in omit or not report_only or run.exit_code != 0:
+                if ident not in omit or not report_only:
+                    reasons.append(f"{ident}: not_applicable is not authorized")
+                else:
+                    reasons.append(f"{ident}: exit_code is {run.exit_code}")
+            continue
         if run.result != "pass":
             reasons.append(f"{ident}: result is {run.result}")
         if run.exit_code != 0:
@@ -682,8 +719,9 @@ def _build_report_dict(
     recorded_at: str,
     required: Sequence[str],
     runs: Sequence[Mapping[str, Any]],
+    readme_only: bool = False,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema": "dfx-local-ci/v1",
         "repo": repo,
         "head": head,
@@ -692,6 +730,9 @@ def _build_report_dict(
         "required": list(required),
         "runs": [dict(run) for run in runs],
     }
+    if readme_only:
+        payload["readme_only"] = True
+    return payload
 
 
 def _report_from_dict(payload: Mapping[str, Any]) -> LocalCiReport:
@@ -893,7 +934,11 @@ def run_policy(
 
     # Revalidate the complete manifest for programmatic callers too.
     try:
-        policy = load_policy(json.dumps(policy))
+        raw_policy = dict(policy)
+        omit_jobs = raw_policy.pop("readme_only_omit", None)
+        if omit_jobs and "readme_only" not in raw_policy:
+            raw_policy["readme_only"] = {"omit_jobs": list(omit_jobs)}
+        policy = load_policy(json.dumps(raw_policy))
     except (TypeError, ValueError) as exc:
         raise A38Error(f"invalid policy: {exc}") from exc
     required = _policy_required_ids(policy)
@@ -921,6 +966,10 @@ def run_policy(
         github_session=github_session, config_home=config_home,
     )
     logs_dir.mkdir(parents=True, exist_ok=True)
+    omit = set(policy.get("readme_only_omit") or [])
+    readme_only = bool(omit) and git_is_readme_only(root, base, head)
+    if omit and not readme_only:
+        omit = set()
 
     env = _job_env(head, base)
     runs: list[dict[str, Any]] = []
@@ -940,6 +989,20 @@ def run_policy(
             timeout_s = float(job["timeout_s"])
             log_path = logs_dir / f"{ident}.log"
             started = time.monotonic()
+            if ident in omit:
+                log_path.write_text("omitted: README-only change set\n", encoding="utf-8")
+                runs.append(
+                    _run_entry(
+                        ident=ident,
+                        name=name,
+                        command=command,
+                        result="not_applicable",
+                        exit_code=0,
+                        duration_s=0.0,
+                        timeout_s=timeout_s,
+                    )
+                )
+                continue
             try:
                 result, exit_code, duration_s = _run_one_job(
                     repo_path=root,
@@ -1058,6 +1121,7 @@ def run_policy(
         recorded_at=recorded_at,
         required=required,
         runs=runs,
+        readme_only=readme_only,
     )
     try:
         _write_report(output, payload)
@@ -1067,7 +1131,11 @@ def run_policy(
     ok = (
         not interrupted
         and not drift
-        and all(run_item["result"] == "pass" and run_item["exit_code"] == 0 for run_item in runs)
+        and all(
+            run_item["exit_code"] == 0
+            and run_item["result"] in {"pass", "not_applicable"}
+            for run_item in runs
+        )
     )
     status = "pass" if ok else "fail"
     if ok:

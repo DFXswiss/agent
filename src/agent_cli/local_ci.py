@@ -21,8 +21,9 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 HEAD_RE = re.compile(r"^[0-9a-f]{40}$")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 RECORDED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-RESULTS = frozenset({"pass", "fail", "error", "timeout"})
+RESULTS = frozenset({"pass", "fail", "error", "timeout", "not_applicable"})
 PAYLOAD_KEYS = frozenset({"schema", "repo", "head", "private", "recorded_at", "required", "runs"})
+PAYLOAD_OPTIONAL = frozenset({"readme_only"})
 RUN_KEYS = frozenset({"id", "name", "command", "result", "exit_code", "duration_s", "timeout_s"})
 
 
@@ -77,6 +78,7 @@ class LocalCiReport:
     recorded_at: str
     required: tuple[str, ...]
     runs: tuple[LocalCiRun, ...]
+    readme_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,7 +162,12 @@ def _as_number(value: Any, label: str) -> float:
 
 
 def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
-    _require_keys(raw, PAYLOAD_KEYS, "payload")
+    extra = set(raw) - PAYLOAD_KEYS - PAYLOAD_OPTIONAL
+    missing = PAYLOAD_KEYS - set(raw)
+    if extra:
+        raise LocalCiError(f"payload has unknown keys: {', '.join(sorted(extra))}")
+    if missing:
+        raise LocalCiError(f"payload missing keys: {', '.join(sorted(missing))}")
     schema = _as_str(raw["schema"], "schema")
     if schema != SCHEMA_ID:
         raise LocalCiError(f"schema must be {SCHEMA_ID}")
@@ -208,7 +215,7 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
         run_ids.add(ident)
         result = _as_str(item["result"], f"runs[{index}].result")
         if result not in RESULTS:
-            raise LocalCiError(f"runs[{index}].result must be pass|fail|error|timeout")
+            raise LocalCiError(f"runs[{index}].result must be pass|fail|error|timeout|not_applicable")
         duration_s = _as_number(item["duration_s"], f"runs[{index}].duration_s")
         timeout_s = _as_number(item["timeout_s"], f"runs[{index}].timeout_s")
         if duration_s < 0:
@@ -229,6 +236,9 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
     missing_runs = sorted(seen - run_ids)
     if missing_runs:
         raise LocalCiError("runs missing required ids: " + ",".join(missing_runs))
+    readme_only = False
+    if "readme_only" in raw:
+        readme_only = _as_bool(raw["readme_only"], "readme_only")
     return LocalCiReport(
         schema=schema,
         repo=repo,
@@ -237,6 +247,7 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
         recorded_at=recorded_at,
         required=tuple(required),
         runs=tuple(runs),
+        readme_only=readme_only,
     )
 
 
@@ -283,6 +294,13 @@ def evaluate(
         if run is None:
             reasons.append(f"{ident}: missing run")
             continue
+        if run.result == "not_applicable":
+            if not report.readme_only or run.exit_code != 0:
+                if not report.readme_only:
+                    reasons.append(f"{ident}: not_applicable is not authorized")
+                else:
+                    reasons.append(f"{ident}: exit_code is {run.exit_code}")
+            continue
         if run.result != "pass":
             reasons.append(f"{ident}: result is {run.result}")
         if run.exit_code != 0:
@@ -311,7 +329,7 @@ def verify_comment(
 
 
 def render_block(report: LocalCiReport) -> str:
-    payload = {
+    payload: dict[str, Any] = {
         "schema": report.schema,
         "repo": report.repo,
         "head": report.head,
@@ -331,5 +349,7 @@ def render_block(report: LocalCiReport) -> str:
             for run in report.runs
         ],
     }
+    if report.readme_only:
+        payload["readme_only"] = True
     body = json.dumps(payload, indent=2, sort_keys=True)
     return f"{BEGIN_MARK}\n```json\n{body}\n```\n{END_MARK}\n"

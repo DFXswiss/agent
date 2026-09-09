@@ -174,6 +174,11 @@ names (including expanded matrix names). When that workflow is required, each
 listed check must actually finish successfully in its latest check suite.
 Use this for workflows whose setup job can succeed while the test jobs skip;
 an overall workflow success must not hide a missing or skipped required test.
+The only exception is when the PR file inventory is independently README-only
+(`README.md` or `*/README.md`, fail-closed): then a completed required check
+may conclude `success`, `skipped`, or `neutral`. Missing required checks still
+block. The guard does not trust a report's `readme_only` flag or
+`not_applicable` results without independently listing the pull request files.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled

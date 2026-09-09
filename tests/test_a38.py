@@ -92,6 +92,7 @@ def _report_comment(
     recorded_at: str | None = None,
     required: list[str] | None = None,
     runs: list[dict] | None = None,
+    readme_only: bool = False,
 ) -> str:
     if recorded_at is None:
         recorded_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -99,7 +100,7 @@ def _report_comment(
         required = ["unit"]
     if runs is None:
         runs = [_run_payload()]
-    payload = {
+    payload: dict = {
         "schema": "dfx-local-ci/v1",
         "repo": repo,
         "head": head,
@@ -108,6 +109,8 @@ def _report_comment(
         "required": required,
         "runs": runs,
     }
+    if readme_only:
+        payload["readme_only"] = True
     return f"{BEGIN_MARK}\n```json\n{json.dumps(payload)}\n```\n{END_MARK}\n"
 
 
@@ -159,6 +162,31 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(policy["schema"], "a38/v1")
         self.assertEqual(policy["jobs"][0]["id"], "unit")
         self.assertEqual(policy["exclusions"], [])
+        self.assertEqual(policy["readme_only_omit"], [])
+
+    def test_readme_only_omit_jobs(self) -> None:
+        policy = load_policy(
+            _policy_text(readme_only={"omit_jobs": ["unit"]})
+        )
+        self.assertEqual(policy["readme_only_omit"], ["unit"])
+
+    def test_readme_only_rejects_unknown_job_id(self) -> None:
+        with self.assertRaisesRegex(A38Error, "unknown id"):
+            load_policy(_policy_text(readme_only={"omit_jobs": ["missing"]}))
+
+    def test_readme_only_rejects_duplicate_ids(self) -> None:
+        with self.assertRaisesRegex(A38Error, "duplicate id"):
+            load_policy(_policy_text(readme_only={"omit_jobs": ["unit", "unit"]}))
+
+    def test_readme_only_rejects_empty_omit_jobs(self) -> None:
+        with self.assertRaisesRegex(A38Error, "non-empty"):
+            load_policy(_policy_text(readme_only={"omit_jobs": []}))
+
+    def test_readme_only_rejects_unknown_key(self) -> None:
+        with self.assertRaisesRegex(A38Error, "unknown keys"):
+            load_policy(
+                _policy_text(readme_only={"omit_jobs": ["unit"], "extra": True})
+            )
 
     def test_rejects_unknown_key(self) -> None:
         raw = _policy_dict()
@@ -300,6 +328,97 @@ class VerifyTests(unittest.TestCase):
             )
             self.assertTrue(verdict["ok"], msg=verdict)
             self.assertEqual(verdict["status"], "pass")
+
+    def test_not_applicable_without_flag_fails(self) -> None:
+        policy = load_policy(_policy_text(readme_only={"omit_jobs": ["unit"]}))
+        comment = _report_comment(
+            runs=[_run_payload(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        verdict = verify_report(
+            comment, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(any("not_applicable is not authorized" in r for r in verdict["reasons"]))
+
+    def test_not_applicable_flag_but_id_not_in_omit_fails(self) -> None:
+        jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        policy = load_policy(
+            _policy_text(jobs=jobs, readme_only={"omit_jobs": ["lint"]})
+        )
+        comment = _report_comment(
+            required=["unit", "lint"],
+            runs=[
+                _run_payload(),
+                _run_payload(
+                    ident="lint",
+                    name="Lint",
+                    result="not_applicable",
+                    exit_code=0,
+                    duration_s=0,
+                ),
+            ],
+            readme_only=True,
+        )
+        # unit is not_applicable but only lint is omitted → fail on unit
+        bad = _report_comment(
+            required=["unit", "lint"],
+            runs=[
+                _run_payload(
+                    result="not_applicable", exit_code=0, duration_s=0
+                ),
+                _run_payload(ident="lint", name="Lint"),
+            ],
+            readme_only=True,
+        )
+        verdict = verify_report(
+            bad, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(any("unit: not_applicable is not authorized" in r for r in verdict["reasons"]))
+        ok = verify_report(
+            comment, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertTrue(ok["ok"], msg=ok)
+
+    def test_not_applicable_with_flag_omit_and_exit_zero_passes(self) -> None:
+        policy = load_policy(_policy_text(readme_only={"omit_jobs": ["unit"]}))
+        comment = _report_comment(
+            runs=[_run_payload(result="not_applicable", exit_code=0, duration_s=0)],
+            readme_only=True,
+        )
+        verdict = verify_report(
+            comment, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertTrue(verdict["ok"], msg=verdict)
+
+    def test_not_applicable_with_flag_omit_and_exit_one_fails(self) -> None:
+        policy = load_policy(_policy_text(readme_only={"omit_jobs": ["unit"]}))
+        comment = _report_comment(
+            runs=[_run_payload(result="not_applicable", exit_code=1, duration_s=0)],
+            readme_only=True,
+        )
+        verdict = verify_report(
+            comment, policy, repo="example/app", head=HEAD_A, private=True
+        )
+        self.assertFalse(verdict["ok"])
+        self.assertTrue(any("exit_code is 1" in r for r in verdict["reasons"]))
 
     def test_public_does_not_bypass_failed_run(self) -> None:
         policy = load_policy(_policy_text())
@@ -998,6 +1117,145 @@ class RunnerTests(unittest.TestCase):
             text = output.read_text(encoding="utf-8")
             self.assertNotIn("stale-success", text)
             self.assertIn(BEGIN_MARK, text)
+
+    def test_readme_only_omits_configured_job(self) -> None:
+        two_jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            logs = root / "logs"
+            logs.mkdir()
+            base = _init_repo(repo)
+            (repo / "README.md").write_text("docs\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "README.md"], cwd=repo, check=True, capture_output=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "commit",
+                    "-m",
+                    "readme",
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            _git(repo, "rev-parse", "HEAD")
+            policy = load_policy(
+                _policy_text(jobs=two_jobs, readme_only={"omit_jobs": ["lint"]})
+            )
+            verdict = run_policy(
+                repo,
+                policy,
+                output=root / "report.md",
+                logs_dir=logs,
+                base_sha=base,
+                private=True,
+            )
+            self.assertTrue(verdict["ok"], msg=verdict)
+            report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
+            self.assertTrue(report.readme_only)
+            by_id = {run.id: run for run in report.runs}
+            self.assertEqual(by_id["unit"].result, "pass")
+            self.assertEqual(by_id["lint"].result, "not_applicable")
+            self.assertEqual(by_id["lint"].exit_code, 0)
+            self.assertEqual(by_id["lint"].duration_s, 0.0)
+            lint_log = (logs / "lint.log").read_text(encoding="utf-8")
+            self.assertEqual(lint_log, "omitted: README-only change set\n")
+            unit_log = (logs / "unit.log").read_text(encoding="utf-8")
+            self.assertNotIn("omitted:", unit_log)
+
+    def test_readme_only_mixed_files_runs_all_jobs(self) -> None:
+        two_jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            logs = root / "logs"
+            logs.mkdir()
+            base = _init_repo(repo)
+            (repo / "README.md").write_text("docs\n", encoding="utf-8")
+            (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "README.md", "app.py"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "commit",
+                    "-m",
+                    "mixed",
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            _git(repo, "rev-parse", "HEAD")
+            policy = load_policy(
+                _policy_text(jobs=two_jobs, readme_only={"omit_jobs": ["lint"]})
+            )
+            verdict = run_policy(
+                repo,
+                policy,
+                output=root / "report.md",
+                logs_dir=logs,
+                base_sha=base,
+                private=True,
+            )
+            self.assertTrue(verdict["ok"], msg=verdict)
+            report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
+            self.assertFalse(report.readme_only)
+            by_id = {run.id: run for run in report.runs}
+            self.assertEqual(by_id["unit"].result, "pass")
+            self.assertEqual(by_id["lint"].result, "pass")
+            for ident in ("unit", "lint"):
+                text = (logs / f"{ident}.log").read_text(encoding="utf-8")
+                self.assertNotIn("omitted:", text)
 
     def test_strips_github_tokens_from_job_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

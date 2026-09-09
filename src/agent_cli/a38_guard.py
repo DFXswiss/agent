@@ -29,12 +29,14 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 from .a38 import load_policy, verify_report
+from .local_ci import LocalCiError, parse_comment
 from .pr_guard_config import (
     CONFIG_PATH as PR_GUARD_CONFIG_PATH,
     PrGuardConfigError,
     evaluate_a38_scope,
     load_pr_guard_config,
 )
+from .readme_only import pull_is_readme_only
 
 API_ORIGIN = "https://api.github.com"
 API_HOST = "api.github.com"
@@ -1108,6 +1110,7 @@ def assess_from_parts(
     runtime_env: Mapping[str, str] | None = None,
     policy_repo: str | None = None,
     policy_sha: str | None = None,
+    api: GitHubApi | None = None,
 ) -> Assessment:
     active_policy_repo = policy_repo or pull.repo
     active_policy_sha = policy_sha or pull.base_sha
@@ -1229,6 +1232,26 @@ def assess_from_parts(
         reasons = ["verify_report reasons missing"]
         ok = False
         status = "fail"
+
+    # Do not trust a report's readme_only / not_applicable without an
+    # independent PR file inventory from GitHub.
+    if ok:
+        try:
+            report = parse_comment(body)
+        except LocalCiError as exc:
+            ok = False
+            status = "fail"
+            reasons = [f"report parse error: {exc}"]
+        else:
+            claims_omit = report.readme_only or any(
+                run.result == "not_applicable" for run in report.runs
+            )
+            if claims_omit and (
+                api is None or not pull_is_readme_only(api, pull.repo, pull.number)
+            ):
+                ok = False
+                status = "fail"
+                reasons = ["README-only omission is not independently confirmed"]
 
     assessment.ok = ok
     assessment.status = status
@@ -1488,6 +1511,7 @@ def assess_pull(
         runtime_env=runtime_env,
         policy_repo=policy_repo,
         policy_sha=policy_sha,
+        api=api,
     )
     assessment.approval_fingerprint = approval
     _attach_trusted_config(assessment, trusted)
