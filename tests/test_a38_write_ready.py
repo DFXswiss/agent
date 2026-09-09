@@ -112,6 +112,8 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertEqual(result.status, "pass")
         self.assertTrue(result.draft)
         self.assertEqual(result.write_ready_reason, "ready by write collaborator")
+        self.assertIn("write collaborator marked Ready", result.comment_body)
+        self.assertNotIn("because the author has write", result.comment_body)
 
     def test_empty_timeline_event_sender_grants_waiver(self) -> None:
         fake = LifecycleAPI()

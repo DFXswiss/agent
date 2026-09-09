@@ -55,10 +55,18 @@ def _save_record(api: Any, assessment: Any, marker: str, record: dict,
 
 def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> None:
     draft = record["state"] == "draft"
-    en = ("This pull request is back in Draft because CI is not fully green or merge conflicts exist."
-          if draft else "The authorized CI runs are green and no merge conflicts exist; this pull request is ready for review.")
-    de = ("Dieser Pull Request steht wieder auf Draft, weil die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen."
-          if draft else "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit zum Review.")
+    restore = (not draft) and bool(record.get("reasons"))
+    if draft:
+        en = "This pull request is back in Draft because CI is not fully green or merge conflicts exist."
+        de = "Dieser Pull Request steht wieder auf Draft, weil die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen."
+    elif restore:
+        en = ("A write collaborator marked Ready; this pull request is ready for review "
+              "even though CI is not fully green or merge conflicts exist.")
+        de = ("Ein Write-Collaborator hat Ready gesetzt; dieser Pull Request ist bereit zum Review, "
+              "auch wenn die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen.")
+    else:
+        en = "The authorized CI runs are green and no merge conflicts exist; this pull request is ready for review."
+        de = "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit zum Review."
     _save_record(api, assessment, STATE_MARKER, {**record, "phase": "applied"}, en, de)
 
 

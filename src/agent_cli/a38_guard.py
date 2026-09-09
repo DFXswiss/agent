@@ -1016,14 +1016,24 @@ def build_comment_body(assessment: Assessment) -> str:
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
     if assessment.draft:
         if waiver_report:
-            extra_en = (
-                " An author local-CI report is not required because the author "
-                "has write on this repository."
-            )
-            extra_de = (
-                " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
-                "Write auf diesem Repository hat."
-            )
+            if assessment.write_ready_reason == "author has write":
+                extra_en = (
+                    " An author local-CI report is not required because the author "
+                    "has write on this repository."
+                )
+                extra_de = (
+                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
+                    "Write auf diesem Repository hat."
+                )
+            else:
+                extra_en = (
+                    " An author local-CI report is not required because a write "
+                    "collaborator marked Ready."
+                )
+                extra_de = (
+                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil ein "
+                    "Write-Collaborator Ready gesetzt hat."
+                )
         elif passing:
             extra_en = " An author local-CI report is accepted for this head."
             extra_de = " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."

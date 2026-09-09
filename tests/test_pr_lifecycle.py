@@ -335,3 +335,10 @@ def test_draft_restores_ready_when_write_collaborator_was_the_ready_actor():
     assert result.lifecycle["action"] == "ready"
     assert fake.transitions == [False]
     assert not fake.pull["draft"]
+    bodies = [c["body"] for c in fake.comments]
+    assert any("write collaborator marked Ready" in b for b in bodies)
+    assert not any(
+        "authorized CI runs are green" in b and "write collaborator marked Ready" not in b
+        for b in bodies
+        if b.startswith(STATE_MARKER)
+    )
