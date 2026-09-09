@@ -200,6 +200,12 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(A38Error, "cannot both be set"):
             load_policy(json.dumps(raw))
 
+    def test_readme_only_rejects_non_list_normalized_omit(self) -> None:
+        raw = _policy_dict()
+        raw["readme_only_omit"] = {"unit": True}
+        with self.assertRaisesRegex(A38Error, "non-empty bounded array"):
+            load_policy(json.dumps(raw))
+
     def test_rejects_unknown_key(self) -> None:
         raw = _policy_dict()
         raw["extra"] = 1

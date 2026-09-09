@@ -266,6 +266,8 @@ def load_policy(text: str) -> dict:
         if "readme_only" in payload:
             raise A38Error("readme_only and readme_only_omit cannot both be set")
         omit_norm = payload.pop("readme_only_omit")
+        if not isinstance(omit_norm, list):
+            raise A38Error("readme_only.omit_jobs must be a non-empty bounded array")
         if omit_norm:
             payload["readme_only"] = {"omit_jobs": list(omit_norm)}
     extra = set(payload) - POLICY_KEYS - {"readme_only"}
