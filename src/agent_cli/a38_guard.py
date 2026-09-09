@@ -1431,26 +1431,23 @@ def collaborator_has_write(
     return True
 
 
-def latest_ready_for_review_actor(
+def load_ready_timeline(
     api: GitHubApi, repo: str, number: int
-) -> tuple[int, str] | None:
-    """Latest GitHub User actor of a ready_for_review timeline event, or None.
+) -> tuple[str, tuple[int, str] | None]:
+    """Return ``("ok", actor_or_none)`` or ``("unavailable", None)``.
 
-    Allowlist: only ``actor.type == "User"`` (missing type is skipped). Timeline
-    pagination 401, 403, or 404 returns None without raising so assessment
-    continues without the waiver; other pagination/integrity errors still raise.
+    HTTP 404 is an empty timeline (``ok``, None). 401/403 are unavailable.
+    Other pagination errors still raise.
     """
     path = f"/repos/{repo}/issues/{number}/timeline"
     try:
         events = api.paginate(path)
     except GuardError as exc:
         message = str(exc)
-        if (
-            "denied (401)" in message
-            or "denied (403)" in message
-            or "HTTP 404 while paginating" in message
-        ):
-            return None
+        if "denied (401)" in message or "denied (403)" in message:
+            return "unavailable", None
+        if "HTTP 404 while paginating" in message:
+            return "ok", None
         raise
     best: tuple[str, int, int, str] | None = None
     for event in events:
@@ -1475,8 +1472,16 @@ def latest_ready_for_review_actor(
         if best is None or (created_at, event_id) > (best[0], best[1]):
             best = key
     if best is None:
-        return None
-    return best[2], best[3]
+        return "ok", None
+    return "ok", (best[2], best[3])
+
+
+def latest_ready_for_review_actor(
+    api: GitHubApi, repo: str, number: int
+) -> tuple[int, str] | None:
+    """Latest GitHub User actor of a ready_for_review timeline event, or None."""
+    _status, actor = load_ready_timeline(api, repo, number)
+    return actor
 
 
 def ready_event_actor(
@@ -1529,10 +1534,12 @@ def resolve_write_ready(
         api, snap.repo, snap.author_login, snap.author_id
     ):
         return True, "author has write"
+    _status, ready_actor = load_ready_timeline(api, snap.repo, snap.number)
+    if ready_actor is not None:
+        if _actor_has_write(api, snap, ready_actor):
+            return True, "ready by write collaborator"
+        return False, ""
     if _actor_has_write(api, snap, event_actor):
-        return True, "ready by write collaborator"
-    ready_actor = latest_ready_for_review_actor(api, snap.repo, snap.number)
-    if _actor_has_write(api, snap, ready_actor):
         return True, "ready by write collaborator"
     return False, ""
 
@@ -2157,12 +2164,14 @@ def reconcile_event(
         )
 
     event_repo, event_pr = extract_repo_pr_from_event(event_name, payload)
-    use_repo = repo or event_repo
-    use_pr = pr if pr is not None else event_pr
+    if repo is not None and _validate_repo(repo) != event_repo:
+        raise GuardError("event repository does not match --repo")
+    if pr is not None and pr != event_pr:
+        raise GuardError("event pull request does not match --pr")
     return reconcile_pull(
         api,
-        use_repo,
-        use_pr,
+        event_repo,
+        event_pr,
         dry_run=dry_run,
         publish=publish,
         runtime_revision=runtime_revision,

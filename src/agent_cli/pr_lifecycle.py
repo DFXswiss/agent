@@ -234,7 +234,13 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if pull.get("mergeable") is False:
         reasons.insert(0, "Merge conflicts")
     target = None
-    restore_write_ready = assessment.write_ready_reason == "ready by write collaborator"
+    we_drafted = (
+        previous.get("state") == "draft"
+        and previous.get("head") == snap.head_sha
+        and previous.get("base") == snap.base_sha
+        and previous.get("phase") in {"planned", "applied"}
+    )
+    restore_write_ready = bool(pull["draft"] and assessment.write_ready and we_drafted)
     # Write collaborator Ready hold: do not auto-draft while author or the latest
     # ready_for_review actor has write/maintain/admin on the target repository.
     if not pull["draft"] and reasons and assessment.write_ready:

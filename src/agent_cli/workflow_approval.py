@@ -170,7 +170,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
     from .a38_guard import (
         GuardError, assess_pull, fetch_pull, resolve_trusted_guard_config,
         _report_fingerprint, collect_comments, pick_latest_author_report,
-        migration_approval,
+        migration_approval, resolve_write_ready,
     )
     if (not assessment.workflow_approval_enabled or assessment.closed or not assessment.ok
             or assessment.status != "pass" or assessment.mode != "enforce"):
@@ -270,6 +270,11 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
                 or _report_fingerprint(pick_latest_author_report(comments, final.author_id)) != assessment.report_fingerprint
                 or migration_approval(api, final) != assessment.approval_fingerprint):
             raise GuardError("pull or author evidence changed before workflow approval")
+        still_ready, _ = resolve_write_ready(
+            api, final, event_actor=assessment.event_actor
+        )
+        if assessment.write_ready and not still_ready:
+            raise GuardError("write-ready waiver changed before workflow approval")
         if not dry_run:
             status, _, _ = api.request("POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False)
             if status != 201:
