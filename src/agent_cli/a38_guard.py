@@ -746,12 +746,13 @@ def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
     reasons: list[str] = []
     inner = commit.get("commit")
     inner_dict: Mapping[str, Any] | None
-    if not isinstance(inner, dict) or not isinstance(inner.get("message"), str):
+    message = inner.get("message") if isinstance(inner, dict) else None
+    if not isinstance(message, str) or not message.strip():
         reasons.append(f"commit {sha7} message missing")
         inner_dict = inner if isinstance(inner, dict) else None
     else:
         reasons.extend(
-            find_tool_attribution(inner["message"], source=f"commit {sha7} message")
+            find_tool_attribution(message, source=f"commit {sha7} message")
         )
         inner_dict = inner
     if isinstance(inner_dict, Mapping):

@@ -773,6 +773,18 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
         self.assertTrue(any("message missing" in r for r in result.reasons))
 
+    def test_blank_commit_message_hard_fails(self) -> None:
+        for blank in ("", "   \n"):
+            with self.subTest(message=blank):
+                fake = FakeAPI()
+                fake.pull = fake._pull(HEAD, BASE, draft=True)
+                fake.commits = [_clean_commit(message=blank)]
+                result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+                self.assertTrue(result.hard_fail)
+                self.assertFalse(result.ok)
+                self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+                self.assertTrue(any("message missing" in r for r in result.reasons))
+
     def test_draft_valid_report_omits_enforce_status(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)
@@ -964,7 +976,7 @@ class A38GuardE2ETests(unittest.TestCase):
         with self.assertRaisesRegex(GuardError, "changed before publish"):
             publish_assessment(api, assessment)
 
-    def test_changed_title_body_midpublish_retries(self) -> None:
+    def test_changed_title_midpublish_retries(self) -> None:
         fake = FakeAPI()
         fake.add_author_report(
             _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=71
@@ -973,7 +985,23 @@ class A38GuardE2ETests(unittest.TestCase):
         assessment = assess_pull(api, REPO, 1)
         self.assertTrue(assessment.ok)
         self.assertFalse(assessment.hard_fail)
-        # Title/body change after assessment, before publish (same SHAs).
+        fake.pull = fake._pull(HEAD, BASE, title=GENERATED_WITH_BANNER)
+        with self.assertRaisesRegex(GuardError, "changed before publish"):
+            publish_assessment(api, assessment)
+        result = reconcile_pull(api, REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertFalse(result.ok)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+
+    def test_changed_body_midpublish_retries(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=72
+        )
+        api = fake.api()
+        assessment = assess_pull(api, REPO, 1)
+        self.assertTrue(assessment.ok)
+        self.assertFalse(assessment.hard_fail)
         fake.pull = fake._pull(HEAD, BASE, body=GENERATED_WITH_BANNER)
         with self.assertRaisesRegex(GuardError, "changed before publish"):
             publish_assessment(api, assessment)
