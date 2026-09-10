@@ -49,10 +49,11 @@ Zero findings only after an explicit complete pass.
 This inner loop is not the pull-request review. `reviewer_approved` does not
 close `grok_pr_*` or `codex_pr_*`. A draft plus local tests is not done.
 
-When the ledger task is created after the inner loop, close `implementer_done`
-then `reviewer_approved` as `ja` with evidence from
+When the ledger task is created after the inner loop, close `implementer_done`,
+then `reviewer_approved`, and, for workflow `resolve-conflicts`,
+`conflicts_resolved`, as `ja` with evidence from
 `local-check|pushing|pr-review|gate-blocked` without starting a new inner-loop
-agent and without moving state back to `reviewing`. Do not use `n_a` for these
-keys.
+agent and without moving state back to `reviewing`. Do not use `n_a` for any of
+these keys.
 
 Locate these files with `agent skills path`.

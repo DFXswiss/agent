@@ -25,6 +25,7 @@ from websockets.exceptions import WebSocketException
 from .allow import (
     ACTIONS,
     GATE_UNAVAILABLE_KEYS,
+    TERMINAL_STATES,
     evaluate_allow,
     ready_for_done_blocking,
     requires_evidence,
@@ -449,7 +450,7 @@ def cmd_session(args: list[str]) -> None:
                 t
                 for t in store.rows("task")
                 if t.get("session_id") == sid
-                and t.get("state") not in ("done", "failed", "superseded")
+                and t.get("state") not in TERMINAL_STATES
             ]
             if open_tasks:
                 die("session has open tasks")
@@ -1713,7 +1714,7 @@ def cmd_status(_: list[str]) -> None:
     store = open_store()
     try:
         data = store.snapshot()
-        open_tasks = [t for t in data["tasks"] if t.get("state") not in ("done", "failed")]
+        open_tasks = [t for t in data["tasks"] if t.get("state") not in TERMINAL_STATES]
         agents_working = [a for a in data["agents"] if a.get("status") == "working"]
         work_open = [w for w in data["work"] if w.get("status") == "open"]
         print(

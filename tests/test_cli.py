@@ -2626,6 +2626,10 @@ def test_task_state_gate_blocked_and_superseded(
         run(tmp_path, ["task", "state", tid, "done"])
     run(tmp_path, ["task", "state", tid, "superseded"])
     assert f"task {tid} state=superseded" in capsys.readouterr().out
+    run(tmp_path, ["status"])
+    status = capsys.readouterr().out
+    assert "tasks_open=0" in status
+    assert f"task {tid} " not in status
     run(tmp_path, ["session", "close", "--id", "s"])
     assert "closed s" in capsys.readouterr().out
 

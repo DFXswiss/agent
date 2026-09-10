@@ -69,7 +69,9 @@ Review lanes execute no software (no tests, builds, or servers).
   only means something inside the runner — it reaches a human who has none of that
   context, and it buries the finding it is printed next to.
 - If a vendor cannot run, record `unavailable`, set the task to
-  `gate-blocked`. Do not record `approved`. Do not substitute another vendor.
+  `gate-blocked`, then close the matching gate checklist key with
+  `close-step --status unavailable` and evidence. `cmd_gate` does not write the
+  checklist. Do not record `approved`. Do not substitute another vendor.
 
 Zero findings only after an explicit complete pass.
 Empty, partial, timeout, or unavailable output is not zero findings.

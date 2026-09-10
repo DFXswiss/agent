@@ -88,7 +88,7 @@ JA_EVIDENCE_REQUIRED: frozenset[str] = frozenset(
     key for keys in CHECKLIST_KEYS.values() for key in keys
 )
 
-_TERMINAL_STATES = frozenset({"done", "failed", "superseded"})
+TERMINAL_STATES: frozenset[str] = frozenset({"done", "failed", "superseded"})
 
 
 @dataclass(frozen=True)
@@ -222,7 +222,7 @@ def _filter_session(
 
 
 def _open_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [t for t in tasks if str(t.get("state")) not in _TERMINAL_STATES]
+    return [t for t in tasks if str(t.get("state")) not in TERMINAL_STATES]
 
 
 def evaluate_allow(
