@@ -21,7 +21,7 @@ def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> fro
     Used so a skipped GitHub required check does not block Ready when the
     matching local-CI job already passed. A failed GitHub check still blocks.
     """
-    if not assessment.ok or assessment.status != "pass":
+    if not assessment.ok or assessment.status != "pass" or assessment.report_status != "pass":
         return frozenset()
     from .a38_guard import collect_comments, pick_latest_author_report
     from .local_ci import LocalCiError, parse_comment
@@ -210,8 +210,9 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     excluded = (ignored_suites | superseded_suites) - {None}
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
-    # Skipped/neutral required checks are accepted only when the PR file
-    # inventory is independently README-only or markdown-only. Missing checks
+    # Skipped/neutral required checks are accepted when the PR file inventory
+    # is independently README-only or markdown-only, or a verified author A38
+    # report on this head passed a matching job. Failed and missing checks
     # still block.
     accept_skipped_required = pull_is_readme_only(
         api, assessment.repo, assessment.pr

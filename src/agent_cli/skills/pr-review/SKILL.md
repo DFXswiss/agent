@@ -120,7 +120,7 @@ canonical active policy, and a separate live join against the actual latest
 report-like GitHub comment by the PR author; public A38 adopters require the
 author report in addition to cumulative GitHub CI.
 Private repositories without that opt-in and non-A38 repositories retain their
-existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. Independently
+existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip, or a verified author A38 report on this head has a passing job matching that required check. Independently
 required GitHub-only checks, technical merge restrictions, review gates, and
 human merge remain required.
 `agent allow --action pr-ready` only checks task state; do
