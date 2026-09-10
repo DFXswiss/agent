@@ -349,11 +349,19 @@ def _runtime_git(runtime: JobRuntime, args: list[str], *, cwd: Path) -> str:
     return completed.stdout
 
 
+def companion_env_missing(companion_cfg: Mapping[str, Any]) -> str:
+    """The one wording for an absent companion directory variable."""
+    return (
+        f"required environment variable missing: {companion_cfg['directory_env']} "
+        f"(expects a clean {companion_cfg['repository']} checkout at {companion_cfg['ref']})"
+    )
+
+
 def _verify_companion(runtime: JobRuntime, cfg: Mapping[str, Any]) -> tuple[Path, str]:
     companion_cfg = cfg["companion"]
     directory = _env_get(runtime, companion_cfg["directory_env"])
     if not directory:
-        raise JobError(f"required environment variable missing: {companion_cfg['directory_env']}")
+        raise JobError(companion_env_missing(companion_cfg))
     source = Path(directory).resolve()
     if not source.is_dir():
         raise JobError("companion directory is not a directory")
@@ -803,10 +811,15 @@ def run_compose(
     def body(runtime: JobRuntime) -> int:
         return _body(runtime, parsed)
 
+    def preflight(runtime: JobRuntime) -> None:
+        if not _env_get(runtime, parsed["companion"]["directory_env"]):
+            raise JobError(companion_env_missing(parsed["companion"]))
+
     return run_lifecycle(
         adapter="compose",
         common=common,
         body=body,
+        preflight=preflight,
         cwd=cwd,
         lock_root=lock_root,
         environ=environ,

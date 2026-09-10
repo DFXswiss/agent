@@ -1350,6 +1350,7 @@ def run_lifecycle(
     adapter: str,
     common: CommonConfig,
     body: Callable[[JobRuntime], int],
+    preflight: Callable[[JobRuntime], None] | None = None,
     cwd: Path | None = None,
     lock_root: Path | None = None,
     environ: Mapping[str, str] | None = None,
@@ -1370,6 +1371,8 @@ def run_lifecycle(
         )
         runtime.install_signal_handlers()
         try:
+            if preflight is not None:
+                preflight(runtime)
             if common.npm is not None:
                 runtime.ensure_node_modules()
             runtime.acquire_configured_lock(default=default_lock)

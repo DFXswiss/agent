@@ -14,6 +14,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -28,8 +29,8 @@ from typing import Any, Callable, Mapping, Sequence
 from .a38_job_adapters import ADAPTERS
 from .readme_only import git_is_readme_only
 from .a38_job_adapters.commands import parse_commands_config
-from .a38_job_adapters.common import JobError
-from .a38_job_adapters.compose import parse_compose_config
+from .a38_job_adapters.common import BUILTIN_UNSET, JobError
+from .a38_job_adapters.compose import companion_env_missing, parse_compose_config
 from .a38_job_adapters.http_smoke import parse_http_smoke_config
 from .a38_job_adapters.immutable import parse_immutable_config
 from .a38_jobs import add_job_parser
@@ -672,6 +673,51 @@ def _job_env(head: str, base: str) -> dict[str, str]:
     return env
 
 
+def _preflight_jobs(jobs: Sequence[Mapping[str, Any]], env: Mapping[str, str]) -> None:
+    """Raise A38Error for job requirements that are already unsatisfiable."""
+    executors: list[tuple[Mapping[str, Any], list[str]]] = []
+    for job in jobs:
+        command = str(job["command"])
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            continue
+        if (
+            argv[:3] == ["agent", "a38", "job"]
+            and len(argv) >= 6
+            and argv[4] == "--config"
+        ):
+            executors.append((job, argv))
+
+    problems: list[str] = []
+    if executors and shutil.which("agent", path=env.get("PATH")) is None:
+        problems.append(
+            'agent executable not found on PATH; executor jobs run "agent a38 job ..."'
+        )
+
+    for job, argv in executors:
+        if argv[3] != "compose":
+            continue
+        try:
+            common, parsed = parse_compose_config(argv[5])
+        except JobError:
+            continue
+        name = parsed["companion"]["directory_env"]
+        if name in common.env:
+            continue
+        missing = (
+            name in BUILTIN_UNSET
+            or name in common.unset
+            or any(name.startswith(prefix) for prefix in common.unset_prefixes)
+            or not env.get(name, "").strip()
+        )
+        if missing:
+            problems.append(f"{job['id']}: {companion_env_missing(parsed['companion'])}")
+
+    if problems:
+        raise A38Error("preflight failed: " + "; ".join(problems))
+
+
 def _chmod_owner_rw(path: Path) -> None:
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 
@@ -978,6 +1024,7 @@ def run_policy(
         omit = set()
 
     env = _job_env(head, base)
+    _preflight_jobs([job for job in jobs if str(job["id"]) not in omit], env)
     runs: list[dict[str, Any]] = []
     reasons: list[str] = []
     interrupted = False

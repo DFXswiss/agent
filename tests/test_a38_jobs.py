@@ -27,6 +27,7 @@ from agent_cli.a38_job_adapters.common import (
     JobRuntime,
     npm_lock_name,
     parse_common_config,
+    run_lifecycle,
     safe_join,
 )
 
@@ -159,6 +160,51 @@ def test_common_validation_node_canaries_and_unknown_keys() -> None:
         parse_common_config({"npm": {"node_major": 24, "canaries": ["../pkg"]}})
     with pytest.raises(JobError, match="positive integer"):
         parse_common_config({"npm": {"node_major": 24.5, "canaries": ["pkg/file"]}})
+
+
+def test_lifecycle_preflight_runs_before_configured_lock(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    lock_root = tmp_path / "locks"
+    body = mock.Mock(return_value=0)
+
+    def preflight(runtime: JobRuntime) -> None:
+        raise JobError("preflight rejected")
+
+    with mock.patch.object(JobRuntime, "acquire_configured_lock") as acquire:
+        status = run_lifecycle(
+            adapter="commands",
+            common=CommonConfig(lock="configured"),
+            body=body,
+            preflight=preflight,
+            cwd=tmp_path / "repo",
+            lock_root=lock_root,
+            environ=_env(base, head),
+        )
+
+    assert status == 1
+    acquire.assert_not_called()
+    body.assert_not_called()
+    assert not (lock_root / "configured.lock").exists()
+
+
+def test_compose_missing_companion_fails_with_checkout_requirement(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    status = compose.run_compose(
+        json.dumps(_companion_config(head)),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    captured = capfd.readouterr()
+
+    assert status == 1
+    assert (
+        "required environment variable missing: EXAMPLE_SERVICES_DIR "
+        f"(expects a clean example/services checkout at {head})"
+    ) in captured.err
+    assert not (tmp_path / "locks" / "docker-heavy.lock").exists()
 
 
 def test_commands_preserve_primary_and_run_diagnostics(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
