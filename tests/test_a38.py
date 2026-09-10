@@ -63,6 +63,29 @@ def _policy_text(**overrides: object) -> str:
     return json.dumps(_policy_dict(**overrides))
 
 
+def _compose_executor_job(**config_overrides: object) -> dict:
+    config = {
+        "companion": {
+            "directory_env": "EXAMPLE_SERVICES_DIR",
+            "ref_env": "EXAMPLE_SERVICES_REF",
+            "ref": "main",
+            "repository": "example/services",
+        },
+        "files": ["compose.yml"],
+        "test_service": "tests",
+        "artifacts": [],
+        **config_overrides,
+    }
+    return {
+        "id": "compose",
+        "name": "Compose",
+        "executor": {"adapter": "compose", "config": config},
+        "timeout_s": 30,
+        "workflow": ".github/workflows/ci.yml",
+        "job": "compose",
+    }
+
+
 def _run_payload(
     *,
     ident: str = "unit",
@@ -747,6 +770,211 @@ class RunnerTests(unittest.TestCase):
                         private=None if failure == "visibility" else True, run=lookup,
                     )
                 self.assertFalse(output.exists())
+
+    def test_compose_preflight_fails_before_any_job_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            logs = root / "logs"
+            head = _init_repo(repo)
+            policy = _policy_dict(jobs=[_compose_executor_job()])
+            with mock.patch.dict(os.environ, {}, clear=False), mock.patch(
+                "agent_cli.a38.shutil.which", return_value="/usr/bin/agent"
+            ), mock.patch(
+                "agent_cli.a38._run_one_job",
+                side_effect=AssertionError("job must not run"),
+            ):
+                os.environ.pop("EXAMPLE_SERVICES_DIR", None)
+                with self.assertRaises(A38Error) as raised:
+                    run_policy(
+                        repo,
+                        policy,
+                        output=root / "report.md",
+                        logs_dir=logs,
+                        base_sha=head,
+                        private=True,
+                    )
+            self.assertIn("EXAMPLE_SERVICES_DIR", str(raised.exception))
+            self.assertEqual(list(logs.iterdir()), [])
+
+    def test_compose_preflight_accepts_environment_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = _policy_dict(jobs=[_compose_executor_job()])
+            with mock.patch.dict(
+                os.environ, {"EXAMPLE_SERVICES_DIR": "/tmp/services"}, clear=False
+            ), mock.patch(
+                "agent_cli.a38.shutil.which", return_value="/usr/bin/agent"
+            ), mock.patch(
+                "agent_cli.a38._run_one_job", return_value=("pass", 0, 0.1)
+            ) as run_job:
+                verdict = run_policy(
+                    repo,
+                    policy,
+                    output=root / "report.md",
+                    logs_dir=root / "logs",
+                    base_sha=head,
+                    private=True,
+                )
+            self.assertTrue(verdict["ok"])
+            run_job.assert_called_once()
+
+    def test_compose_preflight_accepts_configured_environment_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = _policy_dict(
+                jobs=[
+                    _compose_executor_job(
+                        env={"EXAMPLE_SERVICES_DIR": "/configured/services"}
+                    )
+                ]
+            )
+            with mock.patch.dict(os.environ, {}, clear=False), mock.patch(
+                "agent_cli.a38.shutil.which", return_value="/usr/bin/agent"
+            ), mock.patch(
+                "agent_cli.a38._run_one_job", return_value=("pass", 0, 0.1)
+            ) as run_job:
+                os.environ.pop("EXAMPLE_SERVICES_DIR", None)
+                verdict = run_policy(
+                    repo,
+                    policy,
+                    output=root / "report.md",
+                    logs_dir=root / "logs",
+                    base_sha=head,
+                    private=True,
+                )
+            self.assertTrue(verdict["ok"])
+            run_job.assert_called_once()
+
+    def test_compose_preflight_honors_configured_environment_removal(self) -> None:
+        for removal in (
+            {"unset": ["EXAMPLE_SERVICES_DIR"]},
+            {"unset_prefixes": ["EXAMPLE_SERVICES_"]},
+        ):
+            with self.subTest(removal=removal), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "repo"
+                head = _init_repo(repo)
+                policy = _policy_dict(jobs=[_compose_executor_job(**removal)])
+                with mock.patch.dict(
+                    os.environ, {"EXAMPLE_SERVICES_DIR": "/tmp/services"}, clear=False
+                ), mock.patch(
+                    "agent_cli.a38.shutil.which", return_value="/usr/bin/agent"
+                ), mock.patch(
+                    "agent_cli.a38._run_one_job",
+                    side_effect=AssertionError("job must not run"),
+                ):
+                    with self.assertRaises(A38Error) as raised:
+                        run_policy(
+                            repo,
+                            policy,
+                            output=root / "report.md",
+                            logs_dir=root / "logs",
+                            base_sha=head,
+                            private=True,
+                        )
+                self.assertIn("EXAMPLE_SERVICES_DIR", str(raised.exception))
+
+    def test_agent_executable_is_required_only_for_executor_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            executor_policy = _policy_dict(
+                jobs=[
+                    {
+                        "id": "commands",
+                        "name": "Commands",
+                        "executor": {
+                            "adapter": "commands",
+                            "config": {"steps": [["true"]]},
+                        },
+                        "timeout_s": 30,
+                        "workflow": ".github/workflows/ci.yml",
+                        "job": "commands",
+                    }
+                ]
+            )
+            with mock.patch("agent_cli.a38.shutil.which", return_value=None):
+                with self.assertRaisesRegex(
+                    A38Error,
+                    re.escape(
+                        'agent executable not found on PATH; executor jobs run '
+                        '"agent a38 job ..."'
+                    ),
+                ):
+                    run_policy(
+                        repo,
+                        executor_policy,
+                        output=root / "executor-report.md",
+                        logs_dir=root / "executor-logs",
+                        base_sha=head,
+                        private=True,
+                    )
+
+            with mock.patch("agent_cli.a38.shutil.which", return_value=None) as which, mock.patch(
+                "agent_cli.a38._run_one_job", return_value=("pass", 0, 0.1)
+            ):
+                verdict = run_policy(
+                    repo,
+                    _policy_dict(),
+                    output=root / "command-report.md",
+                    logs_dir=root / "command-logs",
+                    base_sha=head,
+                    private=True,
+                )
+            self.assertTrue(verdict["ok"])
+            which.assert_not_called()
+
+    def test_readme_only_omitted_compose_skips_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            base = _init_repo(repo)
+            (repo / "README.md").write_text("docs\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "README.md"], cwd=repo, check=True, capture_output=True
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "commit",
+                    "-m",
+                    "readme",
+                ],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            policy = _policy_dict(
+                jobs=[_compose_executor_job()],
+                readme_only={"omit_jobs": ["compose"]},
+            )
+            with mock.patch.dict(os.environ, {}, clear=False), mock.patch(
+                "agent_cli.a38.shutil.which", return_value=None
+            ) as which, mock.patch(
+                "agent_cli.a38._run_one_job",
+                side_effect=AssertionError("omitted job must not run"),
+            ):
+                os.environ.pop("EXAMPLE_SERVICES_DIR", None)
+                verdict = run_policy(
+                    repo,
+                    policy,
+                    output=root / "report.md",
+                    logs_dir=root / "logs",
+                    base_sha=base,
+                    private=True,
+                )
+            self.assertTrue(verdict["ok"])
+            which.assert_not_called()
 
     def test_cli_preflight_invalidates_stale_success(self) -> None:
         for failure in ("missing", "malformed", "base", "repository", "visibility"):
