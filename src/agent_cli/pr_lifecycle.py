@@ -15,6 +15,49 @@ AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
 STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
 
 
+def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
+    """Names and ids of jobs that passed in the verified author A38 report.
+
+    Used so a skipped or neutral GitHub required check does not block Ready
+    when the matching local-CI job already passed. Cancelled and failed
+    GitHub required checks still block.
+    """
+    if not assessment.ok or assessment.status != "pass" or assessment.report_status != "pass":
+        return frozenset()
+    from .a38_guard import collect_comments, pick_latest_author_report
+    from .local_ci import LocalCiError, parse_comment
+    author_id = _field(pull or {}, "user", "id")
+    if not isinstance(author_id, int):
+        return frozenset()
+    comment = pick_latest_author_report(
+        collect_comments(api, assessment.repo, assessment.pr), author_id
+    )
+    if comment is None:
+        return frozenset()
+    try:
+        report = parse_comment(str(comment.get("body") or ""))
+    except LocalCiError:
+        return frozenset()
+    if report.head != assessment.head_sha:
+        return frozenset()
+    names: set[str] = set()
+    for run in report.runs:
+        if run.result == "pass":
+            names.add(run.name)
+            names.add(run.id)
+    return frozenset(names)
+
+
+def a38_covers_required_check(passed_names: frozenset[str], required: str) -> bool:
+    """True when a passing A38 job name or id matches the required GitHub check."""
+    if not required:
+        return False
+    for name in passed_names:
+        if name == required or required_check_matches(name, required):
+            return True
+    return False
+
+
 def required_check_matches(check_name: object, required: str) -> bool:
     """Return whether a GitHub check run satisfies a required_checks entry.
 
@@ -168,9 +211,10 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     excluded = (ignored_suites | superseded_suites) - {None}
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
-    # Skipped/neutral required checks are accepted only when the PR file
-    # inventory is independently README-only or markdown-only. Missing checks
-    # still block.
+    # Skipped/neutral required checks are accepted when the PR file inventory
+    # is independently README-only or markdown-only, or a verified author A38
+    # report on this head passed a matching job. Cancelled, failed, and
+    # missing checks still block.
     accept_skipped_required = pull_is_readme_only(
         api, assessment.repo, assessment.pr
     ) or pull_is_markdown_only(api, assessment.repo, assessment.pr)
@@ -179,6 +223,7 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
         if accept_skipped_required
         else {"success"}
     )
+    passed_a38 = a38_passed_job_names(api, assessment, pull)
     for path in sorted(required):
         suite = _field(latest.get(path), "check_suite_id")
         for name in config.get("required_checks", {}).get(path, []):
@@ -192,8 +237,13 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
                 previous = latest_by_name.get(check_name)
                 if previous is None or candidate.get("id", 0) > previous.get("id", 0):
                     latest_by_name[check_name] = candidate
+            accepted = (
+                {"success", "skipped", "neutral"}
+                if a38_covers_required_check(passed_a38, name)
+                else accepted_required
+            )
             if not latest_by_name or any(
-                check.get("status") != "completed" or check.get("conclusion") not in accepted_required
+                check.get("status") != "completed" or check.get("conclusion") not in accepted
                 for check in latest_by_name.values()
             ):
                 reasons.append(f"Required CI check not green: {path} / {name}")

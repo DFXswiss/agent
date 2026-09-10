@@ -148,6 +148,7 @@ def _report_comment(
     readme_only: bool = False,
     markdown_only: bool = False,
     duration_s: float = 1.0,
+    extra_runs: list[dict[str, Any]] | None = None,
 ) -> str:
     payload: dict[str, Any] = {
         "schema": "dfx-local-ci/v1",
@@ -156,7 +157,9 @@ def _report_comment(
         "private": private,
         "recorded_at": "2026-09-05T12:00:00Z",
         "required": ["pytest"],
-        "runs": [
+        "runs": extra_runs
+        if extra_runs is not None
+        else [
             {
                 "id": "pytest",
                 "name": "Pytest",
