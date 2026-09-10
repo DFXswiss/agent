@@ -740,6 +740,7 @@ class A38GuardE2ETests(unittest.TestCase):
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
         body = result.comment_body
         self.assertTrue(
             "Tool-attribution" in body or "attribution markers" in body
@@ -821,6 +822,7 @@ class A38GuardE2ETests(unittest.TestCase):
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "success")
+        self.assertEqual(second.state_for_status, "success")
         self.assertIn("omitted until Ready", matching[0].get("description") or "")
 
     def test_draft_does_not_clear_unrelated_enforce_failure(self) -> None:
@@ -843,6 +845,25 @@ class A38GuardE2ETests(unittest.TestCase):
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertEqual(matching[0]["state"], "failure")
         self.assertEqual(matching[0]["description"], "fail: no author local-CI report")
+
+    def test_ready_hard_fail_then_draft_clean_clears(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        first = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(first.draft)
+        self.assertTrue(first.hard_fail)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [_clean_commit(message="feat: ok\n")]
+        second = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(second.draft)
+        self.assertFalse(second.hard_fail)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(matching[0]["state"], "success")
 
     def test_denied_commits_list_raises(self) -> None:
         fake = FakeAPI()

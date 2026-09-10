@@ -1305,19 +1305,20 @@ def _status_bits(assessment: Assessment) -> None:
         return
     assessment.context = status_context_enforce(base)
     assessment.observe_context = ""
-    if assessment.draft and not assessment.hard_fail:
-        # Draft enforce without hard_fail: keep context for audit JSON; do not
-        # post success or failure (missing author report must not red-CI a draft).
+    if assessment.hard_fail:
+        # Rule violations must be red CI on the PR head, including drafts and
+        # after Ready→draft on the same SHA (leftover clear keys on this prefix).
+        assessment.state_for_status = "failure"
+        reason = assessment.reasons[0] if assessment.reasons else assessment.status
+        assessment.description = truncate_desc(f"hard_fail: {reason}")
+        return
+    if assessment.draft:
+        # Draft without hard_fail: keep context for audit JSON; do not post
+        # success or failure (missing author report must not red-CI a draft).
         assessment.state_for_status = ""
         assessment.description = truncate_desc(
             "draft: A38 status omitted until Ready"
         )
-        return
-    if assessment.draft and assessment.hard_fail:
-        # Rule violations must be red CI on the PR head even while draft.
-        assessment.state_for_status = "failure"
-        reason = assessment.reasons[0] if assessment.reasons else assessment.status
-        assessment.description = truncate_desc(f"hard_fail: {reason}")
         return
     if assessment.ok and assessment.status == "pass":
         assessment.state_for_status = "success"
@@ -2198,6 +2199,7 @@ def publish_assessment(
             # GitHub statuses are append-only per context/SHA. Clear only a
             # leftover draft hard_fail so Checks is not stuck red after the
             # violation is gone. Other enforce failures stay.
+            assessment.state_for_status = "success"
             _post_status(
                 context,
                 "success",
