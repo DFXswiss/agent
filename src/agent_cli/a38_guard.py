@@ -1305,12 +1305,19 @@ def _status_bits(assessment: Assessment) -> None:
         return
     assessment.context = status_context_enforce(base)
     assessment.observe_context = ""
-    if assessment.draft:
-        # Draft enforce: keep context for audit JSON; do not post success or failure.
+    if assessment.draft and not assessment.hard_fail:
+        # Draft enforce without hard_fail: keep context for audit JSON; do not
+        # post success or failure (missing author report must not red-CI a draft).
         assessment.state_for_status = ""
         assessment.description = truncate_desc(
             "draft: A38 status omitted until Ready"
         )
+        return
+    if assessment.draft and assessment.hard_fail:
+        # Rule violations must be red CI on the PR head even while draft.
+        assessment.state_for_status = "failure"
+        reason = assessment.reasons[0] if assessment.reasons else assessment.status
+        assessment.description = truncate_desc(f"{assessment.status}: {reason}")
         return
     if assessment.ok and assessment.status == "pass":
         assessment.state_for_status = "success"
@@ -2182,7 +2189,7 @@ def publish_assessment(
             assessment.description,
             require_report=True,
         )
-    elif assessment.draft:
+    elif assessment.draft and not assessment.hard_fail:
         assessment.writes.append("status:skipped:draft")
     else:
         _post_status(
@@ -2471,8 +2478,9 @@ def _load_event(
 
 def _assessment_exit_code(assessment: Assessment) -> int:
     """Closed no-ops exit 0. Attribution and unscannable-message hard-fails exit 1
-    even on draft/observe. Missing draft reports still exit 0. Ready enforce
-    failure exits 1."""
+    even on draft/observe and post a failing PR-head status in enforce. Missing
+    draft reports still omit that status and exit 0. Ready enforce failure
+    exits 1."""
     if assessment.closed:
         return 0
     if assessment.hard_fail:

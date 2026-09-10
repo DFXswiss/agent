@@ -637,14 +637,11 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(result.hard_fail)
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
-        self.assertTrue(
-            any(w == "status:skipped:draft" for w in result.writes)
-            or not any(w.startswith("status:create:") for w in result.writes)
-        )
-        self.assertNotIn(
-            status_context_enforce("develop"),
-            [s["context"] for s in fake.statuses],
-        )
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
         body = result.comment_body
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
@@ -680,14 +677,11 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(result.hard_fail)
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
-        self.assertTrue(
-            any(w == "status:skipped:draft" for w in result.writes)
-            or not any(w.startswith("status:create:") for w in result.writes)
-        )
-        self.assertNotIn(
-            status_context_enforce("develop"),
-            [s["context"] for s in fake.statuses],
-        )
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
         body = result.comment_body
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
@@ -793,10 +787,11 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(result.hard_fail)
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
-        self.assertNotIn(
-            status_context_enforce("develop"),
-            [s["context"] for s in fake.statuses],
-        )
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
 
     def test_denied_commits_list_raises(self) -> None:
         fake = FakeAPI()
