@@ -170,8 +170,13 @@ when its target branch **or** any listed PR label matches; branches and labels
 are exact, case-sensitive strings. Its condition must not be empty. This is
 repository configuration, including which CI is expected for release PRs.
 `required_checks` maps required or conditional workflow paths to exact job check
-names (including expanded matrix names). When that workflow is required, each
-listed check must actually finish successfully in its latest check suite.
+names (including expanded matrix names). A reusable-workflow check
+`{caller} / {called}` satisfies a listed caller name when it starts with that
+name plus ` / `. When several check runs match one listed name, each distinct
+matched name in that suite must finish successfully (latest run per name), so a
+successful sibling cannot hide a skipped nested job. When that workflow is
+required, each listed check must actually finish successfully in its latest
+check suite.
 Use this for workflows whose setup job can succeed while the test jobs skip;
 an overall workflow success must not hide a missing or skipped required test.
 The only exception is when the PR file inventory is independently README-only

@@ -241,6 +241,66 @@ def test_successful_workflow_cannot_hide_a_missing_or_skipped_required_test(conc
     assert fake.transitions == ([] if conclusion == "success" else [True])
 
 
+@pytest.mark.parametrize(
+    "check_name,required,expect",
+    [
+        ("Full-stack E2E", "Full-stack E2E", True),
+        ("Full-stack E2E / Full-stack E2E", "Full-stack E2E", True),
+        ("Full-stack E2E / smoke", "Full-stack E2E", True),
+        ("Testing", "Test", False),
+        ("Test extra", "Test", False),
+        (None, "Test", False),
+        ("Test", "", False),
+    ],
+)
+def test_required_check_matches_reusable_workflow_names(check_name, required, expect):
+    from agent_cli.pr_lifecycle import required_check_matches
+    assert required_check_matches(check_name, required) is expect
+
+
+def test_reusable_prefix_cannot_hide_a_skipped_sibling_required_job():
+    fake = LifecycleAPI()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 30,
+            "name": "Full-stack E2E / setup",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "success",
+        },
+        {
+            "id": 22,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [True]
+
+
+def test_reusable_workflow_required_check_name_allows_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "success",
+        }
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 def test_readme_only_accepts_skipped_required_test_for_auto_ready():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
