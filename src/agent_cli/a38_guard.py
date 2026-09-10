@@ -2220,11 +2220,7 @@ def publish_assessment(
 
 
 def _apply_guard_side_effects(api: GitHubApi, assessment: Assessment, *, dry_run: bool) -> None:
-    """Authorize waiting fork runs before any Ready/Draft mutation.
-
-    A failed draft conversion must not skip workflow approval: GitHub GraphQL
-    can return HTTP 200 without changing ``isDraft`` on a fork pull request.
-    """
+    """Authorize waiting fork runs, then apply Ready/Draft. Approval is independent of lifecycle."""
     from .pr_lifecycle import reconcile_lifecycle
     from .workflow_approval import approve_workflow_runs
     assessment.workflow_approvals = approve_workflow_runs(api, assessment, dry_run=dry_run)

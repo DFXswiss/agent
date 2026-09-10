@@ -276,6 +276,10 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     return reasons, latest
 
 
+class LifecycleDraftUnchanged(Exception):
+    """GraphQL accepted convertToDraft but isDraft is still false."""
+
+
 def _transition(api: Any, node: str, draft: bool) -> Mapping:
     from .a38_guard import GuardError
     operation = "convertPullRequestToDraft" if draft else "markPullRequestReadyForReview"
@@ -286,7 +290,9 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
     if status != 200 or _field(data, "errors") or _field(pull, "id") != node:
         raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
     if _field(pull, "isDraft") is not draft:
-        raise GuardError("PR lifecycle mutation did not change draft state")
+        if draft:
+            raise LifecycleDraftUnchanged
+        raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
     return pull
 
 
@@ -419,10 +425,18 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             raise GuardError("write-ready waiver changed before Ready transition")
     try:
         changed = _transition(api, pull["node_id"], target == "draft")
-    except GuardError as exc:
-        if target == "draft" and "did not change draft state" in str(exc):
-            return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
-        raise
+    except LifecycleDraftUnchanged:
+        record["phase"] = "applied"
+        record["state"] = "ready"
+        _save_record(
+            api,
+            assessment,
+            STATE_MARKER,
+            record,
+            "Readiness is unchanged; convert to Draft did not take effect.",
+            "Der Status bleibt unverändert; die Umstellung auf Draft hat nicht gegriffen.",
+        )
+        return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     assessment.writes.append(f"pull:{target}")
     if target == "ready" and (changed.get("headRefOid") != snap.head_sha or changed.get("baseRefOid") != snap.base_sha):
         _transition(api, pull["node_id"], True)

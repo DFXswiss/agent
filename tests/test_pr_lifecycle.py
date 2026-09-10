@@ -1,7 +1,6 @@
 """CI completion, ownership, conflicts and transitions through the real guard."""
 import copy
 import json
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -468,12 +467,10 @@ def test_unchanged_draft_state_still_approves_waiting_fork_run():
     assert fake.posts == [101]
     assert result.lifecycle["action"] == "unchanged"
     assert not fake.pull["draft"] and not fake.transitions
-
-
-def test_example_guard_workflow_isolates_concurrency_per_pull_request():
-    text = Path("examples/a38-guard.yml").read_text(encoding="utf-8")
-    assert "github.event.pull_request.number || github.event.issue.number" in text
-    assert "all-open" in text
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert states and '"phase": "applied"' in states[-1]["body"]
+    assert '"state": "ready"' in states[-1]["body"]
+    assert '"phase": "planned"' not in states[-1]["body"]
 
 
 def test_changed_head_during_ready_is_restored_to_draft():

@@ -29,7 +29,7 @@ agent pr-guard --repo OWNER/NAME --all-open --dry-run
 agent pr-guard --repo OWNER/NAME --all-open
 ```
 
-Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour. Event-driven runs use one concurrency group per pull request (`cancel-in-progress: false`) so a pending fork-approval reconcile is not cancelled by another PR. Scheduled and dispatch `all_open` scans use a separate `all-open` group. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
+Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and serializes all bot runs for the repository. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
 
 ## Trust and policy
 
@@ -231,10 +231,10 @@ no writes, including audit comments.
 
 The adopting workflow owns runner routing, `actions` and `checks` read access,
 `pull-requests`/`issues`/`statuses` write access, and `actions: write` for initial
-workflow approval. Serialize event-driven runs **per pull request** with
-`cancel-in-progress: false` (GitHub still cancels extra pending jobs in the
-same group). Scheduled `--all-open` reconciliation uses a separate group.
-Run trusted
+workflow approval. The guard authorizes waiting allowlisted fork runs **before**
+it mutates Ready or Draft, so a failed convert-to-draft cannot skip approval.
+Serialize **all** event and scheduled invocations with one
+repository-wide concurrency group and `cancel-in-progress: false`. Run trusted
 `--all-open` reconciliation on a repository-configured schedule (for example every
 five minutes). GitHub may delay scheduled execution; this is not a real-time SLA.
 Privileged runs must never check out PR code. Bot readiness must not be wired to
