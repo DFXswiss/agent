@@ -234,7 +234,8 @@ EN/DE comment says the Draft conversion did not take effect. Authorization recor
 authenticated bot's numeric user ID can supply these records. Dry run performs
 no writes, including audit comments.
 
-The adopting workflow owns runner routing, `actions` and `checks` read access,
+The adopting workflow owns runner routing, `contents: write` for
+`markPullRequestReadyForReview`, `actions` and `checks` read access,
 `pull-requests`/`issues`/`statuses` write access, and `actions: write` for initial
 workflow approval. The guard authorizes waiting allowlisted fork runs **before**
 it mutates Ready or Draft, so a failed convert-to-draft cannot skip approval.
