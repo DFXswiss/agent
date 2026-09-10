@@ -293,13 +293,16 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
         detail = f": {errors[0].get('message') or 'graphql error'}"
     if status != 200 or errors or _field(pull, "id") != node:
         raise GuardError(f"PR lifecycle mutation failed (HTTP {status}){detail}")
-    if _field(pull, "isDraft") is not draft:
-        if draft and _field(pull, "isDraft") is False:
+    got = _field(pull, "isDraft")
+    if got is not draft:
+        if draft and got is False:
             raise LifecycleDraftUnchanged
-        raise GuardError(
-            f"PR lifecycle mutation failed (HTTP {status}): isDraft unchanged; "
-            "GITHUB_TOKEN needs contents: write for markPullRequestReadyForReview"
-        )
+        if not draft and got is True:
+            raise GuardError(
+                f"PR lifecycle mutation failed (HTTP {status}): isDraft unchanged; "
+                "GITHUB_TOKEN needs contents: write for markPullRequestReadyForReview"
+            )
+        raise GuardError(f"PR lifecycle mutation failed (HTTP {status}): isDraft={got!r}")
     return pull
 
 
