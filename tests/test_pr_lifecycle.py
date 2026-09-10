@@ -348,6 +348,32 @@ def test_failed_github_e2e_still_blocks_when_a38_e2e_passed():
     assert fake.transitions == [True]
 
 
+def test_pytest_only_a38_does_not_waive_skipped_e2e():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.pull["base"]["repo"]["private"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.comments = [c for c in fake.comments if c.get("user", {}).get("id") != AUTHOR_ID]
+    fake.add_author_report(
+        _report_comment(private=True),
+        updated_at="2026-09-05T12:00:00Z",
+        cid=21,
+    )
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+
+
 def test_reusable_workflow_required_check_name_allows_auto_ready():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
