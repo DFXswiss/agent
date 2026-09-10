@@ -8,7 +8,7 @@ import pytest
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from agent_cli.pr_lifecycle import AUTH_MARKER, STATE_MARKER
-from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO
+from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO, _report_comment
 from test_workflow_approval_core import ApprovalAPI, PATH
 
 pytestmark = pytest.mark.no_pg
@@ -277,6 +277,77 @@ def test_reusable_prefix_cannot_hide_a_skipped_sibling_required_job():
             "status": "completed",
             "conclusion": "skipped",
         },
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [True]
+
+
+def _e2e_pass_runs() -> list[dict]:
+    return [
+        {
+            "id": "pytest",
+            "name": "Pytest",
+            "command": "pytest",
+            "result": "pass",
+            "exit_code": 0,
+            "duration_s": 1.0,
+            "timeout_s": 600,
+        },
+        {
+            "id": "e2e",
+            "name": "Full-stack E2E",
+            "command": "npm run test:e2e",
+            "result": "pass",
+            "exit_code": 0,
+            "duration_s": 1.0,
+            "timeout_s": 600,
+        },
+    ]
+
+
+def test_skipped_github_e2e_is_ready_when_a38_e2e_passed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.comments = [c for c in fake.comments if c.get("user", {}).get("id") != AUTHOR_ID]
+    fake.add_author_report(
+        _report_comment(extra_runs=_e2e_pass_runs()),
+        updated_at="2026-09-05T12:00:00Z",
+        cid=21,
+    )
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_failed_github_e2e_still_blocks_when_a38_e2e_passed():
+    fake = LifecycleAPI()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.comments = [c for c in fake.comments if c.get("user", {}).get("id") != AUTHOR_ID]
+    fake.add_author_report(
+        _report_comment(extra_runs=_e2e_pass_runs()),
+        updated_at="2026-09-05T12:00:00Z",
+        cid=21,
+    )
+    fake.checks = [
+        {
+            "id": 22,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "failure",
+        }
     ]
     reconcile_pull(fake.api(), REPO, 1)
     assert fake.transitions == [True]
