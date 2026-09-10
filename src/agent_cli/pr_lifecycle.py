@@ -18,8 +18,9 @@ STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
 def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
     """Names and ids of jobs that passed in the verified author A38 report.
 
-    Used so a skipped GitHub required check does not block Ready when the
-    matching local-CI job already passed. A failed GitHub check still blocks.
+    Used so a skipped or neutral GitHub required check does not block Ready
+    when the matching local-CI job already passed. Cancelled and failed
+    GitHub required checks still block.
     """
     if not assessment.ok or assessment.status != "pass" or assessment.report_status != "pass":
         return frozenset()
@@ -212,8 +213,8 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     checks = _checks(api, assessment.repo, assessment.head_sha)
     # Skipped/neutral required checks are accepted when the PR file inventory
     # is independently README-only or markdown-only, or a verified author A38
-    # report on this head passed a matching job. Failed and missing checks
-    # still block.
+    # report on this head passed a matching job. Cancelled, failed, and
+    # missing checks still block.
     accept_skipped_required = pull_is_readme_only(
         api, assessment.repo, assessment.pr
     ) or pull_is_markdown_only(api, assessment.repo, assessment.pr)

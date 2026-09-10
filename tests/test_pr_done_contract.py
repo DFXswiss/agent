@@ -28,6 +28,8 @@ def test_contributing_states_ready_for_review_contract() -> None:
     assert "Empty, partial, timeout, or unavailable" in text
     assert "is not zero findings" in text
     assert "`skipped` and `cancelled` are not green" in text
+    assert "skipped` or `neutral` as green" in text
+    assert "`cancelled` and failed still block" in text
     assert "agent allow --action pr-ready" in text
     assert "Do not mark ready if it denies" in text
     assert "it is not the leave-draft verdict" in text
@@ -55,6 +57,8 @@ def test_design_locks_ready_for_review() -> None:
     assert "is not zero findings" in section_prose
     assert "agent allow --action pr-ready" in section_prose
     assert "`skipped` and `cancelled` are not green" in section_prose
+    assert "skipped` or `neutral` as green" in section_prose
+    assert "`cancelled` and failed still block" in section_prose
     assert "do not substitute another vendor" in section_prose
     assert "Vendors are `grok`, then `codex`" in section_prose
     assert "four lane verdicts" in section_prose

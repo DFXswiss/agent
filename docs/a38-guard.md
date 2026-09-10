@@ -186,8 +186,8 @@ case-sensitive, same fail-closed inventory rules); **or** a verified author
 A38 report on this head has a passing job whose name matches that required
 check (so a draft that skips GitHub E2E by design stays Ready-eligible when
 local E2E already passed). Then a completed required check may conclude
-`success`, `skipped`, or `neutral`. A failed GitHub required check still
-blocks. Missing required checks still block. The guard does not trust a report's `readme_only` /
+`success`, `skipped`, or `neutral`. `cancelled` and failed GitHub required
+checks still block. Missing required checks still block. The guard does not trust a report's `readme_only` /
 `markdown_only` flags or `not_applicable` results without independently listing
 the pull request files.
 
