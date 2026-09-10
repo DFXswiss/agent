@@ -474,7 +474,7 @@ def test_graphql_error_is_not_a_successful_transition():
     fake = LifecycleAPI()
     fake.runs.clear()
     fake.graphql_error = True
-    with pytest.raises(GuardError, match="mutation failed"):
+    with pytest.raises(GuardError, match="denied"):
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.transitions
     assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
