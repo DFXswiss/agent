@@ -1,6 +1,7 @@
 """CI completion, ownership, conflicts and transitions through the real guard."""
 import copy
 import json
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -26,6 +27,7 @@ class LifecycleAPI(ApprovalAPI):
         self.checks = []
         self.transitions = []
         self.graphql_error = False
+        self.graphql_noop_draft = False
         self.mutate_during_transition = False
         self.fail_comment_once = False
 
@@ -40,6 +42,10 @@ class LifecycleAPI(ApprovalAPI):
             operation = "convertPullRequestToDraft" if "convertPullRequestToDraft" in payload["query"] else "markPullRequestReadyForReview"
             if self.graphql_error:
                 return 200, {"errors": [{"message": "denied"}]}, {}
+            if self.graphql_noop_draft and operation == "convertPullRequestToDraft":
+                return 200, {"data": {operation: {"pullRequest": {
+                    "id": "PR_example", "isDraft": False,
+                    "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
             self.pull["draft"] = operation == "convertPullRequestToDraft"
             self.transitions.append(self.pull["draft"])
             if self.mutate_during_transition:
@@ -449,6 +455,25 @@ def test_graphql_error_is_not_a_successful_transition():
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.transitions
     assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
+
+
+def test_unchanged_draft_state_still_approves_waiting_fork_run():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    fake.graphql_noop_draft = True
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.workflow_approvals == [
+        {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
+    ]
+    assert fake.posts == [101]
+    assert result.lifecycle["action"] == "unchanged"
+    assert not fake.pull["draft"] and not fake.transitions
+
+
+def test_example_guard_workflow_isolates_concurrency_per_pull_request():
+    text = Path("examples/a38-guard.yml").read_text(encoding="utf-8")
+    assert "github.event.pull_request.number || github.event.issue.number" in text
+    assert "all-open" in text
 
 
 def test_changed_head_during_ready_is_restored_to_draft():

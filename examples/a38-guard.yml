@@ -24,7 +24,9 @@ on:
         default: false
 
 concurrency:
-  group: a38-pr-guard-${{ github.repository }}
+  # One group per pull request so a busy repository does not cancel a pending
+  # fork-approval reconcile. Scheduled all-open uses a separate key.
+  group: a38-pr-guard-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || 'all-open' }}
   cancel-in-progress: false
 
 permissions:

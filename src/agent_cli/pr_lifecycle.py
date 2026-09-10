@@ -283,8 +283,10 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
              + "(input: {pullRequestId: $id}) { pullRequest { id isDraft headRefOid baseRefOid } } }")
     status, data, _ = api.request("POST", "/graphql", body={"query": query, "variables": {"id": node}}, retry=False)
     pull = _field(data, "data", operation, "pullRequest")
-    if status != 200 or _field(data, "errors") or _field(pull, "id") != node or _field(pull, "isDraft") is not draft:
+    if status != 200 or _field(data, "errors") or _field(pull, "id") != node:
         raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
+    if _field(pull, "isDraft") is not draft:
+        raise GuardError("PR lifecycle mutation did not change draft state")
     return pull
 
 
@@ -415,7 +417,12 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             raise GuardError("A38 evidence changed before Ready transition")
         if restore_write_ready and not fresh.write_ready:
             raise GuardError("write-ready waiver changed before Ready transition")
-    changed = _transition(api, pull["node_id"], target == "draft")
+    try:
+        changed = _transition(api, pull["node_id"], target == "draft")
+    except GuardError as exc:
+        if target == "draft" and "did not change draft state" in str(exc):
+            return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
+        raise
     assessment.writes.append(f"pull:{target}")
     if target == "ready" and (changed.get("headRefOid") != snap.head_sha or changed.get("baseRefOid") != snap.base_sha):
         _transition(api, pull["node_id"], True)
