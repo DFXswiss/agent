@@ -637,14 +637,11 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(result.hard_fail)
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
-        self.assertTrue(
-            any(w == "status:skipped:draft" for w in result.writes)
-            or not any(w.startswith("status:create:") for w in result.writes)
-        )
-        self.assertNotIn(
-            status_context_enforce("develop"),
-            [s["context"] for s in fake.statuses],
-        )
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
         body = result.comment_body
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
@@ -680,14 +677,11 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(result.hard_fail)
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
-        self.assertTrue(
-            any(w == "status:skipped:draft" for w in result.writes)
-            or not any(w.startswith("status:create:") for w in result.writes)
-        )
-        self.assertNotIn(
-            status_context_enforce("develop"),
-            [s["context"] for s in fake.statuses],
-        )
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
         body = result.comment_body
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
@@ -746,6 +740,7 @@ class A38GuardE2ETests(unittest.TestCase):
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
         body = result.comment_body
         self.assertTrue(
             "Tool-attribution" in body or "attribution markers" in body
@@ -793,10 +788,82 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(result.hard_fail)
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
-        self.assertNotIn(
-            status_context_enforce("develop"),
-            [s["context"] for s in fake.statuses],
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+
+    def test_draft_hard_fail_status_clears_when_attribution_removed(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(
+            HEAD,
+            BASE,
+            draft=True,
+            title="Normal summary",
+            body=f"Normal summary\n\n{GENERATED_WITH_BANNER}\n",
         )
+        first = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(first.hard_fail)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
+        fake.pull = fake._pull(
+            HEAD,
+            BASE,
+            draft=True,
+            title="Normal summary",
+            body="clean summary",
+        )
+        second = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(second.hard_fail)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertEqual(second.state_for_status, "success")
+        self.assertIn("omitted until Ready", matching[0].get("description") or "")
+
+    def test_draft_does_not_clear_unrelated_enforce_failure(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        enforce = status_context_enforce("develop")
+        fake.statuses.insert(
+            0,
+            {
+                "id": 1,
+                "sha": HEAD,
+                "state": "failure",
+                "description": "fail: no author local-CI report",
+                "context": enforce,
+            },
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.hard_fail)
+        self.assertTrue(any(w == "status:skipped:draft" for w in result.writes))
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertEqual(matching[0]["description"], "fail: no author local-CI report")
+
+    def test_ready_hard_fail_then_draft_clean_clears(self) -> None:
+        fake = FakeAPI()
+        fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
+        first = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(first.draft)
+        self.assertTrue(first.hard_fail)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [_clean_commit(message="feat: ok\n")]
+        second = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(second.draft)
+        self.assertFalse(second.hard_fail)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(matching[0]["state"], "success")
 
     def test_denied_commits_list_raises(self) -> None:
         fake = FakeAPI()
@@ -837,6 +904,12 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(a38_guard._assessment_exit_code(result), 1)
         self.assertTrue(any("message missing" in r for r in result.reasons))
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
 
     def test_blank_commit_message_hard_fails(self) -> None:
         for blank in ("", "   \n"):
@@ -849,6 +922,12 @@ class A38GuardE2ETests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertEqual(a38_guard._assessment_exit_code(result), 1)
                 self.assertTrue(any("message missing" in r for r in result.reasons))
+                self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+                enforce = status_context_enforce("develop")
+                matching = [s for s in fake.statuses if s.get("context") == enforce]
+                self.assertTrue(matching)
+                self.assertEqual(matching[0]["state"], "failure")
+                self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
 
     def test_ai_author_identity_hard_fails(self) -> None:
         fake = FakeAPI()
