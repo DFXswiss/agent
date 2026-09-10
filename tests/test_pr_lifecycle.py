@@ -486,6 +486,17 @@ def test_unchanged_draft_state_still_approves_waiting_fork_run():
     assert '"phase": "planned"' not in states[-1]["body"]
 
 
+def test_changed_head_during_ready_restore_noop_fails_closed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.mutate_during_transition = True
+    fake.graphql_noop_draft = True
+    with pytest.raises(GuardError, match="Draft restore did not take effect"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 def test_changed_head_during_ready_is_restored_to_draft():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
