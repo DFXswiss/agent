@@ -191,12 +191,13 @@ def test_compose_missing_companion_fails_with_checkout_requirement(
     tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
     base, head = _repo(tmp_path / "repo")
-    status = compose.run_compose(
-        json.dumps(_companion_config(head)),
-        cwd=tmp_path / "repo",
-        lock_root=tmp_path / "locks",
-        environ=_env(base, head),
-    )
+    with mock.patch.object(JobRuntime, "acquire_configured_lock") as acquire:
+        status = compose.run_compose(
+            json.dumps(_companion_config(head)),
+            cwd=tmp_path / "repo",
+            lock_root=tmp_path / "locks",
+            environ=_env(base, head),
+        )
     captured = capfd.readouterr()
 
     assert status == 1
@@ -204,7 +205,7 @@ def test_compose_missing_companion_fails_with_checkout_requirement(
         "required environment variable missing: EXAMPLE_SERVICES_DIR "
         f"(expects a clean example/services checkout at {head})"
     ) in captured.err
-    assert not (tmp_path / "locks" / "docker-heavy.lock").exists()
+    acquire.assert_not_called()
 
 
 def test_commands_preserve_primary_and_run_diagnostics(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
