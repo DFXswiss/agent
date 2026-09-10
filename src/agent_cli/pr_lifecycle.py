@@ -290,7 +290,7 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
     if status != 200 or _field(data, "errors") or _field(pull, "id") != node:
         raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
     if _field(pull, "isDraft") is not draft:
-        if draft:
+        if draft and _field(pull, "isDraft") is False:
             raise LifecycleDraftUnchanged
         raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
     return pull
@@ -439,7 +439,10 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     assessment.writes.append(f"pull:{target}")
     if target == "ready" and (changed.get("headRefOid") != snap.head_sha or changed.get("baseRefOid") != snap.base_sha):
-        _transition(api, pull["node_id"], True)
+        try:
+            _transition(api, pull["node_id"], True)
+        except LifecycleDraftUnchanged as exc:
+            raise GuardError("pull changed during Ready transition; Draft restore did not take effect") from exc
         raise GuardError("pull changed during Ready transition; restored Draft")
     _complete_transition_comment(api, assessment, record)
     result["reasons"] = final_reasons

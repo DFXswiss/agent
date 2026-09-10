@@ -224,7 +224,10 @@ bypasses review requirements, branch protection or human merge.
 Each transition gets an EN/DE comment with the concrete reasons in collapsed
 details. A durable intent is written before the mutation and updated after
 success; the next scan repairs the comment if that update was interrupted.
-Unchanged readiness creates no duplicate comment. Authorization records use
+Unchanged readiness creates no duplicate comment. Convert-to-draft that GitHub
+accepts without GraphQL errors but leaves `isDraft` false is not API denial: the
+planned record is closed as applied Ready, readiness stays unchanged, and the
+EN/DE comment says the Draft conversion did not take effect. Authorization records use
 `PR-GUARD:CI-AUTH:v1`; transition records use `PR-GUARD:LIFECYCLE:v1`. Only the
 authenticated bot's numeric user ID can supply these records. Dry run performs
 no writes, including audit comments.
@@ -245,7 +248,8 @@ their Ready handlers do not repeat already-requested CI.
 Head/base, configuration, evidence and CI are refreshed before promotion.
 GitHub does not offer an atomic CI-and-readiness transaction; subsequent changes
 are corrected by the next reconciliation. A head/base change returned by the
-Ready mutation immediately restores Draft. API denial fails explicitly and is
+Ready mutation immediately restores Draft. If that restore does not change
+`isDraft`, the scan fails explicitly. API denial fails explicitly and is
 not a successful transition. Neither this code nor its configuration is active
 until the trusted installation is deployed.
 

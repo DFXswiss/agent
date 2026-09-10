@@ -456,6 +456,19 @@ def test_graphql_error_is_not_a_successful_transition():
     assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
 
 
+def test_graphql_error_still_approves_then_fails_closed():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    fake.graphql_error = True
+    with pytest.raises(GuardError, match="mutation failed"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert not fake.transitions
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert states and '"phase": "planned"' in states[-1]["body"]
+    assert '"phase": "applied"' not in states[-1]["body"]
+
+
 def test_unchanged_draft_state_still_approves_waiting_fork_run():
     fake = LifecycleAPI()
     fake.runs[0].update(status="completed", conclusion="action_required")
