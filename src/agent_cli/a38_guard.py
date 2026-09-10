@@ -2219,6 +2219,14 @@ def publish_assessment(
     return assessment
 
 
+def _apply_guard_side_effects(api: GitHubApi, assessment: Assessment, *, dry_run: bool) -> None:
+    """Authorize waiting fork runs, then apply Ready/Draft. Approval is independent of lifecycle."""
+    from .pr_lifecycle import reconcile_lifecycle
+    from .workflow_approval import approve_workflow_runs
+    assessment.workflow_approvals = approve_workflow_runs(api, assessment, dry_run=dry_run)
+    assessment.lifecycle = reconcile_lifecycle(api, assessment, dry_run=dry_run)
+
+
 def reconcile_pull(
     api: GitHubApi,
     repo: str,
@@ -2251,16 +2259,10 @@ def reconcile_pull(
                 elif dry_run:
                     assessment.writes.append("dry-run")
                 if not assessment.closed:
-                    from .pr_lifecycle import reconcile_lifecycle
-                    assessment.lifecycle = reconcile_lifecycle(api, assessment, dry_run=True)
-                    from .workflow_approval import approve_workflow_runs
-                    assessment.workflow_approvals = approve_workflow_runs(api, assessment, dry_run=True)
+                    _apply_guard_side_effects(api, assessment, dry_run=True)
                 return assessment
             published = publish_assessment(api, assessment)
-            from .pr_lifecycle import reconcile_lifecycle
-            published.lifecycle = reconcile_lifecycle(api, published)
-            from .workflow_approval import approve_workflow_runs
-            published.workflow_approvals = approve_workflow_runs(api, published)
+            _apply_guard_side_effects(api, published, dry_run=False)
             return published
         except GuardError as exc:
             if "changed before publish" in str(exc):

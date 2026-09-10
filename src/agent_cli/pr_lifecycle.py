@@ -276,6 +276,10 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     return reasons, latest
 
 
+class LifecycleDraftUnchanged(Exception):
+    """GraphQL accepted convertToDraft but isDraft is still false."""
+
+
 def _transition(api: Any, node: str, draft: bool) -> Mapping:
     from .a38_guard import GuardError
     operation = "convertPullRequestToDraft" if draft else "markPullRequestReadyForReview"
@@ -283,7 +287,11 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
              + "(input: {pullRequestId: $id}) { pullRequest { id isDraft headRefOid baseRefOid } } }")
     status, data, _ = api.request("POST", "/graphql", body={"query": query, "variables": {"id": node}}, retry=False)
     pull = _field(data, "data", operation, "pullRequest")
-    if status != 200 or _field(data, "errors") or _field(pull, "id") != node or _field(pull, "isDraft") is not draft:
+    if status != 200 or _field(data, "errors") or _field(pull, "id") != node:
+        raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
+    if _field(pull, "isDraft") is not draft:
+        if draft and _field(pull, "isDraft") is False:
+            raise LifecycleDraftUnchanged
         raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
     return pull
 
@@ -415,10 +423,26 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             raise GuardError("A38 evidence changed before Ready transition")
         if restore_write_ready and not fresh.write_ready:
             raise GuardError("write-ready waiver changed before Ready transition")
-    changed = _transition(api, pull["node_id"], target == "draft")
+    try:
+        changed = _transition(api, pull["node_id"], target == "draft")
+    except LifecycleDraftUnchanged:
+        record["phase"] = "applied"
+        record["state"] = "ready"
+        _save_record(
+            api,
+            assessment,
+            STATE_MARKER,
+            record,
+            "Readiness is unchanged; convert to Draft did not take effect.",
+            "Der Status bleibt unverändert; die Umstellung auf Draft hat nicht gegriffen.",
+        )
+        return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     assessment.writes.append(f"pull:{target}")
     if target == "ready" and (changed.get("headRefOid") != snap.head_sha or changed.get("baseRefOid") != snap.base_sha):
-        _transition(api, pull["node_id"], True)
+        try:
+            _transition(api, pull["node_id"], True)
+        except LifecycleDraftUnchanged as exc:
+            raise GuardError("pull changed during Ready transition; Draft restore did not take effect") from exc
         raise GuardError("pull changed during Ready transition; restored Draft")
     _complete_transition_comment(api, assessment, record)
     result["reasons"] = final_reasons

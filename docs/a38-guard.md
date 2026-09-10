@@ -224,14 +224,19 @@ bypasses review requirements, branch protection or human merge.
 Each transition gets an EN/DE comment with the concrete reasons in collapsed
 details. A durable intent is written before the mutation and updated after
 success; the next scan repairs the comment if that update was interrupted.
-Unchanged readiness creates no duplicate comment. Authorization records use
+Unchanged readiness creates no duplicate comment. Convert-to-draft that GitHub
+accepts without GraphQL errors but leaves `isDraft` false is not API denial: the
+planned record is closed as applied Ready, readiness stays unchanged, and the
+EN/DE comment says the Draft conversion did not take effect. Authorization records use
 `PR-GUARD:CI-AUTH:v1`; transition records use `PR-GUARD:LIFECYCLE:v1`. Only the
 authenticated bot's numeric user ID can supply these records. Dry run performs
 no writes, including audit comments.
 
 The adopting workflow owns runner routing, `actions` and `checks` read access,
 `pull-requests`/`issues`/`statuses` write access, and `actions: write` for initial
-workflow approval. Serialize **all** event and scheduled invocations with one
+workflow approval. The guard authorizes waiting allowlisted fork runs **before**
+it mutates Ready or Draft, so a failed convert-to-draft cannot skip approval.
+Serialize **all** event and scheduled invocations with one
 repository-wide concurrency group and `cancel-in-progress: false`. Run trusted
 `--all-open` reconciliation on a repository-configured schedule (for example every
 five minutes). GitHub may delay scheduled execution; this is not a real-time SLA.
@@ -243,7 +248,8 @@ their Ready handlers do not repeat already-requested CI.
 Head/base, configuration, evidence and CI are refreshed before promotion.
 GitHub does not offer an atomic CI-and-readiness transaction; subsequent changes
 are corrected by the next reconciliation. A head/base change returned by the
-Ready mutation immediately restores Draft. API denial fails explicitly and is
+Ready mutation immediately restores Draft. If that restore does not change
+`isDraft`, the scan fails explicitly. API denial fails explicitly and is
 not a successful transition. Neither this code nor its configuration is active
 until the trusted installation is deployed.
 

@@ -26,6 +26,7 @@ class LifecycleAPI(ApprovalAPI):
         self.checks = []
         self.transitions = []
         self.graphql_error = False
+        self.graphql_noop_draft = False
         self.mutate_during_transition = False
         self.fail_comment_once = False
 
@@ -40,6 +41,10 @@ class LifecycleAPI(ApprovalAPI):
             operation = "convertPullRequestToDraft" if "convertPullRequestToDraft" in payload["query"] else "markPullRequestReadyForReview"
             if self.graphql_error:
                 return 200, {"errors": [{"message": "denied"}]}, {}
+            if self.graphql_noop_draft and operation == "convertPullRequestToDraft":
+                return 200, {"data": {operation: {"pullRequest": {
+                    "id": "PR_example", "isDraft": False,
+                    "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
             self.pull["draft"] = operation == "convertPullRequestToDraft"
             self.transitions.append(self.pull["draft"])
             if self.mutate_during_transition:
@@ -449,6 +454,47 @@ def test_graphql_error_is_not_a_successful_transition():
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.transitions
     assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
+
+
+def test_graphql_error_still_approves_then_fails_closed():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    fake.graphql_error = True
+    with pytest.raises(GuardError, match="mutation failed"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert not fake.transitions
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert states and '"phase": "planned"' in states[-1]["body"]
+    assert '"phase": "applied"' not in states[-1]["body"]
+
+
+def test_unchanged_draft_state_still_approves_waiting_fork_run():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    fake.graphql_noop_draft = True
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.workflow_approvals == [
+        {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
+    ]
+    assert fake.posts == [101]
+    assert result.lifecycle["action"] == "unchanged"
+    assert not fake.pull["draft"] and not fake.transitions
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert states and '"phase": "applied"' in states[-1]["body"]
+    assert '"state": "ready"' in states[-1]["body"]
+    assert '"phase": "planned"' not in states[-1]["body"]
+
+
+def test_changed_head_during_ready_restore_noop_fails_closed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.mutate_during_transition = True
+    fake.graphql_noop_draft = True
+    with pytest.raises(GuardError, match="Draft restore did not take effect"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
 
 
 def test_changed_head_during_ready_is_restored_to_draft():
