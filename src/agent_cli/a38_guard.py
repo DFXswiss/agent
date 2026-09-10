@@ -2190,7 +2190,21 @@ def publish_assessment(
             require_report=True,
         )
     elif assessment.draft and not assessment.hard_fail:
-        assessment.writes.append("status:skipped:draft")
+        context = assessment.context or status_context_enforce(assessment.base_ref)
+        prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
+        prev_state = (prev or {}).get("state") if isinstance(prev, dict) else None
+        if prev_state in {"failure", "error"}:
+            # GitHub statuses are append-only per context/SHA. Clear a stale
+            # hard_fail so Checks is not stuck red after the violation is gone.
+            _post_status(
+                context,
+                "success",
+                assessment.description
+                or truncate_desc("draft: A38 status omitted until Ready"),
+                require_report=False,
+            )
+        else:
+            assessment.writes.append("status:skipped:draft")
     else:
         _post_status(
             assessment.context or status_context_enforce(assessment.base_ref),

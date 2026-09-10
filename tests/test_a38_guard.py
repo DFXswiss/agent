@@ -793,6 +793,35 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "failure")
 
+    def test_draft_hard_fail_status_clears_when_attribution_removed(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(
+            HEAD,
+            BASE,
+            draft=True,
+            title="Normal summary",
+            body=f"Normal summary\n\n{GENERATED_WITH_BANNER}\n",
+        )
+        first = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(first.hard_fail)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        fake.pull = fake._pull(
+            HEAD,
+            BASE,
+            draft=True,
+            title="Normal summary",
+            body="clean summary",
+        )
+        second = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(second.hard_fail)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertIn("omitted until Ready", matching[0].get("description") or "")
+
     def test_denied_commits_list_raises(self) -> None:
         fake = FakeAPI()
         fake.denied_prefixes.append(f"/repos/{REPO}/pulls/1/commits")
