@@ -1153,9 +1153,9 @@ def build_comment_body(assessment: Assessment) -> str:
         return (
             f"{GUARD_MARKER}\n\n"
             "EN:\n"
-            f"Thanks for your contribution! This repository follows the A38 quality rules: {url}\n\n"
+            f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n\n"
             "DE:\n"
-            f"Danke für deinen Beitrag! In diesem Repository gelten die A38-Qualitätsregeln: {url}\n"
+            f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
         )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"

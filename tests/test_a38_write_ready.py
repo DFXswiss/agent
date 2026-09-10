@@ -115,6 +115,10 @@ class WriteReadyWaiverTests(unittest.TestCase):
         body = result.comment_body
         self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38 quality rules", body)
+        self.assertIn(f"[A38 quality rules]({result.standard_url})", body)
+        self.assertIn(f"[A38-Qualitätsregeln]({result.standard_url})", body)
+        self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
+        self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
         self.assertNotIn("still required before Ready", body)
         self.assertNotIn("write collaborator marked Ready", body)
         self.assertNotIn("because the author has write", body)
@@ -358,6 +362,10 @@ class WriteReadyWaiverTests(unittest.TestCase):
         body = result.comment_body
         self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38 quality rules", body)
+        self.assertIn(f"[A38 quality rules]({result.standard_url})", body)
+        self.assertIn(f"[A38-Qualitätsregeln]({result.standard_url})", body)
+        self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
+        self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
         self.assertNotIn("still required before Ready", body)
         self.assertNotIn("Ready actor", body)
         self.assertNotIn("not required", body)
