@@ -31,6 +31,7 @@ from .allow import (
     requires_evidence,
 )
 from .chain import (
+    CLOSE_STATUSES,
     NO_AUTO_CLOSE,
     close_allowed,
     handoff_prompt,
@@ -775,7 +776,7 @@ def cmd_checklist(args: list[str]) -> None:
     evidence = flag(rest, "--evidence")
     if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
         die(f"unavailable is not allowed for {key}")
-    if requires_evidence(status, key) and (evidence is None or evidence == ""):
+    if requires_evidence(status, key) and not (evidence or "").strip():
         die(f"{status} requires --evidence")
     deviation_declared = _bool_flag(rest, "--deviation-declared")
     deviation_granted = _bool_flag(rest, "--deviation-granted")
@@ -2595,7 +2596,7 @@ def cmd_close_step(args: list[str]) -> None:
             "Usage: agent close-step --task ID --key KEY --source script|human|runner "
             "--evidence TEXT [--status ja|n_a|unavailable] [--head SHA]"
         )
-    if status not in ("ja", "n_a", "unavailable"):
+    if status not in CLOSE_STATUSES:
         die("close-step --status must be ja|n_a|unavailable")
     if status == "n_a" and key not in N_A_ALLOWED:
         die(f"n_a is not allowed for {key}")

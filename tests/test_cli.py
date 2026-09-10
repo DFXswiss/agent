@@ -196,6 +196,30 @@ def test_n_a_without_evidence_dies(tmp_path: Path, capsys: pytest.CaptureFixture
         )
 
 
+def test_unavailable_whitespace_evidence_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="unavailable requires --evidence"):
+        run(
+            tmp_path,
+            [
+                "checklist",
+                "set",
+                "--task",
+                tid,
+                "--key",
+                "grok_pr_quality",
+                "--status",
+                "unavailable",
+                "--source",
+                "script",
+                "--evidence",
+                "   ",
+            ],
+        )
+
+
 def test_check_fail_sets_task_failed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
