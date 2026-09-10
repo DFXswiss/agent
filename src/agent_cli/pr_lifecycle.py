@@ -375,8 +375,18 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         _, authorization = _own_record(api, assessment, AUTH_MARKER)
         identity = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha, "base": snap.base_sha}
         owned = authorization.get("runs", [])
-        if (all(authorization.get(k) == v for k, v in identity.items()) and owned
-                and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id") for r in owned)):
+        if not isinstance(owned, list):
+            owned = []
+        # Ignored and otherwise absent workflows are not in `latest`. A stale
+        # AUTH row for them must not block Ready after they were dropped from
+        # the live inventory.
+        current = [
+            r for r in owned
+            if isinstance(r, Mapping) and r.get("workflow") in latest
+        ]
+        if (all(authorization.get(k) == v for k, v in identity.items()) and current
+                and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id")
+                        for r in current)):
             fresh = assess_pull(
                 api, assessment.repo, assessment.pr, dry_run=True,
                 event_actor=assessment.event_actor,
