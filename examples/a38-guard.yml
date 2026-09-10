@@ -28,10 +28,12 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
+  checks: read
 
 jobs:
   guard:

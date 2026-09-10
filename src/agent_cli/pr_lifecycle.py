@@ -287,12 +287,19 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
              + "(input: {pullRequestId: $id}) { pullRequest { id isDraft headRefOid baseRefOid } } }")
     status, data, _ = api.request("POST", "/graphql", body={"query": query, "variables": {"id": node}}, retry=False)
     pull = _field(data, "data", operation, "pullRequest")
-    if status != 200 or _field(data, "errors") or _field(pull, "id") != node:
-        raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
+    errors = _field(data, "errors")
+    detail = ""
+    if isinstance(errors, list) and errors and isinstance(errors[0], Mapping):
+        detail = f": {errors[0].get('message') or 'graphql error'}"
+    if status != 200 or errors or _field(pull, "id") != node:
+        raise GuardError(f"PR lifecycle mutation failed (HTTP {status}){detail}")
     if _field(pull, "isDraft") is not draft:
         if draft and _field(pull, "isDraft") is False:
             raise LifecycleDraftUnchanged
-        raise GuardError(f"PR lifecycle mutation failed (HTTP {status})")
+        raise GuardError(
+            f"PR lifecycle mutation failed (HTTP {status}): isDraft unchanged; "
+            "GITHUB_TOKEN needs contents: write for markPullRequestReadyForReview"
+        )
     return pull
 
 

@@ -5,7 +5,7 @@ description: >
 
 inputs:
   token:
-    description: GitHub token (contents read, issues write, pull-requests write, statuses write; actions/checks read for lifecycle, actions write for workflow approval)
+    description: GitHub token (contents write for markPullRequestReadyForReview, issues write, pull-requests write, statuses write; actions/checks read for lifecycle, actions write for workflow approval)
     required: true
   repository:
     description: owner/name override (workflow_dispatch / standalone)
