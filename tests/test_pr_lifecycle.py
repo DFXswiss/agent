@@ -308,12 +308,13 @@ def _e2e_pass_runs() -> list[dict]:
 def test_skipped_github_e2e_is_ready_when_a38_e2e_passed():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
+    fake.pull["base"]["repo"]["private"] = True
     fake.own_authorization()
     fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
     fake.set_pr_guard_config(fake.config)
     fake.comments = [c for c in fake.comments if c.get("user", {}).get("id") != AUTHOR_ID]
     fake.add_author_report(
-        _report_comment(extra_runs=_e2e_pass_runs()),
+        _report_comment(private=True, extra_runs=_e2e_pass_runs()),
         updated_at="2026-09-05T12:00:00Z",
         cid=21,
     )
@@ -332,11 +333,12 @@ def test_skipped_github_e2e_is_ready_when_a38_e2e_passed():
 
 def test_failed_github_e2e_still_blocks_when_a38_e2e_passed():
     fake = LifecycleAPI()
+    fake.pull["base"]["repo"]["private"] = True
     fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
     fake.set_pr_guard_config(fake.config)
     fake.comments = [c for c in fake.comments if c.get("user", {}).get("id") != AUTHOR_ID]
     fake.add_author_report(
-        _report_comment(extra_runs=_e2e_pass_runs()),
+        _report_comment(private=True, extra_runs=_e2e_pass_runs()),
         updated_at="2026-09-05T12:00:00Z",
         cid=21,
     )
