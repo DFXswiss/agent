@@ -381,7 +381,12 @@ Without the skill, those tables and loops do not run. The session can still regi
 
 Person-facing CLI for the spine stays `agent work` / table `open_work`. Catalog rows are `activity` / `agent activity`. The website key `work` remains `open_work`. Do not collapse those names.
 
-Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` with an explicit `source`. `done` on a task still requires the workflow checklist and both summary sentences.
+Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` /
+`unavailable` with an explicit `source`. `ja`, `n_a`, and `unavailable` need
+evidence. `unavailable` is only for the four PR-gate keys (`grok_pr_quality`,
+`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`); it is not `n_a` and it
+blocks `done`. `done` on a task still requires the workflow checklist and both
+summary sentences.
 
 ## 16. CLI surface
 

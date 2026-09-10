@@ -68,10 +68,12 @@ Review lanes execute no software (no tests, builds, or servers).
   is wrong in a sentence. Leave out `STATUS=`, session ids and anything else that
   only means something inside the runner — it reaches a human who has none of that
   context, and it buries the finding it is printed next to.
-- If a vendor cannot run, record `unavailable`, set the task to
-  `gate-blocked`, then close the matching gate checklist key with
-  `close-step --status unavailable` and evidence. `cmd_gate` does not write the
-  checklist. Do not record `approved`. Do not substitute another vendor.
+- If a vendor cannot run, record `unavailable` with `agent gate record`. That
+  sets the task to `gate-blocked` only on workflows `implement`,
+  `resolve-conflicts`, and `review`, and only from state `pr-review` or
+  `pushing`. It does not write the checklist. Then close the matching gate
+  checklist key with `close-step --status unavailable` and evidence. Do not
+  record `approved`. Do not substitute another vendor.
 
 Zero findings only after an explicit complete pass.
 Empty, partial, timeout, or unavailable output is not zero findings.
