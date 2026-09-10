@@ -112,8 +112,12 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertEqual(result.status, "pass")
         self.assertTrue(result.draft)
         self.assertEqual(result.write_ready_reason, "ready by write collaborator")
-        self.assertIn("write collaborator marked Ready", result.comment_body)
-        self.assertNotIn("because the author has write", result.comment_body)
+        body = result.comment_body
+        self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("A38 quality rules", body)
+        self.assertNotIn("still required before Ready", body)
+        self.assertNotIn("write collaborator marked Ready", body)
+        self.assertNotIn("because the author has write", body)
 
     def test_empty_timeline_event_sender_grants_waiver(self) -> None:
         fake = LifecycleAPI()
@@ -329,7 +333,7 @@ class WriteReadyWaiverTests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertFalse(result.write_ready)
 
-    def test_draft_author_write_no_blocking_status_and_comment_waives_report(self) -> None:
+    def test_draft_author_write_no_blocking_status_and_comment_is_greeting_only(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)
         fake.permissions["author"] = {
@@ -352,11 +356,12 @@ class WriteReadyWaiverTests(unittest.TestCase):
         )
         self.assertEqual(a38_guard._assessment_exit_code(result), 0)
         body = result.comment_body
+        self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("A38 quality rules", body)
         self.assertNotIn("still required before Ready", body)
         self.assertNotIn("Ready actor", body)
-        self.assertIn("not required", body)
-        self.assertIn("write", body.lower())
-        self.assertIn("optional for this write-collaborator waiver", body)
+        self.assertNotIn("not required", body)
+        self.assertNotIn("optional for this write-collaborator waiver", body)
 
     def test_author_write_does_not_waive_workflow_problems(self) -> None:
         fake = FakeAPI()

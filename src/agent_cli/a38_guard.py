@@ -51,10 +51,22 @@ LOCAL_CI_HINT_RE = re.compile(r"DFX-LOCAL-CI", re.IGNORECASE)
 HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 WORKFLOW_FILE_RE = re.compile(r"^\.github/workflows/[^/]+\.(yml|yaml)$")
+_AI_TOOL_TOKEN = r"claude|anthropic|copilot|cursor|chatgpt|openai|gemini|grok|codex"
+_COAUTHOR_LINE_RE = re.compile(r"(?im)^[ \t]*Co-Authored-By:\s*(.+?)\s*$")
+_TRAILER_EMAIL_RE = re.compile(r"<([^>]+)>")
+_SESSION_HEADER_RE = re.compile(r"(?im)^[ \t]*Claude-Session:")
+_GENERATED_WITH_TOKEN_RE = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_])generated[ \t]+with\b[^\n]*\b(?:{_AI_TOOL_TOKEN})\b"
+)
+_ANTHROPIC_EMAIL_RE = re.compile(r"(?i)noreply@anthropic\.com\Z")
+_AI_TOOL_WORD_RE = re.compile(rf"(?i)\b(?:{_AI_TOOL_TOKEN})\b")
 GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 # Public numeric id for github-actions[bot]; used only after /user is unavailable.
 GITHUB_ACTIONS_BOT_ID = 41898282
 MAX_COMMENT_PAGES_ITEMS = 2000
+# GitHub's "List commits on a pull request" endpoint returns at most 250
+# commits. Hitting the cap is treated as truncation (fail closed).
+PULL_COMMITS_API_CAP = 250
 MAX_STATUS_DESC = 140
 MAX_COMMENT_BODY = 12000
 MAX_FILE_BYTES = 1024 * 1024
@@ -102,6 +114,8 @@ class PullSnapshot:
     default_branch: str = ""
     # True only when GitHub reports draft is JSON true; missing/None/False → not draft.
     draft: bool = False
+    title: str = ""
+    body: str = ""
 
 
 @dataclass(frozen=True)
@@ -170,6 +184,9 @@ class Assessment:
     write_ready_reason: str = ""
     # In-memory webhook sender for this reconcile; not serialized.
     event_actor: tuple[int, str] | None = None
+    hard_fail: bool = False
+    title: str = ""
+    body: str = ""
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -202,6 +219,7 @@ class Assessment:
             "draft": self.draft,
             "write_ready": self.write_ready,
             "write_ready_reason": self.write_ready_reason,
+            "hard_fail": self.hard_fail,
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
             "writes": list(self.writes),
@@ -354,6 +372,58 @@ def looks_like_report(body: str | None) -> bool:
     if LOCAL_CI_BEGIN in body or LOCAL_CI_END in body:
         return True
     return LOCAL_CI_HINT_RE.search(body) is not None
+
+
+def _coauthor_line_is_ai(text: str) -> bool:
+    """True when a Co-Authored-By line names an AI tool or the Anthropic noreply mail.
+
+    Tool tokens are matched in the display-name portion only, not in mailbox domains.
+    """
+    for match in _COAUTHOR_LINE_RE.finditer(text):
+        rest = match.group(1)
+        email_m = _TRAILER_EMAIL_RE.search(rest)
+        if email_m:
+            email = email_m.group(1).strip()
+            name = rest[: email_m.start()].strip()
+        else:
+            stripped = rest.strip()
+            looks_like_email = "@" in stripped and " " not in stripped
+            email = stripped if looks_like_email else ""
+            name = "" if looks_like_email else stripped
+        if email and _ANTHROPIC_EMAIL_RE.fullmatch(email):
+            return True
+        if name and _AI_TOOL_WORD_RE.search(name):
+            return True
+    return False
+
+
+def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
+    """Return reason strings for AI tool-attribution markers in ``text``.
+
+    Pure: no I/O. Empty when ``text`` is missing or clean. ``source`` is a short
+    location label included in each reason (e.g. ``PR body``, ``commit abcdef0
+    message``).
+    """
+    if not isinstance(text, str):
+        return []
+    reasons: list[str] = []
+    if _coauthor_line_is_ai(text):
+        reasons.append(f"{source}: AI co-author trailer")
+    if _SESSION_HEADER_RE.search(text):
+        reasons.append(f"{source}: AI session header")
+    if _GENERATED_WITH_TOKEN_RE.search(text):
+        reasons.append(f"{source}: generated-with banner")
+    source_l = source.lower()
+    is_identity = "author" in source_l or "committer" in source_l
+    if is_identity:
+        stripped = text.strip()
+        looks_like_email = "@" in stripped and " " not in stripped and "<" not in stripped
+        if looks_like_email:
+            if _ANTHROPIC_EMAIL_RE.fullmatch(stripped):
+                reasons.append(f"{source}: AI author identity")
+        elif _AI_TOOL_WORD_RE.search(text):
+            reasons.append(f"{source}: AI author identity")
+    return reasons
 
 
 def pick_latest_author_report(
@@ -661,6 +731,12 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
     )
     # Fail closed for the draft exemption: only JSON true is draft.
     draft = data.get("draft") is True
+    title = data.get("title")
+    body = data.get("body")
+    if not isinstance(title, str):
+        title = ""
+    if not isinstance(body, str):
+        body = ""
     return PullSnapshot(
         repo=repo,
         number=number,
@@ -675,7 +751,70 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
         head_repo=head_repository,
         default_branch=default_branch,
         draft=draft,
+        title=title,
+        body=body,
     )
+
+
+def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str, Any]]:
+    """Return every commit object on the pull request (data only; never execute).
+
+    GitHub lists at most 250 pull-request commits. Reaching that cap is
+    treated as a truncated list: fail closed instead of scanning a prefix.
+    """
+    repo = _validate_repo(repo)
+    items = api.paginate(f"/repos/{repo}/pulls/{number}/commits")
+    if len(items) >= PULL_COMMITS_API_CAP:
+        raise GuardError(
+            "pull commit list truncated at GitHub 250-commit cap; refusing partial scan"
+        )
+    commits: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise GuardError("commit payload is not an object")
+        commits.append(item)
+    return commits
+
+
+def _commit_attribution_reasons(commit: Mapping[str, Any]) -> list[str]:
+    """Collect tool-attribution reasons from one commits-API payload item."""
+    sha_raw = commit.get("sha")
+    sha7 = sha_raw[:7] if isinstance(sha_raw, str) and sha_raw else "unknown"
+    reasons: list[str] = []
+    inner = commit.get("commit")
+    inner_dict: Mapping[str, Any] | None
+    message = inner.get("message") if isinstance(inner, dict) else None
+    if not isinstance(message, str) or not message.strip():
+        reasons.append(f"commit {sha7} message missing")
+        inner_dict = inner if isinstance(inner, dict) else None
+    else:
+        reasons.extend(
+            find_tool_attribution(message, source=f"commit {sha7} message")
+        )
+        inner_dict = inner
+    if isinstance(inner_dict, Mapping):
+        for role in ("author", "committer"):
+            person = inner_dict.get(role)
+            if isinstance(person, dict):
+                name = person.get("name") if isinstance(person.get("name"), str) else ""
+                email = person.get("email") if isinstance(person.get("email"), str) else ""
+                if name:
+                    reasons.extend(
+                        find_tool_attribution(name, source=f"commit {sha7} {role}")
+                    )
+                if email:
+                    reasons.extend(
+                        find_tool_attribution(email, source=f"commit {sha7} {role}")
+                    )
+    for role in ("author", "committer"):
+        person = commit.get(role)
+        if isinstance(person, dict):
+            login = person.get("login")
+            if isinstance(login, str):
+                reasons.extend(
+                    find_tool_attribution(login, source=f"commit {sha7} {role}")
+                )
+    return reasons
 
 
 def _parse_default_branch(raw: Any, *, required: bool) -> str:
@@ -1009,94 +1148,102 @@ def _report_accepted(assessment: Assessment) -> bool:
 
 
 def build_comment_body(assessment: Assessment) -> str:
+    if assessment.draft:
+        url = assessment.standard_url or "docs/a38.md"
+        return (
+            f"{GUARD_MARKER}\n\n"
+            "EN:\n"
+            f"Thanks for your contribution! This repository follows the A38 quality rules: {url}\n\n"
+            "DE:\n"
+            f"Danke für deinen Beitrag! In diesem Repository gelten die A38-Qualitätsregeln: {url}\n"
+        )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
     if len(problems) > 800:
         problems = problems[:799] + "…"
-    passing = assessment.ok and assessment.status == "pass"
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
-    if assessment.draft:
-        if waiver_report:
-            if assessment.write_ready_reason == "author has write":
-                extra_en = (
-                    " An author local-CI report is not required because the author "
-                    "has write on this repository."
-                )
-                extra_de = (
-                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil der Autor "
-                    "Write auf diesem Repository hat."
-                )
-            elif assessment.write_ready_reason == "markdown-only change set":
-                extra_en = (
-                    " An author local-CI report is not required because every changed "
-                    "path is a markdown file."
-                )
-                extra_de = (
-                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil jede "
-                    "geänderte Datei eine Markdown-Datei ist."
-                )
-            else:
-                extra_en = (
-                    " An author local-CI report is not required because a write "
-                    "collaborator marked Ready."
-                )
-                extra_de = (
-                    " Ein Autor-Local-CI-Report ist nicht erforderlich, weil ein "
-                    "Write-Collaborator Ready gesetzt hat."
-                )
-        elif passing:
-            extra_en = " An author local-CI report is accepted for this head."
-            extra_de = " Ein Autor-Local-CI-Report für diesen Head ist akzeptiert."
-        else:
-            extra_en = " An author local-CI report is still required before Ready."
-            extra_de = " Ein Autor-Local-CI-Report ist vor Ready weiterhin erforderlich."
-        en = (
-            "A38: this pull request is a draft; "
-            "no blocking A38 report status is published until Ready for review."
-            + extra_en
+    missing_msg = any("message missing" in r for r in assessment.reasons)
+    attr_hit = any(
+        "AI co-author" in r
+        or "AI session" in r
+        or "generated-with" in r
+        or "AI author identity" in r
+        for r in assessment.reasons
+    )
+    if assessment.hard_fail and missing_msg and attr_hit:
+        hard_fail_en = (
+            " Tool-attribution or an unscannable commit message fails dfx pr guard. "
+            "Remove those attribution markers or supply a non-empty commit message."
         )
-        de = (
-            "A38: dieser Pull Request ist ein Draft; "
-            "bis Ready for review wird kein blockierender A38-Report-Status veröffentlicht."
-            + extra_de
+        hard_fail_de = (
+            " Tool-Attribution oder eine nicht lesbare Commit-Message lässt dfx pr guard "
+            "fehlschlagen. Attribution-Marker entfernen oder eine nicht-leere Commit-Message liefern."
+        )
+    elif assessment.hard_fail and missing_msg:
+        hard_fail_en = (
+            " An unscannable or empty commit message fails dfx pr guard. "
+            "Supply a non-empty commit message."
+        )
+        hard_fail_de = (
+            " Eine nicht lesbare oder leere Commit-Message lässt dfx pr guard fehlschlagen. "
+            "Eine nicht-leere Commit-Message liefern."
+        )
+    elif assessment.hard_fail:
+        hard_fail_en = (
+            " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "
+            "Remove those attribution markers."
+        )
+        hard_fail_de = (
+            " Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
+            "fehlschlagen. Diese Attribution-Marker müssen entfernt werden."
         )
     else:
-        if passing and _report_accepted(assessment):
-            en_tail = "author local-CI report accepted for this head."
-            de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
-        elif waiver_report:
-            if assessment.write_ready_reason == "author has write":
-                en_tail = (
-                    "author local-CI report not required because the author "
-                    "has write on this repository."
-                )
-                de_tail = (
-                    "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
-                    "Write auf diesem Repository hat."
-                )
-            elif assessment.write_ready_reason == "markdown-only change set":
-                en_tail = (
-                    "author local-CI report not required because every changed "
-                    "path is a markdown file."
-                )
-                de_tail = (
-                    "Autor-Local-CI-Report nicht erforderlich, weil jede "
-                    "geänderte Datei eine Markdown-Datei ist."
-                )
-            else:
-                en_tail = (
-                    "author local-CI report not required because a write "
-                    "collaborator marked Ready."
-                )
-                de_tail = (
-                    "Autor-Local-CI-Report nicht erforderlich, weil ein "
-                    "Write-Collaborator Ready gesetzt hat."
-                )
+        hard_fail_en = ""
+        hard_fail_de = ""
+    if _report_accepted(assessment):
+        en_tail = "author local-CI report accepted for this head."
+        de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
+    elif waiver_report:
+        if assessment.write_ready_reason == "author has write":
+            en_tail = (
+                "author local-CI report not required because the author "
+                "has write on this repository."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil der Autor "
+                "Write auf diesem Repository hat."
+            )
+        elif assessment.write_ready_reason == "markdown-only change set":
+            en_tail = (
+                "author local-CI report not required because every changed "
+                "path is a markdown file."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil jede "
+                "geänderte Datei eine Markdown-Datei ist."
+            )
         else:
-            en_tail = "author local-CI report missing or invalid for this head."
-            de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
-        en = f"A38 {assessment.status}: " + en_tail
-        de = f"A38 {assessment.status}: " + de_tail
+            en_tail = (
+                "author local-CI report not required because a write "
+                "collaborator marked Ready."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil ein "
+                "Write-Collaborator Ready gesetzt hat."
+            )
+    else:
+        en_tail = "author local-CI report missing or invalid for this head."
+        de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
+    en = (
+        (hard_fail_en.lstrip() + " " if hard_fail_en else "")
+        + f"A38 {assessment.status}: "
+        + en_tail
+    )
+    de = (
+        (hard_fail_de.lstrip() + " " if hard_fail_de else "")
+        + f"A38 {assessment.status}: "
+        + de_tail
+    )
     if assessment.mode == "observe":
         en = "Observe mode (advisory, not branch-required). " + en
         de = "Observe-Modus (Hinweis, nicht branch-pflichtig). " + de
@@ -1238,6 +1385,8 @@ def assess_from_parts(
         draft=pull.draft,
         write_ready=bool(write_ready),
         write_ready_reason=write_ready_reason if write_ready else "",
+        title=pull.title,
+        body=pull.body,
         standard_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, POLICY_DOCS),
         policy_url=blob_url(active_policy_repo, active_policy_sha, POLICY_PATH),
         guard_docs_url=blob_url(CENTRAL_REPO, trusted_runtime_revision, GUARD_DOCS),
@@ -1693,6 +1842,8 @@ def _out_of_scope_assessment(
         skip_publish=False,
         dry_run=dry_run,
         draft=snap.draft,
+        title=snap.title,
+        body=snap.body,
     )
     _attach_trusted_config(assessment, trusted)
     return assessment
@@ -1710,6 +1861,8 @@ def _snapshot_matches_assessment(fresh: PullSnapshot, assessment: Assessment) ->
         and fresh.private == assessment.private
         and fresh.state == expected_state
         and fresh.draft == assessment.draft
+        and fresh.title == assessment.title
+        and fresh.body == assessment.body
     )
 
 
@@ -1812,6 +1965,19 @@ def assess_pull(
     assessment.approval_fingerprint = approval
     assessment.event_actor = event_actor
     _attach_trusted_config(assessment, trusted)
+    commits = fetch_pull_commits(api, snap.repo, snap.number)
+    attribution: list[str] = []
+    attribution.extend(find_tool_attribution(snap.title, source="PR title"))
+    attribution.extend(find_tool_attribution(snap.body, source="PR body"))
+    for commit in commits:
+        attribution.extend(_commit_attribution_reasons(commit))
+    if attribution:
+        assessment.ok = False
+        assessment.status = "fail"
+        assessment.reasons = attribution + list(assessment.reasons)
+        assessment.hard_fail = True
+        _status_bits(assessment)
+        assessment.comment_body = build_comment_body(assessment)
     return assessment
 
 
@@ -2304,10 +2470,15 @@ def _load_event(
 
 
 def _assessment_exit_code(assessment: Assessment) -> int:
-    """Closed, observe, and draft enforce skips exit 0; Ready enforce failure exits 1."""
+    """Closed no-ops exit 0. Attribution and unscannable-message hard-fails exit 1
+    even on draft/observe. Missing draft reports still exit 0. Ready enforce
+    failure exits 1."""
+    if assessment.closed:
+        return 0
+    if assessment.hard_fail:
+        return 1
     return 0 if (
-        assessment.closed
-        or assessment.ok
+        assessment.ok
         or assessment.mode == "observe"
         or assessment.draft
     ) else 1
