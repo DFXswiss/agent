@@ -1317,7 +1317,7 @@ def _status_bits(assessment: Assessment) -> None:
         # Rule violations must be red CI on the PR head even while draft.
         assessment.state_for_status = "failure"
         reason = assessment.reasons[0] if assessment.reasons else assessment.status
-        assessment.description = truncate_desc(f"{assessment.status}: {reason}")
+        assessment.description = truncate_desc(f"hard_fail: {reason}")
         return
     if assessment.ok and assessment.status == "pass":
         assessment.state_for_status = "success"
@@ -2193,9 +2193,11 @@ def publish_assessment(
         context = assessment.context or status_context_enforce(assessment.base_ref)
         prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
         prev_state = (prev or {}).get("state") if isinstance(prev, dict) else None
-        if prev_state in {"failure", "error"}:
-            # GitHub statuses are append-only per context/SHA. Clear a stale
-            # hard_fail so Checks is not stuck red after the violation is gone.
+        prev_desc = (prev or {}).get("description") or ""
+        if prev_state == "failure" and prev_desc.startswith("hard_fail:"):
+            # GitHub statuses are append-only per context/SHA. Clear only a
+            # leftover draft hard_fail so Checks is not stuck red after the
+            # violation is gone. Other enforce failures stay.
             _post_status(
                 context,
                 "success",
