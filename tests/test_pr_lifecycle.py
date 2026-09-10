@@ -258,6 +258,30 @@ def test_required_check_matches_reusable_workflow_names(check_name, required, ex
     assert required_check_matches(check_name, required) is expect
 
 
+def test_reusable_prefix_cannot_hide_a_skipped_sibling_required_job():
+    fake = LifecycleAPI()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 30,
+            "name": "Full-stack E2E / setup",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "success",
+        },
+        {
+            "id": 22,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [True]
+
+
 def test_reusable_workflow_required_check_name_allows_auto_ready():
     fake = LifecycleAPI()
     fake.pull["draft"] = True

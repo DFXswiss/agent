@@ -184,8 +184,18 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
         for name in config.get("required_checks", {}).get(path, []):
             matches = [c for c in checks if suite is not None and _field(c, "check_suite", "id") == suite
                        and required_check_matches(c.get("name"), name)]
-            check = max(matches, key=lambda c: c["id"]) if matches else {}
-            if check.get("status") != "completed" or check.get("conclusion") not in accepted_required:
+            latest_by_name: dict[str, Mapping] = {}
+            for candidate in matches:
+                check_name = candidate.get("name")
+                if not isinstance(check_name, str):
+                    continue
+                previous = latest_by_name.get(check_name)
+                if previous is None or candidate.get("id", 0) > previous.get("id", 0):
+                    latest_by_name[check_name] = candidate
+            if not latest_by_name or any(
+                check.get("status") != "completed" or check.get("conclusion") not in accepted_required
+                for check in latest_by_name.values()
+            ):
                 reasons.append(f"Required CI check not green: {path} / {name}")
     newest: dict[tuple, Mapping] = {}
     for check in checks:
