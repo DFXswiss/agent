@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -2616,6 +2617,110 @@ def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.Captur
         )
 
 
+def test_close_step_unavailable_after_gate_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    for key in (
+        "session_registered",
+        "spec_written",
+        "implementer_done",
+        "reviewer_approved",
+        "local_check_pass",
+        "pushed",
+    ):
+        run(
+            tmp_path,
+            [
+                "checklist",
+                "set",
+                "--task",
+                tid,
+                "--key",
+                key,
+                "--status",
+                "ja",
+                "--source",
+                "script",
+                "--evidence",
+                "fixture prerequisite",
+            ],
+        )
+    aid = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+    )
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "unavailable",
+            "--head",
+            "abcdef0",
+            "--agent",
+            aid,
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="Usage: agent close-step"):
+        run(
+            tmp_path,
+            [
+                "close-step",
+                "--task",
+                tid,
+                "--key",
+                "grok_pr_quality",
+                "--source",
+                "script",
+                "--status",
+                "unavailable",
+            ],
+        )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "grok_pr_quality",
+            "--source",
+            "script",
+            "--status",
+            "unavailable",
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    capsys.readouterr()
+
+    store = Store(tmp_path)
+    try:
+        items = [
+            row
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid and row.get("key") == "grok_pr_quality"
+        ]
+    finally:
+        store.close()
+    assert len(items) == 1
+    assert items[0]["status"] == "unavailable"
+
+
 def test_task_state_gate_blocked_and_superseded(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2735,6 +2840,55 @@ def test_same_second_gate_prefers_newer_updated_row() -> None:
         "unavailable",
         "approved",
     ]
+
+
+def test_gate_record_recorded_at_has_six_fractional_digits(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    aid = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+    )
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "approved",
+            "--head",
+            "abcdef0",
+            "--agent",
+            aid,
+        ],
+    )
+    capsys.readouterr()
+
+    store = Store(tmp_path)
+    try:
+        gates = [
+            row for row in store.rows("review_gate") if row.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+    assert len(gates) == 1
+    assert (
+        re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z",
+            gates[0]["recorded_at"],
+        )
+        is not None
+    )
 
 
 def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
