@@ -207,6 +207,14 @@ def test_ignored_workflow_left_in_auth_does_not_block_auto_ready():
     assert fake.transitions == [False]
 
 
+def test_auth_only_ignored_workflow_does_not_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization(runs=[{"run_id": 999, "workflow": GUARD}])
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+
+
 def test_guard_itself_and_superseded_failures_do_not_block():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
