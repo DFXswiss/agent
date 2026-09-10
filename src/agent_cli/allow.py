@@ -74,12 +74,21 @@ GATE_PAIRS = (
     ("codex-pr", "logic", "codex"),
 )
 
+GATE_UNAVAILABLE_KEYS = frozenset(
+    {
+        "grok_pr_quality",
+        "grok_pr_logic",
+        "codex_pr_quality",
+        "codex_pr_logic",
+    }
+)
+
 # Every `ja` needs --evidence (all keys of all workflows).
 JA_EVIDENCE_REQUIRED: frozenset[str] = frozenset(
     key for keys in CHECKLIST_KEYS.values() for key in keys
 )
 
-_TERMINAL_STATES = frozenset({"done", "failed"})
+_TERMINAL_STATES = frozenset({"done", "failed", "superseded"})
 
 
 @dataclass(frozen=True)

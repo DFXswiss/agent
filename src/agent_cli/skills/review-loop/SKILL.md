@@ -34,6 +34,9 @@ agent agent start --session <session-id> --task <uuid> --role reviewer --vendor 
 agent agent finish --id <reviewer-uuid> --verdict approved|rejected
 ```
 
+`round start` only from `open|implementing|reviewing|failed`. Refused from
+`pr-review`, `gate-blocked`, and while a latest gate is `unavailable`.
+
 - Implementer `blocked` → task `failed`. Stop.
 - Reviewer `rejected` → new round (`agent round start`).
 - Reviewer `approved` → close `reviewer_approved` and continue the spine.
@@ -45,5 +48,11 @@ Zero findings only after an explicit complete pass.
 
 This inner loop is not the pull-request review. `reviewer_approved` does not
 close `grok_pr_*` or `codex_pr_*`. A draft plus local tests is not done.
+
+When the ledger task is created after the inner loop, close `implementer_done`
+then `reviewer_approved` as `ja` with evidence from
+`local-check|pushing|pr-review|gate-blocked` without starting a new inner-loop
+agent and without moving state back to `reviewing`. Do not use `n_a` for these
+keys.
 
 Locate these files with `agent skills path`.

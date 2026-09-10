@@ -48,7 +48,22 @@ agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--t
 
 ## Checklist values
 
-Keys are `pending`, `ja`, `nein`, or `n_a`. `ja` and `n_a` need `--evidence`.
+Keys are `pending`, `ja`, `nein`, `n_a`, or `unavailable`. `ja`, `n_a`, and
+`unavailable` need `--evidence`. `unavailable` only on `grok_pr_quality`,
+`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`; it is not `n_a` and it
+blocks `done`. Unavailable is not allowed for other keys.
+
+## Task states
+
+`gate-blocked` is a PR-lane outage. It is not enough for Ready:
+`allow pr-ready` stays `pushing` / `pr-review`. Cannot mark `done` from
+`gate-blocked`.
+
+`superseded` is the terminal state for obsolete or never-started work. It is
+not `failed`, does not require `spec_written` / `pushed`, and `session close`
+treats it like `done` / `failed`. Cannot supersede a `done` task.
+
+`failed` stays proven failure. Do not reuse it for obsolete tasks.
 
 ## Workflow keys
 
