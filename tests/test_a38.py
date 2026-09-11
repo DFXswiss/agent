@@ -239,6 +239,32 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(A38Error, "unknown keys"):
             load_policy(json.dumps(raw))
 
+    def test_command_job_lock_round_trip(self) -> None:
+        raw = _policy_dict()
+        raw["jobs"][0]["lock"] = "jest-full"
+        policy = load_policy(json.dumps(raw))
+        self.assertEqual(policy["jobs"][0]["lock"], "jest-full")
+
+    def test_command_job_rejects_empty_lock(self) -> None:
+        raw = _policy_dict()
+        raw["jobs"][0]["lock"] = ""
+        with self.assertRaisesRegex(A38Error, "lock name"):
+            load_policy(json.dumps(raw))
+
+    def test_command_job_rejects_illegal_lock_name(self) -> None:
+        raw = _policy_dict()
+        raw["jobs"][0]["lock"] = "jest full"
+        with self.assertRaisesRegex(A38Error, "lock name"):
+            load_policy(json.dumps(raw))
+
+    def test_executor_job_rejects_sibling_lock(self) -> None:
+        raw = _policy_dict(
+            jobs=[_commands_lock_job(ident="jest", gh_job="jest", lock="jest-full")]
+        )
+        raw["jobs"][0]["lock"] = "jest-full"
+        with self.assertRaisesRegex(A38Error, "executor.config"):
+            load_policy(json.dumps(raw))
+
     def test_rejects_empty_jobs(self) -> None:
         with self.assertRaisesRegex(A38Error, "non-empty"):
             load_policy(_policy_text(jobs=[]))

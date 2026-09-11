@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .a38_job_adapters import ADAPTERS
 from .readme_only import git_is_markdown_only, git_is_readme_only
 from .a38_job_adapters.commands import parse_commands_config
-from .a38_job_adapters.common import BUILTIN_UNSET, DOCKER_HEAVY_LOCK, JobError
+from .a38_job_adapters.common import BUILTIN_UNSET, DOCKER_HEAVY_LOCK, LOCK_NAME_RE, JobError
 from .a38_job_adapters.compose import companion_env_missing, parse_compose_config
 from .a38_job_adapters.http_smoke import parse_http_smoke_config
 from .a38_job_adapters.immutable import parse_immutable_config
@@ -226,13 +226,18 @@ def _require_job_keys(obj: Mapping[str, Any], label: str) -> str:
     inputs = keys & {"command", "executor"}
     if len(inputs) != 1:
         raise A38Error(f"{label} must contain exactly one of command or executor")
-    return inputs.pop()
+    input_key = inputs.pop()
+    if input_key == "executor" and "lock" in keys:
+        raise A38Error(f"{label} executor jobs must set lock in executor.config, not as a sibling")
+    return input_key
 
 
 def _optional_job_lock(value: Any, label: str) -> str | None:
-    if value is None or isinstance(value, str):
-        return value
-    raise A38Error(f"{label} must be a string or null")
+    if value is None:
+        return None
+    if not isinstance(value, str) or LOCK_NAME_RE.fullmatch(value) is None:
+        raise A38Error(f"{label} must be a lock name or null")
+    return value
 
 
 def _executor_command_and_lock(value: Any, label: str) -> tuple[str, str | None]:
@@ -266,11 +271,6 @@ def _executor_command_and_lock(value: Any, label: str) -> tuple[str, str | None]
     if lock is None and adapter in _DOCKER_DEFAULT_LOCK_ADAPTERS:
         lock = DOCKER_HEAVY_LOCK
     return command, lock
-
-
-def _executor_command(value: Any, label: str) -> str:
-    command, _lock = _executor_command_and_lock(value, label)
-    return command
 
 
 def load_policy(text: str) -> dict:
