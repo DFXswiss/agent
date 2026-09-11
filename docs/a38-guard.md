@@ -223,9 +223,11 @@ promotion. An unknown merge status neither invents a conflict nor permits Ready.
 This feature changes readiness only; it creates no review approvals and never
 bypasses review requirements, branch protection or human merge.
 
-Each transition gets an EN/DE comment with the concrete reasons in collapsed
-details. A durable intent is written before the mutation and updated after
-success; the next scan repairs the comment if that update was interrupted.
+Each transition gets an EN/DE comment that names the blockers that actually
+apply (never an "or" between CI and merge conflicts); the full reason list
+remains in collapsed details. A durable intent is written before the mutation
+and updated after success; the next scan repairs the comment if that update
+was interrupted.
 Unchanged readiness creates no duplicate comment. Convert-to-draft that GitHub
 accepts without GraphQL errors but leaves `isDraft` false is not API denial: the
 planned record is closed as applied Ready, readiness stays unchanged, and the

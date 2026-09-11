@@ -108,26 +108,125 @@ def _save_record(api: Any, assessment: Any, marker: str, record: dict,
     assessment.writes.append("lifecycle:comment")
 
 
-def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> None:
-    draft = record["state"] == "draft"
-    restore = (not draft) and bool(record.get("reasons"))
-    if draft:
-        en = "This pull request is back in Draft because CI is not fully green or merge conflicts exist."
-        de = "Dieser Pull Request steht wieder auf Draft, weil die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen."
-    elif restore:
-        if assessment.write_ready_reason == "author has write":
-            en = ("The author has write; this pull request is ready for review "
-                  "even though CI is not fully green or merge conflicts exist.")
-            de = ("Der Autor hat Write; dieser Pull Request ist bereit zum Review, "
-                  "auch wenn die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen.")
-        else:
-            en = ("A write collaborator marked Ready; this pull request is ready for review "
-                  "even though CI is not fully green or merge conflicts exist.")
-            de = ("Ein Write-Collaborator hat Ready gesetzt; dieser Pull Request ist bereit zum Review, "
-                  "auch wenn die CI noch nicht vollständig grün ist oder Merge-Konflikte bestehen.")
+def _last_parenthetical_suffix(reason: str) -> str | None:
+    if reason.endswith(")") and " (" in reason:
+        return reason.rsplit(" (", 1)[1][:-1]
+    return None
+
+
+def _join_en_phrases(parts: list[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return ", ".join(parts[:-1]) + f", and {parts[-1]}"
+
+
+def _join_de_phrases(parts: list[str]) -> str:
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} und {parts[1]}"
+    return ", ".join(parts[:-1]) + f" und {parts[-1]}"
+
+
+def visible_transition_sentences(
+    record: Mapping, write_ready_reason: str = ""
+) -> tuple[str, str]:
+    """Return the visible EN and DE sentences for an applied lifecycle comment.
+
+    Names only the blockers present in record['reasons']. Never uses 'or'/'oder'
+    to join CI and merge conflicts. One sentence per language.
+    """
+    raw = record.get("reasons")
+    reasons = list(raw) if isinstance(raw, list) else []
+    draft = record.get("state") == "draft"
+    if not draft and not reasons:
+        return (
+            "The authorized CI runs are green and no merge conflicts exist; "
+            "this pull request is ready for review.",
+            "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; "
+            "dieser Pull Request ist bereit zum Review.",
+        )
+
+    conflicts = "Merge conflicts" in reasons
+    ci_reasons = [r for r in reasons if r != "Merge conflicts"]
+
+    missing = any(
+        isinstance(r, str) and r.startswith("Missing required CI:") for r in ci_reasons
+    )
+    statuses: set[str] = set()
+    a38 = False
+    for reason in ci_reasons:
+        if not isinstance(reason, str):
+            continue
+        if "A38" in reason:
+            a38 = True
+        suffix = _last_parenthetical_suffix(reason)
+        if suffix is not None:
+            statuses.add(suffix)
+
+    en_parts: list[str] = []
+    de_parts: list[str] = []
+    if conflicts:
+        en_parts.append("merge conflicts exist")
+        de_parts.append("Merge-Konflikte bestehen")
+
+    ci_en: list[str] = []
+    ci_de: list[str] = []
+    if missing:
+        ci_en.append("required CI is missing")
+        ci_de.append("erforderliche CI fehlt")
+    if "action_required" in statuses:
+        ci_en.append("CI is waiting for approval")
+        ci_de.append("die CI auf Freigabe wartet")
+    if statuses & {"queued", "waiting", "in_progress", "pending"}:
+        ci_en.append("CI is still running")
+        ci_de.append("die CI noch läuft")
+    if statuses & {"failure", "failed", "cancelled", "timed_out", "error"} and not a38:
+        ci_en.append("CI failed")
+        ci_de.append("die CI fehlgeschlagen ist")
+    if a38:
+        ci_en.append("A38 is not green")
+        ci_de.append("A38 nicht grün ist")
+    if ci_reasons and not ci_en:
+        ci_en.append("CI is not green")
+        ci_de.append("die CI nicht grün ist")
+
+    en_parts.extend(ci_en)
+    de_parts.extend(ci_de)
+
+    if not en_parts:
+        en_clause = "the readiness conditions are no longer met"
+        de_clause = "die Voraussetzungen für Ready nicht mehr erfüllt sind"
     else:
-        en = "The authorized CI runs are green and no merge conflicts exist; this pull request is ready for review."
-        de = "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit zum Review."
+        en_clause = _join_en_phrases(en_parts)
+        de_clause = _join_de_phrases(de_parts)
+
+    if draft:
+        return (
+            f"This pull request is back in Draft because {en_clause}.",
+            f"Dieser Pull Request steht wieder auf Draft, weil {de_clause}.",
+        )
+    if write_ready_reason == "author has write":
+        return (
+            f"The author has write; this pull request is ready for review "
+            f"even though {en_clause}.",
+            f"Der Autor hat Write; dieser Pull Request ist bereit zum Review, "
+            f"auch wenn {de_clause}.",
+        )
+    return (
+        f"A write collaborator marked Ready; this pull request is ready for review "
+        f"even though {en_clause}.",
+        f"Ein Write-Collaborator hat Ready gesetzt; dieser Pull Request ist bereit "
+        f"zum Review, auch wenn {de_clause}.",
+    )
+
+
+def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> None:
+    en, de = visible_transition_sentences(
+        record, write_ready_reason=getattr(assessment, "write_ready_reason", "") or ""
+    )
     _save_record(api, assessment, STATE_MARKER, {**record, "phase": "applied"}, en, de)
 
 
