@@ -134,7 +134,7 @@ class ExecutorPolicyTests(unittest.TestCase):
                 self.assertNotIn("executor", normalized)
                 self.assertEqual(
                     set(normalized),
-                    {"id", "name", "command", "timeout_s", "workflow", "job"},
+                    {"id", "name", "command", "timeout_s", "workflow", "job", "lock"},
                 )
                 argv = shlex.split(normalized["command"])
                 self.assertEqual(argv[:5], ["agent", "a38", "job", adapter, "--config"])
