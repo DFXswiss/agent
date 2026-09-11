@@ -242,6 +242,7 @@ def test_not_fully_green_returns_ready_to_draft_once(status, conclusion):
 
 def test_draft_comment_names_action_required_without_or_merge_conflicts():
     fake = LifecycleAPI()
+    fake.pull["head"]["repo"]["full_name"] = REPO
     fake.runs[0].update(status="completed", conclusion="action_required")
     reconcile_pull(fake.api(), REPO, 1)
     comments = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
