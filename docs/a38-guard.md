@@ -29,7 +29,7 @@ agent pr-guard --repo OWNER/NAME --all-open --dry-run
 agent pr-guard --repo OWNER/NAME --all-open
 ```
 
-Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and serializes all bot runs for the repository. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
+Schedule that command externally when Actions are unavailable; no daemon is installed. The example workflow also reconciles all open PRs at minutes 17 and 47 of every hour and uses two concurrency groups (`event` versus `sweep`) so PR events cannot starve all-open reconciliation. Its manual dispatch accepts either a PR number or `all_open=true`. GitHub Actions does not guarantee delivery of every pending concurrency event, so scheduled reconciliation recovers missed events, base changes and permission changes. Immutable SHA-addressed contents and trees are cached within the API client, up to 128 entries; comments, reviews, permissions and PR snapshots are never cached.
 
 ## Trust and policy
 
@@ -195,12 +195,15 @@ the pull request files.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
-or failed cause a Draft transition, **except** while a write collaborator holds
-Ready: the PR author currently has `write`/`maintain`/`admin` on the target, or
-the latest human `ready_for_review` timeline actor does. That hold skips
-auto-draft only; it does not waive policy, workflow inventory, or migration
-failures, and it does not skip auto-ready when A38 is already a fresh enforce
-`pass`. Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded
+or failed cause a Draft transition. A write collaborator holds Ready through
+missing or red CI only: the PR author currently has `write`/`maintain`/`admin`
+on the target, or the latest human `ready_for_review` timeline actor does.
+Confirmed merge conflicts always return Ready to Draft, including while that
+write hold would otherwise apply. That hold skips auto-draft for CI only; it
+does not waive policy, workflow inventory, or migration failures, and it does
+not skip auto-ready when A38 is already a fresh enforce `pass`. Restore after
+an auto-draft requires GitHub `mergeable` true and no conflicts (CI may still
+be red). Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded
 bases (for example a develop→main release PR) are left untouched. Missing
 required workflows are not an empty green result.
 Only completed, successful required workflows satisfy CI. Optional workflows
@@ -241,8 +244,10 @@ The adopting workflow owns runner routing, `contents: write` for
 `pull-requests`/`issues`/`statuses` write access, and `actions: write` for initial
 workflow approval. The guard authorizes waiting allowlisted fork runs **before**
 it mutates Ready or Draft, so a failed convert-to-draft cannot skip approval.
-Serialize **all** event and scheduled invocations with one
-repository-wide concurrency group and `cancel-in-progress: false`. Run trusted
+Serialize event-driven single-PR runs and scheduled all-open sweeps in two
+repository-wide concurrency groups (`event` versus `sweep`) with
+`cancel-in-progress: false`, so PR events cannot starve all-open reconciliation.
+Sweep jobs may use a 45-minute timeout. Run trusted
 `--all-open` reconciliation on a repository-configured schedule (for example every
 five minutes). GitHub may delay scheduled execution; this is not a real-time SLA.
 Privileged runs must never check out PR code. Bot readiness must not be wired to
@@ -277,7 +282,7 @@ For the private opt-in process, the checkout must be clean at the final reposito
 
 The latest author report-like comment, ordered by `updated_at` and numeric comment ID, is authoritative. A newer malformed or failed report never falls back to an older success. Other authors' reports cannot satisfy the requirement. Matching repository, head, visibility, full job set, names, commands, timeouts and successful measured results are mandatory, including for public repositories.
 
-**Author-report Ready waivers:** When the PR author is a GitHub `User` who currently has `write`, `maintain`, or `admin` on the target repository, or when a GitHub `User` with one of those roles is the latest `ready_for_review` timeline actor **or** the `ready_for_review` webhook sender, the author-report gate is waived and enforce status may succeed with an explicit waiver description. Independently confirmed markdown-only change sets (every changed path ends with `.md`, fail-closed) also waive the author-report gate with reason `markdown-only change set`, reusing the same status-pass path so fork workflow approval and auto-ready can proceed without a local suite. Draft does not skip the Ready-actor path. A valid passing author report still takes the normal “report accepted” path when present. Only `User` actors can grant the write waiver (allowlist); bots and apps cannot, even with write/admin. `MEMBER` / association is not write; 404 or denied permission lookups do not grant it; timeline pagination 401/403/404 yields no waiver and does not crash assessment. Invalid policy, unclassified workflows, and pr-guard migration failures are not waived by write access or by markdown-only detection. No-write authors who mark Ready without a valid report still fail and are still auto-drafted by lifecycle unless the markdown-only waiver applies; lifecycle does not override Ready back to Draft while the write hold applies, and it restores Ready after an auto-draft if the Ready actor still has write.
+**Author-report Ready waivers:** When the PR author is a GitHub `User` who currently has `write`, `maintain`, or `admin` on the target repository, or when a GitHub `User` with one of those roles is the latest `ready_for_review` timeline actor **or** the `ready_for_review` webhook sender, the author-report gate is waived and enforce status may succeed with an explicit waiver description. Independently confirmed markdown-only change sets (every changed path ends with `.md`, fail-closed) also waive the author-report gate with reason `markdown-only change set`, reusing the same status-pass path so fork workflow approval and auto-ready can proceed without a local suite. Draft does not skip the Ready-actor path. A valid passing author report still takes the normal “report accepted” path when present. Only `User` actors can grant the write waiver (allowlist); bots and apps cannot, even with write/admin. `MEMBER` / association is not write; 404 or denied permission lookups do not grant it; timeline pagination 401/403/404 yields no waiver and does not crash assessment. Invalid policy, unclassified workflows, and pr-guard migration failures are not waived by write access or by markdown-only detection. No-write authors who mark Ready without a valid report still fail and are still auto-drafted by lifecycle unless the markdown-only waiver applies; lifecycle does not override Ready back to Draft while the write hold applies for missing or red CI, confirmed merge conflicts still draft, and it restores Ready after an auto-draft if the Ready actor still has write, GitHub `mergeable` is true, and there are no conflicts.
 
 ## Statuses and events
 

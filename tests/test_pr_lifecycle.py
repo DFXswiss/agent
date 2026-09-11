@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from agent_cli import pr_lifecycle
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from agent_cli.pr_lifecycle import AUTH_MARKER, STATE_MARKER, visible_transition_sentences
@@ -228,6 +229,7 @@ class LifecycleAPI(ApprovalAPI):
         self.graphql_ready_without_rest = False
         self.graphql_noop_ready = False
         self.graphql_noop_ready_null = False
+        self.graphql_mergeable = "MERGEABLE"
         self.mutate_during_transition = False
         self.fail_comment_once = False
 
@@ -239,7 +241,14 @@ class LifecycleAPI(ApprovalAPI):
             payload = json.loads(body)
             assert payload["variables"] == {"id": "PR_example"}
             assert "mergePullRequest" not in payload["query"]
-            operation = "convertPullRequestToDraft" if "convertPullRequestToDraft" in payload["query"] else "markPullRequestReadyForReview"
+            query = payload["query"]
+            if (
+                "mergeable" in query
+                and "convertPullRequestToDraft" not in query
+                and "markPullRequestReadyForReview" not in query
+            ):
+                return 200, {"data": {"node": {"mergeable": self.graphql_mergeable}}}, {}
+            operation = "convertPullRequestToDraft" if "convertPullRequestToDraft" in query else "markPullRequestReadyForReview"
             if self.graphql_error:
                 return 200, {"errors": [{"message": "denied"}]}, {}
             if self.graphql_noop_draft and operation == "convertPullRequestToDraft":
@@ -931,6 +940,108 @@ def test_write_author_ready_holds_against_red_or_pending_ci(status, conclusion):
     assert result.lifecycle["reasons"]
     assert fake.transitions == []
     assert not fake.pull["draft"]
+
+
+def test_write_author_ready_conflicts_return_to_draft_and_do_not_restore():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    fake.pull["mergeable"] = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+    follow = reconcile_pull(fake.api(), REPO, 1)
+    assert follow.lifecycle["action"] == "unchanged"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+
+
+def test_write_author_ready_graphql_conflicting_returns_to_draft():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    fake.pull["mergeable"] = None
+    fake.graphql_mergeable = "CONFLICTING"
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+
+
+def test_graphql_unknown_does_not_invent_conflicts_on_write_ready():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    fake.pull["mergeable"] = None
+    fake.graphql_mergeable = "UNKNOWN"
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+    assert not fake.pull["draft"]
+    assert "Merge conflicts" not in result.lifecycle["reasons"]
+
+
+@pytest.mark.parametrize("status,conclusion", [
+    ("in_progress", None),
+    ("completed", "failure"),
+])
+def test_write_hold_after_conflicts_disappear_on_reread_keeps_ready(status, conclusion, monkeypatch):
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    fake.runs[0].update(status=status, conclusion=conclusion)
+    fake.pull["mergeable"] = False
+    conflict_reads = []
+    real = pr_lifecycle._has_merge_conflicts
+
+    def wrapped(api, pull):
+        found = real(api, pull)
+        conflict_reads.append(found)
+        if found:
+            fake.pull["mergeable"] = True
+        return found
+
+    monkeypatch.setattr(pr_lifecycle, "_has_merge_conflicts", wrapped)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.transitions == []
+    assert not fake.pull["draft"]
+    assert conflict_reads == [True, False]
+
+
+@pytest.mark.parametrize("status,conclusion", [
+    ("in_progress", None),
+    ("completed", "failure"),
+])
+def test_write_author_ready_conflicts_with_red_ci_still_draft(status, conclusion):
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    fake.runs[0].update(status=status, conclusion=conclusion)
+    fake.pull["mergeable"] = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
+    follow = reconcile_pull(fake.api(), REPO, 1)
+    assert follow.lifecycle["action"] == "unchanged"
+    assert fake.transitions == [True]
+    assert fake.pull["draft"]
 
 
 def test_auto_draft_then_timeline_restores_write_ready():
