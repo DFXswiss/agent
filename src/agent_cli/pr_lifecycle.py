@@ -156,6 +156,7 @@ def visible_transition_sentences(
         isinstance(r, str) and r.startswith("Missing required CI:") for r in ci_reasons
     )
     statuses: set[str] = set()
+    non_a38_statuses: set[str] = set()
     a38 = False
     for reason in ci_reasons:
         if not isinstance(reason, str):
@@ -165,6 +166,8 @@ def visible_transition_sentences(
         suffix = _last_parenthetical_suffix(reason)
         if suffix is not None:
             statuses.add(suffix)
+            if "A38" not in reason:
+                non_a38_statuses.add(suffix)
 
     en_parts: list[str] = []
     de_parts: list[str] = []
@@ -183,7 +186,7 @@ def visible_transition_sentences(
     if statuses & {"queued", "waiting", "in_progress", "pending"}:
         ci_en.append("CI is still running")
         ci_de.append("die CI noch läuft")
-    if statuses & {"failure", "failed", "cancelled", "timed_out", "error"} and not a38:
+    if non_a38_statuses & {"failure", "failed", "cancelled", "timed_out", "error"}:
         ci_en.append("CI failed")
         ci_de.append("die CI fehlgeschlagen ist")
     if a38:

@@ -91,6 +91,27 @@ def test_visible_transition_sentences_backend_5498_shape():
     assert "merge conflicts" not in en.lower()
 
 
+def test_visible_transition_sentences_mixed_non_a38_failure_and_a38():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            "CI not green: .github/workflows/api-pr.yaml (failure)",
+            "CI status not green: A38 / report (develop) (failure)",
+        ],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI failed and A38 is not green."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI fehlgeschlagen ist "
+        "und A38 nicht grün ist."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
 def test_visible_transition_sentences_restore_author_write_action_required():
     en, de = visible_transition_sentences(
         {
