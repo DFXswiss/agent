@@ -164,7 +164,9 @@ The same trusted repository configuration can enable CI and conflict monitoring:
 
 All fields except `conditional_workflows` and `required_checks` are required when `lifecycle` is
 present. Omission disables lifecycle writes. `auto_ready` requires enabled
-workflow approval and a nonempty required-workflow list. Workflow paths are
+workflow approval and a nonempty required-workflow list. Authorization rows
+for ignored or otherwise absent workflows are skipped; they must not block
+Ready after the live inventory dropped them. Workflow paths are
 exact, bounded and unique across these lists. A conditional workflow is required
 when its target branch **or** any listed PR label matches; branches and labels
 are exact, case-sensitive strings. Its condition must not be empty. This is
