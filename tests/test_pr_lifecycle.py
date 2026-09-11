@@ -112,6 +112,43 @@ def test_visible_transition_sentences_mixed_non_a38_failure_and_a38():
     assert "Merge-Konflikte" not in de
 
 
+def test_visible_transition_sentences_cancelled_only():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [f"CI not green: {PATH} (cancelled)"],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI was cancelled."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI abgebrochen wurde."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "failed" not in en
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
+def test_visible_transition_sentences_false_positive_a38_name():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": ["CI not green: .github/workflows/A38-compat.yml (failure)"],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI failed."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI fehlgeschlagen ist."
+    )
+    assert "A38 is not green" not in en
+    assert "A38 nicht grün" not in de
+    assert " or " not in en
+    assert " oder " not in de
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
 def test_visible_transition_sentences_restore_author_write_action_required():
     en, de = visible_transition_sentences(
         {

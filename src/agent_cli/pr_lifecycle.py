@@ -161,12 +161,12 @@ def visible_transition_sentences(
     for reason in ci_reasons:
         if not isinstance(reason, str):
             continue
-        if "A38" in reason:
+        if "A38 / report (" in reason:
             a38 = True
         suffix = _last_parenthetical_suffix(reason)
         if suffix is not None:
             statuses.add(suffix)
-            if "A38" not in reason:
+            if "A38 / report (" not in reason:
                 non_a38_statuses.add(suffix)
 
     en_parts: list[str] = []
@@ -186,7 +186,10 @@ def visible_transition_sentences(
     if statuses & {"queued", "waiting", "in_progress", "pending"}:
         ci_en.append("CI is still running")
         ci_de.append("die CI noch läuft")
-    if non_a38_statuses & {"failure", "failed", "cancelled", "timed_out", "error"}:
+    if "cancelled" in non_a38_statuses:
+        ci_en.append("CI was cancelled")
+        ci_de.append("die CI abgebrochen wurde")
+    if non_a38_statuses & {"failure", "failed", "timed_out", "error"}:
         ci_en.append("CI failed")
         ci_de.append("die CI fehlgeschlagen ist")
     if a38:
