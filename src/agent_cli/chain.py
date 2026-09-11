@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .allow import CHECKLIST_KEYS, N_A_ALLOWED
+from .allow import CHECKLIST_KEYS, GATE_UNAVAILABLE_KEYS, N_A_ALLOWED
 
 KINDS = ("script", "agent", "human")
 # Who may set ja on these keys (source).
@@ -22,6 +22,17 @@ HUMAN_KEYS = frozenset(
     }
 )
 # All other required keys: only source=script (close-step).
+
+LATE_INNER_STATES = frozenset(
+    {
+        "local-check",
+        "pushing",
+        "pr-review",
+        "gate-blocked",
+    }
+)
+LATE_INNER_KEYS = frozenset({"implementer_done", "conflicts_resolved", "reviewer_approved"})
+CLOSE_STATUSES = ("ja", "n_a", "unavailable")
 
 
 @dataclass(frozen=True)
@@ -232,8 +243,9 @@ def next_steps(
         if spine_only and not s.spine:
             continue
         st = checklist.get(s.key, "pending")
-        # nein = this attempt failed; step is open again
-        if st not in ("pending", "nein"):
+        # nein = this attempt failed; unavailable = retry the same key.
+        # neither is a satisfied need for later steps.
+        if st not in ("pending", "nein", "unavailable"):
             continue
         if all(_satisfied(n, checklist) for n in s.needs):
             out.append(s)
@@ -261,11 +273,16 @@ def close_allowed(
     source: str,
     evidence: str | None,
     snapshot: dict[str, Any] | None = None,
+    status: str = "ja",
 ) -> CloseVerdict:
-    """May this key be set to ja/n_a NOW? Only the current next step."""
+    """May this key be set to ja/n_a/unavailable NOW? Only the current next step."""
     step = find_step(workflow, key)
     if step is None:
         return CloseVerdict(False, f"unknown key {key}", None)
+    if status not in CLOSE_STATUSES:
+        return CloseVerdict(False, "close-step --status must be ja|n_a|unavailable", step)
+    if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
+        return CloseVerdict(False, f"unavailable is not allowed for {key}", step)
     if not evidence or not str(evidence).strip():
         return CloseVerdict(False, f"{key} requires evidence", step)
     want = required_source(step)
@@ -279,10 +296,39 @@ def close_allowed(
             f"{key} is not the next step (open: {pending})",
             step,
         )
-    extra = _artifact_ok(step, snapshot or {})
+    snap = snapshot or {}
+    if status == "unavailable":
+        extra = _unavailable_gate_ok(step, snap)
+    elif _late_inner_skip(key, status, evidence, snap):
+        extra = ""
+    else:
+        extra = _artifact_ok(step, snap)
     if extra:
         return CloseVerdict(False, extra, step)
     return CloseVerdict(True, "allow", step)
+
+
+def _late_inner_skip(
+    key: str, status: str, evidence: str | None, snapshot: dict[str, Any]
+) -> bool:
+    """Skip the finished-agent artefact when stamping the inner loop late."""
+    if status != "ja" or key not in LATE_INNER_KEYS:
+        return False
+    if not evidence or not str(evidence).strip():
+        return False
+    return str(snapshot.get("state") or "") in LATE_INNER_STATES
+
+
+def _unavailable_gate_ok(step: Step, snapshot: dict[str, Any]) -> str:
+    """Empty string = latest gate is unavailable; otherwise the block reason."""
+    if step.role not in ("pr-reviewer-quality", "pr-reviewer-logic"):
+        return f"unavailable is not allowed for {step.key}"
+    dim = "quality" if step.role.endswith("quality") else "logic"
+    stage = "grok-pr" if step.vendor == "grok" else "codex-pr"
+    g = _latest_gate(snapshot, stage, dim)
+    if not g or g.get("verdict") != "unavailable":
+        return f"gate {stage}/{dim} is not unavailable"
+    return ""
 
 
 def _latest_agent(snapshot: dict[str, Any], role: str, vendor: str | None) -> dict[str, Any] | None:

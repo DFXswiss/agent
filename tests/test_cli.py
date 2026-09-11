@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
 import pytest
 
-from agent_cli.main import main
+from agent_cli.main import _latest_gates, load_task_dict, main
 from agent_cli.store import Store, StoreError, utcnow
 from agent_cli.usage import AuthStale
 
@@ -34,7 +35,7 @@ def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFix
     run(tmp_path, ["task", "create", "--session", "sess-1", "--workflow", "implement", "--title", "Ship sync"])
     out = capsys.readouterr().out
     tid = _last_task_id(out)
-    run(tmp_path, ["checklist", "set", "--task", tid, "--key", "session_registered", "--status", "ja", "--source", "script"])
+    run(tmp_path, ["checklist", "set", "--task", tid, "--key", "session_registered", "--status", "ja", "--source", "script", "--evidence", "session register"])
     run(tmp_path, ["status"])
     status = capsys.readouterr().out
     assert "tasks_open=1" in status
@@ -195,6 +196,30 @@ def test_n_a_without_evidence_dies(tmp_path: Path, capsys: pytest.CaptureFixture
         )
 
 
+def test_unavailable_whitespace_evidence_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="unavailable requires --evidence"):
+        run(
+            tmp_path,
+            [
+                "checklist",
+                "set",
+                "--task",
+                tid,
+                "--key",
+                "grok_pr_quality",
+                "--status",
+                "unavailable",
+                "--source",
+                "script",
+                "--evidence",
+                "   ",
+            ],
+        )
+
+
 def test_check_fail_sets_task_failed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
@@ -305,6 +330,8 @@ def test_done_requires_gates_after_summaries_and_checklist(
             "ja",
             "--source",
             "human",
+            "--evidence",
+            "done-gate fixture",
         ]
         if key == "deviation_granted":
             argv.extend(
@@ -1333,6 +1360,8 @@ def test_checklist_deviation_flags_persist(
             "ja",
             "--source",
             "human",
+            "--evidence",
+            "session register",
             "--deviation-declared",
             "true",
             "--deviation-granted",
@@ -2500,3 +2529,733 @@ def test_the_evidence_reaches_the_review_unaltered(tmp_path: Path, capsys: pytes
     body = _review_activities(tmp_path)[0]["payload"]["body"]
     assert evidence in body, "the evidence was altered"
     assert body.endswith(evidence)
+
+
+def _spine_session_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], *, workflow: str = "implement"
+) -> str:
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "review-loop",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(
+        tmp_path,
+        ["task", "create", "--session", "s", "--workflow", workflow, "--title", "Ship"],
+    )
+    return _last_task_id(capsys.readouterr().out)
+
+
+def _start_pr_reviewer(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    tid: str,
+    *,
+    role: str,
+    vendor: str,
+) -> str:
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            role,
+            "--vendor",
+            vendor,
+        ],
+    )
+    return _last_agent_id(capsys.readouterr().out)
+
+
+def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(
+        tmp_path,
+        [
+            "checklist",
+            "set",
+            "--task",
+            tid,
+            "--key",
+            "grok_pr_quality",
+            "--status",
+            "unavailable",
+            "--source",
+            "script",
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    assert "checklist grok_pr_quality=unavailable" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="unavailable requires --evidence"):
+        run(
+            tmp_path,
+            [
+                "checklist",
+                "set",
+                "--task",
+                tid,
+                "--key",
+                "grok_pr_logic",
+                "--status",
+                "unavailable",
+                "--source",
+                "script",
+            ],
+        )
+    with pytest.raises(SystemExit, match="unavailable is not allowed for session_registered"):
+        run(
+            tmp_path,
+            [
+                "checklist",
+                "set",
+                "--task",
+                tid,
+                "--key",
+                "session_registered",
+                "--status",
+                "unavailable",
+                "--source",
+                "script",
+                "--evidence",
+                "not a gate",
+            ],
+        )
+
+
+def test_close_step_unavailable_after_gate_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    for key in (
+        "session_registered",
+        "spec_written",
+        "implementer_done",
+        "reviewer_approved",
+        "local_check_pass",
+        "pushed",
+    ):
+        run(
+            tmp_path,
+            [
+                "checklist",
+                "set",
+                "--task",
+                tid,
+                "--key",
+                key,
+                "--status",
+                "ja",
+                "--source",
+                "script",
+                "--evidence",
+                "fixture prerequisite",
+            ],
+        )
+    aid = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+    )
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "unavailable",
+            "--head",
+            "abcdef0",
+            "--agent",
+            aid,
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="Usage: agent close-step"):
+        run(
+            tmp_path,
+            [
+                "close-step",
+                "--task",
+                tid,
+                "--key",
+                "grok_pr_quality",
+                "--source",
+                "script",
+                "--status",
+                "unavailable",
+            ],
+        )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "grok_pr_quality",
+            "--source",
+            "script",
+            "--status",
+            "unavailable",
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    capsys.readouterr()
+
+    store = Store(tmp_path)
+    try:
+        items = [
+            row
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid and row.get("key") == "grok_pr_quality"
+        ]
+    finally:
+        store.close()
+    assert len(items) == 1
+    assert items[0]["status"] == "unavailable"
+
+
+def test_task_state_gate_blocked_and_superseded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(tmp_path, ["task", "state", tid, "gate-blocked"])
+    assert f"task {tid} state=gate-blocked" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="cannot mark done from gate-blocked"):
+        run(tmp_path, ["task", "state", tid, "done"])
+    run(tmp_path, ["task", "state", tid, "superseded"])
+    assert f"task {tid} state=superseded" in capsys.readouterr().out
+    run(tmp_path, ["status"])
+    status = capsys.readouterr().out
+    assert "tasks_open=0" in status
+    assert f"task {tid} " not in status
+    run(tmp_path, ["session", "close", "--id", "s"])
+    assert "closed s" in capsys.readouterr().out
+
+
+def test_cannot_supersede_a_done_task(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        row = store.row("task", tid)
+        assert row is not None
+        row["state"] = "done"
+        store.write("task", "update", tid, {k: v for k, v in row.items() if not k.startswith("_")})
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="cannot supersede a done task"):
+        run(tmp_path, ["task", "state", tid, "superseded"])
+
+
+def test_round_start_refuses_later_states(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(tmp_path, ["task", "state", tid, "pr-review"])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="round start requires state open\\|implementing\\|reviewing\\|failed"):
+        run(tmp_path, ["round", "start", "--task", tid])
+    run(tmp_path, ["task", "state", tid, "gate-blocked"])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="round start requires state open\\|implementing\\|reviewing\\|failed"):
+        run(tmp_path, ["round", "start", "--task", tid])
+    run(tmp_path, ["task", "state", tid, "implementing"])
+    capsys.readouterr()
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert f"task {tid} round 1" in capsys.readouterr().out
+
+
+def test_round_start_refuses_unavailable_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    aid = _start_pr_reviewer(tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok")
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "unavailable",
+            "--head",
+            "abcdef0",
+            "--agent",
+            aid,
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="round start refused while a gate is unavailable"):
+        run(tmp_path, ["round", "start", "--task", tid])
+
+
+def test_same_second_gate_prefers_newer_updated_row() -> None:
+    recorded_at = "2026-01-01T00:00:00Z"
+    newer = {
+        "task_id": "task-1",
+        "stage": "grok-pr",
+        "dimension": "quality",
+        "vendor": "grok",
+        "verdict": "approved",
+        "head_sha": "abcdef0",
+        "recorded_at": recorded_at,
+        "updated_at": "2026-01-01T00:00:02Z",
+    }
+    older = {
+        **newer,
+        "verdict": "unavailable",
+        "updated_at": "2026-01-01T00:00:01Z",
+    }
+
+    class GateStore:
+        def rows(self, table: str) -> list[dict]:
+            if table == "review_gate":
+                return [newer, older]
+            if table in ("checklist_item", "local_check"):
+                return []
+            raise AssertionError(f"unexpected table: {table}")
+
+        def row(self, table: str, row_id: str) -> dict | None:
+            assert (table, row_id) == ("task", "task-1")
+            return {"id": "task-1"}
+
+    store = GateStore()
+    assert _latest_gates(store, "task-1")[("grok-pr", "quality")] is newer
+    assert [g["verdict"] for g in load_task_dict(store, "task-1")["gates"]] == [
+        "unavailable",
+        "approved",
+    ]
+
+
+def test_gate_record_recorded_at_has_six_fractional_digits(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    aid = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+    )
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "approved",
+            "--head",
+            "abcdef0",
+            "--agent",
+            aid,
+        ],
+    )
+    capsys.readouterr()
+
+    store = Store(tmp_path)
+    try:
+        gates = [
+            row for row in store.rows("review_gate") if row.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+    assert len(gates) == 1
+    assert (
+        re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z",
+            gates[0]["recorded_at"],
+        )
+        is not None
+    )
+
+
+def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(tmp_path, ["task", "state", tid, "pr-review"])
+    capsys.readouterr()
+    agents = {
+        ("quality", "grok"): _start_pr_reviewer(
+            tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+        ),
+        ("logic", "grok"): _start_pr_reviewer(
+            tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="grok"
+        ),
+        ("quality", "codex"): _start_pr_reviewer(
+            tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="codex"
+        ),
+        ("logic", "codex"): _start_pr_reviewer(
+            tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="codex"
+        ),
+    }
+    grok_q = agents[("quality", "grok")]
+    run(tmp_path, ["agent", "finish", "--id", grok_q, "--verdict", "unavailable"])
+    capsys.readouterr()
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["state"] == "pr-review"
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "unavailable",
+            "--head",
+            "abcdef0",
+            "--agent",
+            grok_q,
+            "--evidence",
+            "vendor HTTP 402",
+        ],
+    )
+    out = capsys.readouterr().out
+    assert "gate grok-pr/quality=unavailable" in out
+    assert "type=review.post" not in out
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["state"] == "gate-blocked"
+
+    for (dim, vendor), aid in agents.items():
+        if aid != grok_q:
+            run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+            capsys.readouterr()
+    head = "abcdef0"
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            grok_q,
+        ],
+    )
+    capsys.readouterr()
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["state"] == "gate-blocked"
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "logic",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            agents[("logic", "grok")],
+        ],
+    )
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "codex-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "codex",
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            agents[("quality", "codex")],
+        ],
+    )
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "codex-pr",
+            "--dimension",
+            "logic",
+            "--vendor",
+            "codex",
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            agents[("logic", "codex")],
+        ],
+    )
+    capsys.readouterr()
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["state"] == "pr-review"
+
+
+def test_gate_record_unavailable_without_evidence_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    aid = _start_pr_reviewer(tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok")
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "unavailable"])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="--evidence is required when --verdict is unavailable"):
+        run(
+            tmp_path,
+            [
+                "gate",
+                "record",
+                "--task",
+                tid,
+                "--stage",
+                "grok-pr",
+                "--dimension",
+                "quality",
+                "--vendor",
+                "grok",
+                "--verdict",
+                "unavailable",
+                "--head",
+                "abcdef0",
+                "--agent",
+                aid,
+            ],
+        )
+
+
+def test_late_inner_close_from_pr_review(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "spec_written",
+            "--source",
+            "human",
+            "--evidence",
+            "five-part spec",
+        ],
+    )
+    run(tmp_path, ["task", "state", tid, "pr-review"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "implementer_done",
+            "--source",
+            "script",
+            "--evidence",
+            "inner loop already finished",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "reviewer_approved",
+            "--source",
+            "script",
+            "--evidence",
+            "inner loop already finished",
+        ],
+    )
+    capsys.readouterr()
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["state"] == "pr-review"
+    store = Store(tmp_path)
+    try:
+        items = {
+            r["key"]: r["status"]
+            for r in store.rows("checklist_item")
+            if r.get("task_id") == tid
+        }
+    finally:
+        store.close()
+    assert items["implementer_done"] == "ja"
+    assert items["reviewer_approved"] == "ja"
+
+
+def test_late_inner_close_from_implementing_without_agent_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "spec_written",
+            "--source",
+            "human",
+            "--evidence",
+            "five-part spec",
+        ],
+    )
+    run(tmp_path, ["task", "state", tid, "implementing"])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="no finished implementer agent"):
+        run(
+            tmp_path,
+            [
+                "close-step",
+                "--task",
+                tid,
+                "--key",
+                "implementer_done",
+                "--source",
+                "script",
+                "--evidence",
+                "no agent",
+            ],
+        )
+    run(
+        tmp_path,
+        [
+            "checklist",
+            "set",
+            "--task",
+            tid,
+            "--key",
+            "implementer_done",
+            "--status",
+            "ja",
+            "--source",
+            "script",
+            "--evidence",
+            "forced",
+        ],
+    )
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="no finished reviewer agent"):
+        run(
+            tmp_path,
+            [
+                "close-step",
+                "--task",
+                tid,
+                "--key",
+                "reviewer_approved",
+                "--source",
+                "script",
+                "--evidence",
+                "no agent",
+            ],
+        )

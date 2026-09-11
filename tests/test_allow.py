@@ -177,6 +177,39 @@ class TestEvaluateAllow(unittest.TestCase):
         # and generically for any key
         self.assertTrue(requires_evidence("ja", "any_key"))
 
+    def test_claim_done_ignores_superseded_like_done(self) -> None:
+        task = _ready_task(state="superseded")
+        task["checklist"]["pushed"] = "pending"
+        r = evaluate_allow(
+            "claim-done",
+            session_id="sess-a",
+            task_id=None,
+            session_tasks=[task],
+        )
+        self.assertTrue(r.allowed)
+
+    def test_pr_ready_gate_blocked_denies(self) -> None:
+        task = _ready_task(state="gate-blocked")
+        r = evaluate_allow(
+            "pr-ready",
+            session_id="sess-a",
+            task_id=None,
+            session_tasks=[task],
+        )
+        self.assertFalse(r.allowed)
+
+    def test_task_done_unavailable_gate_key_blocks(self) -> None:
+        task = _ready_task()
+        task["checklist"]["grok_pr_quality"] = "unavailable"
+        r = evaluate_allow(
+            "task-done",
+            session_id="sess-a",
+            task_id="1",
+            session_tasks=[task],
+        )
+        self.assertFalse(r.allowed)
+        self.assertTrue(any("grok_pr_quality=unavailable" in b for b in r.blocking))
+
 
 if __name__ == "__main__":
     unittest.main()

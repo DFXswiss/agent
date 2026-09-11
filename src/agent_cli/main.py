@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,16 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import WebSocketException
 
-from .allow import ACTIONS, evaluate_allow, ready_for_done_blocking
+from .allow import (
+    ACTIONS,
+    GATE_UNAVAILABLE_KEYS,
+    TERMINAL_STATES,
+    evaluate_allow,
+    ready_for_done_blocking,
+    requires_evidence,
+)
 from .chain import (
+    CLOSE_STATUSES,
     NO_AUTO_CLOSE,
     close_allowed,
     handoff_prompt,
@@ -107,8 +116,19 @@ TASK_STATES = (
     "local-check",
     "pushing",
     "pr-review",
+    "gate-blocked",
     "done",
     "failed",
+    "superseded",
+)
+CHECKLIST_STATUSES = ("ja", "nein", "n_a", "pending", "unavailable")
+ROUND_START_STATES = frozenset(
+    {
+        "open",
+        "implementing",
+        "reviewing",
+        "failed",
+    }
 )
 PING_KINDS = ("review-request", "ping", "question")
 ACTIVITY_TYPES = frozenset(
@@ -430,7 +450,8 @@ def cmd_session(args: list[str]) -> None:
             open_tasks = [
                 t
                 for t in store.rows("task")
-                if t.get("session_id") == sid and t.get("state") not in ("done", "failed")
+                if t.get("session_id") == sid
+                and t.get("state") not in TERMINAL_STATES
             ]
             if open_tasks:
                 die("session has open tasks")
@@ -703,6 +724,11 @@ def cmd_task(args: list[str]) -> None:
             row = _need(store, "task", tid)
             _require_owned(store, row, "task")
             _require_skill(_need(store, "session", row["session_id"]), "spine")
+            current = row.get("state")
+            if state == "superseded" and current == "done":
+                die("cannot supersede a done task")
+            if state == "done" and current == "gate-blocked":
+                die("cannot mark done from gate-blocked")
             if state == "done":
                 _assert_ready(store, row)
             row["state"] = state
@@ -733,7 +759,7 @@ def cmd_task(args: list[str]) -> None:
 def cmd_checklist(args: list[str]) -> None:
     if not args or args[0] != "set":
         die(
-            "Usage: agent checklist set --task ID --key KEY --status ja|nein|n_a|pending "
+            "Usage: agent checklist set --task ID --key KEY --status ja|nein|n_a|pending|unavailable "
             "--source human|runner|script "
             "[--evidence TEXT] [--deviation-declared true|false] "
             "[--deviation-granted true|false] [--granted-by TEXT] [--actor-session ID]"
@@ -743,15 +769,15 @@ def cmd_checklist(args: list[str]) -> None:
     key = require_flag(rest, "--key")
     status = require_flag(rest, "--status")
     source = require_flag(rest, "--source")
-    if status not in ("ja", "nein", "n_a", "pending"):
-        die("status must be ja|nein|n_a|pending")
+    if status not in CHECKLIST_STATUSES:
+        die("status must be ja|nein|n_a|pending|unavailable")
     if source not in ("human", "runner", "script"):
         die("source must be human|runner|script")
     evidence = flag(rest, "--evidence")
-    if status == "n_a" and (evidence is None or evidence == ""):
-        die("n_a requires --evidence")
-    if key == "mergeable" and status == "ja" and (evidence is None or evidence == ""):
-        die("mergeable=ja requires --evidence")
+    if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
+        die(f"unavailable is not allowed for {key}")
+    if requires_evidence(status, key) and not (evidence or "").strip():
+        die(f"{status} requires --evidence")
     deviation_declared = _bool_flag(rest, "--deviation-declared")
     deviation_granted = _bool_flag(rest, "--deviation-granted")
     granted_by = flag(rest, "--granted-by")
@@ -814,8 +840,11 @@ def cmd_round(args: list[str]) -> None:
         workflow = task.get("workflow")
         if workflow not in ("implement", "resolve-conflicts"):
             die("round start requires workflow implement|resolve-conflicts")
-        if task.get("state") == "done":
-            die("cannot start a round on a done task")
+        if task.get("state") not in ROUND_START_STATES:
+            die("round start requires state open|implementing|reviewing|failed")
+        latest = _latest_gates(store, tid)
+        if any(g.get("verdict") == "unavailable" for g in latest.values()):
+            die("round start refused while a gate is unavailable")
         current = int(task.get("current_round") or 0)
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
@@ -993,8 +1022,8 @@ def cmd_agent(args: list[str]) -> None:
                 task["updated_at"] = utcnow()
                 store.write("task", "update", task["id"], _strip(task))
             elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
-                if verdict not in ("approved", "rejected"):
-                    die("pr-reviewer verdict must be approved|rejected")
+                if verdict not in ("approved", "rejected", "unavailable"):
+                    die("pr-reviewer verdict must be approved|rejected|unavailable")
                 _require_owned(store, task, "task")
             else:
                 die(f"unknown agent role: {role}")
@@ -1235,8 +1264,8 @@ def cmd_gate(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
             "Usage: agent gate record --task UUID --stage grok-pr|codex-pr "
-            "--dimension quality|logic --vendor grok|codex --verdict approved|rejected "
-            "--head SHA --agent UUID [--evidence TEXT; required when rejected]"
+            "--dimension quality|logic --vendor grok|codex --verdict approved|rejected|unavailable "
+            "--head SHA --agent UUID [--evidence TEXT; required when rejected or unavailable]"
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
@@ -1256,10 +1285,12 @@ def cmd_gate(args: list[str]) -> None:
     expected_vendor = "grok" if stage == "grok-pr" else "codex"
     if vendor != expected_vendor:
         die(f"stage {stage} requires vendor {expected_vendor}")
-    if verdict not in ("approved", "rejected"):
-        die("verdict must be approved|rejected")
+    if verdict not in ("approved", "rejected", "unavailable"):
+        die("verdict must be approved|rejected|unavailable")
     if verdict == "rejected" and not (evidence or "").strip():
         die("--evidence is required when --verdict is rejected")
+    if verdict == "unavailable" and not (evidence or "").strip():
+        die("--evidence is required when --verdict is unavailable")
     if not re.fullmatch(r"[0-9a-f]{7,40}", head):
         die("--head must be a git SHA (lowercase hex, length 7–40)")
     store = open_store()
@@ -1310,10 +1341,24 @@ def cmd_gate(args: list[str]) -> None:
                 "evidence": evidence,
                 "head_sha": head,
                 "agent_id": agent_id,
-                "recorded_at": utcnow(),
+                "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             },
         )
-        if verdict == "rejected" and task.get("workflow") in ("implement", "resolve-conflicts"):
+        if verdict == "unavailable" and task.get("workflow") in (
+            "implement",
+            "resolve-conflicts",
+            "review",
+        ):
+            if task.get("state") in ("pr-review", "pushing"):
+                task["state"] = "gate-blocked"
+                task["updated_at"] = utcnow()
+                store.write("task", "update", tid, _strip(task))
+        elif verdict == "approved" and task.get("state") == "gate-blocked":
+            if _all_gate_pairs_approved_same_head(_latest_gates(store, tid)):
+                task["state"] = "pr-review"
+                task["updated_at"] = utcnow()
+                store.write("task", "update", tid, _strip(task))
+        elif verdict == "rejected" and task.get("workflow") in ("implement", "resolve-conflicts"):
             if task.get("state") != "implementing":
                 task["state"] = "implementing"
                 task["updated_at"] = utcnow()
@@ -1670,7 +1715,7 @@ def cmd_status(_: list[str]) -> None:
     store = open_store()
     try:
         data = store.snapshot()
-        open_tasks = [t for t in data["tasks"] if t.get("state") not in ("done", "failed")]
+        open_tasks = [t for t in data["tasks"] if t.get("state") not in TERMINAL_STATES]
         agents_working = [a for a in data["agents"] if a.get("status") == "working"]
         work_open = [w for w in data["work"] if w.get("status") == "open"]
         print(
@@ -2193,13 +2238,29 @@ def _find_round(store: Store, task_id: str, round_num: object) -> dict:
 
 def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
     gates = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
-    # rows() is updated_at DESC; reverse for older-first, then stable sort by recorded_at.
-    ordered = list(reversed(gates))
-    ordered.sort(key=lambda g: g.get("recorded_at") or "")
+    # rows() is updated_at DESC (index 0 = newer). Keep newer rows last on ties.
+    indexed = list(enumerate(gates))
+    indexed.sort(key=lambda item: (item[1].get("recorded_at") or "", -item[0]))
+    ordered = [g for _, g in indexed]
     latest: dict[tuple[str, str], dict] = {}
     for g in ordered:
         latest[(g.get("stage"), g.get("dimension"))] = g
     return latest
+
+
+def _all_gate_pairs_approved_same_head(latest: dict[tuple[str, str], dict]) -> bool:
+    heads: set[str] = set()
+    for stage, dim, vendor in GATE_PAIRS:
+        got = latest.get((stage, dim))
+        if got is None:
+            return False
+        if got.get("vendor") != vendor or got.get("verdict") != "approved":
+            return False
+        head = str(got.get("head_sha") or "")
+        if not head:
+            return False
+        heads.add(head)
+    return len(heads) == 1
 
 
 def _latest_checks(store: Store, task_id: str) -> dict[str, dict]:
@@ -2235,8 +2296,11 @@ def load_task_dict(store: Store, tid: str) -> dict:
         {"name": name, "result": c.get("result")} for name, c in latest_by_name.items()
     ]
     gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    ordered_gates = list(reversed(gates_raw))
-    ordered_gates.sort(key=lambda g: g.get("recorded_at") or "")
+    indexed_gates = list(enumerate(gates_raw))
+    indexed_gates.sort(
+        key=lambda item: (item[1].get("recorded_at") or "", -item[0])
+    )
+    ordered_gates = [g for _, g in indexed_gates]
     gates = [
         {
             "stage": g.get("stage"),
@@ -2302,6 +2366,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
         "implementer_verdict": last_round.get("implementer_verdict") or "",
         "reviewer_verdict": last_round.get("reviewer_verdict") or "",
         "workflow": task.get("workflow"),
+        "state": task.get("state"),
         "checklist": task.get("checklist") or {},
         "session_id": sid,
     }
@@ -2529,12 +2594,14 @@ def cmd_close_step(args: list[str]) -> None:
     if not tid or not key or not source or evidence is None or evidence == "":
         die(
             "Usage: agent close-step --task ID --key KEY --source script|human|runner "
-            "--evidence TEXT [--status ja|n_a] [--head SHA]"
+            "--evidence TEXT [--status ja|n_a|unavailable] [--head SHA]"
         )
-    if status not in ("ja", "n_a"):
-        die("close-step --status must be ja|n_a")
+    if status not in CLOSE_STATUSES:
+        die("close-step --status must be ja|n_a|unavailable")
     if status == "n_a" and key not in N_A_ALLOWED:
         die(f"n_a is not allowed for {key}")
+    if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
+        die(f"unavailable is not allowed for {key}")
     if source not in ("script", "human", "runner"):
         die("source must be script|human|runner")
     chain_source = "script" if source == "runner" else source
@@ -2550,6 +2617,7 @@ def cmd_close_step(args: list[str]) -> None:
             source=chain_source,
             evidence=evidence,
             snapshot=snap,
+            status=status,
         )
         if not verdict.allowed:
             die(verdict.reason)

@@ -32,7 +32,7 @@ Ready for review requires all of:
 
 1. Signed commits on a branch in this repository, based on `develop`.
 2. Four lane verdicts on **this** head, two vendor stages: grok quality and grok logic in parallel, then Codex quality and Codex logic. Quality/conformance reads this file first. The session that authored the diff does not sit those reviews.
-3. Codex runs only if both grok dimensions are approved. If a vendor cannot run, abort loudly; do not record `approved`; do not substitute another vendor.
+3. Codex runs only if both grok dimensions are approved. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor.
 4. Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings. Iterate until all four lane verdicts on this head are approved.
 5. Inner implement/review rounds (`review-loop`) are not the PR reviews (`pr-review`).
 6. CI green on **this** head. This public repository uses GitHub Actions. `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. The local-CI comment schema for **private** product repositories is defined in [docs/local-ci-v1.md](docs/local-ci-v1.md) and verified by `agent local-ci verify`.

@@ -91,7 +91,7 @@ agent work list --session <session-id>
 agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>
-agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT [--status ja|n_a]
+agent close-step --task <uuid> --key KEY --source script|human|runner --evidence TEXT [--status ja|n_a|unavailable]
 agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH] [--no-tmux]
 agent github pending
 agent query --match-file PATH

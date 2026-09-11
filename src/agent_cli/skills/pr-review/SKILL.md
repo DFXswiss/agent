@@ -33,12 +33,16 @@ Two dimensions (quality, logic) and two vendor stages (`grok-pr`, then
 ```bash
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
-agent agent finish --id <uuid> --verdict approved|rejected
+agent agent finish --id <uuid> --verdict approved|rejected|unavailable
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
   --verdict approved --head <sha> --agent <reviewer-uuid>
 agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
   --verdict rejected --head <sha> --agent <reviewer-uuid> --evidence "<findings>"
+agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+  --verdict unavailable --head <sha> --agent <reviewer-uuid> --evidence "<why>"
 ```
+
+`gate record --verdict approved|rejected|unavailable` (`unavailable` needs `--evidence`).
 
 Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
 
@@ -64,11 +68,15 @@ Review lanes execute no software (no tests, builds, or servers).
   is wrong in a sentence. Leave out `STATUS=`, session ids and anything else that
   only means something inside the runner — it reaches a human who has none of that
   context, and it buries the finding it is printed next to.
-- If a vendor cannot run, abort loudly. Do not record `approved`. Do not
-  substitute another vendor.
+- If a vendor cannot run, record `unavailable` with `agent gate record`. That
+  sets the task to `gate-blocked` only on workflows `implement`,
+  `resolve-conflicts`, and `review`, and only from state `pr-review` or
+  `pushing`. It does not write the checklist. Then close the matching gate
+  checklist key with `close-step --status unavailable` and evidence. Do not
+  record `approved`. Do not substitute another vendor.
 
-Zero findings only after an explicit complete pass. Empty, partial,
-timeout, or unavailable output is not zero findings.
+Zero findings only after an explicit complete pass.
+Empty, partial, timeout, or unavailable output is not zero findings.
 
 A reported point that contradicts a verified repo rule or fact may be
 dismissed with that evidence; it is not a defect.

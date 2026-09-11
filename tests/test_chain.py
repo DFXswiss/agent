@@ -298,6 +298,163 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("close-step", text)
         self.assertNotIn("grok_pr_quality", text)
 
+    def test_unavailable_gate_close_needs_unavailable_record(self) -> None:
+        cl = _pending("implement")
+        for k in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+        ):
+            cl[k] = "ja"
+        v = close_allowed(
+            "implement",
+            "grok_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="lane 402",
+            snapshot={
+                "gates": [
+                    {
+                        "stage": "grok-pr",
+                        "dimension": "quality",
+                        "vendor": "grok",
+                        "verdict": "approved",
+                    }
+                ]
+            },
+            status="unavailable",
+        )
+        self.assertFalse(v.allowed)
+        v2 = close_allowed(
+            "implement",
+            "grok_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="lane 402",
+            snapshot={
+                "gates": [
+                    {
+                        "stage": "grok-pr",
+                        "dimension": "quality",
+                        "vendor": "grok",
+                        "verdict": "unavailable",
+                    }
+                ]
+            },
+            status="unavailable",
+        )
+        self.assertTrue(v2.allowed)
+
+    def test_late_inner_skips_artifact_ok_only_in_late_states(self) -> None:
+        cl = _pending("implement")
+        cl["session_registered"] = "ja"
+        cl["spec_written"] = "ja"
+        empty = {"agents": []}
+        for state in ("local-check", "pushing", "pr-review", "gate-blocked"):
+            self.assertTrue(
+                close_allowed(
+                    "implement",
+                    "implementer_done",
+                    checklist=cl,
+                    source="script",
+                    evidence="late stamp",
+                    snapshot={**empty, "state": state},
+                ).allowed,
+                msg=f"late skip should apply in {state}",
+            )
+        for state in ("open", "implementing", "reviewing"):
+            denied = close_allowed(
+                "implement",
+                "implementer_done",
+                checklist=cl,
+                source="script",
+                evidence="late stamp",
+                snapshot={**empty, "state": state},
+            )
+            self.assertFalse(denied.allowed, msg=f"late skip must not apply in {state}")
+            self.assertIn("implementer", denied.reason)
+        reviewer_too_soon = close_allowed(
+            "implement",
+            "reviewer_approved",
+            checklist=cl,
+            source="script",
+            evidence="late stamp",
+            snapshot={**empty, "state": "pr-review"},
+        )
+        self.assertFalse(reviewer_too_soon.allowed)
+        self.assertIn("not the next step", reviewer_too_soon.reason)
+        cl["implementer_done"] = "ja"
+        self.assertTrue(
+            close_allowed(
+                "implement",
+                "reviewer_approved",
+                checklist=cl,
+                source="script",
+                evidence="late stamp",
+                snapshot={**empty, "state": "pr-review"},
+            ).allowed
+        )
+
+    def test_resolve_conflicts_late_inner_skips_artifact_ok(self) -> None:
+        cl = _pending("resolve-conflicts")
+        cl["session_registered"] = "ja"
+        empty = {"agents": []}
+        for state in ("local-check", "pushing", "pr-review", "gate-blocked"):
+            self.assertTrue(
+                close_allowed(
+                    "resolve-conflicts",
+                    "conflicts_resolved",
+                    checklist=cl,
+                    source="script",
+                    evidence="late stamp",
+                    snapshot={**empty, "state": state},
+                ).allowed,
+                msg=f"late skip should apply in {state}",
+            )
+        for state in ("open", "implementing", "reviewing"):
+            denied = close_allowed(
+                "resolve-conflicts",
+                "conflicts_resolved",
+                checklist=cl,
+                source="script",
+                evidence="late stamp",
+                snapshot={**empty, "state": state},
+            )
+            self.assertFalse(denied.allowed, msg=f"late skip must not apply in {state}")
+            self.assertIn("no finished implementer agent", denied.reason)
+        cl["conflicts_resolved"] = "ja"
+        self.assertTrue(
+            close_allowed(
+                "resolve-conflicts",
+                "reviewer_approved",
+                checklist=cl,
+                source="script",
+                evidence="late stamp",
+                snapshot={**empty, "state": "pr-review"},
+            ).allowed
+        )
+
+    def test_unavailable_is_not_a_satisfied_need(self) -> None:
+        cl = _pending("implement")
+        for k in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+        ):
+            cl[k] = "ja"
+        cl["grok_pr_quality"] = "unavailable"
+        nxt = {s.key for s in next_steps("implement", cl)}
+        self.assertIn("grok_pr_quality", nxt)
+        self.assertIn("grok_pr_logic", nxt)
+        self.assertNotIn("codex_pr_quality", nxt)
+        self.assertNotIn("codex_pr_logic", nxt)
+
 
 if __name__ == "__main__":
     unittest.main()
