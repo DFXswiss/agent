@@ -1146,24 +1146,13 @@ def run_policy(
         timeout_s = float(job["timeout_s"])
         log_path = logs_dir / f"{ident}.log"
         started = time.monotonic()
-        try:
-            result, exit_code, duration_s = _run_one_job(
-                repo_path=root,
-                command=command,
-                timeout_s=timeout_s,
-                log_path=log_path,
-                env=env,
-            )
-        except OSError:
-            return _run_entry(
-                ident=ident,
-                name=name,
-                command=command,
-                result="error",
-                exit_code=-1,
-                duration_s=time.monotonic() - started,
-                timeout_s=timeout_s,
-            )
+        result, exit_code, duration_s = _run_one_job(
+            repo_path=root,
+            command=command,
+            timeout_s=timeout_s,
+            log_path=log_path,
+            env=env,
+        )
         if result == "pass" and duration_s > timeout_s:
             result = "timeout"
         return _run_entry(
@@ -1285,11 +1274,17 @@ def run_policy(
                         drift = True
                         stop_starting = True
                         reasons.append(f"working tree or HEAD drifted: {exc}")
+                        pending.clear()
+                        _terminate_active_job_procs()
+                        _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
                         break
                     if after != head:
                         drift = True
                         stop_starting = True
                         reasons.append("HEAD drifted during run")
+                        pending.clear()
+                        _terminate_active_job_procs()
+                        _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
                         break
     except KeyboardInterrupt:
         interrupted = True
