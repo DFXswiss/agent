@@ -1191,6 +1191,7 @@ def run_policy(
                 pending.append(job)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_in_flight) as pool:
+          try:
             while pending or in_flight:
                 if not stop_starting:
                     inflight_keys: set[str] = set()
@@ -1286,6 +1287,12 @@ def run_policy(
                         _terminate_active_job_procs()
                         _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
                         break
+          except KeyboardInterrupt:
+            interrupted = True
+            stop_starting = True
+            reasons.append("run interrupted")
+            _terminate_active_job_procs()
+            _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
     except KeyboardInterrupt:
         interrupted = True
         reasons.append("run interrupted")

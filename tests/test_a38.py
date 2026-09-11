@@ -2017,6 +2017,48 @@ class SchedulerTests(unittest.TestCase):
             report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
             self.assertEqual([run.id for run in report.runs], ["docker", "jest"])
 
+    def test_head_drift_terminates_in_flight_peer(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+            _commands_lock_job(ident="docker", gh_job="compose", lock="docker-heavy"),
+        ]
+        terminated = {"n": 0}
+        tree_calls = {"n": 0}
+
+        def fake_run_one_job(**kwargs: object) -> tuple[str, int, float]:
+            time.sleep(0.15)
+            return ("pass", 0, 0.15)
+
+        def fake_clean_tree(*args: object, **kwargs: object) -> None:
+            tree_calls["n"] += 1
+            if tree_calls["n"] >= 2:
+                raise A38Error("dirty")
+
+        def fake_terminate() -> None:
+            terminated["n"] += 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = load_policy(_policy_text(jobs=jobs))
+            with mock.patch("agent_cli.a38._run_one_job", side_effect=fake_run_one_job):
+                with mock.patch("agent_cli.a38._require_clean_tree", side_effect=fake_clean_tree):
+                    with mock.patch(
+                        "agent_cli.a38._terminate_active_job_procs",
+                        side_effect=fake_terminate,
+                    ):
+                        verdict = run_policy(
+                            repo,
+                            policy,
+                            output=root / "report.md",
+                            logs_dir=root / "logs",
+                            base_sha=head,
+                            private=True,
+                        )
+        self.assertFalse(verdict["ok"])
+        self.assertGreaterEqual(terminated["n"], 1)
+
     def test_invalid_max_in_flight_raises_before_jobs(self) -> None:
         jobs = [_commands_lock_job(ident="jest", gh_job="jest", lock="jest-full")]
         called = {"n": 0}
