@@ -249,7 +249,10 @@ Head/base, configuration, evidence and CI are refreshed before promotion.
 GitHub does not offer an atomic CI-and-readiness transaction; subsequent changes
 are corrected by the next reconciliation. A head/base change returned by the
 Ready mutation immediately restores Draft. If that restore does not change
-`isDraft`, the scan fails explicitly. API denial fails explicitly and is
+`isDraft`, the scan fails explicitly. After GraphQL reports success, the guard
+re-reads the REST `draft` field and fails closed if it is missing, non-boolean,
+or still the old value; GraphQL HTTP 200 with matching `isDraft` is not enough
+to record the transition as applied. API denial fails explicitly and is
 not a successful transition. Neither this code nor its configuration is active
 until the trusted installation is deployed.
 

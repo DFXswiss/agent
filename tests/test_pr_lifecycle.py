@@ -27,6 +27,7 @@ class LifecycleAPI(ApprovalAPI):
         self.transitions = []
         self.graphql_error = False
         self.graphql_noop_draft = False
+        self.graphql_ready_without_rest = False
         self.mutate_during_transition = False
         self.fail_comment_once = False
 
@@ -42,6 +43,10 @@ class LifecycleAPI(ApprovalAPI):
             if self.graphql_error:
                 return 200, {"errors": [{"message": "denied"}]}, {}
             if self.graphql_noop_draft and operation == "convertPullRequestToDraft":
+                return 200, {"data": {operation: {"pullRequest": {
+                    "id": "PR_example", "isDraft": False,
+                    "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
+            if self.graphql_ready_without_rest and operation == "markPullRequestReadyForReview":
                 return 200, {"data": {operation: {"pullRequest": {
                     "id": "PR_example", "isDraft": False,
                     "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
@@ -505,6 +510,37 @@ def test_changed_head_during_ready_is_restored_to_draft():
     with pytest.raises(GuardError, match="restored Draft"):
         reconcile_pull(fake.api(), REPO, 1)
     assert fake.transitions == [False, True]
+
+
+def test_graphql_ready_without_rest_draft_fails_closed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.graphql_ready_without_rest = True
+    with pytest.raises(GuardError, match=r"REST draft.*intended Ready/Draft state"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.pull["draft"] is True
+    assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
+
+
+def test_graphql_ready_with_non_bool_rest_draft_fails_closed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.graphql_ready_without_rest = True
+    original = fake.request_fn
+
+    def request(method, url, body=None):
+        status, data, headers = original(method, url, body)
+        if method == "POST" and urlparse(url).path == "/graphql":
+            fake.pull["draft"] = "ready"
+        return status, data, headers
+
+    fake.request_fn = request
+    with pytest.raises(GuardError, match=r"REST draft.*intended Ready/Draft state"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.pull["draft"] == "ready"
+    assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
 
 
 def test_comment_failure_is_repaired_without_repeating_transition():

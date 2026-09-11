@@ -444,6 +444,13 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         except LifecycleDraftUnchanged as exc:
             raise GuardError("pull changed during Ready transition; Draft restore did not take effect") from exc
         raise GuardError("pull changed during Ready transition; restored Draft")
+    confirmed = api.get_json(path)
+    want_draft = target == "draft"
+    observed = confirmed.get("draft")
+    if type(observed) is not bool or observed != want_draft:
+        raise GuardError(
+            f"PR lifecycle REST draft did not match intended Ready/Draft state (observed {observed!r})"
+        )
     _complete_transition_comment(api, assessment, record)
     result["reasons"] = final_reasons
     return result
