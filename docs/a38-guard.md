@@ -244,9 +244,10 @@ The adopting workflow owns runner routing, `contents: write` for
 `pull-requests`/`issues`/`statuses` write access, and `actions: write` for initial
 workflow approval. The guard authorizes waiting allowlisted fork runs **before**
 it mutates Ready or Draft, so a failed convert-to-draft cannot skip approval.
-Serialize event-driven single-PR runs and scheduled all-open sweeps in two
+Serialize event-driven single-PR runs and all-open sweeps in two
 repository-wide concurrency groups (`event` versus `sweep`) with
 `cancel-in-progress: false`, so PR events cannot starve all-open reconciliation.
+The `sweep` group is `schedule` or `workflow_dispatch` with `all_open`.
 Sweep jobs may use a 45-minute timeout. Run trusted
 `--all-open` reconciliation on a repository-configured schedule (for example every
 five minutes). GitHub may delay scheduled execution; this is not a real-time SLA.

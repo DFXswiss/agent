@@ -1,7 +1,7 @@
 """Configured PR readiness, based on live CI rather than a cached green rollup.
 
 This reconciler never runs tests, submits reviews, or merges pull requests.
-The caller must serialize all guard invocations for the repository.
+The caller must serialize guard invocations within the `event` group and within the `sweep` group, not across both groups.
 """
 from __future__ import annotations
 
