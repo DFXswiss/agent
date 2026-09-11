@@ -134,8 +134,12 @@ class ExecutorPolicyTests(unittest.TestCase):
                 self.assertNotIn("executor", normalized)
                 self.assertEqual(
                     set(normalized),
-                    {"id", "name", "command", "timeout_s", "workflow", "job"},
+                    {"id", "name", "command", "timeout_s", "workflow", "job", "lock"},
                 )
+                if adapter in ("compose", "http-smoke"):
+                    self.assertEqual(normalized["lock"], "docker-heavy")
+                else:
+                    self.assertIsNone(normalized["lock"])
                 argv = shlex.split(normalized["command"])
                 self.assertEqual(argv[:5], ["agent", "a38", "job", adapter, "--config"])
                 self.assertEqual(len(argv), 6)
@@ -152,6 +156,12 @@ class ExecutorPolicyTests(unittest.TestCase):
                     normalized["command"],
                     f"agent a38 job {adapter} --config {shlex.quote(canonical)}",
                 )
+
+    def test_explicit_compose_lock_overrides_docker_heavy_default(self) -> None:
+        config = dict(_minimal_configs()["compose"])
+        config["lock"] = "custom-lock"
+        policy = load_policy(_policy_text(_executor_job("compose", config)))
+        self.assertEqual(policy["jobs"][0]["lock"], "custom-lock")
 
     def test_reordered_nested_keys_have_identical_normalization(self) -> None:
         first = {

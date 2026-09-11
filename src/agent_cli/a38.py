@@ -8,6 +8,7 @@ of execution. Guard and backend integration live elsewhere.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import html
 import json
 import math
@@ -29,7 +30,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .a38_job_adapters import ADAPTERS
 from .readme_only import git_is_markdown_only, git_is_readme_only
 from .a38_job_adapters.commands import parse_commands_config
-from .a38_job_adapters.common import BUILTIN_UNSET, JobError
+from .a38_job_adapters.common import BUILTIN_UNSET, DOCKER_HEAVY_LOCK, LOCK_NAME_RE, JobError
 from .a38_job_adapters.compose import companion_env_missing, parse_compose_config
 from .a38_job_adapters.http_smoke import parse_http_smoke_config
 from .a38_job_adapters.immutable import parse_immutable_config
@@ -54,7 +55,8 @@ POLICY_KEYS = frozenset(
     {"schema", "standard", "documentation", "mode", "jobs", "exclusions"}
 )
 JOB_COMMON_KEYS = frozenset({"id", "name", "timeout_s", "workflow", "job"})
-JOB_INPUT_KEYS = JOB_COMMON_KEYS | frozenset({"command", "executor"})
+JOB_INPUT_KEYS = JOB_COMMON_KEYS | frozenset({"command", "executor", "lock"})
+_DOCKER_DEFAULT_LOCK_ADAPTERS = frozenset({"compose", "http-smoke"})
 EXECUTOR_KEYS = frozenset({"adapter", "config"})
 EXCLUSION_KEYS = frozenset({"workflow", "job", "reason"})
 
@@ -224,10 +226,21 @@ def _require_job_keys(obj: Mapping[str, Any], label: str) -> str:
     inputs = keys & {"command", "executor"}
     if len(inputs) != 1:
         raise A38Error(f"{label} must contain exactly one of command or executor")
-    return inputs.pop()
+    input_key = inputs.pop()
+    if input_key == "executor" and "lock" in keys:
+        raise A38Error(f"{label} executor jobs must set lock in executor.config, not as a sibling")
+    return input_key
 
 
-def _executor_command(value: Any, label: str) -> str:
+def _optional_job_lock(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or LOCK_NAME_RE.fullmatch(value) is None:
+        raise A38Error(f"{label} must be a lock name or null")
+    return value
+
+
+def _executor_command_and_lock(value: Any, label: str) -> tuple[str, str | None]:
     if not isinstance(value, dict):
         raise A38Error(f"{label} must be an object")
     _require_keys(value, EXECUTOR_KEYS, label)
@@ -249,11 +262,15 @@ def _executor_command(value: Any, label: str) -> str:
         raise A38Error(f"{label}.config cannot be serialized as JSON: {exc}") from exc
     parser = _ADAPTER_CONFIG_PARSERS[adapter]
     try:
-        parser(config_text)
+        common, _parsed = parser(config_text)
     except (JobError, OverflowError, RecursionError) as exc:
         raise A38Error(f"{label}.config is invalid: {exc}") from exc
     command = f"agent a38 job {adapter} --config {shlex.quote(config_text)}"
-    return _validate_command(command, f"{label} command")
+    command = _validate_command(command, f"{label} command")
+    lock = common.lock
+    if lock is None and adapter in _DOCKER_DEFAULT_LOCK_ADAPTERS:
+        lock = DOCKER_HEAVY_LOCK
+    return command, lock
 
 
 def load_policy(text: str) -> dict:
@@ -330,8 +347,14 @@ def load_policy(text: str) -> dict:
         name = _validate_name(item["name"], f"jobs[{index}].name")
         if input_key == "command":
             command = _validate_command(item["command"], f"jobs[{index}].command")
+            if "lock" in item:
+                lock = _optional_job_lock(item["lock"], f"jobs[{index}].lock")
+            else:
+                lock = None
         else:
-            command = _executor_command(item["executor"], f"jobs[{index}].executor")
+            command, lock = _executor_command_and_lock(
+                item["executor"], f"jobs[{index}].executor"
+            )
         jobs.append(
             {
                 "id": ident,
@@ -340,6 +363,7 @@ def load_policy(text: str) -> dict:
                 "timeout_s": timeout_out,
                 "workflow": workflow,
                 "job": gh_job,
+                "lock": lock,
             }
         )
 
@@ -840,6 +864,18 @@ def _write_report(output: Path, payload: Mapping[str, Any]) -> None:
     _write_bytes_atomic(output, text.encode("utf-8"))
 
 
+_active_job_procs: list[subprocess.Popen[Any]] = []
+_active_job_procs_lock = threading.Lock()
+
+
+def _terminate_active_job_procs() -> None:
+    # SIGTERM is delivered to the main thread; workers will not see KeyboardInterrupt.
+    with _active_job_procs_lock:
+        procs = list(_active_job_procs)
+    for proc in procs:
+        _terminate_process_group(proc)
+
+
 def _terminate_process_group(proc: subprocess.Popen[Any]) -> None:
     """Allow the leader up to 30 seconds for owned-resource cleanup on TERM.
 
@@ -896,6 +932,8 @@ def _run_one_job(
         if sys.platform != "win32":
             popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(**popen_kwargs)  # noqa: S603
+        with _active_job_procs_lock:
+            _active_job_procs.append(proc)
         timed_out = False
         try:
             try:
@@ -909,6 +947,11 @@ def _run_one_job(
         finally:
             # The session leader may have exited while descendants still run.
             _terminate_process_group(proc)
+            with _active_job_procs_lock:
+                try:
+                    _active_job_procs.remove(proc)
+                except ValueError:
+                    pass
     duration = time.monotonic() - start
     if timed_out or duration > timeout_s:
         return "timeout", proc.returncode if proc.returncode is not None else -1, duration
@@ -927,6 +970,56 @@ def _force_fail_runs(runs: list[dict[str, Any]]) -> None:
         run["result"] = "fail"
         if run.get("exit_code") == 0:
             run["exit_code"] = 1
+
+
+def _job_conflict_keys(job: Mapping[str, Any]) -> frozenset[str]:
+    lock = job["lock"]
+    if lock == DOCKER_HEAVY_LOCK:
+        return frozenset({DOCKER_HEAVY_LOCK})
+    keys: set[str] = {"#cpu"}
+    if isinstance(lock, str) and lock:
+        keys.add(lock)
+    return frozenset(keys)
+
+
+def _max_in_flight(env: Mapping[str, str]) -> int:
+    raw = env.get("A38_MAX_IN_FLIGHT", "2")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise A38Error("A38_MAX_IN_FLIGHT must be an integer >= 1") from None
+    if value < 1:
+        raise A38Error("A38_MAX_IN_FLIGHT must be an integer >= 1")
+    return value
+
+
+def _await_in_flight_as_interrupted(
+    in_flight: dict[
+        concurrent.futures.Future[Any], tuple[Mapping[str, Any], float]
+    ],
+    run_by_id: dict[str, dict[str, Any]],
+    reasons: list[str],
+) -> None:
+    if in_flight:
+        concurrent.futures.wait(tuple(in_flight))
+    for fut, (job, started) in list(in_flight.items()):
+        ident = str(job["id"])
+        try:
+            fut.result()
+        except Exception:
+            pass
+        if ident not in run_by_id:
+            run_by_id[ident] = _run_entry(
+                ident=ident,
+                name=str(job["name"]),
+                command=str(job["command"]),
+                result="error",
+                exit_code=-1,
+                duration_s=time.monotonic() - started,
+                timeout_s=float(job["timeout_s"]),
+            )
+            reasons.append(f"{ident}: interrupted")
+    in_flight.clear()
 
 
 def _prepare_run_output(
@@ -1033,8 +1126,8 @@ def run_policy(
         omit = set(required)
 
     env = _job_env(head, base)
+    max_in_flight = _max_in_flight(env)
     _preflight_jobs([job for job in jobs if str(job["id"]) not in omit], env)
-    runs: list[dict[str, Any]] = []
     reasons: list[str] = []
     interrupted = False
     drift = False
@@ -1043,97 +1136,177 @@ def run_policy(
         if markdown_only
         else "omitted: README-only change set\n"
     )
+    run_by_id: dict[str, dict[str, Any]] = {}
+    stop_starting = False
+
+    def execute_job(job: Mapping[str, Any]) -> dict[str, Any]:
+        ident = str(job["id"])
+        name = str(job["name"])
+        command = str(job["command"])
+        timeout_s = float(job["timeout_s"])
+        log_path = logs_dir / f"{ident}.log"
+        started = time.monotonic()
+        result, exit_code, duration_s = _run_one_job(
+            repo_path=root,
+            command=command,
+            timeout_s=timeout_s,
+            log_path=log_path,
+            env=env,
+        )
+        if result == "pass" and duration_s > timeout_s:
+            result = "timeout"
+        return _run_entry(
+            ident=ident,
+            name=name,
+            command=command,
+            result=result,
+            exit_code=exit_code,
+            duration_s=duration_s,
+            timeout_s=timeout_s,
+        )
 
     previous_sigterm = None
     if threading.current_thread() is threading.main_thread():
         previous_sigterm = signal.getsignal(signal.SIGTERM)
         signal.signal(signal.SIGTERM, _interrupt_run)
+    in_flight: dict[
+        concurrent.futures.Future[dict[str, Any]], tuple[Mapping[str, Any], float]
+    ] = {}
+    pending: list[Mapping[str, Any]] = []
     try:
         for job in jobs:
             ident = str(job["id"])
-            name = str(job["name"])
-            command = str(job["command"])
-            timeout_s = float(job["timeout_s"])
-            log_path = logs_dir / f"{ident}.log"
-            started = time.monotonic()
             if ident in omit:
-                log_path.write_text(omit_log, encoding="utf-8")
-                runs.append(
-                    _run_entry(
-                        ident=ident,
-                        name=name,
-                        command=command,
-                        result="not_applicable",
-                        exit_code=0,
-                        duration_s=0.0,
-                        timeout_s=timeout_s,
-                    )
-                )
-                continue
-            try:
-                result, exit_code, duration_s = _run_one_job(
-                    repo_path=root,
-                    command=command,
-                    timeout_s=timeout_s,
-                    log_path=log_path,
-                    env=env,
-                )
-            except KeyboardInterrupt:
-                interrupted = True
-                runs.append(
-                    _run_entry(
-                        ident=ident,
-                        name=name,
-                        command=command,
-                        result="error",
-                        exit_code=-1,
-                        duration_s=time.monotonic() - started,
-                        timeout_s=timeout_s,
-                    )
-                )
-                reasons.append(f"{ident}: interrupted")
-                break
-            except OSError as exc:
-                result, exit_code, duration_s = "error", -1, time.monotonic() - started
-                reasons.append(f"{ident}: execution failed ({type(exc).__name__})")
-            if result == "pass" and duration_s > timeout_s:
-                result = "timeout"
-            runs.append(
-                _run_entry(
+                (logs_dir / f"{ident}.log").write_text(omit_log, encoding="utf-8")
+                run_by_id[ident] = _run_entry(
                     ident=ident,
-                    name=name,
-                    command=command,
-                    result=result,
-                    exit_code=exit_code,
-                    duration_s=duration_s,
-                    timeout_s=timeout_s,
+                    name=str(job["name"]),
+                    command=str(job["command"]),
+                    result="not_applicable",
+                    exit_code=0,
+                    duration_s=0.0,
+                    timeout_s=float(job["timeout_s"]),
                 )
-            )
-            if result != "pass" or exit_code != 0:
-                reasons.append(f"{ident}: result is {result}")
+            else:
+                pending.append(job)
 
-            try:
-                _require_clean_tree(root, run=runner)
-                after = _head_sha(root, run=runner)
-            except A38Error as exc:
-                drift = True
-                reasons.append(f"working tree or HEAD drifted: {exc}")
-                break
-            if after != head:
-                drift = True
-                reasons.append("HEAD drifted during run")
-                break
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_in_flight) as pool:
+          try:
+            while pending or in_flight:
+                if not stop_starting:
+                    inflight_keys: set[str] = set()
+                    for running_job, _started in in_flight.values():
+                        inflight_keys.update(_job_conflict_keys(running_job))
+                    still_pending: list[Mapping[str, Any]] = []
+                    for job in pending:
+                        keys = _job_conflict_keys(job)
+                        if (
+                            len(in_flight) >= max_in_flight
+                            or keys & inflight_keys
+                        ):
+                            still_pending.append(job)
+                            continue
+                        started = time.monotonic()
+                        future = pool.submit(execute_job, job)
+                        in_flight[future] = (job, started)
+                        inflight_keys.update(keys)
+                    pending = still_pending
+
+                if not in_flight:
+                    break
+
+                try:
+                    done, _pending_futs = concurrent.futures.wait(
+                        tuple(in_flight),
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                except KeyboardInterrupt:
+                    interrupted = True
+                    stop_starting = True
+                    reasons.append("run interrupted")
+                    _terminate_active_job_procs()
+                    _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
+                    break
+
+                for future in done:
+                    job, started = in_flight.pop(future)
+                    ident = str(job["id"])
+                    try:
+                        entry = future.result()
+                    except KeyboardInterrupt:
+                        interrupted = True
+                        stop_starting = True
+                        entry = _run_entry(
+                            ident=ident,
+                            name=str(job["name"]),
+                            command=str(job["command"]),
+                            result="error",
+                            exit_code=-1,
+                            duration_s=time.monotonic() - started,
+                            timeout_s=float(job["timeout_s"]),
+                        )
+                        reasons.append(f"{ident}: interrupted")
+                        _terminate_active_job_procs()
+                        _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
+                        run_by_id[ident] = entry
+                        pending.clear()
+                        break
+                    except Exception as exc:
+                        entry = _run_entry(
+                            ident=ident,
+                            name=str(job["name"]),
+                            command=str(job["command"]),
+                            result="error",
+                            exit_code=-1,
+                            duration_s=time.monotonic() - started,
+                            timeout_s=float(job["timeout_s"]),
+                        )
+                        reasons.append(f"{ident}: execution failed ({type(exc).__name__})")
+                    run_by_id[ident] = entry
+                    if entry["result"] != "pass" or entry["exit_code"] != 0:
+                        if f"{ident}: result is {entry['result']}" not in reasons:
+                            reasons.append(f"{ident}: result is {entry['result']}")
+                    if interrupted:
+                        break
+                    try:
+                        _require_clean_tree(root, run=runner)
+                        after = _head_sha(root, run=runner)
+                    except A38Error as exc:
+                        drift = True
+                        stop_starting = True
+                        reasons.append(f"working tree or HEAD drifted: {exc}")
+                        pending.clear()
+                        _terminate_active_job_procs()
+                        _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
+                        break
+                    if after != head:
+                        drift = True
+                        stop_starting = True
+                        reasons.append("HEAD drifted during run")
+                        pending.clear()
+                        _terminate_active_job_procs()
+                        _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
+                        break
+          except KeyboardInterrupt:
+            interrupted = True
+            stop_starting = True
+            reasons.append("run interrupted")
+            _terminate_active_job_procs()
+            _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
     except KeyboardInterrupt:
         interrupted = True
         reasons.append("run interrupted")
+        _terminate_active_job_procs()
+        _await_in_flight_as_interrupted(in_flight, run_by_id, reasons)
     finally:
         if previous_sigterm is not None:
             signal.signal(signal.SIGTERM, previous_sigterm)
 
-    finished_ids = {run_item["id"] for run_item in runs}
+    runs: list[dict[str, Any]] = []
     for job in jobs:
         ident = str(job["id"])
-        if ident in finished_ids:
+        if ident in run_by_id:
+            runs.append(run_by_id[ident])
             continue
         runs.append(
             _run_entry(

@@ -8,6 +8,7 @@ import signal
 import sys
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -236,6 +237,32 @@ class PolicyTests(unittest.TestCase):
         raw = _policy_dict()
         raw["extra"] = 1
         with self.assertRaisesRegex(A38Error, "unknown keys"):
+            load_policy(json.dumps(raw))
+
+    def test_command_job_lock_round_trip(self) -> None:
+        raw = _policy_dict()
+        raw["jobs"][0]["lock"] = "jest-full"
+        policy = load_policy(json.dumps(raw))
+        self.assertEqual(policy["jobs"][0]["lock"], "jest-full")
+
+    def test_command_job_rejects_empty_lock(self) -> None:
+        raw = _policy_dict()
+        raw["jobs"][0]["lock"] = ""
+        with self.assertRaisesRegex(A38Error, "lock name"):
+            load_policy(json.dumps(raw))
+
+    def test_command_job_rejects_illegal_lock_name(self) -> None:
+        raw = _policy_dict()
+        raw["jobs"][0]["lock"] = "jest full"
+        with self.assertRaisesRegex(A38Error, "lock name"):
+            load_policy(json.dumps(raw))
+
+    def test_executor_job_rejects_sibling_lock(self) -> None:
+        raw = _policy_dict(
+            jobs=[_commands_lock_job(ident="jest", gh_job="jest", lock="jest-full")]
+        )
+        raw["jobs"][0]["lock"] = "jest-full"
+        with self.assertRaisesRegex(A38Error, "executor.config"):
             load_policy(json.dumps(raw))
 
     def test_rejects_empty_jobs(self) -> None:
@@ -1808,6 +1835,256 @@ class RunnerTests(unittest.TestCase):
                     base_sha=None,
                     private=True,
                 )
+
+
+def _commands_lock_job(
+    *,
+    ident: str,
+    gh_job: str,
+    lock: str | None,
+    timeout_s: float = 30,
+) -> dict:
+    config: dict = {"steps": [["true", ident]]}
+    if lock is not None:
+        config["lock"] = lock
+    return {
+        "id": ident,
+        "name": ident,
+        "executor": {"adapter": "commands", "config": config},
+        "timeout_s": timeout_s,
+        "workflow": ".github/workflows/ci.yml",
+        "job": gh_job,
+    }
+
+
+class SchedulerTests(unittest.TestCase):
+    def _run_with_sleeper(
+        self,
+        jobs: list[dict],
+        *,
+        sleep_s: float = 0.25,
+        env: dict[str, str] | None = None,
+        outcomes: dict[str, tuple[str, int, float]] | None = None,
+    ) -> tuple[dict, float, list[tuple[str, str, float]]]:
+        events: list[tuple[str, str, float]] = []
+        lock = threading.Lock()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = load_policy(_policy_text(jobs=jobs))
+            ident_by_command = {str(job["command"]): str(job["id"]) for job in policy["jobs"]}
+
+            def fake_run_one_job_mapped(**kwargs: object) -> tuple[str, int, float]:
+                command = str(kwargs["command"])
+                ident = ident_by_command.get(command, "unknown")
+                t0 = time.monotonic()
+                with lock:
+                    events.append(("start", ident, t0))
+                time.sleep(sleep_s)
+                t1 = time.monotonic()
+                with lock:
+                    events.append(("end", ident, t1))
+                if outcomes and ident in outcomes:
+                    return outcomes[ident]
+                return ("pass", 0, t1 - t0)
+
+            extra_env = env or {}
+            with mock.patch.dict(os.environ, extra_env, clear=False):
+                with mock.patch("agent_cli.a38._run_one_job", side_effect=fake_run_one_job_mapped):
+                    started = time.monotonic()
+                    verdict = run_policy(
+                        repo,
+                        policy,
+                        output=root / "report.md",
+                        logs_dir=root / "logs",
+                        base_sha=head,
+                        private=True,
+                    )
+                    wall = time.monotonic() - started
+        return verdict, wall, events
+
+    def test_disjoint_lock_domains_overlap(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+            _commands_lock_job(ident="docker", gh_job="compose", lock="docker-heavy"),
+        ]
+        verdict, wall, events = self._run_with_sleeper(jobs, sleep_s=0.3)
+        self.assertTrue(verdict["ok"], msg=verdict)
+        starts = [item for item in events if item[0] == "start"]
+        ends = [item for item in events if item[0] == "end"]
+        self.assertEqual({item[1] for item in starts}, {"jest", "docker"})
+        first_end = min(item[2] for item in ends)
+        second_start = max(item[2] for item in starts)
+        self.assertLess(second_start, first_end)
+        self.assertLess(wall, 0.55)
+
+    def test_same_lock_does_not_overlap(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="a", gh_job="a", lock="jest-full"),
+            _commands_lock_job(ident="b", gh_job="b", lock="jest-full"),
+        ]
+        verdict, wall, events = self._run_with_sleeper(jobs, sleep_s=0.25)
+        self.assertTrue(verdict["ok"], msg=verdict)
+        starts = sorted((item[2], item[1]) for item in events if item[0] == "start")
+        ends = {item[1]: item[2] for item in events if item[0] == "end"}
+        first_id = starts[0][1]
+        self.assertGreaterEqual(starts[1][0], ends[first_id])
+        self.assertGreaterEqual(wall, 0.45)
+
+    def test_command_and_jest_share_cpu_domain(self) -> None:
+        jobs = [
+            {
+                "id": "lint",
+                "name": "lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+        ]
+        verdict, wall, events = self._run_with_sleeper(jobs, sleep_s=0.25)
+        self.assertTrue(verdict["ok"], msg=verdict)
+        starts = sorted((item[2], item[1]) for item in events if item[0] == "start")
+        ends = {item[1]: item[2] for item in events if item[0] == "end"}
+        first_id = starts[0][1]
+        self.assertGreaterEqual(starts[1][0], ends[first_id])
+        self.assertGreaterEqual(wall, 0.45)
+
+    def test_max_in_flight_cap_prevents_overlap(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+            _commands_lock_job(ident="docker", gh_job="compose", lock="docker-heavy"),
+        ]
+        verdict, wall, events = self._run_with_sleeper(
+            jobs, sleep_s=0.25, env={"A38_MAX_IN_FLIGHT": "1"}
+        )
+        self.assertTrue(verdict["ok"], msg=verdict)
+        starts = sorted((item[2], item[1]) for item in events if item[0] == "start")
+        ends = {item[1]: item[2] for item in events if item[0] == "end"}
+        first_id = starts[0][1]
+        self.assertGreaterEqual(starts[1][0], ends[first_id])
+        self.assertGreaterEqual(wall, 0.45)
+
+    def test_failure_still_runs_independent_domain(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+            _commands_lock_job(ident="docker", gh_job="compose", lock="docker-heavy"),
+        ]
+        verdict, _wall, events = self._run_with_sleeper(
+            jobs,
+            sleep_s=0.05,
+            outcomes={"jest": ("fail", 1, 0.05)},
+        )
+        self.assertFalse(verdict["ok"])
+        ran = {item[1] for item in events if item[0] == "start"}
+        self.assertEqual(ran, {"jest", "docker"})
+
+    def test_report_runs_follow_policy_order(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="docker", gh_job="compose", lock="docker-heavy"),
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+        ]
+        hold_docker = threading.Event()
+
+        def fake_run_one_job(**kwargs: object) -> tuple[str, int, float]:
+            command = str(kwargs["command"])
+            if "docker-heavy" in command:
+                hold_docker.wait(timeout=2)
+                time.sleep(0.05)
+                return ("pass", 0, 0.05)
+            time.sleep(0.02)
+            hold_docker.set()
+            return ("pass", 0, 0.02)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = load_policy(_policy_text(jobs=jobs))
+            with mock.patch("agent_cli.a38._run_one_job", side_effect=fake_run_one_job):
+                verdict = run_policy(
+                    repo,
+                    policy,
+                    output=root / "report.md",
+                    logs_dir=root / "logs",
+                    base_sha=head,
+                    private=True,
+                )
+            self.assertTrue(verdict["ok"], msg=verdict)
+            report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
+            self.assertEqual([run.id for run in report.runs], ["docker", "jest"])
+
+    def test_head_drift_terminates_in_flight_peer(self) -> None:
+        jobs = [
+            _commands_lock_job(ident="jest", gh_job="jest", lock="jest-full"),
+            _commands_lock_job(ident="docker", gh_job="compose", lock="docker-heavy"),
+        ]
+        terminated = {"n": 0}
+        tree_calls = {"n": 0}
+
+        def fake_run_one_job(**kwargs: object) -> tuple[str, int, float]:
+            time.sleep(0.15)
+            return ("pass", 0, 0.15)
+
+        def fake_clean_tree(*args: object, **kwargs: object) -> None:
+            tree_calls["n"] += 1
+            if tree_calls["n"] >= 2:
+                raise A38Error("dirty")
+
+        def fake_terminate() -> None:
+            terminated["n"] += 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = load_policy(_policy_text(jobs=jobs))
+            with mock.patch("agent_cli.a38._run_one_job", side_effect=fake_run_one_job):
+                with mock.patch("agent_cli.a38._require_clean_tree", side_effect=fake_clean_tree):
+                    with mock.patch(
+                        "agent_cli.a38._terminate_active_job_procs",
+                        side_effect=fake_terminate,
+                    ):
+                        verdict = run_policy(
+                            repo,
+                            policy,
+                            output=root / "report.md",
+                            logs_dir=root / "logs",
+                            base_sha=head,
+                            private=True,
+                        )
+        self.assertFalse(verdict["ok"])
+        self.assertGreaterEqual(terminated["n"], 1)
+
+    def test_invalid_max_in_flight_raises_before_jobs(self) -> None:
+        jobs = [_commands_lock_job(ident="jest", gh_job="jest", lock="jest-full")]
+        called = {"n": 0}
+
+        def fake_run_one_job(**kwargs: object) -> tuple[str, int, float]:
+            called["n"] += 1
+            return ("pass", 0, 0.01)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            policy = load_policy(_policy_text(jobs=jobs))
+            with mock.patch.dict(os.environ, {"A38_MAX_IN_FLIGHT": "0"}):
+                with mock.patch("agent_cli.a38._run_one_job", side_effect=fake_run_one_job):
+                    with self.assertRaises(A38Error) as ctx:
+                        run_policy(
+                            repo,
+                            policy,
+                            output=root / "report.md",
+                            logs_dir=root / "logs",
+                            base_sha=head,
+                            private=True,
+                        )
+            self.assertIn("A38_MAX_IN_FLIGHT", str(ctx.exception))
+            self.assertEqual(called["n"], 0)
 
 
 class CliTests(unittest.TestCase):
