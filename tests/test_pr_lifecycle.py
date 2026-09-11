@@ -28,6 +28,8 @@ class LifecycleAPI(ApprovalAPI):
         self.graphql_error = False
         self.graphql_noop_draft = False
         self.graphql_ready_without_rest = False
+        self.graphql_noop_ready = False
+        self.graphql_noop_ready_null = False
         self.mutate_during_transition = False
         self.fail_comment_once = False
 
@@ -49,6 +51,14 @@ class LifecycleAPI(ApprovalAPI):
             if self.graphql_ready_without_rest and operation == "markPullRequestReadyForReview":
                 return 200, {"data": {operation: {"pullRequest": {
                     "id": "PR_example", "isDraft": False,
+                    "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
+            if self.graphql_noop_ready and operation == "markPullRequestReadyForReview":
+                return 200, {"data": {operation: {"pullRequest": {
+                    "id": "PR_example", "isDraft": True,
+                    "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
+            if self.graphql_noop_ready_null and operation == "markPullRequestReadyForReview":
+                return 200, {"data": {operation: {"pullRequest": {
+                    "id": "PR_example", "isDraft": None,
                     "headRefOid": self.pull["head"]["sha"], "baseRefOid": BASE}}}}, {}
             self.pull["draft"] = operation == "convertPullRequestToDraft"
             self.transitions.append(self.pull["draft"])
@@ -474,9 +484,32 @@ def test_graphql_error_is_not_a_successful_transition():
     fake = LifecycleAPI()
     fake.runs.clear()
     fake.graphql_error = True
-    with pytest.raises(GuardError, match="mutation failed"):
+    with pytest.raises(GuardError, match="denied"):
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.transitions
+    assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
+
+
+def test_ready_mutation_http_200_with_unchanged_draft_fails_closed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.graphql_noop_ready = True
+    with pytest.raises(GuardError, match="contents: write"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert not fake.transitions
+    assert fake.pull["draft"] is True
+
+
+def test_ready_mutation_non_boolean_is_draft_fails_closed():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.graphql_noop_ready_null = True
+    with pytest.raises(GuardError, match=r"isDraft=None"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert not fake.transitions
+    assert fake.pull["draft"] is True
     assert all('"phase": "applied"' not in c["body"] for c in fake.comments)
 
 
