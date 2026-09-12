@@ -549,7 +549,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if _has_merge_conflicts(api, final_pull):
         final_reasons.insert(0, "Merge conflicts")
     if target == "ready" and (
-        "Merge conflicts" in final_reasons or final_pull.get("mergeable") is False
+        "Merge conflicts" in final_reasons or final_pull.get("mergeable") is not True
     ):
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     if (
@@ -561,6 +561,29 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     if target == "draft" and not final_reasons:
         return {"action": "unchanged", "reasons": [], "dry_run": False}
     if target == "draft" and write_hold and "Merge conflicts" not in final_reasons:
+        hold = {
+            "repo": assessment.repo,
+            "pr": assessment.pr,
+            "head": snap.head_sha,
+            "base": snap.base_sha,
+            "state": "ready",
+            "reasons": final_reasons,
+            "phase": "applied",
+        }
+        if not dry_run and (
+            previous.get("phase") != "applied"
+            or previous.get("state") != "ready"
+            or previous.get("head") != snap.head_sha
+            or previous.get("base") != snap.base_sha
+        ):
+            _save_record(
+                api,
+                assessment,
+                STATE_MARKER,
+                hold,
+                "A write collaborator holds Ready; this pull request stays ready for review.",
+                "Ein Write-Collaborator hält Ready; dieser Pull Request bleibt bereit zum Review.",
+            )
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     record = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha,
               "base": snap.base_sha, "state": target, "reasons": final_reasons, "phase": "planned"}

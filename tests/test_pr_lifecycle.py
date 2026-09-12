@@ -1019,6 +1019,9 @@ def test_write_hold_after_conflicts_disappear_on_reread_keeps_ready(status, conc
     assert fake.transitions == []
     assert not fake.pull["draft"]
     assert conflict_reads == [True, False]
+    states = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert states and '"phase": "applied"' in states[-1]["body"]
+    assert '"state": "ready"' in states[-1]["body"]
 
 
 @pytest.mark.parametrize("status,conclusion", [
