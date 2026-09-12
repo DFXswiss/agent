@@ -7,12 +7,210 @@ import pytest
 
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
-from agent_cli.pr_lifecycle import AUTH_MARKER, STATE_MARKER
+from agent_cli.pr_lifecycle import AUTH_MARKER, STATE_MARKER, visible_transition_sentences
 from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO, _report_comment
 from test_workflow_approval_core import ApprovalAPI, PATH
 
 pytestmark = pytest.mark.no_pg
 GUARD = ".github/workflows/guard.yml"
+
+
+def test_visible_transition_sentences_action_required_only():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [f"CI not green: {PATH} (action_required)"],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI is waiting for approval."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI auf Freigabe wartet."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
+def test_visible_transition_sentences_merge_conflicts_only():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": ["Merge conflicts"],
+    })
+    assert en == (
+        "This pull request is back in Draft because merge conflicts exist."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "CI" not in en
+    assert "CI" not in de
+
+
+def test_visible_transition_sentences_conflicts_and_ci_failed():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            "Merge conflicts",
+            f"CI not green: {PATH} (failure)",
+        ],
+    })
+    assert en == (
+        "This pull request is back in Draft because merge conflicts exist and CI failed."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen "
+        "und die CI fehlgeschlagen ist."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+
+
+def test_visible_transition_sentences_backend_5498_shape():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            "CI not green: .github/workflows/api-pr.yaml (action_required)",
+            "CI not green: .github/workflows/codeql.yml (action_required)",
+            "Required CI check not green: .github/workflows/api-pr.yaml / Test",
+            "CI status not green: A38 / report (develop) (failure)",
+        ],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI is waiting for approval "
+        "and A38 is not green."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI auf Freigabe wartet "
+        "und A38 nicht grün ist."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "merge conflicts" not in en.lower()
+
+
+def test_visible_transition_sentences_mixed_non_a38_failure_and_a38():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [
+            "CI not green: .github/workflows/api-pr.yaml (failure)",
+            "CI status not green: A38 / report (develop) (failure)",
+        ],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI failed and A38 is not green."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI fehlgeschlagen ist "
+        "und A38 nicht grün ist."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
+def test_visible_transition_sentences_cancelled_only():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [f"CI not green: {PATH} (cancelled)"],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI was cancelled."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI abgebrochen wurde."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "failed" not in en
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
+def test_visible_transition_sentences_false_positive_a38_name():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": ["CI not green: .github/workflows/A38-compat.yml (failure)"],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI failed."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI fehlgeschlagen ist."
+    )
+    assert "A38 is not green" not in en
+    assert "A38 nicht grün" not in de
+    assert " or " not in en
+    assert " oder " not in de
+    assert "merge conflicts" not in en.lower()
+    assert "Merge-Konflikte" not in de
+
+
+def test_visible_transition_sentences_restore_author_write_action_required():
+    en, de = visible_transition_sentences(
+        {
+            "state": "ready",
+            "reasons": [f"CI not green: {PATH} (action_required)"],
+        },
+        write_ready_reason="author has write",
+    )
+    assert en == (
+        "The author has write; this pull request is ready for review "
+        "even though CI is waiting for approval."
+    )
+    assert de == (
+        "Der Autor hat Write; dieser Pull Request ist bereit zum Review, "
+        "auch wenn die CI auf Freigabe wartet."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+    assert "or merge conflicts" not in en
+    assert "Merge-Konflikte" not in de
+
+
+def test_visible_transition_sentences_green_ready_unchanged():
+    en, de = visible_transition_sentences({"state": "ready", "reasons": []})
+    assert en == (
+        "The authorized CI runs are green and no merge conflicts exist; "
+        "this pull request is ready for review."
+    )
+    assert de == (
+        "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; "
+        "dieser Pull Request ist bereit zum Review."
+    )
+
+
+def test_visible_transition_sentences_queued_ci():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [f"CI not green: {PATH} (queued)"],
+    })
+    assert en == (
+        "This pull request is back in Draft because CI is still running."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil die CI noch läuft."
+    )
+    assert " or " not in en
+    assert " oder " not in de
+
+
+def test_visible_transition_sentences_missing_required_ci():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [f"Missing required CI: {PATH}"],
+    })
+    assert en == (
+        "This pull request is back in Draft because required CI is missing."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil erforderliche CI fehlt."
+    )
+    assert " or " not in en
+    assert " oder " not in de
 
 
 class LifecycleAPI(ApprovalAPI):
@@ -98,6 +296,74 @@ def test_not_fully_green_returns_ready_to_draft_once(status, conclusion):
     reconcile_pull(fake.api(), REPO, 1)
     assert fake.transitions == [True]
     assert len([c for c in fake.comments if c["body"].startswith(STATE_MARKER)]) == 1
+
+
+def test_draft_comment_names_action_required_without_or_merge_conflicts():
+    fake = LifecycleAPI()
+    fake.pull["head"]["repo"]["full_name"] = REPO
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    reconcile_pull(fake.api(), REPO, 1)
+    comments = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert '"phase": "applied"' in body
+    assert "CI is waiting for approval" in body
+    assert "die CI auf Freigabe wartet" in body
+    assert "or merge conflicts" not in body
+    assert "oder Merge-Konflikte" not in body
+
+
+def test_draft_comment_names_merge_conflicts_only():
+    fake = LifecycleAPI()
+    fake.pull["mergeable"] = False
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.pull["draft"] and fake.transitions == [True]
+    comments = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert "This pull request is back in Draft because merge conflicts exist." in body
+    assert "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen." in body
+    en = body.split("EN:\n", 1)[1].split("\n\nDE:\n", 1)[0]
+    de = body.split("DE:\n", 1)[1].split("\n\n<details>", 1)[0]
+    assert "CI" not in en and " or " not in en
+    assert "CI" not in de and " oder " not in de
+
+
+def test_draft_comment_joins_conflicts_and_failed_ci_with_and():
+    fake = LifecycleAPI()
+    fake.pull["mergeable"] = False
+    fake.runs[0].update(status="completed", conclusion="failure")
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.pull["draft"] and fake.transitions == [True]
+    comments = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert (
+        "This pull request is back in Draft because merge conflicts exist and CI failed."
+        in body
+    )
+    assert (
+        "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen "
+        "und die CI fehlgeschlagen ist."
+    ) in body
+    en = body.split("EN:\n", 1)[1].split("\n\nDE:\n", 1)[0]
+    de = body.split("DE:\n", 1)[1].split("\n\n<details>", 1)[0]
+    assert " or " not in en
+    assert " oder " not in de
+
+
+def test_draft_comment_names_a38_when_author_report_missing():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.pull["draft"] and fake.transitions == [True]
+    comments = [c for c in fake.comments if c["body"].startswith(STATE_MARKER)]
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert "This pull request is back in Draft because A38 is not green." in body
+    assert "Dieser Pull Request steht wieder auf Draft, weil A38 nicht grün ist." in body
+    assert "or merge conflicts" not in body
+    assert "oder Merge-Konflikte" not in body
 
 
 def test_missing_ci_is_not_vacuously_green():
