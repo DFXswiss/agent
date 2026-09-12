@@ -248,7 +248,7 @@ Serialize event-driven single-PR runs and all-open sweeps in two
 repository-wide concurrency groups (`event` versus `sweep`) with
 `cancel-in-progress: false`, so PR events cannot starve all-open reconciliation.
 The `sweep` group is `schedule` or `workflow_dispatch` with `all_open`.
-Sweep jobs may use a 45-minute timeout. Run trusted
+Sweep jobs may use a 45-minute timeout; event-driven single-PR jobs may use 10 minutes. Run trusted
 `--all-open` reconciliation on a repository-configured schedule (for example every
 five minutes). GitHub may delay scheduled execution; this is not a real-time SLA.
 Privileged runs must never check out PR code. Bot readiness must not be wired to
