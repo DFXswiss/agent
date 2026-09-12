@@ -2270,7 +2270,7 @@ def reconcile_pull(
             published = publish_assessment(api, assessment)
             _apply_guard_side_effects(api, published, dry_run=False)
             return published
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — invalidate after any publish-path failure
             if _is_guard_error(exc) and "changed before publish" in str(exc):
                 last_err = exc
                 continue
@@ -2554,7 +2554,7 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                             publish=publish,
                             runtime_env=environ,
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 — per-PR isolation
                         results.append({
                             "ok": False, "status": "error", "repo": args.repo,
                             "pr": number, "reasons": [str(exc)],
