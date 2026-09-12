@@ -33,8 +33,8 @@ def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: in
     (consumer / "agent_cli/a38_guard.py").write_text(malicious)
 
     # Trusted stand-ins avoid network/package writes while running the exact
-    # checked-in shell command. The guard stand-in also imports its YAML module
-    # and exports main() so the composite can import that name.
+    # checked-in shell command. YAML is asserted at import; the trusted marker
+    # prints only from main() so python -m cannot satisfy the stdout check.
     (trusted_src / "pip.py").write_text("print('trusted installer')\n")
     (trusted_src / "yaml.py").write_text("TRUSTED = True\n")
     (trusted_src / "agent_cli").mkdir()
@@ -42,8 +42,8 @@ def test_composite_cannot_import_consumer_modules(tmp_path: Path, step_index: in
     (trusted_src / "agent_cli/a38_guard.py").write_text(
         "import yaml\n"
         "assert yaml.TRUSTED\n"
-        "print('trusted guard')\n"
         "def main(*args, **kwargs):\n"
+        "    print('trusted guard')\n"
         "    return 0\n"
     )
     bin_dir = tmp_path / "bin"

@@ -816,6 +816,79 @@ def test_all_open_continues_after_plain_runtimeerror(capsys) -> None:
     assert "boom" in output.err
 
 
+def test_all_open_invalidates_after_foreign_guarderror_from_side_effects(capsys) -> None:
+    fake = FakeAPI()
+    fake.open_pulls = [2, 1]
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    # FakeAPI only serves pulls/1 and issues/1; fetch_pull still records number=2.
+    original_request = fake.request_fn
+
+    def request(method, url, body=None):
+        rewritten = url.replace("/pulls/2", "/pulls/1").replace("/issues/2/", "/issues/1/")
+        return original_request(method, rewritten, body)
+
+    fake.request_fn = request
+    foreign = type("GuardError", (RuntimeError,), {})(
+        "fork workflow approval requires the current base to be included in the head"
+    )
+    original_apply = guard._apply_guard_side_effects
+
+    def apply(api, assessment, *, dry_run):
+        if assessment.pr == 2 and dry_run is False:
+            raise foreign
+        return original_apply(api, assessment, dry_run=dry_run)
+
+    with mock.patch.object(guard, "_apply_guard_side_effects", side_effect=apply):
+        code = guard.main(["--repo", REPO, "--all-open"], env={}, api=fake.api())
+    output = capsys.readouterr()
+    results = json.loads(output.out)["results"]
+    assert code == 1
+    assert [(result["pr"], result["ok"]) for result in results] == [(2, False), (1, True)]
+    assert results[0]["status"] == "error"
+    assert (
+        "fork workflow approval requires the current base to be included in the head"
+        in results[0]["reasons"]
+    )
+    assert "PR 2" in output.err
+    assert fake.statuses
+    assert fake.statuses[0]["state"] == "success"
+    assert any(item["state"] == "error" for item in fake.statuses)
+
+
+def test_all_open_invalidates_after_plain_runtimeerror_from_side_effects(capsys) -> None:
+    fake = FakeAPI()
+    fake.open_pulls = [2, 1]
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    # FakeAPI only serves pulls/1 and issues/1; fetch_pull still records number=2.
+    original_request = fake.request_fn
+
+    def request(method, url, body=None):
+        rewritten = url.replace("/pulls/2", "/pulls/1").replace("/issues/2/", "/issues/1/")
+        return original_request(method, rewritten, body)
+
+    fake.request_fn = request
+    original_apply = guard._apply_guard_side_effects
+
+    def apply(api, assessment, *, dry_run):
+        if assessment.pr == 2 and dry_run is False:
+            raise RuntimeError("boom")
+        return original_apply(api, assessment, dry_run=dry_run)
+
+    with mock.patch.object(guard, "_apply_guard_side_effects", side_effect=apply):
+        code = guard.main(["--repo", REPO, "--all-open"], env={}, api=fake.api())
+    output = capsys.readouterr()
+    results = json.loads(output.out)["results"]
+    assert code == 1
+    assert [(result["pr"], result["ok"]) for result in results] == [(2, False), (1, True)]
+    assert results[0]["status"] == "error"
+    assert "boom" in results[0]["reasons"]
+    assert "PR 2" in output.err
+    assert "boom" in output.err
+    assert fake.statuses
+    assert fake.statuses[0]["state"] == "success"
+    assert any(item["state"] == "error" for item in fake.statuses)
+
+
 def test_foreign_guarderror_single_pr_is_caught(capsys) -> None:
     fake = FakeAPI()
     foreign = type("GuardError", (RuntimeError,), {})(

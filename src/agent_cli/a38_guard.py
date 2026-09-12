@@ -93,6 +93,12 @@ class GuardError(RuntimeError):
     """Loud failure of the guard (API, config, bounds). Not a soft report miss."""
 
 
+def _is_guard_error(exc: BaseException) -> bool:
+    return isinstance(exc, GuardError) or (
+        isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
+    )
+
+
 @dataclass(frozen=True)
 class PullSnapshot:
     repo: str
@@ -2264,8 +2270,8 @@ def reconcile_pull(
             published = publish_assessment(api, assessment)
             _apply_guard_side_effects(api, published, dry_run=False)
             return published
-        except GuardError as exc:
-            if "changed before publish" in str(exc):
+        except Exception as exc:
+            if _is_guard_error(exc) and "changed before publish" in str(exc):
                 last_err = exc
                 continue
             if publish and not dry_run and snap is not None:
@@ -2510,12 +2516,6 @@ def _assessment_exit_code(assessment: Assessment) -> int:
         or assessment.mode == "observe"
         or assessment.draft
     ) else 1
-
-
-def _is_guard_error(exc: BaseException) -> bool:
-    return isinstance(exc, GuardError) or (
-        isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
-    )
 
 
 def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | None = None,
