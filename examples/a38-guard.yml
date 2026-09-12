@@ -24,7 +24,7 @@ on:
         default: false
 
 concurrency:
-  group: a38-pr-guard-${{ github.repository }}
+  group: a38-pr-guard-${{ github.repository }}-${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && 'sweep' || 'event' }}
   cancel-in-progress: false
 
 permissions:
@@ -38,6 +38,7 @@ permissions:
 jobs:
   guard:
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && 45 || 10 }}
     steps:
       - name: dfx pr guard
         uses: DFXswiss/agent/.github/actions/a38-guard@USES_REF_PIN_ME

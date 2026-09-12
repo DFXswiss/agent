@@ -1,7 +1,7 @@
 """Configured PR readiness, based on live CI rather than a cached green rollup.
 
 This reconciler never runs tests, submits reviews, or merges pull requests.
-The caller must serialize all guard invocations for the repository.
+The caller must serialize guard invocations within the `event` group and within the `sweep` group, not across both groups.
 """
 from __future__ import annotations
 
@@ -411,6 +411,27 @@ def _transition(api: Any, node: str, draft: bool) -> Mapping:
     return pull
 
 
+def _has_merge_conflicts(api: Any, pull: Mapping) -> bool:
+    from .a38_guard import GuardError
+    mergeable = pull.get("mergeable")
+    if mergeable is False:
+        return True
+    if mergeable is True:
+        return False
+    node = pull.get("node_id")
+    if not isinstance(node, str):
+        raise GuardError("PR lifecycle mergeable query failed: node_id missing")
+    query = "query($id: ID!) { node(id: $id) { ... on PullRequest { mergeable } } }"
+    status, data, _ = api.request("POST", "/graphql", body={"query": query, "variables": {"id": node}}, retry=False)
+    errors = _field(data, "errors")
+    detail = ""
+    if isinstance(errors, list) and errors and isinstance(errors[0], Mapping):
+        detail = f": {errors[0].get('message') or 'graphql error'}"
+    if status != 200 or errors:
+        raise GuardError(f"PR lifecycle mergeable query failed (HTTP {status}){detail}")
+    return _field(data, "data", "node", "mergeable") == "CONFLICTING"
+
+
 def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> dict:
     from .a38_guard import GuardError, assess_pull, fetch_pull, resolve_trusted_guard_config
     if assessment.closed or not assessment.lifecycle_enabled:
@@ -438,7 +459,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             and previous.get("state") == ("draft" if pull["draft"] else "ready") and not dry_run):
         _complete_transition_comment(api, assessment, previous)
     reasons, latest = ci_state(api, assessment, config, pull)
-    if pull.get("mergeable") is False:
+    if _has_merge_conflicts(api, pull):
         reasons.insert(0, "Merge conflicts")
     target = None
     we_drafted = (
@@ -451,11 +472,16 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         "author has write",
         "ready by write collaborator",
     }
-    restore_write_ready = bool(pull["draft"] and write_hold and we_drafted)
-    # Write collaborator Ready hold: do not auto-draft while author or the latest
-    # ready_for_review actor has write/maintain/admin on the target repository.
+    restore_write_ready = bool(
+        pull["draft"] and write_hold and we_drafted
+        and pull.get("mergeable") is True
+        and "Merge conflicts" not in reasons
+    )
+    # Write collaborator Ready hold: do not auto-draft for red/missing CI while
+    # author or the latest ready_for_review actor has write/maintain/admin.
+    # Confirmed merge conflicts always return Ready to Draft, including in a hold.
     # Markdown-only is a report waiver only — it does not hold Ready through red CI.
-    if not pull["draft"] and reasons and write_hold:
+    if not pull["draft"] and reasons and write_hold and "Merge conflicts" not in reasons:
         hold = {
             "repo": assessment.repo,
             "pr": assessment.pr,
@@ -520,13 +546,42 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             or final_pull.get("draft") != pull["draft"]):
         raise GuardError("pull or configuration changed before lifecycle transition")
     final_reasons, _ = ci_state(api, assessment, config, final_pull)
-    if final_pull.get("mergeable") is False:
+    if _has_merge_conflicts(api, final_pull):
         final_reasons.insert(0, "Merge conflicts")
+    if target == "ready" and (
+        "Merge conflicts" in final_reasons or final_pull.get("mergeable") is not True
+    ):
+        return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     if (
         target == "ready"
         and not restore_write_ready
         and (final_reasons or final_pull.get("mergeable") is not True)
     ):
+        return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
+    if target == "draft" and write_hold and "Merge conflicts" not in final_reasons:
+        hold = {
+            "repo": assessment.repo,
+            "pr": assessment.pr,
+            "head": snap.head_sha,
+            "base": snap.base_sha,
+            "state": "ready",
+            "reasons": final_reasons,
+            "phase": "applied",
+        }
+        if not dry_run and (
+            previous.get("phase") != "applied"
+            or previous.get("state") != "ready"
+            or previous.get("head") != snap.head_sha
+            or previous.get("base") != snap.base_sha
+        ):
+            _save_record(
+                api,
+                assessment,
+                STATE_MARKER,
+                hold,
+                "A write collaborator holds Ready; this pull request stays ready for review.",
+                "Ein Write-Collaborator hält Ready; dieser Pull Request bleibt bereit zum Review.",
+            )
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     if target == "draft" and not final_reasons:
         return {"action": "unchanged", "reasons": [], "dry_run": False}
