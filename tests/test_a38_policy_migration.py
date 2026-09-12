@@ -765,6 +765,69 @@ def test_all_open_continues_after_one_pr_api_failure(capsys) -> None:
     assert fake.statuses and fake.statuses[0]["state"] == "success"
 
 
+def test_all_open_continues_after_foreign_guarderror(capsys) -> None:
+    fake = FakeAPI()
+    fake.open_pulls = [2, 1]
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    foreign = type("GuardError", (RuntimeError,), {})(
+        "fork workflow approval requires the current base to be included in the head"
+    )
+    original = guard.reconcile_pull
+
+    def reconcile(client, repo, number, **kwargs):
+        if number == 2:
+            raise foreign
+        return original(client, repo, number, **kwargs)
+
+    with mock.patch.object(guard, "reconcile_pull", side_effect=reconcile):
+        code = guard.main(["--repo", REPO, "--all-open"], env={}, api=fake.api())
+    output = capsys.readouterr()
+    results = json.loads(output.out)["results"]
+    assert code == 1
+    assert [(result["pr"], result["ok"]) for result in results] == [(2, False), (1, True)]
+    assert results[0]["status"] == "error"
+    assert (
+        "fork workflow approval requires the current base to be included in the head"
+        in results[0]["reasons"]
+    )
+    assert "PR 2" in output.err
+
+
+def test_all_open_continues_after_plain_runtimeerror(capsys) -> None:
+    fake = FakeAPI()
+    fake.open_pulls = [2, 1]
+    fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=80)
+    original = guard.reconcile_pull
+
+    def reconcile(client, repo, number, **kwargs):
+        if number == 2:
+            raise RuntimeError("boom")
+        return original(client, repo, number, **kwargs)
+
+    with mock.patch.object(guard, "reconcile_pull", side_effect=reconcile):
+        code = guard.main(["--repo", REPO, "--all-open"], env={}, api=fake.api())
+    output = capsys.readouterr()
+    results = json.loads(output.out)["results"]
+    assert code == 1
+    assert [(result["pr"], result["ok"]) for result in results] == [(2, False), (1, True)]
+    assert results[0]["status"] == "error"
+    assert "boom" in results[0]["reasons"]
+    assert "PR 2" in output.err
+    assert "boom" in output.err
+
+
+def test_foreign_guarderror_single_pr_is_caught(capsys) -> None:
+    fake = FakeAPI()
+    foreign = type("GuardError", (RuntimeError,), {})(
+        "fork workflow approval requires the current base to be included in the head"
+    )
+    with mock.patch.object(guard, "reconcile_pull", side_effect=foreign):
+        code = guard.main(["--repo", REPO, "--pr", "1"], env={}, api=fake.api())
+    output = capsys.readouterr()
+    assert code == 1
+    assert "a38-guard:" in output.err
+
+
 @pytest.mark.parametrize("batch", [False, True])
 @pytest.mark.parametrize("status", [403, 503])
 @pytest.mark.parametrize("endpoint", ["/git/trees/", "/commits/"])

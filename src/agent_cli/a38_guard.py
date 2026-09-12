@@ -2512,6 +2512,12 @@ def _assessment_exit_code(assessment: Assessment) -> int:
     ) else 1
 
 
+def _is_guard_error(exc: BaseException) -> bool:
+    return isinstance(exc, GuardError) or (
+        isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
+    )
+
+
 def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | None = None,
          api: GitHubApi | None = None) -> int:
     arguments = list(argv) if argv is not None else sys.argv[1:]
@@ -2548,7 +2554,7 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                             publish=publish,
                             runtime_env=environ,
                         )
-                    except GuardError as exc:
+                    except Exception as exc:
                         results.append({
                             "ok": False, "status": "error", "repo": args.repo,
                             "pr": number, "reasons": [str(exc)],
@@ -2614,7 +2620,9 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
             return _assessment_exit_code(assessment)
 
         raise GuardError(f"unknown command {args.command}")
-    except GuardError as exc:
+    except RuntimeError as exc:
+        if not _is_guard_error(exc):
+            raise
         print(f"a38-guard: {exc}", file=sys.stderr)
         return 1
 
