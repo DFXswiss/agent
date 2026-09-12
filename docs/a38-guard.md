@@ -309,7 +309,7 @@ Supported events:
 - `pull_request_target`: opened, reopened, synchronize, edited, ready_for_review.
 - `issue_comment`: created, edited, deleted, for PRs only.
 - Scheduled all-open reconciliation on the trusted default branch; cadence is repository configuration.
-- `workflow_dispatch`: an explicit repository and PR number.
+- `workflow_dispatch`: an explicit repository and PR number, or `all_open=true` reconciliation.
 
 Issue-only events and the bot's own comments are ignored. The installed workflow deliberately has no `pull_request_review` trigger because that event loads workflow code from PR context. After approving or dismissing a policy review, post a normal PR comment such as `A38 recheck` for immediate reassessment, or dispatch the default-branch workflow. Scheduled reconciliation catches other review/base changes. The CLI can consume submitted/edited/dismissed review events supplied by an external trusted event handler, but never grant elevated credentials to PR-context workflow code. Never check out the PR head in a privileged bot job.
 
