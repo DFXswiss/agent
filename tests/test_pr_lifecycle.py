@@ -993,6 +993,7 @@ def test_graphql_unknown_does_not_invent_conflicts_on_write_ready():
 @pytest.mark.parametrize("status,conclusion", [
     ("in_progress", None),
     ("completed", "failure"),
+    ("completed", "success"),
 ])
 def test_write_hold_after_conflicts_disappear_on_reread_keeps_ready(status, conclusion, monkeypatch):
     fake = LifecycleAPI()
