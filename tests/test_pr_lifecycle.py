@@ -465,6 +465,29 @@ def test_approval_then_pending_then_green_promotes_once_without_rerunning():
     assert fake.posts == [101] and fake.transitions == [True, False]
 
 
+def test_multiple_auth_comments_use_latest_and_do_not_raise_ambiguous():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    identity = {"repo": REPO, "pr": 1, "head": HEAD, "base": BASE}
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": AUTH_MARKER + "\n```json\n" + json.dumps({
+            **identity, "runs": [{"run_id": 999, "workflow": PATH}],
+        }) + "\n```",
+    })
+    fake.comments.append({
+        "id": 501,
+        "user": {"id": BOT_ID},
+        "body": AUTH_MARKER + "\n```json\n" + json.dumps({
+            **identity, "runs": [{"run_id": 101, "workflow": PATH}],
+        }) + "\n```",
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "ready"
+    assert fake.transitions == [False]
+
+
 @pytest.mark.parametrize("case", ["missing", "forged", "head", "base", "run", "report", "disabled"])
 def test_green_alone_does_not_authorize_auto_ready(case):
     fake = LifecycleAPI()

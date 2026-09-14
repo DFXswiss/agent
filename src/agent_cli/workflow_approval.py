@@ -209,6 +209,9 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
     inventory = _runs(api, assessment.repo, assessment.head_sha)
     candidates = _latest(inventory, pull, paths)
     result = []
+    auth_posted = False
+    cancel_posted = False
+    from .pr_lifecycle import record_workflow_approval, record_workflow_cancel
     for stale in _stale_held(inventory, pull, candidates):
         pull = fresh_pull()
         run = api.get_json(f"/repos/{assessment.repo}/actions/runs/{stale['id']}")
@@ -238,6 +241,9 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
                     f"workflow cancel HTTP {status}; Actions write permission is required"
                 )
             assessment.writes.append(f"workflow:cancel:{run['id']}")
+            if status == 202:
+                record_workflow_cancel(api, assessment, run, create=not cancel_posted)
+                cancel_posted = True
         result.append(
             {
                 "run_id": stale["id"],
@@ -285,9 +291,8 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             if status != 201:
                 raise GuardError(f"workflow approval HTTP {status}; Actions write permission is required")
             assessment.writes.append(f"workflow:approve:{run['id']}")
-            if assessment.lifecycle_enabled:
-                from .pr_lifecycle import record_workflow_approval
-                record_workflow_approval(api, assessment, run)
+            record_workflow_approval(api, assessment, run, create=not auth_posted)
+            auth_posted = True
         result.append({"run_id": run["id"], "workflow": path, "head": assessment.head_sha,
                        "status": "planned" if dry_run else "approved"})
     return result

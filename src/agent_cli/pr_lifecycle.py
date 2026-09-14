@@ -13,6 +13,7 @@ from .workflow_approval import _field, _runs, _timestamp
 
 AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
 STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
+CANCEL_MARKER = "<!-- PR-GUARD:CI-CANCEL:v1 -->"
 
 
 def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
@@ -76,8 +77,6 @@ def _own_record(api: Any, assessment: Any, marker: str) -> tuple[Mapping | None,
     comments = collect_comments(api, assessment.repo, assessment.pr)
     records = [c for c in comments if _field(c, "user", "id") == own_id
                and str(c.get("body", "")).startswith(marker + "\n")]
-    if len(records) > 1 and marker == AUTH_MARKER:
-        raise GuardError("ambiguous bot lifecycle audit comments")
     if not records:
         return None, {}
     comment = max(records, key=lambda c: c["id"])
@@ -236,7 +235,7 @@ def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> Non
     _save_record(api, assessment, STATE_MARKER, {**record, "phase": "applied"}, en, de)
 
 
-def record_workflow_approval(api: Any, assessment: Any, run: Mapping) -> None:
+def record_workflow_approval(api: Any, assessment: Any, run: Mapping, *, create: bool = True) -> None:
     """Persist only an authorization whose POST returned 201, before the next one."""
     _, previous = _own_record(api, assessment, AUTH_MARKER)
     identity = {"repo": assessment.repo, "pr": assessment.pr,
@@ -246,7 +245,24 @@ def record_workflow_approval(api: Any, assessment: Any, run: Mapping) -> None:
     runs.append({"run_id": run["id"], "workflow": run["path"]})
     _save_record(api, assessment, AUTH_MARKER, {**identity, "runs": runs},
                  "I have authorized the recorded CI runs; their results are still pending.",
-                 "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.")
+                 "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.",
+                 create=create)
+
+
+def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: bool = True) -> None:
+    """Persist a cancel whose POST returned 202, before the next one."""
+    _, previous = _own_record(api, assessment, CANCEL_MARKER)
+    identity = {"repo": assessment.repo, "pr": assessment.pr,
+                "head": assessment.head_sha, "base": assessment.base_sha}
+    runs = previous.get("runs", []) if all(previous.get(k) == v for k, v in identity.items()) else []
+    runs = [r for r in runs if r.get("workflow") != run.get("path")]
+    runs.append({"run_id": run["id"], "workflow": run.get("path")})
+    _save_record(
+        api, assessment, CANCEL_MARKER, {**identity, "runs": runs},
+        "I cancelled waiting workflow runs that were superseded or not on the allowlist, so they no longer await approval.",
+        "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der Allowlist sind, damit sie nicht weiter auf Freigabe warten.",
+        create=create,
+    )
 
 
 def _checks(api: Any, repo: str, head: str) -> list[Mapping]:
