@@ -26,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, MutableMapping, Sequence
 
 from .a38 import load_policy, verify_report
 from .local_ci import LocalCiError, parse_comment
@@ -460,14 +460,15 @@ def pick_latest_author_report(
     return candidates[-1][2]
 
 
-def _parse_link_next(link_header: str | None) -> str | None:
+def _parse_link_rel(link_header: str | None, rel: str) -> str | None:
+    """Return the URL for rel (next, prev, last, first) from a GitHub Link header."""
     if not link_header:
         return None
-    # <url>; rel="next", <url>; rel="last"
-    parts = link_header.split(",")
-    for part in parts:
+    quoted = f'rel="{rel}"'
+    unquoted = f"rel={rel}"
+    for part in link_header.split(","):
         section = part.strip()
-        if 'rel="next"' not in section and "rel=next" not in section:
+        if quoted not in section and unquoted not in section:
             continue
         start = section.find("<")
         end = section.find(">")
@@ -475,6 +476,32 @@ def _parse_link_next(link_header: str | None) -> str | None:
             continue
         return section[start + 1 : end]
     return None
+
+
+def _parse_link_next(link_header: str | None) -> str | None:
+    return _parse_link_rel(link_header, "next")
+
+
+def _same_first_page(url: str, first_url: str) -> bool:
+    """True when *url* is page 1 of the same resource as the discovery GET."""
+    left = urllib.parse.urlparse(url)
+    right = urllib.parse.urlparse(first_url)
+    if (left.scheme, left.netloc, left.path) != (right.scheme, right.netloc, right.path):
+        return False
+
+    def parts(parsed: urllib.parse.ParseResult) -> tuple[tuple[tuple[str, str], ...], str]:
+        page = "1"
+        rest: list[tuple[str, str]] = []
+        for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True):
+            if key == "page":
+                page = value or "1"
+            else:
+                rest.append((key, value))
+        return tuple(rest), page
+
+    left_q, left_page = parts(left)
+    right_q, right_page = parts(right)
+    return left_q == right_q and left_page == "1" and right_page == "1"
 
 
 def _ensure_api_url(url: str) -> str:
@@ -663,6 +690,67 @@ class GitHubApi:
                 break
             next_url = _ensure_api_url(nxt)
         return items
+
+    def iter_pages_newest_first(
+        self, path: str, *, hard_limit: int = MAX_COMMENT_PAGES_ITEMS
+    ) -> Iterator[Any]:
+        """Yield items newest-first without fetching older pages after the caller stops.
+
+        Page 1 is requested to read ``rel=last`` and is cached, not yielded, until
+        the reverse walk reaches it. ``rel=prev`` / ``rel=first`` may name that
+        same page as ``page=1``; reuse the cache instead of treating that as a cycle.
+        """
+        if path.startswith("https://"):
+            first_url = _ensure_api_url(path)
+        else:
+            sep = "&" if "?" in path else "?"
+            first_url = API_ORIGIN + path + f"{sep}per_page=100"
+
+        visited: set[str] = set()
+        # Discovery GET of page 1 may later reappear as rel=prev/first with page=1.
+        page_cache: dict[str, tuple[Any, dict[str, str]]] = {}
+        yielded = 0
+
+        def fetch(url: str) -> tuple[Any, dict[str, str]]:
+            cached = page_cache.get(url)
+            if cached is None and _same_first_page(url, first_url):
+                cached = page_cache.get(first_url)
+            if cached is not None:
+                return cached
+            if url in visited or len(visited) >= 100:
+                raise GuardError("pagination cycle or page bound exceeded")
+            visited.add(url)
+            status, data, headers = self.request("GET", url)
+            if status in {401, 403}:
+                raise GuardError(f"GitHub API denied ({status}) while paginating")
+            if status < 200 or status >= 300:
+                raise GuardError(f"GitHub API HTTP {status} while paginating")
+            if not isinstance(data, list):
+                raise GuardError("GitHub API pagination expected a JSON array")
+            page_cache[url] = (data, headers)
+            return data, headers
+
+        _, first_headers = fetch(first_url)
+        last_raw = _parse_link_rel(first_headers.get("link"), "last")
+        last_url = _ensure_api_url(last_raw) if last_raw else None
+        # Do not yield page 1 until the reverse walk reaches it (if ever).
+        current: str | None = (
+            last_url if last_url is not None and last_url != first_url else first_url
+        )
+
+        while current:
+            data, headers = fetch(current)
+            for event in reversed(data):
+                yielded += 1
+                if yielded > hard_limit:
+                    raise GuardError(
+                        f"pagination exceeded bound ({hard_limit}); refusing partial accept"
+                    )
+                yield event
+            prev_raw = _parse_link_rel(headers.get("link"), "prev")
+            if prev_raw is None:
+                break
+            current = _ensure_api_url(prev_raw)
 
     def resolve_own_user(self) -> tuple[int, str]:
         if self._own_id is not None and self._own_login is not None:
@@ -1646,7 +1734,25 @@ def load_ready_timeline(
     """
     path = f"/repos/{repo}/issues/{number}/timeline"
     try:
-        events = api.paginate(path)
+        for event in api.iter_pages_newest_first(path):
+            if not isinstance(event, Mapping):
+                continue
+            if event.get("event") != "ready_for_review":
+                continue
+            created_at = event.get("created_at")
+            event_id = event.get("id")
+            if not isinstance(created_at, str) or type(event_id) is not int:
+                continue
+            actor = event.get("actor")
+            if not isinstance(actor, Mapping):
+                continue
+            if actor.get("type") != "User":
+                continue
+            login = actor.get("login")
+            actor_id = actor.get("id")
+            if not isinstance(login, str) or type(actor_id) is not int:
+                continue
+            return "ok", (actor_id, login)
     except GuardError as exc:
         message = str(exc)
         if (
@@ -1656,31 +1762,7 @@ def load_ready_timeline(
         ):
             return "unavailable", None
         raise
-    best: tuple[str, int, int, str] | None = None
-    for event in events:
-        if not isinstance(event, Mapping):
-            continue
-        if event.get("event") != "ready_for_review":
-            continue
-        created_at = event.get("created_at")
-        event_id = event.get("id")
-        if not isinstance(created_at, str) or type(event_id) is not int:
-            continue
-        actor = event.get("actor")
-        if not isinstance(actor, Mapping):
-            continue
-        if actor.get("type") != "User":
-            continue
-        login = actor.get("login")
-        actor_id = actor.get("id")
-        if not isinstance(login, str) or type(actor_id) is not int:
-            continue
-        key = (created_at, event_id, actor_id, login)
-        if best is None or (created_at, event_id) > (best[0], best[1]):
-            best = key
-    if best is None:
-        return "ok", None
-    return "ok", (best[2], best[3])
+    return "ok", None
 
 
 def ready_event_actor(
@@ -2544,7 +2626,14 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                     raise GuardError("--all-open requires --repo")
                 results = []
                 exit_codes = []
-                for number in list_open_pulls(client, _validate_repo(args.repo)):
+                numbers = list_open_pulls(client, _validate_repo(args.repo))
+                n = len(numbers)
+                for i, number in enumerate(numbers, start=1):
+                    print(
+                        f"a38-guard: all-open {i}/{n} PR {number}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     try:
                         assessment = reconcile_pull(
                             client,
@@ -2560,7 +2649,11 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                             "pr": number, "reasons": [str(exc)],
                         })
                         exit_codes.append(1)
-                        print(f"a38-guard: PR {number}: {exc}", file=sys.stderr)
+                        print(
+                            f"a38-guard: PR {number}: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
                         continue
                     results.append(assessment.to_json())
                     exit_codes.append(_assessment_exit_code(assessment))
