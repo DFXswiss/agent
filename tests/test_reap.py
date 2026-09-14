@@ -435,8 +435,8 @@ def test_a_job_id_that_escapes_the_work_root_is_refused(tmp_path: Path) -> None:
         store.close()
 
 
-def test_a_row_whose_repo_is_missing_or_empty_is_skipped_without_raising(tmp_path: Path) -> None:
-    # Missing or empty repo must be skipped, not raise.
+def test_a_row_whose_repo_is_missing_is_skipped_without_raising(tmp_path: Path) -> None:
+    # A missing repo must be skipped, not raise. The empty-string case is its own test.
     store = Store(tmp_path)
     try:
         row = job_row(
@@ -793,7 +793,9 @@ def test_one_failed_removal_does_not_stop_the_rest_of_the_pass(tmp_path: Path) -
             socket="/tmp/sock",
             repos_root="/tmp/repos",
             work_root="/tmp/work",
-            work_dirs=[good, bad],
+            # The failing item goes first: if a failure aborted the pass, the good
+            # one would never be processed and removed would come back empty.
+            work_dirs=[bad, good],
             marker_of=lambda j: (False, None),
             now_epoch=1000000000,
             session_prefix="job-",
