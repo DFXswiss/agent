@@ -1268,8 +1268,8 @@ def _docs_report_waiver(reason: str) -> bool:
     return reason in {"markdown-only change set", "guard-docs change set"}
 
 
-def _draft_markdown_only_pass(assessment: Assessment) -> bool:
-    """True when a draft independently confirmed docs-report waiver is enforce pass."""
+def _draft_docs_waiver_pass(assessment: Assessment) -> bool:
+    """True when a draft independently confirmed docs-report waiver pass (markdown-only and guard-docs)."""
     return (
         assessment.draft
         and not assessment.hard_fail
@@ -1280,7 +1280,7 @@ def _draft_markdown_only_pass(assessment: Assessment) -> bool:
 
 
 def build_comment_body(assessment: Assessment) -> str:
-    if assessment.draft and not _draft_markdown_only_pass(assessment):
+    if assessment.draft and not _draft_docs_waiver_pass(assessment):
         url = assessment.standard_url or "docs/a38.md"
         return (
             f"{GUARD_MARKER}\n\n"
@@ -1458,7 +1458,7 @@ def _status_bits(assessment: Assessment) -> None:
         assessment.description = truncate_desc(f"hard_fail: {reason}")
         return
     if assessment.draft:
-        if _draft_markdown_only_pass(assessment):
+        if _draft_docs_waiver_pass(assessment):
             assessment.state_for_status = "success"
             assessment.description = truncate_desc(
                 f"pass: {assessment.write_ready_reason}; A38 report not required"
@@ -2081,7 +2081,10 @@ def assess_pull(
     if policy is not None and policy_error is None:
         skip_bytes_paths: tuple[str, ...] = (
             (GUARD_WORKFLOW_PATH,)
-            if pull_is_guard_docs_only(api, snap.repo, snap.number)
+            if (
+                pull_is_guard_docs_only(api, snap.repo, snap.number)
+                and not pull_is_markdown_only(api, snap.repo, snap.number)
+            )
             else ()
         )
         workflow_problems = check_workflows_against_policy(
@@ -2351,7 +2354,7 @@ def publish_assessment(
     elif assessment.draft and not assessment.hard_fail:
         context = assessment.context or status_context_enforce(assessment.base_ref)
         if (
-            _draft_markdown_only_pass(assessment)
+            _draft_docs_waiver_pass(assessment)
             and assessment.state_for_status == "success"
         ):
             _post_status(

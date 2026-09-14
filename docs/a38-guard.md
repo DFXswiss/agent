@@ -186,14 +186,18 @@ an overall workflow success must not hide a missing or skipped required test.
 The only exceptions are: the PR file inventory is independently README-only
 (exactly `README.md` or a path that ends with `/README.md`, case-sensitive,
 fail-closed) **or** independently markdown-only (every path ends with `.md`,
-case-sensitive, same fail-closed inventory rules); **or** a verified author
-A38 report on this head has a passing job whose name matches that required
-check (so a draft that skips GitHub E2E by design stays Ready-eligible when
-local E2E already passed). Then a completed required check may conclude
-`success`, `skipped`, or `neutral`. `cancelled` and failed GitHub required
-checks still block. Missing required checks still block. The guard does not trust a report's `readme_only` /
+case-sensitive, same fail-closed inventory rules) **or** independently
+confirmed guard-docs (every path is a markdown file and/or exactly
+`.github/workflows/a38-guard.yml`, same fail-closed inventory rules);
+**or** a verified author A38 report on this head has a passing job whose
+name matches that required check (so a draft that skips GitHub E2E by design
+stays Ready-eligible when local E2E already passed). Then a completed
+required check may conclude `success`, `skipped`, or `neutral`. `cancelled`
+and failed GitHub required checks still block. Missing required checks still
+block. The guard does not trust a report's `readme_only` /
 `markdown_only` flags or `not_applicable` results without independently listing
-the pull request files.
+the pull request files. There is no guard-docs report flag; confirmation is
+inventory-only.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled

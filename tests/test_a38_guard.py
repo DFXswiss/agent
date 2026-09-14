@@ -2358,6 +2358,16 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             msg=result.reasons,
         )
 
+    def test_markdown_only_does_not_skip_guard_workflow_bytes_changed(self) -> None:
+        fake = FakeAPI()
+        _install_guard_workflow(fake, changed=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any("a38-guard.yml bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
