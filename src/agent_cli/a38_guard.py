@@ -1153,8 +1153,19 @@ def _report_accepted(assessment: Assessment) -> bool:
     return assessment.report_status == "pass"
 
 
+def _draft_markdown_only_pass(assessment: Assessment) -> bool:
+    """True when a draft independently confirmed markdown-only waiver is enforce pass."""
+    return (
+        assessment.draft
+        and not assessment.hard_fail
+        and assessment.write_ready
+        and assessment.write_ready_reason == "markdown-only change set"
+        and assessment.status == "pass"
+    )
+
+
 def build_comment_body(assessment: Assessment) -> str:
-    if assessment.draft:
+    if assessment.draft and not _draft_markdown_only_pass(assessment):
         url = assessment.standard_url or "docs/a38.md"
         return (
             f"{GUARD_MARKER}\n\n"
@@ -1319,6 +1330,12 @@ def _status_bits(assessment: Assessment) -> None:
         assessment.description = truncate_desc(f"hard_fail: {reason}")
         return
     if assessment.draft:
+        if _draft_markdown_only_pass(assessment):
+            assessment.state_for_status = "success"
+            assessment.description = truncate_desc(
+                "pass: markdown-only change set; A38 report not required"
+            )
+            return
         # Draft without hard_fail: keep context for audit JSON; do not post
         # success or failure (missing author report must not red-CI a draft).
         assessment.state_for_status = ""
@@ -2198,23 +2215,34 @@ def publish_assessment(
         )
     elif assessment.draft and not assessment.hard_fail:
         context = assessment.context or status_context_enforce(assessment.base_ref)
-        prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
-        prev_state = (prev or {}).get("state") if isinstance(prev, dict) else None
-        prev_desc = (prev or {}).get("description") or ""
-        if prev_state == "failure" and prev_desc.startswith("hard_fail:"):
-            # GitHub statuses are append-only per context/SHA. Clear only a
-            # leftover draft hard_fail so Checks is not stuck red after the
-            # violation is gone. Other enforce failures stay.
-            assessment.state_for_status = "success"
+        if (
+            _draft_markdown_only_pass(assessment)
+            and assessment.state_for_status == "success"
+        ):
             _post_status(
                 context,
                 "success",
-                assessment.description
-                or truncate_desc("draft: A38 status omitted until Ready"),
+                assessment.description,
                 require_report=False,
             )
         else:
-            assessment.writes.append("status:skipped:draft")
+            prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
+            prev_state = (prev or {}).get("state") if isinstance(prev, dict) else None
+            prev_desc = (prev or {}).get("description") or ""
+            if prev_state == "failure" and prev_desc.startswith("hard_fail:"):
+                # GitHub statuses are append-only per context/SHA. Clear only a
+                # leftover draft hard_fail so Checks is not stuck red after the
+                # violation is gone. Other enforce failures stay.
+                assessment.state_for_status = "success"
+                _post_status(
+                    context,
+                    "success",
+                    assessment.description
+                    or truncate_desc("draft: A38 status omitted until Ready"),
+                    require_report=False,
+                )
+            else:
+                assessment.writes.append("status:skipped:draft")
     else:
         _post_status(
             assessment.context or status_context_enforce(assessment.base_ref),

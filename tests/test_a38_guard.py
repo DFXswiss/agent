@@ -1924,6 +1924,32 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(result.write_ready_reason, "markdown-only change set")
         self.assertIn("optional for this markdown-only waiver", result.comment_body)
 
+    def test_draft_markdown_only_posts_pass_without_report(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.draft)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+        self.assertTrue(result.write_ready)
+        self.assertEqual(result.write_ready_reason, "markdown-only change set")
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertEqual(
+            matching[0].get("description"),
+            "pass: markdown-only change set; A38 report not required",
+        )
+        self.assertIn("optional for this markdown-only waiver", result.comment_body)
+        self.assertIn(
+            "author local-CI report not required because every changed "
+            "path is a markdown file",
+            result.comment_body,
+        )
+
     def test_empty_pull_files_do_not_waive_for_markdown(self) -> None:
         fake = FakeAPI()
         fake.pull_files = []
