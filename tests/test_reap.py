@@ -285,7 +285,7 @@ def test_a_work_dir_whose_marker_is_older_than_the_max_age_is_reaped(tmp_path: P
         )
         row.update(
             {
-                "state": "running",
+                "state": "done",
                 "session": "job-1",
                 "worktree": "/tmp/work/job-1",
                 "started": "2026-01-01T00:00:00Z",
@@ -308,7 +308,7 @@ def test_a_work_dir_whose_marker_is_older_than_the_max_age_is_reaped(tmp_path: P
             session_prefix="job-",
         )
 
-        assert removed == []
+        assert removed == [jid]
         assert killed == []
         assert failed == []
         assert skipped == 0
@@ -457,6 +457,7 @@ def test_a_row_whose_repo_is_missing_or_empty_is_skipped_without_raising(tmp_pat
         )
         del row["repo"]
         store.write("job", "insert", row["id"], row)
+        jid = row["id"]
         calls: list[list[str]] = []
 
         removed, killed, failed, skipped = reap_orphans(
@@ -465,7 +466,7 @@ def test_a_row_whose_repo_is_missing_or_empty_is_skipped_without_raising(tmp_pat
             socket="/tmp/sock",
             repos_root="/tmp/repos",
             work_root="/tmp/work",
-            work_dirs=["job-1"],
+            work_dirs=[jid],
             marker_of=lambda jid: (False, None),
             now_epoch=1000000000,
             session_prefix="job-",
@@ -801,5 +802,51 @@ def test_one_failed_removal_does_not_stop_the_rest_of_the_pass(tmp_path: Path) -
         assert removed == [good]
         assert failed == [bad]
         assert skipped == 0
+    finally:
+        store.close()
+
+
+def test_a_row_whose_repo_is_an_empty_string_is_skipped_without_raising(tmp_path: Path) -> None:
+    # The sibling test covers a missing repo; an empty string must skip the same way
+    # rather than reaching bare_path with a value that cannot name a repository.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="1",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "done",
+                "session": "job-1",
+                "worktree": "/tmp/work/job-1",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+                "repo": "",
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        jid = row["id"]
+        calls: list[list[str]] = []
+
+        removed, killed, failed, skipped = reap_orphans(
+            store,
+            _runner(calls=calls),
+            socket="/tmp/sock",
+            repos_root="/tmp/repos",
+            work_root="/tmp/work",
+            work_dirs=[jid],
+            marker_of=lambda j: (False, None),
+            now_epoch=1000000000,
+            session_prefix="job-",
+        )
+
+        assert removed == []
+        assert failed == []
+        assert skipped == 1
+        assert not any("worktree remove" in " ".join(argv) for argv in calls)
     finally:
         store.close()

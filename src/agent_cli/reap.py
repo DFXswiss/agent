@@ -185,6 +185,12 @@ def reap_orphans(
             skipped += 1
             continue
         repo = row.get("repo")
+        # Type-defensive rather than behaviour-changing: a missing or empty repo
+        # would also be caught below, where bare_path raises ValueError and the
+        # job is skipped for the same reason. Removing this check therefore
+        # changes no outcome and a mutation of it stays green. It stays because
+        # validating the field is clearer than routing ordinary control flow
+        # through an exception.
         if not isinstance(repo, str) or not repo.strip():
             skipped += 1
             continue
