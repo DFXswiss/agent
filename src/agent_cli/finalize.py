@@ -25,11 +25,11 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def _budget(policy: Any, job_type: str, key: str) -> int | None:
+def _budget(runner_config: Any, job_type: str, key: str) -> int | None:
     """Return a non-negative int budget or None if missing or invalid (bool rejected)."""
-    if not isinstance(policy, dict):
+    if not isinstance(runner_config, dict):
         return None
-    skills = policy.get("skills")
+    skills = runner_config.get("skills")
     if not isinstance(skills, dict):
         return None
     skill = skills.get(job_type)
@@ -41,10 +41,10 @@ def _budget(policy: Any, job_type: str, key: str) -> int | None:
     return None
 
 
-def done_kind(policy: Any, job_type: str) -> str:
+def done_kind(runner_config: Any, job_type: str) -> str:
     """Return the done_kind configured for job_type, or a derived default."""
-    if isinstance(policy, dict):
-        skills = policy.get("skills")
+    if isinstance(runner_config, dict):
+        skills = runner_config.get("skills")
         if isinstance(skills, dict):
             skill = skills.get(job_type)
             if isinstance(skill, dict):
@@ -55,7 +55,7 @@ def done_kind(policy: Any, job_type: str) -> str:
                     # Unrecognised setting must degrade to the weakest proof,
                     # never to a convenient one.
                     return "marker"
-    # Derive from job type when the policy is silent or unusable.
+    # Derive from job type when the runner config is silent or unusable.
     if job_type in ("pr-review", "pr-ready"):
         return "pr-reviewed"
     if job_type == "merge-conflict":
@@ -136,7 +136,7 @@ def finalize_running(
     *,
     socket: str,
     repos_root: str,
-    policy: Any,
+    runner_config: Any,
     login: str,
     exit_code_of: Callable[[str], int | None],
     transcript_of: Callable[[str], str],
@@ -189,8 +189,8 @@ def finalize_running(
             completed = runner(workspace.has_session_argv(socket, session))
             if completed.returncode == 0:
                 # Session alive and no exit code: apply timeout/stall budgets.
-                timeout_minutes = _budget(policy, job_type, "timeout_minutes")
-                stall_minutes = _budget(policy, job_type, "stall_minutes")
+                timeout_minutes = _budget(runner_config, job_type, "timeout_minutes")
+                stall_minutes = _budget(runner_config, job_type, "stall_minutes")
                 if timeout_minutes is None or stall_minutes is None:
                     skipped += 1
                     continue
@@ -255,7 +255,7 @@ def finalize_running(
             else:
                 outcome = "crashed"
 
-        kind = done_kind(policy, job_type)
+        kind = done_kind(runner_config, job_type)
         contract_followed = transcript_has_marker(transcript_of(job_id), ref)
 
         if outcome == "success":
