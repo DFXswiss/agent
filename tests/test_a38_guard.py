@@ -1929,6 +1929,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         fake.pull = fake._pull(HEAD, BASE, draft=True)
         fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.draft)
         self.assertTrue(result.ok, msg=result.reasons)
         self.assertEqual(result.status, "pass")
         self.assertTrue(result.write_ready)
@@ -1938,7 +1939,10 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "success")
-        self.assertIn("markdown-only change set", matching[0].get("description") or "")
+        self.assertEqual(
+            matching[0].get("description"),
+            "pass: markdown-only change set; A38 report not required",
+        )
         self.assertIn("optional for this markdown-only waiver", result.comment_body)
         self.assertIn(
             "author local-CI report not required because every changed "
