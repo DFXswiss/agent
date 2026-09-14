@@ -22,6 +22,7 @@ except ImportError:
 
 
 from agent_cli import a38_guard  # noqa: E402
+from agent_cli.readme_only import GUARD_WORKFLOW_PATH  # noqa: E402
 from agent_cli.a38_guard import (  # noqa: E402
     GUARD_MARKER,
     GITHUB_ACTIONS_BOT_ID,
@@ -452,6 +453,29 @@ class FakeAPI:
                 "created_at": updated_at,
             }
         )
+
+
+def _install_guard_workflow(fake: FakeAPI, *, changed: bool = True) -> None:
+    path = GUARD_WORKFLOW_PATH
+    base_wf = _workflow_yaml(["guard"])
+    fake.files[(BASE, path)] = base_wf
+    fake.files[(HEAD, path)] = base_wf + (b"\n# changed\n" if changed else b"")
+    for sha in (HEAD, BASE):
+        current = list(fake.tree_paths.get(sha, []))
+        if path not in current:
+            current.append(path)
+        fake.tree_paths[sha] = current
+    fake.files[(BASE, ".github/a38.json")] = json.dumps(
+        _policy(
+            exclusions=[
+                {
+                    "workflow": path,
+                    "job": "guard",
+                    "reason": "dfx pr guard is not a local test job",
+                }
+            ]
+        )
+    ).encode()
 
 
 class A38GuardUnitTests(unittest.TestCase):
@@ -2237,6 +2261,102 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         result = assess_pull(fake.api(), REPO, 1, dry_run=True)
         self.assertTrue(result.ok, msg=result.reasons)
         self.assertEqual(result.status, "pass")
+
+    def test_guard_docs_waives_author_report_and_skips_guard_workflow_bytes(self) -> None:
+        fake = FakeAPI()
+        _install_guard_workflow(fake, changed=True)
+        fake.pull_files = [
+            {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+            {"filename": "docs/ci-runners.md", "status": "modified"},
+        ]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+        self.assertTrue(result.write_ready)
+        self.assertEqual(result.write_ready_reason, "guard-docs change set")
+        self.assertFalse(
+            any("a38-guard.yml bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+        self.assertIn("optional for this guard-docs waiver", result.comment_body)
+        self.assertIn(
+            "author local-CI report not required because the change set is "
+            "markdown files and/or .github/workflows/a38-guard.yml.",
+            result.comment_body,
+        )
+
+    def test_guard_docs_plus_source_does_not_waive_and_keeps_bytes_changed(self) -> None:
+        fake = FakeAPI()
+        _install_guard_workflow(fake, changed=True)
+        fake.pull_files = [
+            {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+            {"filename": "docs/ci-runners.md", "status": "modified"},
+            {"filename": "app.py", "status": "modified"},
+        ]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.write_ready)
+        self.assertTrue(
+            any("a38-guard.yml bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+
+    def test_draft_guard_docs_posts_pass_without_report(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        _install_guard_workflow(fake, changed=True)
+        fake.pull_files = [
+            {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+            {"filename": "docs/ci-runners.md", "status": "modified"},
+        ]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.draft)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+        self.assertTrue(result.write_ready)
+        self.assertEqual(result.write_ready_reason, "guard-docs change set")
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertEqual(
+            matching[0].get("description"),
+            "pass: guard-docs change set; A38 report not required",
+        )
+        self.assertIn("optional for this guard-docs waiver", result.comment_body)
+        self.assertIn(
+            "author local-CI report not required because the change set is "
+            "markdown files and/or .github/workflows/a38-guard.yml.",
+            result.comment_body,
+        )
+
+    def test_other_workflow_bytes_changed_with_markdown_still_fails(self) -> None:
+        fake = FakeAPI()
+        fake.pull_files = [
+            {"filename": "docs/guide.md", "status": "modified"},
+            {"filename": ".github/workflows/test.yml", "status": "modified"},
+        ]
+        fake.files[(HEAD, ".github/workflows/test.yml")] = (
+            _workflow_yaml(["pytest"]) + b"\n# changed\n"
+        )
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertTrue(any("bytes changed" in r for r in result.reasons))
+        self.assertFalse(result.write_ready)
+
+    def test_guard_workflow_alone_waives_and_skips_bytes_changed(self) -> None:
+        fake = FakeAPI()
+        _install_guard_workflow(fake, changed=True)
+        fake.pull_files = [{"filename": GUARD_WORKFLOW_PATH, "status": "modified"}]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+        self.assertEqual(result.write_ready_reason, "guard-docs change set")
+        self.assertFalse(
+            any("a38-guard.yml bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
 
 
 if __name__ == "__main__":

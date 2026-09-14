@@ -1,9 +1,11 @@
-"""Fail-closed README-only and markdown-only detection for A38.
+"""Fail-closed README-only, markdown-only, and guard-docs detection for A38.
 
 A change set is README-only only when every path is exactly ``README.md``
 or ends with ``/README.md`` (case-sensitive). A change set is markdown-only
-only when every path ends with ``.md`` (case-sensitive). Unknown git
-statuses, truncated GitHub inventories, or command/API errors are neither.
+only when every path ends with ``.md`` (case-sensitive). A change set is
+guard-docs only when every path is markdown or exactly
+``.github/workflows/a38-guard.yml``. Unknown git statuses, truncated GitHub
+inventories, or command/API errors are none of these.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 README = "README.md"
+GUARD_WORKFLOW_PATH = ".github/workflows/a38-guard.yml"
 MAX_FILES = 500
 _STATUS_OK = frozenset({"A", "M", "D", "T"})
 _STATUS_RENAME = frozenset({"R", "C"})
@@ -38,6 +41,17 @@ def paths_are_markdown_only(paths: Sequence[str]) -> bool:
     if not paths:
         return False
     return all(isinstance(p, str) and is_markdown_path(p) for p in paths)
+
+
+def is_guard_docs_path(path: str) -> bool:
+    return is_markdown_path(path) or path == GUARD_WORKFLOW_PATH
+
+
+def paths_are_guard_docs_only(paths: Sequence[str]) -> bool:
+    # Empty inventory is not guard-docs (fail-closed).
+    if not paths:
+        return False
+    return all(isinstance(p, str) and is_guard_docs_path(p) for p in paths)
 
 
 def parse_name_status_z(blob: bytes) -> list[str] | None:
@@ -130,6 +144,13 @@ def git_is_markdown_only(repo: Path, base: str, head: str) -> bool:
     return paths_are_markdown_only(paths)
 
 
+def git_is_guard_docs_only(repo: Path, base: str, head: str) -> bool:
+    paths = git_changed_paths(repo, base, head)
+    if paths is None or len(paths) > MAX_FILES:
+        return False
+    return paths_are_guard_docs_only(paths)
+
+
 def github_file_paths(entries: Sequence[Mapping[str, Any]]) -> list[str] | None:
     paths: list[str] = []
     for item in entries:
@@ -174,6 +195,17 @@ def github_is_markdown_only(entries: Sequence[Mapping[str, Any]], *, truncated: 
     return paths_are_markdown_only(paths)
 
 
+def github_is_guard_docs_only(entries: Sequence[Mapping[str, Any]], *, truncated: bool) -> bool:
+    if truncated:
+        return False
+    if len(entries) > MAX_FILES:
+        return False
+    paths = github_file_paths(entries)
+    if paths is None:
+        return False
+    return paths_are_guard_docs_only(paths)
+
+
 def list_pull_files(api: Any, repo: str, number: int) -> list[Mapping[str, Any]] | None:
     """Return PR file entries, or None when the inventory is incomplete."""
     try:
@@ -199,3 +231,10 @@ def pull_is_markdown_only(api: Any, repo: str, number: int) -> bool:
     if entries is None:
         return False
     return github_is_markdown_only(entries, truncated=False)
+
+
+def pull_is_guard_docs_only(api: Any, repo: str, number: int) -> bool:
+    entries = list_pull_files(api, repo, number)
+    if entries is None:
+        return False
+    return github_is_guard_docs_only(entries, truncated=False)

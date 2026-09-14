@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-from .readme_only import pull_is_markdown_only, pull_is_readme_only
+from .readme_only import pull_is_guard_docs_only, pull_is_markdown_only, pull_is_readme_only
 from .workflow_approval import _field, _runs, _timestamp
 
 AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
@@ -355,12 +355,14 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
     # Skipped/neutral required checks are accepted when the PR file inventory
-    # is independently README-only or markdown-only, or a verified author A38
-    # report on this head passed a matching job. Cancelled, failed, and
-    # missing checks still block.
+    # is independently README-only, markdown-only, or guard-docs-only, or a
+    # verified author A38 report on this head passed a matching job. Cancelled,
+    # failed, and missing checks still block.
     accept_skipped_required = pull_is_readme_only(
         api, assessment.repo, assessment.pr
-    ) or pull_is_markdown_only(api, assessment.repo, assessment.pr)
+    ) or pull_is_markdown_only(
+        api, assessment.repo, assessment.pr
+    ) or pull_is_guard_docs_only(api, assessment.repo, assessment.pr)
     accepted_required = (
         {"success", "skipped", "neutral"}
         if accept_skipped_required

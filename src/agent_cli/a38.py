@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
-from .readme_only import git_is_markdown_only, git_is_readme_only
+from .readme_only import git_is_guard_docs_only, git_is_markdown_only, git_is_readme_only
 from .a38_job_adapters.commands import parse_commands_config
 from .a38_job_adapters.common import BUILTIN_UNSET, DOCKER_HEAVY_LOCK, LOCK_NAME_RE, JobError
 from .a38_job_adapters.compose import companion_env_missing, parse_compose_config
@@ -1122,8 +1122,12 @@ def run_policy(
     if omit and not readme_only:
         omit = set()
     markdown_only = git_is_markdown_only(root, base, head)
+    guard_docs_only = False
     if markdown_only:
         omit = set(required)
+    elif git_is_guard_docs_only(root, base, head):
+        omit = set(required)
+        guard_docs_only = True
 
     env = _job_env(head, base)
     max_in_flight = _max_in_flight(env)
@@ -1131,11 +1135,12 @@ def run_policy(
     reasons: list[str] = []
     interrupted = False
     drift = False
-    omit_log = (
-        "omitted: markdown-only change set\n"
-        if markdown_only
-        else "omitted: README-only change set\n"
-    )
+    if markdown_only:
+        omit_log = "omitted: markdown-only change set\n"
+    elif guard_docs_only:
+        omit_log = "omitted: guard-docs change set\n"
+    else:
+        omit_log = "omitted: README-only change set\n"
     run_by_id: dict[str, dict[str, Any]] = {}
     stop_starting = False
 

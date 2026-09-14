@@ -36,7 +36,12 @@ from .pr_guard_config import (
     evaluate_a38_scope,
     load_pr_guard_config,
 )
-from .readme_only import pull_is_markdown_only, pull_is_readme_only
+from .readme_only import (
+    GUARD_WORKFLOW_PATH,
+    pull_is_guard_docs_only,
+    pull_is_markdown_only,
+    pull_is_readme_only,
+)
 
 API_ORIGIN = "https://api.github.com"
 API_HOST = "api.github.com"
@@ -185,7 +190,7 @@ class Assessment:
     lifecycle: dict[str, Any] = field(default_factory=dict)
     draft: bool = False
     # Author-report waiver: write collaborator (also holds Ready) or markdown-only
-    # (report/suite only; does not hold Ready through red CI).
+    # / guard-docs (report/suite only; does not hold Ready through red CI).
     write_ready: bool = False
     write_ready_reason: str = ""
     # In-memory webhook sender for this reconcile; not serialized.
@@ -1192,6 +1197,7 @@ def check_workflows_against_policy(
     base_sha: str,
     policy: Mapping[str, Any],
     allow_changes: bool = False,
+    skip_bytes_paths: Sequence[str] = (),
 ) -> list[str]:
     """Return maintainer-facing problems for head workflows vs trusted base policy.
 
@@ -1202,6 +1208,7 @@ def check_workflows_against_policy(
     treat fork 404 as success.
     """
     problems: list[str] = []
+    skip_bytes = frozenset(skip_bytes_paths)
     # Inventory failures are operational errors, including in observe mode.
     # Only an inventory successfully fetched and assessed can be advisory.
     head_paths = list_workflow_paths(api, repo, head_sha)
@@ -1215,7 +1222,7 @@ def check_workflows_against_policy(
         base_bytes = fetch_file_at_ref(api, repo, path, base_sha)
         if head_bytes is None and base_bytes is None:
             continue
-        if head_bytes != base_bytes and not allow_changes:
+        if head_bytes != base_bytes and not allow_changes and path not in skip_bytes:
             problems.append(
                 f"{path} bytes changed vs base; explicit current-head/base maintainer "
                 "A38 policy approval is required"
@@ -1257,13 +1264,17 @@ def _report_accepted(assessment: Assessment) -> bool:
     return assessment.report_status == "pass"
 
 
+def _docs_report_waiver(reason: str) -> bool:
+    return reason in {"markdown-only change set", "guard-docs change set"}
+
+
 def _draft_markdown_only_pass(assessment: Assessment) -> bool:
-    """True when a draft independently confirmed markdown-only waiver is enforce pass."""
+    """True when a draft independently confirmed docs-report waiver is enforce pass."""
     return (
         assessment.draft
         and not assessment.hard_fail
         and assessment.write_ready
-        and assessment.write_ready_reason == "markdown-only change set"
+        and _docs_report_waiver(assessment.write_ready_reason)
         and assessment.status == "pass"
     )
 
@@ -1343,6 +1354,15 @@ def build_comment_body(assessment: Assessment) -> str:
                 "Autor-Local-CI-Report nicht erforderlich, weil jede "
                 "geänderte Datei eine Markdown-Datei ist."
             )
+        elif assessment.write_ready_reason == "guard-docs change set":
+            en_tail = (
+                "author local-CI report not required because the change set is "
+                "markdown files and/or .github/workflows/a38-guard.yml."
+            )
+            de_tail = (
+                "Autor-Local-CI-Report nicht erforderlich, weil der Diff nur "
+                "Markdown und/oder .github/workflows/a38-guard.yml ist."
+            )
         else:
             en_tail = (
                 "author local-CI report not required because a write "
@@ -1386,6 +1406,10 @@ def build_comment_body(assessment: Assessment) -> str:
                 "- Publish: an author local-CI report is optional for this markdown-only waiver; "
                 "if posted, use the PR author's account and preserve the report block.\n"
                 if assessment.write_ready_reason == "markdown-only change set"
+                else
+                "- Publish: an author local-CI report is optional for this guard-docs waiver; "
+                "if posted, use the PR author's account and preserve the report block.\n"
+                if assessment.write_ready_reason == "guard-docs change set"
                 else
                 "- Publish: an author local-CI report is optional for this write-collaborator waiver; "
                 "if posted, use the PR author's account and preserve the report block.\n"
@@ -1437,7 +1461,7 @@ def _status_bits(assessment: Assessment) -> None:
         if _draft_markdown_only_pass(assessment):
             assessment.state_for_status = "success"
             assessment.description = truncate_desc(
-                "pass: markdown-only change set; A38 report not required"
+                f"pass: {assessment.write_ready_reason}; A38 report not required"
             )
             return
         # Draft without hard_fail: keep context for audit JSON; do not post
@@ -1454,9 +1478,9 @@ def _status_bits(assessment: Assessment) -> None:
                 assessment.description = truncate_desc(
                     "pass: author has write; A38 report not required"
                 )
-            elif assessment.write_ready_reason == "markdown-only change set":
+            elif _docs_report_waiver(assessment.write_ready_reason):
                 assessment.description = truncate_desc(
-                    "pass: markdown-only change set; A38 report not required"
+                    f"pass: {assessment.write_ready_reason}; A38 report not required"
                 )
             else:
                 assessment.description = truncate_desc(
@@ -2055,6 +2079,11 @@ def assess_pull(
         policy_repo, policy_sha = snap.head_repo or snap.repo, snap.head_sha
     workflow_problems: list[str] = []
     if policy is not None and policy_error is None:
+        skip_bytes_paths: tuple[str, ...] = (
+            (GUARD_WORKFLOW_PATH,)
+            if pull_is_guard_docs_only(api, snap.repo, snap.number)
+            else ()
+        )
         workflow_problems = check_workflows_against_policy(
             api,
             snap.repo,
@@ -2062,6 +2091,7 @@ def assess_pull(
             base_sha=snap.base_sha,
             policy=policy,
             allow_changes=bool(approval),
+            skip_bytes_paths=skip_bytes_paths,
         )
     workflow_problems.extend(
         check_pr_guard_config_migration(
@@ -2076,6 +2106,9 @@ def assess_pull(
     if not write_ready and pull_is_markdown_only(api, snap.repo, snap.number):
         write_ready = True
         write_ready_reason = "markdown-only change set"
+    elif not write_ready and pull_is_guard_docs_only(api, snap.repo, snap.number):
+        write_ready = True
+        write_ready_reason = "guard-docs change set"
     assessment = assess_from_parts(
         pull=snap,
         policy=policy,
@@ -2214,13 +2247,17 @@ def publish_assessment(
                 still_ready, _ = resolve_write_ready(
                     api, latest_pull, event_actor=assessment.event_actor
                 )
-                markdown_only = (
-                    assessment.write_ready_reason == "markdown-only change set"
-                    and pull_is_markdown_only(
+                docs_waiver = _docs_report_waiver(
+                    assessment.write_ready_reason
+                ) and (
+                    pull_is_markdown_only(
+                        api, latest_pull.repo, latest_pull.number
+                    )
+                    or pull_is_guard_docs_only(
                         api, latest_pull.repo, latest_pull.number
                     )
                 )
-                if not still_ready and not markdown_only:
+                if not still_ready and not docs_waiver:
                     raise GuardError(
                         "write-ready waiver changed before publish; retry assessment"
                     )
