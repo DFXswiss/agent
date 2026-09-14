@@ -21,6 +21,7 @@ from agent_cli.pr_lifecycle import AUTH_MARKER, CANCEL_MARKER
 from test_a38_guard import (
     BASE,
     BASE2,
+    BOT_ID,
     HEAD,
     REPO,
     FakeAPI,
@@ -934,4 +935,55 @@ def test_dry_run_cancel_candidate_writes_no_audit_comments() -> None:
     assert fake.writes == []
     assert not _marker_comments(fake, AUTH_MARKER)
     assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_two_same_path_cancels_in_one_reconcile_list_both_run_ids() -> None:
+    fake = FakeApproval()
+    fake.runs = [
+        fake.run(id=101, path=PATH),
+        fake.run(id=202, path=OTHER),
+        fake.run(id=203, path=OTHER, created_at="2026-09-05T11:01:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in result.writes
+    assert "workflow:cancel:202" in result.writes
+    assert "workflow:cancel:203" in result.writes
+    cancels = _marker_comments(fake, CANCEL_MARKER)
+    assert len(cancels) == 1
+    ids = {row["run_id"] for row in _comment_record(cancels[0])["runs"]}
+    assert ids == {202, 203}
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert any(row.get("run_id") == 101 for row in _comment_record(auths[0])["runs"])
+
+
+def test_create_false_patches_this_invocation_comment_not_latest_by_id() -> None:
+    fake = FakeApproval()
+    fake.config = _cfg({"enabled": True, "workflows": [PATH, OTHER]})
+    fake.set_pr_guard_config(fake.config)
+    fake.runs = [fake.run(id=101, path=PATH), fake.run(id=202, path=OTHER)]
+    planted_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
+            "runs": [{"run_id": 999, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": planted_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in result.writes
+    assert "workflow:approve:202" in result.writes
+    auths = _marker_comments(fake, AUTH_MARKER)
+    planted = next(c for c in auths if c["id"] == 500)
+    assert planted["body"] == planted_body
+    fresh = [c for c in auths if c["id"] != 500]
+    assert len(fresh) == 1
+    assert fresh[0]["id"] < 500
+    ids = {row["run_id"] for row in _comment_record(fresh[0])["runs"]}
+    assert ids == {101, 202}
 

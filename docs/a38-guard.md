@@ -138,7 +138,7 @@ The run's PR association must match the current PR/head/base. For private forks 
 
 Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes, including audit comments. Assessment JSON includes `workflow_approvals`; completed authorization also records `workflow:approve:<run-id>` and `workflow:cancel:<run-id>` in `writes`.
 
-Every bot mutation (approve a waiting fork run, cancel a held run, convert to draft, mark ready) posts a **new** visible EN/DE comment at the bottom of the thread. Authorization comments use `PR-GUARD:CI-AUTH:v1`. Cancel comments use `PR-GUARD:CI-CANCEL:v1`. Ready/Draft comments stay `PR-GUARD:LIFECYCLE:v1`. A later authorization or cancel in a new scan POSTs a new comment; it must not only PATCH an older one (GitHub PATCH does not move the comment in the timeline). Multiple AUTH comments are historical; auto-ready uses the latest AUTH record (highest comment id) on the current head/base. HTTP 409 on cancel is a no-op and does not comment. Approve and cancel comments are posted whenever those POSTs succeed, including when lifecycle is disabled. Auto-ready still requires lifecycle and the latest AUTH record.
+The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record (highest comment id) on the current head/base.
 
 The trusted default-branch workflow and config must be installed before this feature is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
 
@@ -229,26 +229,24 @@ permits Ready. This feature changes readiness only; it creates no review
 approvals and never bypasses review requirements, branch protection or human
 merge.
 
-Every bot mutation (approve a waiting fork run, cancel a held run, convert to
-draft, mark ready) posts a **new** visible EN/DE comment at the bottom of the
-thread. Each Ready/Draft transition names the blockers that actually apply
-(never an "or" between CI and merge conflicts); the full reason list remains in
-collapsed details. A durable intent is written before the mutation and updated
-after success; the next scan repairs the comment if that update was interrupted.
-Unchanged readiness creates no duplicate comment. Convert-to-draft that GitHub
-accepts without GraphQL errors but leaves `isDraft` false is not API denial: the
-planned record is closed as applied Ready, readiness stays unchanged, and the
-EN/DE comment says the Draft conversion did not take effect. Authorization
-comments use `PR-GUARD:CI-AUTH:v1`. Cancel comments use `PR-GUARD:CI-CANCEL:v1`.
-Ready/Draft comments stay `PR-GUARD:LIFECYCLE:v1`. A later authorization or
-cancel in a new scan POSTs a new comment; it must not only PATCH an older one
-(GitHub PATCH does not move the comment in the timeline). Multiple AUTH comments
-are historical; auto-ready uses the latest AUTH record (highest comment id) on
-the current head/base. HTTP 409 on cancel is a no-op and does not comment.
-Approve and cancel comments are posted whenever those POSTs succeed, including
-when lifecycle is disabled. Auto-ready still requires lifecycle and the latest
-AUTH record. Only the authenticated bot's numeric user ID can supply these
-records. `--dry-run` still writes no audit comments.
+The first successful approve or cancel in a guard invocation POSTs a new visible
+EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further
+successful same-kind mutations in that same invocation PATCH that comment. A
+later invocation POSTs a new comment; it must not PATCH an older one (GitHub
+PATCH does not move the comment in the timeline). Ready/Draft still POST a new
+`PR-GUARD:LIFECYCLE:v1` comment per transition. Each Ready/Draft transition names
+the blockers that actually apply (never an "or" between CI and merge conflicts);
+the full reason list remains in collapsed details. A durable intent is written
+before the mutation and updated after success; the next scan repairs the comment
+if that update was interrupted. Unchanged readiness creates no duplicate comment.
+Convert-to-draft that GitHub accepts without GraphQL errors but leaves `isDraft`
+false is not API denial: the planned record is closed as applied Ready, readiness
+stays unchanged, and the EN/DE comment says the Draft conversion did not take
+effect. HTTP 409 on cancel does not comment. Approve and cancel comments are
+posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record
+(highest comment id) on the current head/base. Only the authenticated bot's
+numeric user ID can supply these records. `--dry-run` still writes no audit
+comments.
 
 The adopting workflow owns runner routing, `contents: write` for
 `markPullRequestReadyForReview`, `actions` and `checks` read access,
