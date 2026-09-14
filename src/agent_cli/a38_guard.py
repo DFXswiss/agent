@@ -93,6 +93,12 @@ class GuardError(RuntimeError):
     """Loud failure of the guard (API, config, bounds). Not a soft report miss."""
 
 
+def _is_guard_error(exc: BaseException) -> bool:
+    return isinstance(exc, GuardError) or (
+        isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
+    )
+
+
 @dataclass(frozen=True)
 class PullSnapshot:
     repo: str
@@ -2264,8 +2270,8 @@ def reconcile_pull(
             published = publish_assessment(api, assessment)
             _apply_guard_side_effects(api, published, dry_run=False)
             return published
-        except GuardError as exc:
-            if "changed before publish" in str(exc):
+        except Exception as exc:  # noqa: BLE001 — invalidate after any publish-path failure
+            if _is_guard_error(exc) and "changed before publish" in str(exc):
                 last_err = exc
                 continue
             if publish and not dry_run and snap is not None:
@@ -2548,7 +2554,7 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                             publish=publish,
                             runtime_env=environ,
                         )
-                    except GuardError as exc:
+                    except Exception as exc:  # noqa: BLE001 — per-PR isolation
                         results.append({
                             "ok": False, "status": "error", "repo": args.repo,
                             "pr": number, "reasons": [str(exc)],
@@ -2614,7 +2620,9 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
             return _assessment_exit_code(assessment)
 
         raise GuardError(f"unknown command {args.command}")
-    except GuardError as exc:
+    except RuntimeError as exc:
+        if not _is_guard_error(exc):
+            raise
         print(f"a38-guard: {exc}", file=sys.stderr)
         return 1
 

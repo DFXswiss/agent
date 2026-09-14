@@ -95,4 +95,4 @@ runs:
         fi
         # Token stays in the environment for the guard module only.
         # No subprocess is started against pull-request code.
-        python -P -m agent_cli.a38_guard "${args[@]}"
+        python -P -c 'from agent_cli.a38_guard import main; raise SystemExit(main())' "${args[@]}"
