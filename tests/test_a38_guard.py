@@ -645,6 +645,74 @@ class A38GuardUnitTests(unittest.TestCase):
         ]
         self.assertEqual(len(timeline_gets), 2)
 
+    def test_load_ready_timeline_reuses_cached_page_1_via_prev(self) -> None:
+        """Walking rel=prev back to discovery page 1 reuses the cached GET."""
+        fake = FakeAPI()
+        page1: list[dict[str, Any]] = []
+        for i in range(1, 101):
+            if i == 50:
+                page1.append(
+                    {
+                        "event": "ready_for_review",
+                        "id": i,
+                        "created_at": "2026-02-01T00:00:00Z",
+                        "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+                    }
+                )
+            else:
+                page1.append(
+                    {
+                        "event": "commented",
+                        "id": i,
+                        "created_at": "2026-01-01T00:00:00Z",
+                    }
+                )
+        page2: list[dict[str, Any]] = []
+        for i in range(101, 151):
+            if i == 125:
+                page2.append(
+                    {
+                        "event": "ready_for_review",
+                        "id": i,
+                        "created_at": "2026-09-01T00:00:00Z",
+                        "actor": {
+                            "id": BOT_ID,
+                            "login": "github-actions[bot]",
+                            "type": "Bot",
+                        },
+                    }
+                )
+            else:
+                page2.append(
+                    {
+                        "event": "commented",
+                        "id": i,
+                        "created_at": "2026-09-01T00:00:00Z",
+                    }
+                )
+        fake.timeline = page1 + page2
+        self.assertEqual(len(fake.timeline), 150)
+
+        gets: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            if method.upper() == "GET":
+                gets.append(url)
+            return inner(method, url, body)
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        status, actor = load_ready_timeline(api, REPO, 1)
+        self.assertEqual(status, "ok")
+        self.assertEqual(actor, (4004, "reviewer"))
+        timeline_path = f"/repos/{REPO}/issues/1/timeline"
+        timeline_gets = [
+            url for url in gets if urlparse(url).path == timeline_path
+        ]
+        self.assertEqual(len(timeline_gets), 2)
+
     def test_iter_pages_newest_first_empty_self_prev_is_cycle(self) -> None:
         path = f"/repos/{REPO}/issues/1/timeline"
         last_url = f"https://api.github.com{path}?per_page=100&page=2"
