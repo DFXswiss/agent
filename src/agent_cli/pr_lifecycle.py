@@ -13,6 +13,7 @@ from .workflow_approval import _field, _runs, _timestamp
 
 AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
 STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
+CANCEL_MARKER = "<!-- PR-GUARD:CI-CANCEL:v1 -->"
 
 
 def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
@@ -70,42 +71,54 @@ def required_check_matches(check_name: object, required: str) -> bool:
     return check_name == required or check_name.startswith(required + " / ")
 
 
-def _own_record(api: Any, assessment: Any, marker: str) -> tuple[Mapping | None, dict]:
-    from .a38_guard import GuardError, collect_comments
-    own_id, _ = api.resolve_own_user()
-    comments = collect_comments(api, assessment.repo, assessment.pr)
-    records = [c for c in comments if _field(c, "user", "id") == own_id
-               and str(c.get("body", "")).startswith(marker + "\n")]
-    if len(records) > 1 and marker == AUTH_MARKER:
-        raise GuardError("ambiguous bot lifecycle audit comments")
-    if not records:
-        return None, {}
-    comment = max(records, key=lambda c: c["id"])
+def _audit_payload(comment: Mapping) -> dict:
+    from .a38_guard import GuardError
     try:
         data = json.loads(comment["body"].split("```json\n", 1)[1].split("\n```", 1)[0])
     except (ValueError, IndexError, TypeError) as exc:
         raise GuardError("invalid bot lifecycle audit comment") from exc
     if not isinstance(data, dict):
         raise GuardError("invalid bot lifecycle audit record")
-    return comment, data
+    return data
+
+
+def _own_record(api: Any, assessment: Any, marker: str) -> tuple[Mapping | None, dict]:
+    from .a38_guard import collect_comments
+    own_id, _ = api.resolve_own_user()
+    comments = collect_comments(api, assessment.repo, assessment.pr)
+    records = [c for c in comments if _field(c, "user", "id") == own_id
+               and str(c.get("body", "")).startswith(marker + "\n")]
+    if not records:
+        return None, {}
+    comment = max(records, key=lambda c: c["id"])
+    return comment, _audit_payload(comment)
 
 
 def _save_record(api: Any, assessment: Any, marker: str, record: dict,
-                 en: str, de: str, *, create: bool = False) -> None:
+                 en: str, de: str, *, create: bool = False,
+                 existing: Mapping | None = None) -> dict:
     from .a38_guard import GuardError
-    existing, _ = _own_record(api, assessment, marker)
     if create:
         existing = None
+    elif not (isinstance(existing, Mapping) and type(existing.get("id")) is int):
+        existing, _ = _own_record(api, assessment, marker)
     body = (f"{marker}\nEN:\n{en}\n\nDE:\n{de}\n\n<details>\n<summary>Details</summary>\n\n"
             + "```json\n" + json.dumps(record, indent=2, sort_keys=True) + "\n```\n\n</details>")
     if existing and existing.get("body") == body:
-        return
+        return existing
     path = (f"/repos/{assessment.repo}/issues/comments/{existing['id']}" if existing
             else f"/repos/{assessment.repo}/issues/{assessment.pr}/comments")
-    status, _, _ = api.request("PATCH" if existing else "POST", path, body={"body": body}, retry=False)
+    status, data, _ = api.request("PATCH" if existing else "POST", path, body={"body": body}, retry=False)
     if not 200 <= status < 300:
         raise GuardError(f"bot lifecycle audit comment HTTP {status}")
     assessment.writes.append("lifecycle:comment")
+    if existing is not None:
+        if isinstance(existing, dict):
+            existing["body"] = body
+        return existing
+    if not isinstance(data, Mapping) or type(data.get("id")) is not int:
+        raise GuardError("bot lifecycle audit comment missing id")
+    return data
 
 
 def _last_parenthetical_suffix(reason: str) -> str | None:
@@ -236,17 +249,42 @@ def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> Non
     _save_record(api, assessment, STATE_MARKER, {**record, "phase": "applied"}, en, de)
 
 
-def record_workflow_approval(api: Any, assessment: Any, run: Mapping) -> None:
+def record_workflow_approval(api: Any, assessment: Any, run: Mapping, *, create: bool = True,
+                             existing: Mapping | None = None) -> dict:
     """Persist only an authorization whose POST returned 201, before the next one."""
-    _, previous = _own_record(api, assessment, AUTH_MARKER)
+    if existing is not None:
+        previous = _audit_payload(existing)
+    else:
+        _, previous = _own_record(api, assessment, AUTH_MARKER)
     identity = {"repo": assessment.repo, "pr": assessment.pr,
                 "head": assessment.head_sha, "base": assessment.base_sha}
     runs = previous.get("runs", []) if all(previous.get(k) == v for k, v in identity.items()) else []
     runs = [r for r in runs if r.get("workflow") != run["path"]]
     runs.append({"run_id": run["id"], "workflow": run["path"]})
-    _save_record(api, assessment, AUTH_MARKER, {**identity, "runs": runs},
+    return _save_record(api, assessment, AUTH_MARKER, {**identity, "runs": runs},
                  "I have authorized the recorded CI runs; their results are still pending.",
-                 "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.")
+                 "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.",
+                 create=create, existing=existing)
+
+
+def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: bool = True,
+                           existing: Mapping | None = None) -> dict:
+    """Persist a cancel whose POST returned 202, before the next one."""
+    if existing is not None:
+        previous = _audit_payload(existing)
+    else:
+        _, previous = _own_record(api, assessment, CANCEL_MARKER)
+    identity = {"repo": assessment.repo, "pr": assessment.pr,
+                "head": assessment.head_sha, "base": assessment.base_sha}
+    runs = previous.get("runs", []) if all(previous.get(k) == v for k, v in identity.items()) else []
+    runs = [r for r in runs if r.get("run_id") != run["id"]]
+    runs.append({"run_id": run["id"], "workflow": run.get("path")})
+    return _save_record(
+        api, assessment, CANCEL_MARKER, {**identity, "runs": runs},
+        "I cancelled waiting workflow runs that were superseded or not on the allowlist, so they no longer await approval.",
+        "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der Allowlist sind, damit sie nicht weiter auf Freigabe warten.",
+        create=create, existing=existing,
+    )
 
 
 def _checks(api: Any, repo: str, head: str) -> list[Mapping]:

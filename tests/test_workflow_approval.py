@@ -17,9 +17,11 @@ from agent_cli.a38_guard import (
     reconcile_pull,
 )
 from agent_cli.pr_guard_config import PrGuardConfigError, load_pr_guard_config
+from agent_cli.pr_lifecycle import AUTH_MARKER, CANCEL_MARKER
 from test_a38_guard import (
     BASE,
     BASE2,
+    BOT_ID,
     HEAD,
     REPO,
     FakeAPI,
@@ -828,3 +830,160 @@ def test_private_fork_fallback_fails_closed_without_unique_stable_link(what: str
     with pytest.raises(GuardError):
         reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
+
+
+# --- visible AUTH / CANCEL comments -----------------------------------------
+
+
+AUTH_EN = "I have authorized the recorded CI runs; their results are still pending."
+AUTH_DE = "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus."
+CANCEL_EN = (
+    "I cancelled waiting workflow runs that were superseded or not on the allowlist, "
+    "so they no longer await approval."
+)
+CANCEL_DE = (
+    "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der "
+    "Allowlist sind, damit sie nicht weiter auf Freigabe warten."
+)
+
+
+def _marker_comments(fake: FakeApproval, marker: str) -> list[dict]:
+    return [c for c in fake.comments if str(c.get("body", "")).startswith(marker)]
+
+
+def _comment_record(comment: dict) -> dict:
+    return json.loads(comment["body"].split("```json\n", 1)[1].split("\n```", 1)[0])
+
+
+def test_approve_201_posts_auth_comment_without_lifecycle() -> None:
+    fake = FakeApproval()
+    assert "lifecycle" not in fake.config
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in result.writes
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    body = auths[0]["body"]
+    assert body.startswith(AUTH_MARKER)
+    assert AUTH_EN in body
+    assert AUTH_DE in body
+    assert any(row.get("run_id") == 101 for row in _comment_record(auths[0])["runs"])
+
+
+def test_two_allowlisted_approves_in_one_reconcile_share_one_auth_comment() -> None:
+    fake = FakeApproval()
+    fake.config = _cfg({"enabled": True, "workflows": [PATH, OTHER]})
+    fake.set_pr_guard_config(fake.config)
+    fake.runs = [fake.run(id=101, path=PATH), fake.run(id=202, path=OTHER)]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in result.writes
+    assert "workflow:approve:202" in result.writes
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    ids = {row["run_id"] for row in _comment_record(auths[0])["runs"]}
+    assert ids == {101, 202}
+
+
+def test_later_reconcile_posts_new_auth_comment_without_patching_history() -> None:
+    fake = FakeApproval()
+    fake.config = _cfg({"enabled": True, "workflows": [PATH, OTHER]})
+    fake.set_pr_guard_config(fake.config)
+    fake.runs = [fake.run(id=101, path=PATH)]
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in first.writes
+    fake.runs.append(fake.run(id=202, path=OTHER, created_at="2026-09-05T11:02:00Z"))
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:202" in second.writes
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 2
+    older, latest = sorted(auths, key=lambda c: c["id"])
+    older_ids = {row["run_id"] for row in _comment_record(older)["runs"]}
+    latest_ids = {row["run_id"] for row in _comment_record(latest)["runs"]}
+    assert 202 not in older_ids
+    assert latest_ids == {101, 202}
+
+
+def test_cancel_202_posts_cancel_comment_and_approve_posts_auth() -> None:
+    fake = FakeApproval()
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:cancel:202" in result.writes
+    assert "workflow:approve:101" in result.writes
+    cancels = _marker_comments(fake, CANCEL_MARKER)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(cancels) == 1
+    assert len(auths) == 1
+    body = cancels[0]["body"]
+    assert body.startswith(CANCEL_MARKER)
+    assert CANCEL_EN in body
+    assert CANCEL_DE in body
+    assert any(row.get("run_id") == 202 for row in _comment_record(cancels[0])["runs"])
+
+
+def test_cancel_409_records_write_without_cancel_comment() -> None:
+    fake = FakeApproval()
+    fake.cancel_status = 409
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:cancel:202" in result.writes
+    assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_dry_run_cancel_candidate_writes_no_audit_comments() -> None:
+    fake = FakeApproval()
+    fake.runs.append(fake.run(id=202, path=OTHER))
+    reconcile_pull(fake.api(), REPO, 1, dry_run=True)
+    assert fake.writes == []
+    assert not _marker_comments(fake, AUTH_MARKER)
+    assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_two_same_path_cancels_in_one_reconcile_list_both_run_ids() -> None:
+    fake = FakeApproval()
+    fake.runs = [
+        fake.run(id=101, path=PATH),
+        fake.run(id=202, path=OTHER),
+        fake.run(id=203, path=OTHER, created_at="2026-09-05T11:01:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in result.writes
+    assert "workflow:cancel:202" in result.writes
+    assert "workflow:cancel:203" in result.writes
+    cancels = _marker_comments(fake, CANCEL_MARKER)
+    assert len(cancels) == 1
+    ids = {row["run_id"] for row in _comment_record(cancels[0])["runs"]}
+    assert ids == {202, 203}
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert any(row.get("run_id") == 101 for row in _comment_record(auths[0])["runs"])
+
+
+def test_create_false_patches_this_invocation_comment_not_latest_by_id() -> None:
+    fake = FakeApproval()
+    fake.config = _cfg({"enabled": True, "workflows": [PATH, OTHER]})
+    fake.set_pr_guard_config(fake.config)
+    fake.runs = [fake.run(id=101, path=PATH), fake.run(id=202, path=OTHER)]
+    planted_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
+            "runs": [{"run_id": 999, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": planted_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "workflow:approve:101" in result.writes
+    assert "workflow:approve:202" in result.writes
+    auths = _marker_comments(fake, AUTH_MARKER)
+    planted = next(c for c in auths if c["id"] == 500)
+    assert planted["body"] == planted_body
+    fresh = [c for c in auths if c["id"] != 500]
+    assert len(fresh) == 1
+    assert fresh[0]["id"] < 500
+    ids = {row["run_id"] for row in _comment_record(fresh[0])["runs"]}
+    assert ids == {101, 202}
+
