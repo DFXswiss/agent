@@ -16,6 +16,7 @@ except ImportError:
 
 from agent_cli.readme_only import (
     GUARD_WORKFLOW_PATH,
+    MAX_FILES,
     github_file_paths,
     github_is_guard_docs_only,
     github_is_markdown_only,
@@ -27,6 +28,7 @@ from agent_cli.readme_only import (
     is_guard_docs_path,
     is_markdown_path,
     is_readme_path,
+    markdown_and_guard_docs_only,
     parse_name_status_z,
     paths_are_guard_docs_only,
     paths_are_markdown_only,
@@ -149,6 +151,25 @@ class PathHelperTests(unittest.TestCase):
         self.assertTrue(is_guard_docs_path(GUARD_WORKFLOW_PATH))
         self.assertTrue(is_guard_docs_path("docs/x.md"))
         self.assertFalse(is_guard_docs_path("app.py"))
+
+    def test_markdown_and_guard_docs_only_from_one_inventory(self) -> None:
+        self.assertEqual(markdown_and_guard_docs_only(None), (False, False))
+        self.assertEqual(markdown_and_guard_docs_only([]), (False, False))
+        self.assertEqual(markdown_and_guard_docs_only(["docs/x.md"]), (True, True))
+        self.assertEqual(
+            markdown_and_guard_docs_only(["docs/x.md", GUARD_WORKFLOW_PATH]),
+            (False, True),
+        )
+        self.assertEqual(
+            markdown_and_guard_docs_only([GUARD_WORKFLOW_PATH]),
+            (False, True),
+        )
+        self.assertEqual(
+            markdown_and_guard_docs_only(["docs/x.md", "app.py"]),
+            (False, False),
+        )
+        too_many = ["README.md"] * (MAX_FILES + 1)
+        self.assertEqual(markdown_and_guard_docs_only(too_many), (False, False))
 
 
 class ParseNameStatusTests(unittest.TestCase):

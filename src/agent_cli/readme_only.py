@@ -54,6 +54,19 @@ def paths_are_guard_docs_only(paths: Sequence[str]) -> bool:
     return all(isinstance(p, str) and is_guard_docs_path(p) for p in paths)
 
 
+def markdown_and_guard_docs_only(
+    paths: Sequence[str] | None,
+) -> tuple[bool, bool]:
+    """Return ``(markdown_only, guard_docs_only)`` from one path inventory.
+
+    ``None`` paths (inventory error or unknown status), more than
+    ``MAX_FILES`` paths, and empty inventories yield ``(False, False)``.
+    """
+    if paths is None or len(paths) > MAX_FILES:
+        return False, False
+    return paths_are_markdown_only(paths), paths_are_guard_docs_only(paths)
+
+
 def parse_name_status_z(blob: bytes) -> list[str] | None:
     """Parse ``git diff --name-status -z`` output.
 

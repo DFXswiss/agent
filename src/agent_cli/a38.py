@@ -28,7 +28,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
-from .readme_only import git_is_guard_docs_only, git_is_markdown_only, git_is_readme_only
+from .readme_only import (
+    MAX_FILES,
+    git_changed_paths,
+    markdown_and_guard_docs_only,
+    paths_are_readme_only,
+)
 from .a38_job_adapters.commands import parse_commands_config
 from .a38_job_adapters.common import BUILTIN_UNSET, DOCKER_HEAVY_LOCK, LOCK_NAME_RE, JobError
 from .a38_job_adapters.compose import companion_env_missing, parse_compose_config
@@ -1118,16 +1123,20 @@ def run_policy(
     )
     logs_dir.mkdir(parents=True, exist_ok=True)
     omit = set(policy.get("readme_only_omit") or [])
-    readme_only = bool(omit) and git_is_readme_only(root, base, head)
+    # One git inventory: a second listing must not flip omit classification.
+    paths = git_changed_paths(root, base, head)
+    markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
+    if paths is None or len(paths) > MAX_FILES:
+        readme_only = False
+    else:
+        readme_only = bool(omit) and paths_are_readme_only(paths)
     if omit and not readme_only:
         omit = set()
-    markdown_only = git_is_markdown_only(root, base, head)
-    guard_docs_only = False
     if markdown_only:
         omit = set(required)
-    elif git_is_guard_docs_only(root, base, head):
+        guard_docs_only = False
+    elif guard_docs_only:
         omit = set(required)
-        guard_docs_only = True
 
     env = _job_env(head, base)
     max_in_flight = _max_in_flight(env)

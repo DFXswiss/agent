@@ -2368,6 +2368,37 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             msg=result.reasons,
         )
 
+    def test_second_github_listing_cannot_flip_skip_bytes(self) -> None:
+        fake = FakeAPI()
+        _install_guard_workflow(fake, changed=True)
+        markdown_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        later_files = [
+            {"filename": "docs/guide.md", "status": "modified"},
+            {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+        ]
+        fake.pull_files = list(markdown_files)
+        orig = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            result = orig(method, url, body)
+            if url.startswith("https://api.github.com"):
+                path_only = url[len("https://api.github.com") :].split("?", 1)[0]
+            else:
+                path_only = url.split("?", 1)[0]
+            if method.upper() == "GET" and path_only.endswith("/pulls/1/files"):
+                fake.pull_files = list(later_files)
+            return result
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertTrue(
+            any("a38-guard.yml bytes changed" in r for r in result.reasons),
+            msg=result.reasons,
+        )
+        self.assertEqual(result.write_ready_reason, "markdown-only change set")
+
 
 if __name__ == "__main__":
     unittest.main()

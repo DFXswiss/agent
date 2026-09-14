@@ -38,6 +38,9 @@ from .pr_guard_config import (
 )
 from .readme_only import (
     GUARD_WORKFLOW_PATH,
+    github_file_paths,
+    list_pull_files,
+    markdown_and_guard_docs_only,
     pull_is_guard_docs_only,
     pull_is_markdown_only,
     pull_is_readme_only,
@@ -2077,16 +2080,17 @@ def assess_pull(
         if policy is not None:
             policy = dict(policy, mode=base_mode)
         policy_repo, policy_sha = snap.head_repo or snap.repo, snap.head_sha
+    # One GitHub inventory for skip_bytes and the docs write-ready waivers.
+    entries = list_pull_files(api, snap.repo, snap.number)
+    paths = None if entries is None else github_file_paths(entries)
+    markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
+    skip_bytes_paths: tuple[str, ...] = (
+        (GUARD_WORKFLOW_PATH,)
+        if (guard_docs_only and not markdown_only)
+        else ()
+    )
     workflow_problems: list[str] = []
     if policy is not None and policy_error is None:
-        skip_bytes_paths: tuple[str, ...] = (
-            (GUARD_WORKFLOW_PATH,)
-            if (
-                pull_is_guard_docs_only(api, snap.repo, snap.number)
-                and not pull_is_markdown_only(api, snap.repo, snap.number)
-            )
-            else ()
-        )
         workflow_problems = check_workflows_against_policy(
             api,
             snap.repo,
@@ -2106,10 +2110,10 @@ def assess_pull(
     write_ready, write_ready_reason = resolve_write_ready(
         api, snap, event_actor=event_actor
     )
-    if not write_ready and pull_is_markdown_only(api, snap.repo, snap.number):
+    if not write_ready and markdown_only:
         write_ready = True
         write_ready_reason = "markdown-only change set"
-    elif not write_ready and pull_is_guard_docs_only(api, snap.repo, snap.number):
+    elif not write_ready and guard_docs_only:
         write_ready = True
         write_ready_reason = "guard-docs change set"
     assessment = assess_from_parts(

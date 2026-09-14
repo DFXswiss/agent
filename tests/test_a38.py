@@ -1805,6 +1805,67 @@ class RunnerTests(unittest.TestCase):
                 text = (logs / f"{ident}.log").read_text(encoding="utf-8")
                 self.assertEqual(text, "omitted: guard-docs change set\n")
 
+    def test_single_git_inventory_second_listing_cannot_flip_omit(self) -> None:
+        two_jobs = [
+            {
+                "id": "unit",
+                "name": "Unit",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "unit",
+            },
+            {
+                "id": "lint",
+                "name": "Lint",
+                "command": "true",
+                "timeout_s": 30,
+                "workflow": ".github/workflows/ci.yml",
+                "job": "lint",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            logs = root / "logs"
+            logs.mkdir()
+            base = _init_repo(repo)
+            calls = {"n": 0}
+
+            def fake_changed(
+                _root: Path, _base: str, _head: str
+            ) -> list[str] | None:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    return ["src/app.py"]
+                return [GUARD_WORKFLOW_PATH]
+
+            policy = load_policy(_policy_text(jobs=two_jobs))
+            with mock.patch(
+                "agent_cli.a38.git_changed_paths", side_effect=fake_changed
+            ), mock.patch(
+                "agent_cli.readme_only.git_changed_paths",
+                side_effect=fake_changed,
+            ):
+                verdict = run_policy(
+                    repo,
+                    policy,
+                    output=root / "report.md",
+                    logs_dir=logs,
+                    base_sha=base,
+                    private=True,
+                )
+            self.assertEqual(calls["n"], 1)
+            self.assertTrue(verdict["ok"], msg=verdict)
+            report = parse_comment((root / "report.md").read_text(encoding="utf-8"))
+            self.assertFalse(report.markdown_only)
+            by_id = {run.id: run for run in report.runs}
+            self.assertEqual(by_id["unit"].result, "pass")
+            self.assertEqual(by_id["lint"].result, "pass")
+            for ident in ("unit", "lint"):
+                text = (logs / f"{ident}.log").read_text(encoding="utf-8")
+                self.assertNotIn("omitted:", text)
+
     def test_strips_github_tokens_from_job_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
