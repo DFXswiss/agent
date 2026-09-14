@@ -699,6 +699,7 @@ class GitHubApi:
         Page 1 is requested to read ``rel=last`` and is cached, not yielded, until
         the reverse walk reaches it. ``rel=prev`` / ``rel=first`` may name that
         same page as ``page=1``; reuse the cache instead of treating that as a cycle.
+        Repeating a page already walked this iterator is a cycle.
         """
         if path.startswith("https://"):
             first_url = _ensure_api_url(path)
@@ -709,6 +710,8 @@ class GitHubApi:
         visited: set[str] = set()
         # Discovery GET of page 1 may later reappear as rel=prev/first with page=1.
         page_cache: dict[str, tuple[Any, dict[str, str]]] = {}
+        # Pages already consumed this walk; distinct from the HTTP cache.
+        walked: set[str] = set()
         yielded = 0
 
         def fetch(url: str) -> tuple[Any, dict[str, str]]:
@@ -730,6 +733,12 @@ class GitHubApi:
             page_cache[url] = (data, headers)
             return data, headers
 
+        def walk_key(url: str) -> str:
+            ensured = _ensure_api_url(url)
+            if _same_first_page(ensured, first_url):
+                return first_url
+            return ensured
+
         _, first_headers = fetch(first_url)
         last_raw = _parse_link_rel(first_headers.get("link"), "last")
         last_url = _ensure_api_url(last_raw) if last_raw else None
@@ -739,7 +748,11 @@ class GitHubApi:
         )
 
         while current:
+            key = walk_key(current)
+            if key in walked:
+                raise GuardError("pagination cycle or page bound exceeded")
             data, headers = fetch(current)
+            walked.add(key)
             for event in reversed(data):
                 yielded += 1
                 if yielded > hard_limit:

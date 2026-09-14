@@ -645,6 +645,52 @@ class A38GuardUnitTests(unittest.TestCase):
         ]
         self.assertEqual(len(timeline_gets), 2)
 
+    def test_iter_pages_newest_first_empty_self_prev_is_cycle(self) -> None:
+        path = f"/repos/{REPO}/issues/1/timeline"
+        last_url = f"https://api.github.com{path}?per_page=100&page=2"
+        fetches: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            fetches.append(url)
+            self.assertLess(len(fetches), 20, "cycle must not keep fetching")
+            page = (parse_qs(urlparse(url).query).get("page") or ["1"])[0]
+            if page == "2":
+                return 200, [], {"link": f'<{last_url}>; rel="prev"'}
+            return 200, [{"id": 1}], {"link": f'<{last_url}>; rel="last"'}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(GuardError) as ctx:
+            list(api.iter_pages_newest_first(path))
+        self.assertEqual(str(ctx.exception), "pagination cycle or page bound exceeded")
+        self.assertLess(len(fetches), 10)
+
+    def test_iter_pages_newest_first_nonempty_self_prev_is_cycle(self) -> None:
+        path = f"/repos/{REPO}/issues/1/timeline"
+        last_url = f"https://api.github.com{path}?per_page=100&page=2"
+        last_items = [{"id": 1}, {"id": 2}, {"id": 3}]
+        fetches: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            fetches.append(url)
+            self.assertLess(len(fetches), 20, "cycle must not keep fetching")
+            page = (parse_qs(urlparse(url).query).get("page") or ["1"])[0]
+            if page == "2":
+                return 200, last_items, {"link": f'<{last_url}>; rel="prev"'}
+            return 200, [{"id": 0}], {"link": f'<{last_url}>; rel="last"'}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        got: list[Any] = []
+        with self.assertRaises(GuardError) as ctx:
+            for item in api.iter_pages_newest_first(path):
+                got.append(item)
+        self.assertEqual(str(ctx.exception), "pagination cycle or page bound exceeded")
+        self.assertEqual(got, list(reversed(last_items)))
+        self.assertLess(len(fetches), 10)
+
 
 class A38GuardE2ETests(unittest.TestCase):
     def test_opened_no_report(self) -> None:
