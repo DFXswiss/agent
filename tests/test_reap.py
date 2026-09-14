@@ -1,12 +1,8 @@
-"""Tests for reap.py decision logic. Pure module: no Store, no runner, no filesystem."""
+"""Tests for the reap decision helpers and for reap_orphans."""
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable
 from pathlib import Path
-
-import pytest
 
 from agent_cli.ingest import job_row
 from agent_cli.reap import (

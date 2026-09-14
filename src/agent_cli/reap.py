@@ -1,9 +1,15 @@
-"""Decide which worktrees and tmux sessions are orphaned after a worker dies.
+"""Reap what a killed worker leaves behind.
 
-Pure module: no subprocess, no network, no filesystem, no Store. Once workers can be
-killed for running over time or stalling, stale artefacts remain — worktrees whose job
-no longer runs, tmux sessions with no corresponding row, half-finished clone directories.
-This module answers "what is orphaned" so the caller can act; it deletes nothing.
+Once workers can be killed for running over time or stalling, stale artefacts
+remain: worktrees whose job no longer runs, tmux sessions with no corresponding
+row, half-finished clone directories. The decision helpers here are pure — they
+take measurements and answer "what is orphaned" without touching anything.
+`reap_orphans` is not: it reads the store and drives an injected runner to issue
+the git and tmux commands that remove a worktree or kill a session.
+
+It still opens no socket, no subprocess and no database of its own; the store and
+the runner arrive injected. Removing a directory that no job row knows about needs
+a raw recursive delete and is deliberately absent — those are counted as skipped.
 """
 
 from __future__ import annotations
