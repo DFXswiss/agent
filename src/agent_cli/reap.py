@@ -43,14 +43,20 @@ def preparing_active(
 
 
 def within_root(root: str, candidate: str) -> bool:
-    """True only when candidate is strictly below root."""
+    """True only when candidate is strictly below root.
+
+    The check refuses any path that is not already canonical. This enforces the
+    caller's obligation at this boundary instead of merely documenting it.
+    Symlink resolution still cannot be verified here, so the caller must have
+    resolved them — that residual limit remains.
+    """
     if not isinstance(root, str) or not isinstance(candidate, str):
         return False
-    root_n = posixpath.normpath(root)
-    cand_n = posixpath.normpath(candidate)
-    if not root_n.startswith("/") or not cand_n.startswith("/"):
+    if not root.startswith("/") or not candidate.startswith("/"):
         return False
-    if cand_n == root_n:
+    if root != posixpath.normpath(root) or candidate != posixpath.normpath(candidate):
+        return False
+    if candidate == root:
         # The root itself must never be deletable. Type-defensive rather than
         # behaviour-changing: the prefix test below already excludes equality,
         # so removing this line changes no outcome and a mutation of it stays
@@ -61,7 +67,7 @@ def within_root(root: str, candidate: str) -> bool:
     # comparing; a pure module cannot, so the caller must pass already-resolved paths.
     # Without that, a symlink inside the root could point outside it and this guard
     # would not notice. Being wrong here deletes data.
-    return cand_n.startswith(root_n + "/")
+    return candidate.startswith(root + "/")
 
 
 def orphan_worktrees(work_dirs: list[str], running_ids: set[str], preparing_ids: set[str]) -> list[str]:
@@ -109,10 +115,22 @@ def reap_orphans(
     marker_of: Callable[[str], tuple[bool, int | None]],
     now_epoch: int,
     session_prefix: str,
-) -> tuple[list[str], list[str], int]:
-    """Reap orphaned worktrees and tmux sessions after workers are killed."""
+) -> tuple[list[str], list[str], list[str], int]:
+    """Reap orphaned worktrees and tmux sessions after workers are killed.
+
+    Returns (removed_worktrees, killed_sessions, failed, skipped) where:
+    - removed_worktrees: job ids whose worktree remove succeeded (exit 0)
+    - killed_sessions: session names whose kill-session succeeded (exit 0)
+    - failed: ids/names whose command returned non-zero
+    - skipped: items not attempted (no row, bad repo, refused path, malformed input)
+
+    A failed command is never counted as a skip. A failed prune does not negate
+    a successful removal, but a failed removal is never reported as success.
+    The pass continues after any failure.
+    """
     removed_worktrees: list[str] = []
     killed_sessions: list[str] = []
+    failed: list[str] = []
     skipped = 0
 
     # Step 1: collect running job ids and session names
@@ -174,14 +192,20 @@ def reap_orphans(
             # guard against traversal: a job id containing .. would let the path escape the work root
             skipped += 1
             continue
-        runner(workspace.worktree_remove_argv(bare, path))
+        remove_result = runner(workspace.worktree_remove_argv(bare, path))
         runner(workspace.worktree_prune_argv(bare))
-        removed_worktrees.append(job_id)
+        if remove_result.returncode == 0:
+            removed_worktrees.append(job_id)
+        else:
+            failed.append(job_id)
 
     # Step 5: sessions (skip entirely if listing failed)
     if not session_listing_failed:
         for name in orphan_sessions(candidate_session_names, running_sessions, preparing_ids, prefix=session_prefix):
-            runner(workspace.kill_session_argv(socket, name))
-            killed_sessions.append(name)
+            kill_result = runner(workspace.kill_session_argv(socket, name))
+            if kill_result.returncode == 0:
+                killed_sessions.append(name)
+            else:
+                failed.append(name)
 
-    return removed_worktrees, killed_sessions, skipped
+    return removed_worktrees, killed_sessions, failed, skipped

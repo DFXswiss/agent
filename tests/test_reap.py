@@ -93,7 +93,7 @@ def test_within_root_returns_false_for_path_outside_root() -> None:
 
 
 def test_within_root_returns_false_for_traversal_escape() -> None:
-    # Normalisation must reject "/work/../etc".
+    # Refused because the candidate is not canonical (contains ..); the traversal case is still False, but now because it is non-canonical, not because it normalises to somewhere outside.
     assert within_root("/work", "/work/../etc") is False
 
 
@@ -105,8 +105,24 @@ def test_within_root_returns_false_for_relative_candidate() -> None:
     assert within_root("/work", "job-1") is False
 
 
-def test_within_root_ignores_trailing_slash() -> None:
-    assert within_root("/work/", "/work/job-1/") is True
+def test_within_root_returns_false_for_trailing_slash_on_root() -> None:
+    # Refused because the root is not canonical (trailing slash); caller must pass resolved paths.
+    assert within_root("/work/", "/work/job-1") is False
+
+
+def test_within_root_returns_false_for_trailing_slash_on_candidate() -> None:
+    # Refused because the candidate is not canonical (trailing slash); caller must pass resolved paths.
+    assert within_root("/work", "/work/job-1/") is False
+
+
+def test_within_root_returns_false_for_dot_segment() -> None:
+    # Refused because the candidate is not canonical (dot segment); caller must pass resolved paths.
+    assert within_root("/work", "/work/./job-1") is False
+
+
+def test_within_root_returns_false_for_double_slash() -> None:
+    # Refused because the candidate is not canonical (double slash); caller must pass resolved paths.
+    assert within_root("/work", "/work//job-1") is False
 
 
 # ---------------------------------------------------------------- orphan_worktrees
@@ -166,6 +182,9 @@ def _runner(
     calls: list[list[str]],
     list_sessions_rc: int = 0,
     list_sessions_stdout: str = "",
+    worktree_remove_rc: int = 0,
+    worktree_prune_rc: int = 0,
+    kill_session_rc: int = 0,
 ):
     """Fake runner recording every argv, answering the commands reap_orphans issues."""
 
@@ -174,10 +193,12 @@ def _runner(
         joined = " ".join(argv)
         if "list-sessions" in joined:
             return Completed(list_sessions_rc, list_sessions_stdout, "")
-        if "worktree" in joined:
-            return Completed(0, "", "")
+        if "worktree remove" in joined:
+            return Completed(worktree_remove_rc, "", "")
+        if "worktree prune" in joined:
+            return Completed(worktree_prune_rc, "", "")
         if "kill-session" in joined:
-            return Completed(0, "", "")
+            return Completed(kill_session_rc, "", "")
         raise AssertionError(argv)
 
     return run
@@ -207,7 +228,7 @@ def test_a_work_dir_whose_job_is_running_is_not_reaped(tmp_path: Path) -> None:
         calls: list[list[str]] = []
         jid = row["id"]
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -221,6 +242,7 @@ def test_a_work_dir_whose_job_is_running_is_not_reaped(tmp_path: Path) -> None:
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
         assert not any("worktree remove" in " ".join(argv) for argv in calls)
     finally:
@@ -233,7 +255,7 @@ def test_a_work_dir_protected_by_a_fresh_preparing_marker_is_not_reaped(tmp_path
     try:
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -247,6 +269,7 @@ def test_a_work_dir_protected_by_a_fresh_preparing_marker_is_not_reaped(tmp_path
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
         assert not any("worktree remove" in " ".join(argv) for argv in calls)
     finally:
@@ -277,7 +300,7 @@ def test_a_work_dir_whose_marker_is_older_than_the_max_age_is_reaped(tmp_path: P
         calls: list[list[str]] = []
         jid = row["id"]
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -291,6 +314,7 @@ def test_a_work_dir_whose_marker_is_older_than_the_max_age_is_reaped(tmp_path: P
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
     finally:
         store.close()
@@ -320,7 +344,7 @@ def test_an_orphan_with_a_job_row_issues_worktree_remove_then_prune(tmp_path: Pa
         calls: list[list[str]] = []
         jid = row["id"]
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -334,6 +358,7 @@ def test_an_orphan_with_a_job_row_issues_worktree_remove_then_prune(tmp_path: Pa
 
         assert removed == [jid]
         assert killed == []
+        assert failed == []
         assert skipped == 0
         joined = [" ".join(argv) for argv in calls]
         remove_idx = next(i for i, c in enumerate(joined) if "worktree remove" in c)
@@ -349,7 +374,7 @@ def test_an_orphan_with_no_job_row_is_skipped_and_issues_no_command(tmp_path: Pa
     try:
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -363,6 +388,7 @@ def test_an_orphan_with_no_job_row_is_skipped_and_issues_no_command(tmp_path: Pa
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 1
         assert not any("worktree remove" in " ".join(argv) for argv in calls)
     finally:
@@ -392,7 +418,7 @@ def test_a_job_id_that_escapes_the_work_root_is_refused(tmp_path: Path) -> None:
         store.write("job", "insert", "../escape", row)
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -406,6 +432,7 @@ def test_a_job_id_that_escapes_the_work_root_is_refused(tmp_path: Path) -> None:
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 1
         assert not any("worktree remove" in " ".join(argv) for argv in calls)
     finally:
@@ -436,7 +463,7 @@ def test_a_row_whose_repo_is_missing_or_empty_is_skipped_without_raising(tmp_pat
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls),
             socket="/tmp/sock",
@@ -450,6 +477,7 @@ def test_a_row_whose_repo_is_missing_or_empty_is_skipped_without_raising(tmp_pat
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 1
     finally:
         store.close()
@@ -461,7 +489,7 @@ def test_an_orphaned_session_is_killed_and_returned_in_killed_sessions(tmp_path:
     try:
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls, list_sessions_stdout="job-1\n"),
             socket="/tmp/sock",
@@ -475,6 +503,7 @@ def test_an_orphaned_session_is_killed_and_returned_in_killed_sessions(tmp_path:
 
         assert removed == []
         assert killed == ["job-1"]
+        assert failed == []
         assert skipped == 0
         assert any("kill-session" in " ".join(argv) for argv in calls)
     finally:
@@ -505,7 +534,7 @@ def test_a_session_named_in_a_running_row_is_not_killed(tmp_path: Path) -> None:
         calls: list[list[str]] = []
         jid = row["id"]
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls, list_sessions_stdout=f"job-{jid}\n"),
             socket="/tmp/sock",
@@ -519,6 +548,7 @@ def test_a_session_named_in_a_running_row_is_not_killed(tmp_path: Path) -> None:
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
         assert not any("kill-session" in " ".join(argv) for argv in calls)
     finally:
@@ -532,7 +562,7 @@ def test_a_session_whose_job_id_has_a_fresh_preparing_marker_is_not_killed(tmp_p
         calls: list[list[str]] = []
         jid = "jobid123"
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls, list_sessions_stdout=f"job-{jid}\n"),
             socket="/tmp/sock",
@@ -546,6 +576,7 @@ def test_a_session_whose_job_id_has_a_fresh_preparing_marker_is_not_killed(tmp_p
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
         assert not any("kill-session" in " ".join(argv) for argv in calls)
     finally:
@@ -558,7 +589,7 @@ def test_a_non_zero_return_from_list_sessions_kills_nothing_at_all(tmp_path: Pat
     try:
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls, list_sessions_rc=1, list_sessions_stdout="job-orphan\n"),
             socket="/tmp/sock",
@@ -572,6 +603,7 @@ def test_a_non_zero_return_from_list_sessions_kills_nothing_at_all(tmp_path: Pat
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
         assert not any("kill-session" in " ".join(argv) for argv in calls)
     finally:
@@ -584,7 +616,7 @@ def test_a_session_name_without_the_prefix_is_never_killed(tmp_path: Path) -> No
     try:
         calls: list[list[str]] = []
 
-        removed, killed, skipped = reap_orphans(
+        removed, killed, failed, skipped = reap_orphans(
             store,
             _runner(calls=calls, list_sessions_stdout="editor\n"),
             socket="/tmp/sock",
@@ -598,7 +630,180 @@ def test_a_session_name_without_the_prefix_is_never_killed(tmp_path: Path) -> No
 
         assert removed == []
         assert killed == []
+        assert failed == []
         assert skipped == 0
         assert not any("kill-session" in " ".join(argv) for argv in calls)
+    finally:
+        store.close()
+
+
+# ------------------------------------------------- command failure reporting
+
+
+def _orphan_row(store: Store, ref: str) -> str:
+    """Insert a finished job row so its work dir counts as an orphan."""
+    row = job_row(
+        session_id="s",
+        repo="owner/name",
+        ref=ref,
+        job_type="pr-review",
+        actor="davidleomay",
+    )
+    row.update(
+        {
+            "state": "done",
+            "session": f"job-{ref}",
+            "worktree": f"/tmp/work/job-{ref}",
+            "started": "2026-01-01T00:00:00Z",
+            "baseline_output_ids": [],
+        }
+    )
+    store.write("job", "insert", row["id"], row)
+    return row["id"]
+
+
+def test_a_failed_worktree_remove_is_reported_failed_not_removed(tmp_path: Path) -> None:
+    # The reported defect: a non-zero remove must never be counted as a removal.
+    store = Store(tmp_path)
+    try:
+        jid = _orphan_row(store, "1")
+        calls: list[list[str]] = []
+
+        removed, killed, failed, skipped = reap_orphans(
+            store,
+            _runner(calls=calls, worktree_remove_rc=1),
+            socket="/tmp/sock",
+            repos_root="/tmp/repos",
+            work_root="/tmp/work",
+            work_dirs=[jid],
+            marker_of=lambda j: (False, None),
+            now_epoch=1000000000,
+            session_prefix="job-",
+        )
+
+        assert removed == []
+        assert failed == [jid]
+        assert skipped == 0
+    finally:
+        store.close()
+
+
+def test_a_failed_kill_session_is_reported_failed_not_killed(tmp_path: Path) -> None:
+    # A session that could not be killed is still alive; never report it killed.
+    store = Store(tmp_path)
+    try:
+        calls: list[list[str]] = []
+
+        removed, killed, failed, skipped = reap_orphans(
+            store,
+            _runner(calls=calls, list_sessions_stdout="job-orphan\n", kill_session_rc=1),
+            socket="/tmp/sock",
+            repos_root="/tmp/repos",
+            work_root="/tmp/work",
+            work_dirs=[],
+            marker_of=lambda j: (False, None),
+            now_epoch=1000000000,
+            session_prefix="job-",
+        )
+
+        assert killed == []
+        assert failed == ["job-orphan"]
+    finally:
+        store.close()
+
+
+def test_a_failed_prune_does_not_negate_a_successful_removal(tmp_path: Path) -> None:
+    # Prune is best-effort metadata cleanup; its failure must not undo a real removal.
+    store = Store(tmp_path)
+    try:
+        jid = _orphan_row(store, "1")
+        calls: list[list[str]] = []
+
+        removed, killed, failed, skipped = reap_orphans(
+            store,
+            _runner(calls=calls, worktree_prune_rc=1),
+            socket="/tmp/sock",
+            repos_root="/tmp/repos",
+            work_root="/tmp/work",
+            work_dirs=[jid],
+            marker_of=lambda j: (False, None),
+            now_epoch=1000000000,
+            session_prefix="job-",
+        )
+
+        assert removed == [jid]
+        assert failed == []
+    finally:
+        store.close()
+
+
+def test_every_command_failing_reports_nothing_as_done(tmp_path: Path) -> None:
+    # The reviewer's reproduction: with every command exiting 1 the function used to
+    # return both ids as successes while nothing had been deleted or terminated.
+    store = Store(tmp_path)
+    try:
+        jid = _orphan_row(store, "1")
+        calls: list[list[str]] = []
+
+        removed, killed, failed, skipped = reap_orphans(
+            store,
+            _runner(
+                calls=calls,
+                list_sessions_stdout="job-orphan\n",
+                worktree_remove_rc=1,
+                worktree_prune_rc=1,
+                kill_session_rc=1,
+            ),
+            socket="/tmp/sock",
+            repos_root="/tmp/repos",
+            work_root="/tmp/work",
+            work_dirs=[jid],
+            marker_of=lambda j: (False, None),
+            now_epoch=1000000000,
+            session_prefix="job-",
+        )
+
+        assert removed == []
+        assert killed == []
+        assert jid in failed
+        assert "job-orphan" in failed
+    finally:
+        store.close()
+
+
+def test_one_failed_removal_does_not_stop_the_rest_of_the_pass(tmp_path: Path) -> None:
+    # A failure must not abort the pass: the other orphan is still processed.
+    store = Store(tmp_path)
+    try:
+        good = _orphan_row(store, "1")
+        bad = _orphan_row(store, "2")
+        calls: list[list[str]] = []
+
+        def run(argv: list[str]) -> Completed:
+            calls.append(argv)
+            joined = " ".join(argv)
+            if "list-sessions" in joined:
+                return Completed(0, "", "")
+            if "worktree remove" in joined:
+                return Completed(1 if bad in joined else 0, "", "")
+            if "worktree prune" in joined:
+                return Completed(0, "", "")
+            raise AssertionError(argv)
+
+        removed, killed, failed, skipped = reap_orphans(
+            store,
+            run,
+            socket="/tmp/sock",
+            repos_root="/tmp/repos",
+            work_root="/tmp/work",
+            work_dirs=[good, bad],
+            marker_of=lambda j: (False, None),
+            now_epoch=1000000000,
+            session_prefix="job-",
+        )
+
+        assert removed == [good]
+        assert failed == [bad]
+        assert skipped == 0
     finally:
         store.close()
