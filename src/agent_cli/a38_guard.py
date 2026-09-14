@@ -741,6 +741,9 @@ class GitHubApi:
 
         _, first_headers = fetch(first_url)
         last_raw = _parse_link_rel(first_headers.get("link"), "last")
+        next_raw = _parse_link_rel(first_headers.get("link"), "next")
+        if next_raw and not last_raw:
+            raise GuardError("pagination last relation missing")
         last_url = _ensure_api_url(last_raw) if last_raw else None
         # Do not yield page 1 until the reverse walk reaches it (if ever).
         current: str | None = (

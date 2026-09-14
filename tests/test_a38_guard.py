@@ -691,6 +691,31 @@ class A38GuardUnitTests(unittest.TestCase):
         self.assertEqual(got, list(reversed(last_items)))
         self.assertLess(len(fetches), 10)
 
+    def test_iter_pages_newest_first_next_without_last_relation_missing(self) -> None:
+        path = f"/repos/{REPO}/issues/1/timeline"
+        next_url = f"https://api.github.com{path}?per_page=100&page=2"
+        page1_items = [{"id": 1}, {"id": 2}]
+        fetches: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            fetches.append(url)
+            self.assertLess(len(fetches), 20, "must not keep fetching")
+            page = (parse_qs(urlparse(url).query).get("page") or ["1"])[0]
+            if page == "1":
+                return 200, page1_items, {"link": f'<{next_url}>; rel="next"'}
+            return 200, [{"id": 99}], {}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        got: list[Any] = []
+        with self.assertRaises(GuardError) as ctx:
+            for item in api.iter_pages_newest_first(path):
+                got.append(item)
+        self.assertEqual(str(ctx.exception), "pagination last relation missing")
+        self.assertEqual(got, [])
+        self.assertEqual(len(fetches), 1)
+
 
 class A38GuardE2ETests(unittest.TestCase):
     def test_opened_no_report(self) -> None:
