@@ -33,6 +33,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     event_should_ignore,
     fetch_pull,
     find_tool_attribution,
+    load_ready_timeline,
     looks_like_report,
     main,
     pick_latest_author_report,
@@ -318,12 +319,20 @@ class FakeAPI:
             start = (page - 1) * per_page
             chunk = self.timeline[start : start + per_page]
             headers: dict[str, str] = {}
-            if start + per_page < len(self.timeline):
-                next_page = page + 1
-                headers["link"] = (
-                    f'<https://api.github.com/repos/{REPO}/issues/1/timeline'
-                    f"?per_page=100&page={next_page}>; rel=\"next\""
-                )
+            last_page = max(1, (len(self.timeline) + per_page - 1) // per_page)
+            base = (
+                f"https://api.github.com/repos/{REPO}/issues/1/timeline"
+                f"?per_page=100&page="
+            )
+            rels: list[str] = []
+            if page > 1:
+                rels.append(f'<{base}{page - 1}>; rel="prev"')
+                rels.append(f'<{base}1>; rel="first"')
+            if page < last_page:
+                rels.append(f'<{base}{page + 1}>; rel="next"')
+                rels.append(f'<{base}{last_page}>; rel="last"')
+            if rels:
+                headers["link"] = ", ".join(rels)
             return 200, chunk, headers
 
         if (
@@ -571,6 +580,209 @@ class A38GuardUnitTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_load_ready_timeline_newest_first_skips_older_pages(self) -> None:
+        """A long timeline only GETs page 1 (to find last) and the last page."""
+        fake = FakeAPI()
+        older: list[dict[str, Any]] = []
+        for i in range(1, 201):
+            if i == 50:
+                older.append(
+                    {
+                        "event": "ready_for_review",
+                        "id": i,
+                        "created_at": "2026-02-01T00:00:00Z",
+                        "actor": {
+                            "id": BOT_ID,
+                            "login": "github-actions[bot]",
+                            "type": "Bot",
+                        },
+                    }
+                )
+            else:
+                older.append(
+                    {
+                        "event": "commented",
+                        "id": i,
+                        "created_at": "2026-01-01T00:00:00Z",
+                    }
+                )
+        newest = [
+            {
+                "event": "commented",
+                "id": 200 + i,
+                "created_at": "2026-09-01T00:00:00Z",
+            }
+            for i in range(1, 100)
+        ]
+        ready = {
+            "event": "ready_for_review",
+            "id": 300,
+            "created_at": "2026-09-05T12:00:00Z",
+            "actor": {"id": 3003, "login": "maintainer", "type": "User"},
+        }
+        fake.timeline = older + newest + [ready]
+        self.assertGreater(len(fake.timeline), 200)
+        self.assertEqual(len(fake.timeline), 300)
+
+        gets: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            if method.upper() == "GET":
+                gets.append(url)
+            return inner(method, url, body)
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        status, actor = load_ready_timeline(api, REPO, 1)
+        self.assertEqual(status, "ok")
+        self.assertEqual(actor, (3003, "maintainer"))
+        timeline_path = f"/repos/{REPO}/issues/1/timeline"
+        timeline_gets = [
+            url for url in gets if urlparse(url).path == timeline_path
+        ]
+        self.assertEqual(len(timeline_gets), 2)
+
+    def test_load_ready_timeline_reuses_cached_page_1_via_prev(self) -> None:
+        """Walking rel=prev back to discovery page 1 reuses the cached GET."""
+        fake = FakeAPI()
+        page1: list[dict[str, Any]] = []
+        for i in range(1, 101):
+            if i == 50:
+                page1.append(
+                    {
+                        "event": "ready_for_review",
+                        "id": i,
+                        "created_at": "2026-02-01T00:00:00Z",
+                        "actor": {"id": 4004, "login": "reviewer", "type": "User"},
+                    }
+                )
+            else:
+                page1.append(
+                    {
+                        "event": "commented",
+                        "id": i,
+                        "created_at": "2026-01-01T00:00:00Z",
+                    }
+                )
+        page2: list[dict[str, Any]] = []
+        for i in range(101, 151):
+            if i == 125:
+                page2.append(
+                    {
+                        "event": "ready_for_review",
+                        "id": i,
+                        "created_at": "2026-09-01T00:00:00Z",
+                        "actor": {
+                            "id": BOT_ID,
+                            "login": "github-actions[bot]",
+                            "type": "Bot",
+                        },
+                    }
+                )
+            else:
+                page2.append(
+                    {
+                        "event": "commented",
+                        "id": i,
+                        "created_at": "2026-09-01T00:00:00Z",
+                    }
+                )
+        fake.timeline = page1 + page2
+        self.assertEqual(len(fake.timeline), 150)
+
+        gets: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            if method.upper() == "GET":
+                gets.append(url)
+            return inner(method, url, body)
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        status, actor = load_ready_timeline(api, REPO, 1)
+        self.assertEqual(status, "ok")
+        self.assertEqual(actor, (4004, "reviewer"))
+        timeline_path = f"/repos/{REPO}/issues/1/timeline"
+        timeline_gets = [
+            url for url in gets if urlparse(url).path == timeline_path
+        ]
+        self.assertEqual(len(timeline_gets), 2)
+
+    def test_iter_pages_newest_first_empty_self_prev_is_cycle(self) -> None:
+        path = f"/repos/{REPO}/issues/1/timeline"
+        last_url = f"https://api.github.com{path}?per_page=100&page=2"
+        fetches: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            fetches.append(url)
+            self.assertLess(len(fetches), 20, "cycle must not keep fetching")
+            page = (parse_qs(urlparse(url).query).get("page") or ["1"])[0]
+            if page == "2":
+                return 200, [], {"link": f'<{last_url}>; rel="prev"'}
+            return 200, [{"id": 1}], {"link": f'<{last_url}>; rel="last"'}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(GuardError) as ctx:
+            list(api.iter_pages_newest_first(path))
+        self.assertEqual(str(ctx.exception), "pagination cycle or page bound exceeded")
+        self.assertLess(len(fetches), 10)
+
+    def test_iter_pages_newest_first_nonempty_self_prev_is_cycle(self) -> None:
+        path = f"/repos/{REPO}/issues/1/timeline"
+        last_url = f"https://api.github.com{path}?per_page=100&page=2"
+        last_items = [{"id": 1}, {"id": 2}, {"id": 3}]
+        fetches: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            fetches.append(url)
+            self.assertLess(len(fetches), 20, "cycle must not keep fetching")
+            page = (parse_qs(urlparse(url).query).get("page") or ["1"])[0]
+            if page == "2":
+                return 200, last_items, {"link": f'<{last_url}>; rel="prev"'}
+            return 200, [{"id": 0}], {"link": f'<{last_url}>; rel="last"'}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        got: list[Any] = []
+        with self.assertRaises(GuardError) as ctx:
+            for item in api.iter_pages_newest_first(path):
+                got.append(item)
+        self.assertEqual(str(ctx.exception), "pagination cycle or page bound exceeded")
+        self.assertEqual(got, list(reversed(last_items)))
+        self.assertLess(len(fetches), 10)
+
+    def test_iter_pages_newest_first_next_without_last_relation_missing(self) -> None:
+        path = f"/repos/{REPO}/issues/1/timeline"
+        next_url = f"https://api.github.com{path}?per_page=100&page=2"
+        page1_items = [{"id": 1}, {"id": 2}]
+        fetches: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            fetches.append(url)
+            self.assertLess(len(fetches), 20, "must not keep fetching")
+            page = (parse_qs(urlparse(url).query).get("page") or ["1"])[0]
+            if page == "1":
+                return 200, page1_items, {"link": f'<{next_url}>; rel="next"'}
+            return 200, [{"id": 99}], {}
+
+        api = GitHubApi("fake-token", request_fn=request_fn, sleep_fn=lambda _s: None)
+        got: list[Any] = []
+        with self.assertRaises(GuardError) as ctx:
+            for item in api.iter_pages_newest_first(path):
+                got.append(item)
+        self.assertEqual(str(ctx.exception), "pagination last relation missing")
+        self.assertEqual(got, [])
+        self.assertEqual(len(fetches), 1)
 
 
 class A38GuardE2ETests(unittest.TestCase):

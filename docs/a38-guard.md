@@ -327,6 +327,8 @@ API or assessment errors terminate with failure. If the head is known and status
 
 An all-open scan isolates errors per PR, continues reconciling later PRs, and returns aggregate failure after the full scan. Isolation covers any per-PR exception, including workflow-approval GuardError (fork head does not contain current base), not only inaccessible PRs. Its JSON includes an error entry for each failed PR, so one inaccessible PR cannot prevent other statuses from being refreshed.
 
+The issue timeline for the Ready actor is walked newest-first and stops at the newest GitHub `User` `ready_for_review` event, so old PRs do not download thousands of older timeline events. The composite action runs the guard unbuffered; `--all-open` prints per-PR progress on stderr so GitHub Actions logs update during a long sweep.
+
 HTTP is restricted to `https://api.github.com`, redirects are refused, and safe GET retries are bounded. Comment/review pagination is complete up to its explicit 2000-item limit, with cycle/page limits; exceeding a bound fails instead of accepting partial evidence.
 
 ## CLI
