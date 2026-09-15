@@ -240,14 +240,21 @@ def pull_is_readme_only(api: Any, repo: str, number: int) -> bool:
 
 
 def pull_is_markdown_only(api: Any, repo: str, number: int) -> bool:
-    entries = list_pull_files(api, repo, number)
-    if entries is None:
-        return False
-    return github_is_markdown_only(entries, truncated=False)
+    markdown_only, _ = pull_markdown_and_guard_docs(api, repo, number)
+    return markdown_only
 
 
 def pull_is_guard_docs_only(api: Any, repo: str, number: int) -> bool:
+    _, guard_docs_only = pull_markdown_and_guard_docs(api, repo, number)
+    return guard_docs_only
+
+
+def pull_markdown_and_guard_docs(api: Any, repo: str, number: int) -> tuple[bool, bool]:
+    """One GitHub file listing → ``(markdown_only, guard_docs_only)``."""
     entries = list_pull_files(api, repo, number)
     if entries is None:
-        return False
-    return github_is_guard_docs_only(entries, truncated=False)
+        return False, False
+    if len(entries) > MAX_FILES:
+        return False, False
+    paths = github_file_paths(entries)
+    return markdown_and_guard_docs_only(paths)

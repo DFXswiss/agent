@@ -43,7 +43,6 @@ from .readme_only import (
     markdown_and_guard_docs_only,
     pull_is_guard_docs_only,
     pull_is_markdown_only,
-    pull_is_readme_only,
 )
 
 API_ORIGIN = "https://api.github.com"
@@ -1677,9 +1676,7 @@ def assess_from_parts(
             if claims_omit:
                 confirmed = False
                 if api is not None:
-                    confirmed = pull_is_readme_only(
-                        api, pull.repo, pull.number
-                    ) or pull_is_markdown_only(api, pull.repo, pull.number)
+                    confirmed = pull_is_markdown_only(api, pull.repo, pull.number)
                 if not confirmed:
                     ok = False
                     status = "fail"
@@ -2256,13 +2253,8 @@ def publish_assessment(
                 )
                 docs_waiver = _docs_report_waiver(
                     assessment.write_ready_reason
-                ) and (
-                    pull_is_markdown_only(
-                        api, latest_pull.repo, latest_pull.number
-                    )
-                    or pull_is_guard_docs_only(
-                        api, latest_pull.repo, latest_pull.number
-                    )
+                ) and pull_is_guard_docs_only(
+                    api, latest_pull.repo, latest_pull.number
                 )
                 if not still_ready and not docs_waiver:
                     raise GuardError(

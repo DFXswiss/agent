@@ -35,6 +35,7 @@ from agent_cli.readme_only import (
     paths_are_readme_only,
     pull_is_guard_docs_only,
     pull_is_markdown_only,
+    pull_markdown_and_guard_docs,
 )
 
 
@@ -490,6 +491,29 @@ class GitHubHelperTests(unittest.TestCase):
         self.assertFalse(pull_is_guard_docs_only(mixed_api, "example/app", 1))
         err_api = _FakePullFilesAPI(None, error=True)
         self.assertFalse(pull_is_guard_docs_only(err_api, "example/app", 1))
+
+    def test_pull_markdown_and_guard_docs_lists_once(self) -> None:
+        class CountingAPI(_FakePullFilesAPI):
+            def __init__(self) -> None:
+                super().__init__(
+                    [
+                        {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+                        {"filename": "docs/ci-runners.md", "status": "modified"},
+                    ]
+                )
+                self.calls = 0
+
+            def paginate(self, path: str):  # noqa: ANN201
+                self.calls += 1
+                return super().paginate(path)
+
+        api = CountingAPI()
+        markdown_only, guard_docs_only = pull_markdown_and_guard_docs(
+            api, "example/app", 1
+        )
+        self.assertFalse(markdown_only)
+        self.assertTrue(guard_docs_only)
+        self.assertEqual(api.calls, 1)
 
 
 if __name__ == "__main__":
