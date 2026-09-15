@@ -15,18 +15,27 @@ except ImportError:
     pass
 
 from agent_cli.readme_only import (
+    GUARD_WORKFLOW_PATH,
+    MAX_FILES,
     github_file_paths,
+    github_is_guard_docs_only,
     github_is_markdown_only,
     github_is_readme_only,
     git_changed_paths,
+    git_is_guard_docs_only,
     git_is_markdown_only,
     git_is_readme_only,
+    is_guard_docs_path,
     is_markdown_path,
     is_readme_path,
+    markdown_and_guard_docs_only,
     parse_name_status_z,
+    paths_are_guard_docs_only,
     paths_are_markdown_only,
     paths_are_readme_only,
+    pull_is_guard_docs_only,
     pull_is_markdown_only,
+    pull_markdown_and_guard_docs,
 )
 
 
@@ -131,6 +140,37 @@ class PathHelperTests(unittest.TestCase):
         self.assertFalse(paths_are_markdown_only(["readme.MD"]))
         self.assertFalse(paths_are_markdown_only(["foo.md.bak"]))
         self.assertFalse(paths_are_markdown_only([123]))  # type: ignore[list-item]
+
+    def test_paths_are_guard_docs_only_fail_closed(self) -> None:
+        self.assertFalse(paths_are_guard_docs_only([]))
+        self.assertTrue(paths_are_guard_docs_only(["README.md"]))
+        self.assertTrue(paths_are_markdown_only(["README.md"]))
+        self.assertTrue(paths_are_guard_docs_only(["docs/x.md", GUARD_WORKFLOW_PATH]))
+        self.assertTrue(paths_are_guard_docs_only([GUARD_WORKFLOW_PATH]))
+        self.assertFalse(paths_are_guard_docs_only([GUARD_WORKFLOW_PATH, "app.py"]))
+        self.assertFalse(paths_are_guard_docs_only([".github/workflows/ci.yml"]))
+        self.assertTrue(is_guard_docs_path(GUARD_WORKFLOW_PATH))
+        self.assertTrue(is_guard_docs_path("docs/x.md"))
+        self.assertFalse(is_guard_docs_path("app.py"))
+
+    def test_markdown_and_guard_docs_only_from_one_inventory(self) -> None:
+        self.assertEqual(markdown_and_guard_docs_only(None), (False, False))
+        self.assertEqual(markdown_and_guard_docs_only([]), (False, False))
+        self.assertEqual(markdown_and_guard_docs_only(["docs/x.md"]), (True, True))
+        self.assertEqual(
+            markdown_and_guard_docs_only(["docs/x.md", GUARD_WORKFLOW_PATH]),
+            (False, True),
+        )
+        self.assertEqual(
+            markdown_and_guard_docs_only([GUARD_WORKFLOW_PATH]),
+            (False, True),
+        )
+        self.assertEqual(
+            markdown_and_guard_docs_only(["docs/x.md", "app.py"]),
+            (False, False),
+        )
+        too_many = ["README.md"] * (MAX_FILES + 1)
+        self.assertEqual(markdown_and_guard_docs_only(too_many), (False, False))
 
 
 class ParseNameStatusTests(unittest.TestCase):
@@ -285,6 +325,43 @@ class GitDetectionTests(unittest.TestCase):
             head = _commit(repo, "mixed")
             self.assertFalse(git_is_markdown_only(repo, base, head))
 
+    def test_guard_docs_markdown_plus_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo)
+            wf = repo / GUARD_WORKFLOW_PATH
+            wf.parent.mkdir(parents=True)
+            wf.write_text("name: guard\n", encoding="utf-8")
+            docs = repo / "docs"
+            docs.mkdir()
+            (docs / "guide.md").write_text("guide\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", GUARD_WORKFLOW_PATH, "docs/guide.md"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            head = _commit(repo, "guard docs")
+            self.assertTrue(git_is_guard_docs_only(repo, base, head))
+            self.assertFalse(git_is_markdown_only(repo, base, head))
+
+    def test_guard_docs_workflow_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            base = _init_repo(repo)
+            wf = repo / GUARD_WORKFLOW_PATH
+            wf.parent.mkdir(parents=True)
+            wf.write_text("name: guard\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", GUARD_WORKFLOW_PATH],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+            )
+            head = _commit(repo, "guard workflow")
+            self.assertTrue(git_is_guard_docs_only(repo, base, head))
+            self.assertFalse(git_is_markdown_only(repo, base, head))
+
 
 class _FakePullFilesAPI:
     def __init__(self, entries: list[dict] | None, *, error: bool = False) -> None:
@@ -371,6 +448,72 @@ class GitHubHelperTests(unittest.TestCase):
         self.assertFalse(pull_is_markdown_only(mixed_api, "example/app", 1))
         err_api = _FakePullFilesAPI(None, error=True)
         self.assertFalse(pull_is_markdown_only(err_api, "example/app", 1))
+
+    def test_github_is_guard_docs_only(self) -> None:
+        md = [{"filename": "docs/guide.md", "status": "modified"}]
+        self.assertTrue(github_is_guard_docs_only(md, truncated=False))
+        self.assertTrue(github_is_markdown_only(md, truncated=False))
+        mixed = [
+            {"filename": "docs/guide.md", "status": "modified"},
+            {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+        ]
+        self.assertTrue(github_is_guard_docs_only(mixed, truncated=False))
+        self.assertFalse(github_is_markdown_only(mixed, truncated=False))
+        yaml_only = [{"filename": GUARD_WORKFLOW_PATH, "status": "added"}]
+        self.assertTrue(github_is_guard_docs_only(yaml_only, truncated=False))
+        with_py = [
+            {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+            {"filename": "app.py", "status": "modified"},
+        ]
+        self.assertFalse(github_is_guard_docs_only(with_py, truncated=False))
+        other_wf = [{"filename": ".github/workflows/ci.yml", "status": "modified"}]
+        self.assertFalse(github_is_guard_docs_only(other_wf, truncated=False))
+        self.assertFalse(github_is_guard_docs_only([], truncated=False))
+        self.assertFalse(github_is_guard_docs_only(md, truncated=True))
+
+    def test_pull_is_guard_docs_only_fail_closed(self) -> None:
+        ok_api = _FakePullFilesAPI(
+            [
+                {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+                {"filename": "docs/ci-runners.md", "status": "modified"},
+            ]
+        )
+        self.assertTrue(pull_is_guard_docs_only(ok_api, "example/app", 1))
+        self.assertFalse(pull_is_markdown_only(ok_api, "example/app", 1))
+        empty_api = _FakePullFilesAPI([])
+        self.assertFalse(pull_is_guard_docs_only(empty_api, "example/app", 1))
+        mixed_api = _FakePullFilesAPI(
+            [
+                {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+                {"filename": "app.py", "status": "modified"},
+            ]
+        )
+        self.assertFalse(pull_is_guard_docs_only(mixed_api, "example/app", 1))
+        err_api = _FakePullFilesAPI(None, error=True)
+        self.assertFalse(pull_is_guard_docs_only(err_api, "example/app", 1))
+
+    def test_pull_markdown_and_guard_docs_lists_once(self) -> None:
+        class CountingAPI(_FakePullFilesAPI):
+            def __init__(self) -> None:
+                super().__init__(
+                    [
+                        {"filename": GUARD_WORKFLOW_PATH, "status": "modified"},
+                        {"filename": "docs/ci-runners.md", "status": "modified"},
+                    ]
+                )
+                self.calls = 0
+
+            def paginate(self, path: str):  # noqa: ANN201
+                self.calls += 1
+                return super().paginate(path)
+
+        api = CountingAPI()
+        markdown_only, guard_docs_only = pull_markdown_and_guard_docs(
+            api, "example/app", 1
+        )
+        self.assertFalse(markdown_only)
+        self.assertTrue(guard_docs_only)
+        self.assertEqual(api.calls, 1)
 
 
 if __name__ == "__main__":

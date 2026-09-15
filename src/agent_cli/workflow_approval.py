@@ -280,12 +280,12 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         still_ready, _ = resolve_write_ready(
             api, final, event_actor=assessment.event_actor
         )
-        from .readme_only import pull_is_markdown_only
-        markdown_only = (
-            getattr(assessment, "write_ready_reason", "") == "markdown-only change set"
-            and pull_is_markdown_only(api, final.repo, final.number)
-        )
-        if assessment.write_ready and not still_ready and not markdown_only:
+        from .a38_guard import _docs_report_waiver
+        from .readme_only import pull_is_guard_docs_only
+        docs_waiver = _docs_report_waiver(
+            getattr(assessment, "write_ready_reason", "")
+        ) and pull_is_guard_docs_only(api, final.repo, final.number)
+        if assessment.write_ready and not still_ready and not docs_waiver:
             raise GuardError("write-ready waiver changed before workflow approval")
         if not dry_run:
             status, _, _ = api.request("POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False)
