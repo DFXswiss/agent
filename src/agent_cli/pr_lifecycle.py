@@ -518,7 +518,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     # Write collaborator Ready hold: do not auto-draft for red/missing CI while
     # author or the latest ready_for_review actor has write/maintain/admin.
     # Confirmed merge conflicts always return Ready to Draft, including in a hold.
-    # Markdown-only is a report waiver only — it does not hold Ready through red CI.
+    # Markdown-only and guard-docs are report waivers only — they do not hold Ready through red CI.
     if not pull["draft"] and reasons and write_hold and "Merge conflicts" not in reasons:
         hold = {
             "repo": assessment.repo,
