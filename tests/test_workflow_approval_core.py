@@ -98,7 +98,7 @@ def test_dry_run_previews_without_any_writes():
 
 
 @pytest.mark.parametrize("case", ["missing", "disabled", "report", "same_repo", "closed", "observe", "exclude"])
-def test_no_approval_or_actions_inventory_without_authorization(case):
+def test_no_approval_without_authorization(case):
     fake = ApprovalAPI()
     if case == "missing":
         fake.set_pr_guard_config(None)
@@ -120,7 +120,11 @@ def test_no_approval_or_actions_inventory_without_authorization(case):
         fake.set_pr_guard_config(fake.config)
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.workflow_approvals == []
-    assert not fake.posts and not fake.actions_gets
+    assert not fake.posts and not fake.cancels
+    if case in {"closed", "exclude"}:
+        assert not fake.actions_gets
+    else:
+        assert fake.actions_gets
 
 
 @pytest.mark.parametrize("changes", [

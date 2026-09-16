@@ -281,7 +281,7 @@ def test_approve_short_circuits_without_touching_api(kwargs: dict) -> None:
 
 
 @pytest.mark.parametrize("case", ["missing", "disabled", "same_repo", "closed", "observe", "fail"])
-def test_opt_in_disabled_or_missing_never_calls_actions(case: str) -> None:
+def test_opt_in_disabled_or_missing_never_approves(case: str) -> None:
     fake = FakeApproval()
     if case == "missing":
         fake.set_pr_guard_config(_pr_guard_config())
@@ -301,9 +301,13 @@ def test_opt_in_disabled_or_missing_never_calls_actions(case: str) -> None:
     assert result.workflow_approvals == []
     assert "workflow_approvals" in result.to_json()
     assert result.to_json()["workflow_approvals"] == []
-    assert fake.actions_pages == []
+    assert "manual_workflows" in result.to_json()
     assert fake.posts == []
     assert fake.cancels == []
+    if case == "closed":
+        assert fake.actions_pages == []
+    else:
+        assert fake.actions_pages
 
 
 # --- reconcile integration --------------------------------------------------
@@ -546,7 +550,10 @@ def test_pagination_exact_page_does_not_fetch_another_page() -> None:
     fake.inventory = inventory
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [100]
-    assert fake.actions_pages == [1, 1]
+    # Approval refreshes the inventory, then the always-on manual-activation
+    # scan reads it again. Neither call may walk past page 1 when total_count is 100.
+    assert fake.actions_pages == [1, 1, 1]
+    assert 2 not in fake.actions_pages
     assert any(item["run_id"] == 100 and item["status"] == "approved" for item in result.workflow_approvals)
     assert len(fake.cancels) == 99
 
