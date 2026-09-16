@@ -2,6 +2,10 @@
 
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.no_pg
+
 
 def _a38_md() -> str:
     return (Path(__file__).resolve().parents[1] / "docs" / "a38.md").read_text(
