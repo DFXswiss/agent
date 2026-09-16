@@ -302,6 +302,10 @@ def test_unexpected_environment_approval_status_fails_loudly() -> None:
          {"environment": {"id": ENVIRONMENT_ID, "name": ENVIRONMENT}}],
         [{"environment": {"id": 0, "name": ENVIRONMENT}}],
         [{"environment": {"id": ENVIRONMENT_ID, "name": ""}}],
+        ["not-an-object"],
+        [{"environment": {"id": "4242", "name": ENVIRONMENT}}],
+        [{"environment": {"id": True, "name": ENVIRONMENT}}],
+        [{"environment": {"id": ENVIRONMENT_ID, "name": 1}}],
     ],
 )
 def test_malformed_pending_inventory_fails_closed(payload: object) -> None:

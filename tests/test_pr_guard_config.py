@@ -115,6 +115,17 @@ def test_disabled_environment_approval_allows_empty_workflows() -> None:
         },
         {"enabled": True, "environment": "pr-ci", "workflows": PATH},
         {"enabled": True, "environment": "pr-ci", "workflows": [1]},
+        {
+            "enabled": True,
+            "environment": "pr-ci",
+            "workflows": [f".github/workflows/w{i}.yml" for i in range(65)],
+        },
+        {
+            "enabled": True,
+            "environment": "pr-ci",
+            "workflows": [PATH + ("x" * 240)],
+        },
+        {"enabled": False, "environment": "pr-ci", "workflows": [PATH, PATH]},
     ],
 )
 def test_invalid_environment_approval_fails_closed(approval: object) -> None:
