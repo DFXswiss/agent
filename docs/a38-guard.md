@@ -4,6 +4,8 @@ dfx pr guard explains a repository's centrally defined [A38 rules](a38.md), chec
 
 ## Installation
 
+The adopting repository's file checklist (manifest, `pr-guard.json`, contributing pointer, and what not to copy) is in [Adopting A38 in a repository](a38.md#adopting-a38-in-a-repository). This section is only the guard workflow.
+
 Install the [example workflow](../examples/a38-guard.yml) on the target repository's default branch. Replace `USES_REF_PIN_ME` with a reviewed, published **full commit SHA** of this repository. The example is not deployable until that placeholder is replaced. Keep the guard's executable action pinned even when approving policy migrations.
 
 The [composite action](../.github/actions/a38-guard/action.yml) uses pinned setup-python and PyYAML 6.0.2, and imports only the trusted action's sources through `github.action_path/../../../src`. Both Python steps run from the trusted action directory with safe-path mode (`python -P`), and replace inherited `PYTHONPATH` with the trusted source path, preventing consumer modules from shadowing the guard or its installer. It does not install dependencies or run scripts from the consumer checkout. Install the package's declared dependencies for standalone use; there is no fallback YAML parser.
