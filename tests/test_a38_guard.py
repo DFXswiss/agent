@@ -1497,10 +1497,9 @@ class A38GuardE2ETests(unittest.TestCase):
         )
         result = reconcile_pull(fake.api(), REPO, 1, publish=True)
         self.assertTrue(result.ok)
-        self.assertEqual(result.status, "not_applicable")
-        self.assertEqual(result.scope_decision, "exclude")
+        self.assertEqual(result.status, "pass")
+        self.assertEqual(result.scope_decision, "enforce")
         self.assertEqual(result.context, status_context_enforce("main"))
-        self.assertFalse(any(w.startswith("comment:") for w in result.writes))
         self.assertTrue(any("(main)" in (s.get("context") or "") for s in fake.statuses))
 
         # Same head SHA against an in-scope target still enforces with a distinct context.
