@@ -136,9 +136,9 @@ For each workflow, the newest matching run across **all** states wins. A queued,
 
 The run's PR association must match the current PR/head/base. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, its head must include the current base, and the run must not predate the PR or a later recorded target/lifecycle change. Ambiguous association, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, latest author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
 
-Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes, including audit comments. Assessment JSON includes `workflow_approvals`; completed authorization also records `workflow:approve:<run-id>` and `workflow:cancel:<run-id>` in `writes`.
+Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes, including audit comments. Assessment JSON includes `workflow_approvals` and `manual_workflows`; completed authorization also records `workflow:approve:<run-id>` and `workflow:cancel:<run-id>` in `writes`.
 
-The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record (highest comment id) on the current head/base.
+The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). When the latest run of a workflow on the current head was started by a human (re-run, `workflow_dispatch`, or a different triggering actor), the guard POSTs one informational EN/DE comment (`PR-GUARD:CI-MANUAL:v1`) naming who did it. That comment is one per current head; a later head POSTs a new comment and must not PATCH an older one. It does not authorize auto-ready. It is always-on for open in-scope PRs (no `pr-guard.json` flag; it does not require `workflow_approval.enabled`). Assessment JSON includes `manual_workflows`. `--dry-run` computes the comment without writing. Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record (highest comment id) on the current head/base.
 
 The trusted default-branch workflow and config must be installed before this feature is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
 
@@ -237,7 +237,15 @@ The first successful approve or cancel in a guard invocation POSTs a new visible
 EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further
 successful same-kind mutations in that same invocation PATCH that comment. A
 later invocation POSTs a new comment; it must not PATCH an older one (GitHub
-PATCH does not move the comment in the timeline). Ready/Draft still POST a new
+PATCH does not move the comment in the timeline). When the latest run of a
+workflow on the current head was started by a human (re-run, `workflow_dispatch`,
+or a different triggering actor), the guard POSTs one informational EN/DE
+comment (`PR-GUARD:CI-MANUAL:v1`) naming who did it. That comment is one per
+current head; a later head POSTs a new comment and must not PATCH an older one.
+It does not authorize auto-ready. It is always-on for open in-scope PRs (no
+`pr-guard.json` flag; it does not require `workflow_approval.enabled`).
+Assessment JSON includes `manual_workflows`. `--dry-run` computes the comment
+without writing. Ready/Draft still POST a new
 `PR-GUARD:LIFECYCLE:v1` comment per transition. Each Ready/Draft transition names
 the blockers that actually apply (never an "or" between CI and merge conflicts);
 the full reason list remains in collapsed details. A durable intent is written

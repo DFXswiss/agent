@@ -188,6 +188,7 @@ class Assessment:
     writes: list[str] = field(default_factory=list)
     workflow_approval_enabled: bool = False
     workflow_approvals: list[dict[str, Any]] = field(default_factory=list)
+    manual_workflows: list[dict[str, Any]] = field(default_factory=list)
     lifecycle_enabled: bool = False
     lifecycle: dict[str, Any] = field(default_factory=dict)
     draft: bool = False
@@ -237,6 +238,7 @@ class Assessment:
             "dry_run": self.dry_run,
             "writes": list(self.writes),
             "workflow_approvals": list(self.workflow_approvals),
+            "manual_workflows": list(self.manual_workflows),
             "lifecycle": dict(self.lifecycle),
             "comment_body": self.comment_body,
         }
@@ -2388,10 +2390,11 @@ def publish_assessment(
 
 
 def _apply_guard_side_effects(api: GitHubApi, assessment: Assessment, *, dry_run: bool) -> None:
-    """Authorize waiting fork runs, then apply Ready/Draft. Approval is independent of lifecycle."""
-    from .pr_lifecycle import reconcile_lifecycle
+    """Authorize waiting fork runs, note manual activations, then apply Ready/Draft."""
+    from .pr_lifecycle import note_manual_workflow_activation, reconcile_lifecycle
     from .workflow_approval import approve_workflow_runs
     assessment.workflow_approvals = approve_workflow_runs(api, assessment, dry_run=dry_run)
+    assessment.manual_workflows = note_manual_workflow_activation(api, assessment, dry_run=dry_run)
     assessment.lifecycle = reconcile_lifecycle(api, assessment, dry_run=dry_run)
 
 

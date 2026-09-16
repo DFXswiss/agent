@@ -6,6 +6,7 @@ The caller must serialize guard invocations within the `event` group and within 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 from .readme_only import pull_is_guard_docs_only
@@ -14,6 +15,10 @@ from .workflow_approval import _field, _runs, _timestamp
 AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
 STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
 CANCEL_MARKER = "<!-- PR-GUARD:CI-CANCEL:v1 -->"
+MANUAL_MARKER = "<!-- PR-GUARD:CI-MANUAL:v1 -->"
+
+_GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+_MANUAL_EVENTS = frozenset({"pull_request", "workflow_dispatch", "repository_dispatch"})
 
 
 def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
@@ -285,6 +290,102 @@ def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: b
         "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der Allowlist sind, damit sie nicht weiter auf Freigabe warten.",
         create=create, existing=existing,
     )
+
+
+def _is_manual_run(run: Mapping) -> bool:
+    event = run.get("event")
+    if event not in _MANUAL_EVENTS:
+        return False
+    path = run.get("path")
+    if not isinstance(path, str) or path.endswith("a38-guard.yml"):
+        return False
+    attempt = run.get("run_attempt")
+    if type(attempt) is int and attempt >= 2:
+        return True
+    if event in {"workflow_dispatch", "repository_dispatch"}:
+        return True
+    trig_type = _field(run, "triggering_actor", "type")
+    actor_id = _field(run, "actor", "id")
+    trig_id = _field(run, "triggering_actor", "id")
+    return (
+        trig_type == "User"
+        and type(actor_id) is int
+        and type(trig_id) is int
+        and actor_id != trig_id
+    )
+
+
+def _manual_actor(run: Mapping) -> tuple[str, int | None, str, str]:
+    trig = run.get("triggering_actor") or run.get("actor") or {}
+    login = trig.get("login") if isinstance(trig, Mapping) else None
+    if (
+        isinstance(trig, Mapping)
+        and trig.get("type") == "User"
+        and isinstance(login, str)
+        and _GITHUB_LOGIN.match(login)
+    ):
+        ident = trig.get("id")
+        named = f"@{login}"
+        return login, ident if type(ident) is int else None, named, named
+    return "", None, "an administrator", "einem Administrator"
+
+
+def _latest_manual_paths(runs: list[Mapping]) -> dict[str, Mapping]:
+    latest: dict[str, Mapping] = {}
+    for run in runs:
+        if run.get("event") not in _MANUAL_EVENTS:
+            continue
+        path = run.get("path")
+        if not isinstance(path, str):
+            continue
+        key = (_timestamp(run.get("created_at")), run["id"])
+        previous = latest.get(path)
+        if previous is None or key > (_timestamp(previous.get("created_at")), previous["id"]):
+            latest[path] = run
+    return latest
+
+
+def note_manual_workflow_activation(
+    api: Any, assessment: Any, *, dry_run: bool = False
+) -> list[dict[str, Any]]:
+    """Post one informational EN/DE comment when current-head CI was started by a human."""
+    if assessment.closed or assessment.scope_decision == "exclude":
+        return []
+    inventory = _runs(api, assessment.repo, assessment.head_sha, event=None)
+    latest = _latest_manual_paths(inventory)
+    manuals = [run for run in latest.values() if _is_manual_run(run)]
+    if not manuals:
+        return []
+    manuals.sort(key=lambda run: (_timestamp(run.get("created_at")), run["id"]), reverse=True)
+    newest = manuals[0]
+    actor_login, actor_id, en_name, de_name = _manual_actor(newest)
+    runs = [{"run_id": run["id"], "workflow": run["path"]} for run in manuals]
+    identity = {
+        "repo": assessment.repo,
+        "pr": assessment.pr,
+        "head": assessment.head_sha,
+        "base": assessment.base_sha,
+    }
+    _, previous = _own_record(api, assessment, MANUAL_MARKER)
+    result = {"status": "exists", "actor_login": actor_login, "runs": runs}
+    if all(previous.get(key) == value for key, value in identity.items()):
+        return [result]
+    if dry_run:
+        result["status"] = "planned"
+        return [result]
+    record = {**identity, "actor_login": actor_login, "actor_id": actor_id, "runs": runs}
+    _save_record(
+        api,
+        assessment,
+        MANUAL_MARKER,
+        record,
+        f"The workflows were started manually by {en_name}.",
+        f"Die Workflows wurden von {de_name} manuell aktiviert.",
+        create=True,
+    )
+    assessment.writes.append("workflow:manual-comment")
+    result["status"] = "posted"
+    return [result]
 
 
 def _checks(api: Any, repo: str, head: str) -> list[Mapping]:

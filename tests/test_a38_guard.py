@@ -394,6 +394,9 @@ class FakeAPI:
             items = [s for s in self.statuses if s.get("sha") == sha]
             return 200, items, {}
 
+        if method_u == "GET" and path_only == f"/repos/{REPO}/actions/runs":
+            return 200, {"total_count": 0, "workflow_runs": []}, {}
+
         if method_u == "POST" and path_only == f"/repos/{REPO}/issues/1/comments":
             if self.mutate_head_on_publish:
                 # Mid-publish mutation is applied on the *next* pulls GET via flag check in publish —

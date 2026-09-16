@@ -8,7 +8,7 @@ import pytest
 from agent_cli import pr_lifecycle
 from agent_cli.a38_guard import GuardError, reconcile_pull
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
-from agent_cli.pr_lifecycle import AUTH_MARKER, STATE_MARKER, visible_transition_sentences
+from agent_cli.pr_lifecycle import AUTH_MARKER, MANUAL_MARKER, STATE_MARKER, visible_transition_sentences
 from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO, _report_comment
 from test_workflow_approval_core import ApprovalAPI, PATH
 
@@ -1190,3 +1190,157 @@ def test_hold_clears_draft_record_so_later_human_draft_does_not_restore():
     assert third.write_ready
     assert third.lifecycle["action"] == "unchanged"
     assert fake.pull["draft"]
+
+
+HUMAN = {"id": 42, "login": "TaprootFreak", "type": "User"}
+AUTHOR = {"id": 315477232, "login": "TaprootFreakAI", "type": "User"}
+BOT_ACTOR = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
+
+
+def _approval_without_auto_approve() -> ApprovalAPI:
+    fake = ApprovalAPI()
+    fake.config["workflow_approval"]["enabled"] = False
+    fake.set_pr_guard_config(fake.config)
+    return fake
+
+
+def _manual_comments(fake: ApprovalAPI) -> list[dict]:
+    return [c for c in fake.comments if str(c.get("body", "")).startswith(MANUAL_MARKER + "\n")]
+
+
+def _comment_record(comment: dict) -> dict:
+    return json.loads(comment["body"].split("```json\n", 1)[1].split("\n```", 1)[0])
+
+
+def test_manual_rerun_posts_named_comment():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(run_attempt=2, actor=AUTHOR, triggering_actor=HUMAN)]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "posted"
+    assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
+    assert "workflow:manual-comment" in result.writes
+    assert "manual_workflows" in result.to_json()
+    comments = _manual_comments(fake)
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert "The workflows were started manually by @TaprootFreak." in body
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
+    record = _comment_record(comments[0])
+    assert record["actor_login"] == "TaprootFreak"
+    assert record["actor_id"] == 42
+    assert record["runs"] == [{"run_id": 101, "workflow": PATH}]
+
+
+def test_manual_bot_triggering_actor_falls_back_to_administrator():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(run_attempt=2, actor=AUTHOR, triggering_actor=BOT_ACTOR)]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "posted"
+    assert result.manual_workflows[0]["actor_login"] == ""
+    comments = _manual_comments(fake)
+    assert len(comments) == 1
+    body = comments[0]["body"]
+    assert "The workflows were started manually by an administrator." in body
+    assert "Die Workflows wurden von einem Administrator manuell aktiviert." in body
+    record = _comment_record(comments[0])
+    assert record["actor_login"] == ""
+    assert record["actor_id"] is None
+
+
+def test_initial_pull_request_run_is_not_manual():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(
+        run_attempt=1,
+        event="pull_request",
+        actor=HUMAN,
+        triggering_actor=HUMAN,
+    )]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows == []
+    assert _manual_comments(fake) == []
+    assert "workflow:manual-comment" not in result.writes
+
+
+def test_workflow_dispatch_posts_named_comment():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(
+        event="workflow_dispatch",
+        run_attempt=1,
+        triggering_actor=HUMAN,
+    )]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "posted"
+    assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
+    body = _manual_comments(fake)[0]["body"]
+    assert "The workflows were started manually by @TaprootFreak." in body
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
+
+
+def test_different_user_ids_on_initial_pull_request_are_manual():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(
+        run_attempt=1,
+        event="pull_request",
+        actor=AUTHOR,
+        triggering_actor=HUMAN,
+    )]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "posted"
+    assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
+    assert _comment_record(_manual_comments(fake)[0])["actor_login"] == "TaprootFreak"
+
+
+def test_existing_manual_comment_for_this_head_is_not_posted_again():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(run_attempt=2, actor=AUTHOR, triggering_actor=HUMAN)]
+    record = {
+        "repo": REPO,
+        "pr": 1,
+        "head": HEAD,
+        "base": BASE,
+        "actor_login": "TaprootFreak",
+        "actor_id": 42,
+        "runs": [{"run_id": 101, "workflow": PATH}],
+    }
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": MANUAL_MARKER + "\n```json\n" + json.dumps(record) + "\n```",
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "exists"
+    assert "workflow:manual-comment" not in result.writes
+    assert len(_manual_comments(fake)) == 1
+
+
+def test_manual_dry_run_is_planned_without_writes():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(run_attempt=2, actor=AUTHOR, triggering_actor=HUMAN)]
+    result = reconcile_pull(fake.api(), REPO, 1, dry_run=True)
+    assert result.manual_workflows[0]["status"] == "planned"
+    assert "workflow:manual-comment" not in result.writes
+    assert _manual_comments(fake) == []
+
+
+def test_a38_guard_workflow_rerun_is_ignored():
+    fake = _approval_without_auto_approve()
+    fake.runs = [
+        fake.run(
+            path=".github/workflows/a38-guard.yml",
+            run_attempt=2,
+            actor=AUTHOR,
+            triggering_actor=HUMAN,
+        ),
+        fake.run(
+            id=102,
+            path=PATH,
+            run_attempt=1,
+            event="pull_request",
+            actor=HUMAN,
+            triggering_actor=HUMAN,
+        ),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows == []
+    assert _manual_comments(fake) == []
+    assert "workflow:manual-comment" not in result.writes
