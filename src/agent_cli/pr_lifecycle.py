@@ -6,6 +6,7 @@ The caller must serialize guard invocations within the `event` group and within 
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 from typing import Any, Mapping
 
@@ -292,12 +293,19 @@ def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: b
     )
 
 
+def _is_guard_workflow_path(path: str) -> bool:
+    normalized = path
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return posixpath.basename(normalized) == "a38-guard.yml"
+
+
 def _is_manual_run(run: Mapping) -> bool:
     event = run.get("event")
     if event not in _MANUAL_EVENTS:
         return False
     path = run.get("path")
-    if not isinstance(path, str) or path.endswith("a38-guard.yml"):
+    if not isinstance(path, str) or _is_guard_workflow_path(path):
         return False
     attempt = run.get("run_attempt")
     if type(attempt) is int and attempt >= 2:

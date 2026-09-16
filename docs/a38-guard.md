@@ -20,7 +20,7 @@ For the composite action, `A38_RUNTIME_REVISION` is overwritten from `${{ github
 
 Standalone execution accepts the same explicit trusted `A38_RUNTIME_REVISION`. Without it, source-checkout fallback is allowed only when the loaded module is exactly `<root>/src/agent_cli/a38_guard.py`, `<root>/.git` belongs to that root, Git reports the same top-level using explicit `--git-dir` and `--work-tree`, and `HEAD` is lowercase 40-hex. The lookup is anchored to the module source root, removes inherited `GIT_*` variables, and never discovers from the current directory or an enclosing consumer checkout. A non-Git packaged install requires the explicit trusted revision; it never guesses `develop` or another moving ref. Closed PRs, ignored events, and empty all-open scans remain successful no-ops and do not need provenance resolution.
 
-The token requires contents write, pull requests write, issues write and statuses write. `markPullRequestReadyForReview` needs `contents: write` on `GITHUB_TOKEN` or it returns HTTP 200 with `isDraft` unchanged (`Resource not accessible by integration`). Publishing the guard comment on a pull request needs `pull-requests: write` for `GITHUB_TOKEN`; `issues: write` alone is not enough and yields 403. Policy migrations also require permission to read collaborators' effective repository permissions. If that API is unavailable, the migration fails closed. Use a dedicated GitHub App or service account with the necessary repository access for external operation. Tokens are taken from `GH_TOKEN` or `GITHUB_TOKEN` and never printed.
+The token requires contents write, pull requests write, issues write and statuses write. Listing workflow runs for the informational `PR-GUARD:CI-MANUAL:v1` comment needs Actions read (`actions: read`). `markPullRequestReadyForReview` needs `contents: write` on `GITHUB_TOKEN` or it returns HTTP 200 with `isDraft` unchanged (`Resource not accessible by integration`). Publishing the guard comment on a pull request needs `pull-requests: write` for `GITHUB_TOKEN`; `issues: write` alone is not enough and yields 403. Policy migrations also require permission to read collaborators' effective repository permissions. If that API is unavailable, the migration fails closed. Use a dedicated GitHub App or service account with the necessary repository access for external operation. Tokens are taken from `GH_TOKEN` or `GITHUB_TOKEN` and never printed.
 
 Actions must actually be available for event-driven operation. When Actions are blocked or unavailable, run the same reconciler on a trusted external host:
 
@@ -138,9 +138,11 @@ The run's PR association must match the current PR/head/base. For private forks 
 
 Enable `actions: write` in the trusted guard workflow (or equivalent Actions write access on a dedicated App token). The guard uses GitHub's [approve-workflow-run endpoint](https://docs.github.com/en/rest/actions/workflow-runs#approve-a-workflow-run-for-a-fork-pull-request), accepts only its documented `201` success, and never retries that POST. Insufficient permissions remain an explicit failure; changing the repository's fork protection setting is not a fallback. `--dry-run` previews candidates without any writes, including audit comments. Assessment JSON includes `workflow_approvals` and `manual_workflows`; completed authorization also records `workflow:approve:<run-id>` and `workflow:cancel:<run-id>` in `writes`.
 
-The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). When the latest run of a workflow on the current head was started by a human (re-run, `workflow_dispatch`, or a different triggering actor), the guard POSTs one informational EN/DE comment (`PR-GUARD:CI-MANUAL:v1`) naming who did it. That comment is one per current head; a later head POSTs a new comment and must not PATCH an older one. It does not authorize auto-ready. It is always-on for open in-scope PRs (no `pr-guard.json` flag; it does not require `workflow_approval.enabled`). Assessment JSON includes `manual_workflows`. `--dry-run` computes the comment without writing. Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record (highest comment id) on the current head/base.
+The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record (highest comment id) on the current head/base.
 
-The trusted default-branch workflow and config must be installed before this feature is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
+When the latest run of a product workflow on the current head was started by a human (re-run, `workflow_dispatch`, `repository_dispatch`, or a different triggering actor), the guard POSTs one informational EN/DE comment (`PR-GUARD:CI-MANUAL:v1`) naming who did it. That comment is one per current head; a later head POSTs a new comment and must not PATCH an older one. It does not authorize auto-ready. It is always-on for open in-scope PRs (no `pr-guard.json` flag; it does not require `workflow_approval.enabled`). Assessment JSON includes `manual_workflows`. `--dry-run` computes the comment without writing. The guard's own workflow file `a38-guard.yml` is ignored.
+
+The trusted default-branch workflow and config must be installed before optional fork workflow approval is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
 
 
 ## Optional continuous readiness
@@ -237,15 +239,7 @@ The first successful approve or cancel in a guard invocation POSTs a new visible
 EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further
 successful same-kind mutations in that same invocation PATCH that comment. A
 later invocation POSTs a new comment; it must not PATCH an older one (GitHub
-PATCH does not move the comment in the timeline). When the latest run of a
-workflow on the current head was started by a human (re-run, `workflow_dispatch`,
-or a different triggering actor), the guard POSTs one informational EN/DE
-comment (`PR-GUARD:CI-MANUAL:v1`) naming who did it. That comment is one per
-current head; a later head POSTs a new comment and must not PATCH an older one.
-It does not authorize auto-ready. It is always-on for open in-scope PRs (no
-`pr-guard.json` flag; it does not require `workflow_approval.enabled`).
-Assessment JSON includes `manual_workflows`. `--dry-run` computes the comment
-without writing. Ready/Draft still POST a new
+PATCH does not move the comment in the timeline). Ready/Draft still POST a new
 `PR-GUARD:LIFECYCLE:v1` comment per transition. Each Ready/Draft transition names
 the blockers that actually apply (never an "or" between CI and merge conflicts);
 the full reason list remains in collapsed details. A durable intent is written
@@ -259,6 +253,16 @@ posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record
 (highest comment id) on the current head/base. Only the authenticated bot's
 numeric user ID can supply these records. `--dry-run` still writes no audit
 comments.
+
+When the latest run of a product workflow on the current head was started by a
+human (re-run, `workflow_dispatch`, `repository_dispatch`, or a different
+triggering actor), the guard POSTs one informational EN/DE comment
+(`PR-GUARD:CI-MANUAL:v1`) naming who did it. That comment is one per current
+head; a later head POSTs a new comment and must not PATCH an older one. It does
+not authorize auto-ready. It is always-on for open in-scope PRs (no
+`pr-guard.json` flag; it does not require `workflow_approval.enabled`).
+Assessment JSON includes `manual_workflows`. `--dry-run` computes the comment
+without writing. The guard's own workflow file `a38-guard.yml` is ignored.
 
 The adopting workflow owns runner routing, `contents: write` for
 `markPullRequestReadyForReview`, `actions` and `checks` read access,

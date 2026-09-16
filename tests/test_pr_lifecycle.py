@@ -1276,6 +1276,21 @@ def test_workflow_dispatch_posts_named_comment():
     assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
 
 
+def test_repository_dispatch_posts_named_comment():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(
+        event="repository_dispatch",
+        run_attempt=1,
+        triggering_actor=HUMAN,
+    )]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "posted"
+    assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
+    body = _manual_comments(fake)[0]["body"]
+    assert "The workflows were started manually by @TaprootFreak." in body
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
+
+
 def test_different_user_ids_on_initial_pull_request_are_manual():
     fake = _approval_without_auto_approve()
     fake.runs = [fake.run(
@@ -1344,3 +1359,29 @@ def test_a38_guard_workflow_rerun_is_ignored():
     assert result.manual_workflows == []
     assert _manual_comments(fake) == []
     assert "workflow:manual-comment" not in result.writes
+
+
+def test_prefixed_guard_workflow_path_is_ignored():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(
+        path="./.github/workflows/a38-guard.yml",
+        run_attempt=2,
+        actor=AUTHOR,
+        triggering_actor=HUMAN,
+    )]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows == []
+    assert _manual_comments(fake) == []
+
+
+def test_similar_workflow_filename_is_not_treated_as_the_guard():
+    fake = _approval_without_auto_approve()
+    fake.runs = [fake.run(
+        path=".github/workflows/foo-a38-guard.yml",
+        run_attempt=2,
+        actor=AUTHOR,
+        triggering_actor=HUMAN,
+    )]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.manual_workflows[0]["status"] == "posted"
+    assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
