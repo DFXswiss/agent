@@ -4,6 +4,8 @@ dfx pr guard explains a repository's centrally defined [A38 rules](a38.md), chec
 
 ## Installation
 
+The adopting repository's file checklist (manifest, `pr-guard.json`, contributing pointer, and what not to copy) is in [Adopting A38 in a repository](a38.md#adopting-a38-in-a-repository). This section is only the guard workflow.
+
 Install the [example workflow](../examples/a38-guard.yml) on the target repository's default branch. Replace `USES_REF_PIN_ME` with a reviewed, published **full commit SHA** of this repository. The example is not deployable until that placeholder is replaced. Keep the guard's executable action pinned even when approving policy migrations.
 
 The [composite action](../.github/actions/a38-guard/action.yml) uses pinned setup-python and PyYAML 6.0.2, and imports only the trusted action's sources through `github.action_path/../../../src`. Both Python steps run from the trusted action directory with safe-path mode (`python -P`), and replace inherited `PYTHONPATH` with the trusted source path, preventing consumer modules from shadowing the guard or its installer. It does not install dependencies or run scripts from the consumer checkout. Install the package's declared dependencies for standalone use; there is no fallback YAML parser.
@@ -37,7 +39,7 @@ The authoritative PR API supplies the target repository, exact head SHA, exact b
 
 ### Target-branch scope (`.github/pr-guard.json`)
 
-A38 applicability is **repository configuration**, except for the built-in exact-`main` rule. The repository default branch is not itself a built-in enforce/exclude decision; it is only the trusted location of the file. Optional [`.github/pr-guard.json`](../examples/pr-guard.json) on the trusted default-branch revision selects which PR **target** branches enforce A38:
+A38 applicability is **repository configuration**, except for the built-in exact-`main` skip when `main` is **not** the default branch. The repository default branch is not itself a built-in enforce/exclude decision; it locates the file and decides that skip. Optional [`.github/pr-guard.json`](../examples/pr-guard.json) on the trusted default-branch revision selects which PR **target** branches enforce A38:
 
 ```json
 {
@@ -62,9 +64,9 @@ Rules enforced centrally by the Agent:
 - Branch entries are exact, case-sensitive names (same 1–75 character limits as status contexts). There is no glob DSL.
 - No duplicates within a list, and no overlap between `enforce` and `exclude`.
 - Unknown JSON keys and duplicate JSON keys fail closed. The schema string must match exactly.
-- The only built-in branch-name rule is exact `main`: that target is always out of scope (nothing for A38 to check). Other names have no built-in meaning. The repository default branch is used only to **locate** this file, never as an implicit enforce.
-- Evaluation order: exact `main`, else exact `enforce` match, else exact `exclude` match, else `a38.default`.
-- When the entire file is missing on the trusted revision, legacy **enforce-all** applies for every target **except** `main`. Malformed configuration, HTTP 403, or any non-404 configuration API error fails closed and cannot exempt a PR.
+- The only built-in branch-name rule is exact `main` **when it is not the repository default branch**: that target is out of scope (nothing for A38 to check). When the default branch is `main`, `a38.enforce` / `a38.default` apply. Other names have no built-in meaning. The repository default branch is used to **locate** this file and to decide that `main` skip; it is never an implicit enforce by itself.
+- Evaluation order: skip exact `main` only when it is not the default branch, else exact `enforce` match, else exact `exclude` match, else `a38.default`.
+- When the entire file is missing on the trusted revision, legacy **enforce-all** applies for every in-scope target. Malformed configuration, HTTP 403, or any non-404 configuration API error fails closed and cannot exempt a PR.
 - The live PR's `base.repo.default_branch` metadata (never the head repository) is validated, resolved to an immutable commit via `GET /repos/{repo}/commits/{urlencoded_default_branch}` (lowercase 40-hex SHA), then the file is read from that revision in the **base** repository. Configuration from the PR head can never self-exempt.
 - Assessment JSON records `trusted_default_branch` and `config_revision` for audit. Closed PRs remain successful no-ops **before** any configuration lookup.
 

@@ -1017,7 +1017,8 @@ def resolve_trusted_guard_config(
     """Load and evaluate `.github/pr-guard.json` from the trusted default revision.
 
     Always reads the base repository. PR-head configuration can never self-exempt.
-    A missing file retains legacy enforce-all for every target except exact `main`.
+    A missing file retains legacy enforce-all for every in-scope target.
+    Exact `main` stays out of scope when it is not the repository default branch.
     API denial, non-404 errors and malformed JSON fail closed.
     """
     if not snap.default_branch:
@@ -1025,7 +1026,9 @@ def resolve_trusted_guard_config(
     revision = resolve_default_branch_commit(api, snap.repo, snap.default_branch)
     raw = fetch_file_at_ref(api, snap.repo, PR_GUARD_CONFIG_PATH, revision)
     if raw is None:
-        decision, reason = evaluate_a38_scope(None, snap.base_ref)
+        decision, reason = evaluate_a38_scope(
+            None, snap.base_ref, default_branch=snap.default_branch
+        )
         return TrustedGuardConfig(
             trusted_default_branch=snap.default_branch,
             config_revision=revision,
@@ -1042,7 +1045,9 @@ def resolve_trusted_guard_config(
         ) from exc
     try:
         config = load_pr_guard_config(text)
-        decision, reason = evaluate_a38_scope(config, snap.base_ref)
+        decision, reason = evaluate_a38_scope(
+            config, snap.base_ref, default_branch=snap.default_branch
+        )
     except PrGuardConfigError as exc:
         raise GuardError(
             f"maintainer config error: invalid {PR_GUARD_CONFIG_PATH} on "

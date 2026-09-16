@@ -1,11 +1,14 @@
 """Repository pr-guard configuration: schema, validation and scope evaluation.
 
 Optional `.github/pr-guard.json` controls which PR target branches A38 enforces.
-Exact target ``main`` is a built-in out-of-scope rule (nothing for A38 to check),
-even when the file is missing or ``a38.enforce`` lists ``main``. The repository
-default branch is only the trusted location used to *find* this file; it is not
-itself an implicit enforce. Missing configuration retains legacy enforce-all for
-every other target. Malformed configuration fails closed.
+Exact target ``main`` is a built-in out-of-scope rule when it is **not** the
+repository default branch (a release PR onto production). When the default
+branch **is** ``main``, it is the integration branch and ``a38.enforce`` /
+``a38.default`` apply, including listing ``main`` in ``enforce``. The default
+branch name is never an implicit enforce by itself; it only locates this file
+and, for exact ``main``, decides whether the built-in skip applies. Missing
+configuration retains legacy enforce-all for every in-scope target. Malformed
+configuration fails closed.
 """
 
 from __future__ import annotations
@@ -207,19 +210,22 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
 
 
 def evaluate_a38_scope(
-    config: Mapping[str, Any] | None, base_ref: str
+    config: Mapping[str, Any] | None,
+    base_ref: str,
+    default_branch: str = "",
 ) -> tuple[str, str]:
     """Return (decision, reason) for a PR target branch.
 
-    Exact ``main`` is always out of scope (built-in; nothing to check), before
-    legacy enforce-all and before ``a38.enforce`` / ``a38.exclude`` /
-    ``a38.default``. ``config is None`` means the file is absent on the trusted
-    revision and retains legacy enforce-all for every other name. Listed
-    branches use exact case-sensitive match; unlisted branches follow
-    ``a38.default``.
+    Exact ``main`` is out of scope when it is not the repository default
+    branch (release PRs), before legacy enforce-all and before ``a38.enforce``
+    / ``a38.exclude`` / ``a38.default``. When ``default_branch`` is ``main``,
+    that skip does not apply and the file (or legacy enforce-all) decides.
+    ``config is None`` means the file is absent on the trusted revision and
+    retains legacy enforce-all for every in-scope name. Listed branches use
+    exact case-sensitive match; unlisted branches follow ``a38.default``.
     """
     branch = validate_branch_name(base_ref, "base_ref")
-    if branch == "main":
+    if branch == "main" and default_branch != "main":
         return ("exclude", "target branch 'main' has nothing for A38 to check")
     if config is None:
         return (
