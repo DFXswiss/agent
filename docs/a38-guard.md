@@ -138,7 +138,7 @@ This is an optional top-level object alongside `schema` and `a38`. Omission disa
 
 The bot approves only an **initial** `pull_request` run waiting in `completed` / `action_required`, with `run_attempt: 1`, for an allowlisted workflow on the exact current head, fork repository and branch. A fresh A38 `pass` under `enforce` is required. Failed or incomplete evidence, observe mode, excluded targets, closed PRs and same-repository PRs cannot trigger approval. Existing migration authorization remains required for policy/workflow/config changes.
 
-For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The bot never calls a rerun, dispatch, merge, review-approval or environment-approval endpoint. It **cancels** superseded or non-allowlisted `action_required` runs on the current head so GitHub does not keep the pull request banner “workflows awaiting approval”. It never cancels an in-progress or queued test. Approval authorizes execution; it is not a test result or a Ready verdict.
+For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The fork workflow-approval path never calls a rerun, dispatch, merge, review-approval or environment-approval endpoint. It **cancels** superseded or non-allowlisted `action_required` runs on the current head so GitHub does not keep the pull request banner “workflows awaiting approval”. It never cancels an in-progress or queued test. Approval authorizes execution; it is not a test result or a Ready verdict.
 
 The run's PR association must match the current PR/head/base. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, its head must include the current base, and the run must not predate the PR or a later recorded target/lifecycle change. Ambiguous association, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, latest author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
 
@@ -147,6 +147,54 @@ Enable `actions: write` in the trusted guard workflow (or equivalent Actions wri
 The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record (highest comment id) on the current head/base.
 
 The trusted default-branch workflow and config must be installed before optional fork workflow approval is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
+
+## Optional environment deployment approval
+
+A repository may separately opt in to approval of deployments waiting on one
+GitHub environment in its trusted default-branch `.github/pr-guard.json`:
+
+```json
+"environment_approval": {
+  "enabled": true,
+  "environment": "pr-ci",
+  "workflows": [".github/workflows/pr.yml"]
+}
+```
+
+This optional top-level object is a sibling of `workflow_approval`, not a
+replacement. Omission disables it. All three fields are required when present;
+`enabled` is a boolean, `environment` is a nonempty string of at most 255
+characters, and `workflows` follows the same bounded, duplicate-free exact-path
+rules as fork workflow approval (nonempty when enabled). Unknown fields fail
+closed. Configuration proposed only on the pull-request head cannot activate
+the feature.
+
+After a fresh A38 `pass` under `enforce`, the guard selects the latest matching
+`pull_request` run for each allowlisted workflow on the current head, reads its
+`pending_deployments`, and approves only pending items whose environment name
+exactly equals the configured name. It sends `A38 enforce pass` as the approval
+comment. Runs without a matching pending deployment are unchanged. This applies
+to fork, organization-member, and same-repository pull requests; unlike fork
+workflow approval, it does not skip a same-repository head. It does not require
+`action_required`, `run_attempt: 1`, or a particular run status because a later
+job may wait on an environment while the run is `in_progress`.
+
+The guard rechecks the pull, trusted configuration, A38 assessment, author
+report, migration approval, latest workflow run, run identity, and pending
+deployment list immediately before each write. It calls GitHub's GET and POST
+`/repos/{repo}/actions/runs/{run_id}/pending_deployments` endpoints and accepts
+only HTTP 200 from the POST. It still never dispatches or reruns workflows,
+merges, or submits pull-request review approvals, and this feature never calls
+the fork workflow-run `/approve` or `/cancel` endpoints.
+
+The token must belong to a required reviewer of the configured environment.
+`GITHUB_TOKEN` acts as `github-actions[bot]` and cannot approve unless that bot
+is explicitly listed as an environment reviewer. A successful approval uses the
+existing visible `PR-GUARD:CI-AUTH:v1` EN/DE audit comment; the first approval in
+one guard invocation posts a new comment and later approvals in that invocation
+update it. Assessment JSON includes `environment_approvals`, and each successful
+write adds `environment:approve:<run-id>` to `writes`. `--dry-run` reports
+`planned` approvals without POSTs or audit comments.
 
 
 ## Optional continuous readiness

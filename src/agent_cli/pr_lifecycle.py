@@ -257,7 +257,11 @@ def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> Non
 
 def record_workflow_approval(api: Any, assessment: Any, run: Mapping, *, create: bool = True,
                              existing: Mapping | None = None) -> dict:
-    """Persist only an authorization whose POST returned 201, before the next one."""
+    """Persist a successful CI authorization before the next mutation."""
+    invocation_comment = getattr(assessment, "_auth_comment", None)
+    if existing is None and isinstance(invocation_comment, Mapping):
+        existing = invocation_comment
+        create = False
     if existing is not None:
         previous = _audit_payload(existing)
     else:
@@ -267,10 +271,12 @@ def record_workflow_approval(api: Any, assessment: Any, run: Mapping, *, create:
     runs = previous.get("runs", []) if all(previous.get(k) == v for k, v in identity.items()) else []
     runs = [r for r in runs if r.get("workflow") != run["path"]]
     runs.append({"run_id": run["id"], "workflow": run["path"]})
-    return _save_record(api, assessment, AUTH_MARKER, {**identity, "runs": runs},
-                 "I have authorized the recorded CI runs; their results are still pending.",
-                 "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.",
-                 create=create, existing=existing)
+    saved = _save_record(api, assessment, AUTH_MARKER, {**identity, "runs": runs},
+                         "I have authorized the recorded CI runs; their results are still pending.",
+                         "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.",
+                         create=create, existing=existing)
+    assessment._auth_comment = saved
+    return saved
 
 
 def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: bool = True,
