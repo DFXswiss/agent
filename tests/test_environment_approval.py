@@ -203,6 +203,44 @@ def test_missing_or_disabled_config_never_posts_pending_deployments(
     assert fake.pending_posts == []
 
 
+def test_fork_pr_approves_matching_pending_environment() -> None:
+    fake = FakeEnvironmentApproval()
+    fake.pull["head"]["repo"]["full_name"] = "other/fork"
+    fake.runs[0]["head_repository"] = {"full_name": "other/fork"}
+
+    result = reconcile_pull(fake.api(), REPO, 1)
+
+    assert result.environment_approvals == [
+        {
+            "run_id": 101,
+            "workflow": PATH,
+            "environment": ENVIRONMENT,
+            "head": HEAD,
+            "status": "approved",
+        }
+    ]
+    assert fake.pending_posts == [
+        {
+            "environment_ids": [ENVIRONMENT_ID],
+            "state": "approved",
+            "comment": "A38 enforce pass",
+        }
+    ]
+
+
+def test_head_only_environment_approval_does_not_activate() -> None:
+    fake = FakeEnvironmentApproval()
+    fake.set_pr_guard_config(_pr_guard_config())
+    fake.files[(HEAD, ".github/pr-guard.json")] = json.dumps(
+        _environment_config()
+    ).encode()
+
+    result = reconcile_pull(fake.api(), REPO, 1)
+
+    assert result.environment_approvals == []
+    assert fake.pending_posts == []
+
+
 def test_same_repository_pr_approves_matching_pending_environment() -> None:
     fake = FakeEnvironmentApproval()
 

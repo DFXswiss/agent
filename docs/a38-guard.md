@@ -22,7 +22,7 @@ For the composite action, `A38_RUNTIME_REVISION` is overwritten from `${{ github
 
 Standalone execution accepts the same explicit trusted `A38_RUNTIME_REVISION`. Without it, source-checkout fallback is allowed only when the loaded module is exactly `<root>/src/agent_cli/a38_guard.py`, `<root>/.git` belongs to that root, Git reports the same top-level using explicit `--git-dir` and `--work-tree`, and `HEAD` is lowercase 40-hex. The lookup is anchored to the module source root, removes inherited `GIT_*` variables, and never discovers from the current directory or an enclosing consumer checkout. A non-Git packaged install requires the explicit trusted revision; it never guesses `develop` or another moving ref. Closed PRs, ignored events, and empty all-open scans remain successful no-ops and do not need provenance resolution.
 
-The token requires contents write, pull requests write, issues write and statuses write. Listing workflow runs for the informational `PR-GUARD:CI-MANUAL:v1` comment needs Actions read (`actions: read`). `markPullRequestReadyForReview` needs `contents: write` on `GITHUB_TOKEN` or it returns HTTP 200 with `isDraft` unchanged (`Resource not accessible by integration`). Publishing the guard comment on a pull request needs `pull-requests: write` for `GITHUB_TOKEN`; `issues: write` alone is not enough and yields 403. Policy migrations also require permission to read collaborators' effective repository permissions. If that API is unavailable, the migration fails closed. Use a dedicated GitHub App or service account with the necessary repository access for external operation. Tokens are taken from `GH_TOKEN` or `GITHUB_TOKEN` and never printed.
+The token requires contents write, pull requests write, issues write and statuses write. Listing workflow runs for the informational `PR-GUARD:CI-MANUAL:v1` comment needs Actions read (`actions: read`). Approving held fork workflow runs and pending environment deployments needs Actions write (`actions: write`). `markPullRequestReadyForReview` needs `contents: write` on `GITHUB_TOKEN` or it returns HTTP 200 with `isDraft` unchanged (`Resource not accessible by integration`). Publishing the guard comment on a pull request needs `pull-requests: write` for `GITHUB_TOKEN`; `issues: write` alone is not enough and yields 403. Policy migrations also require permission to read collaborators' effective repository permissions. If that API is unavailable, the migration fails closed. Use a dedicated GitHub App or service account with the necessary repository access for external operation. Tokens are taken from `GH_TOKEN` or `GITHUB_TOKEN` and never printed.
 
 Actions must actually be available for event-driven operation. When Actions are blocked or unavailable, run the same reconciler on a trusted external host:
 
@@ -187,9 +187,10 @@ only HTTP 200 from the POST. It still never dispatches or reruns workflows,
 merges, or submits pull-request review approvals, and this feature never calls
 the fork workflow-run `/approve` or `/cancel` endpoints.
 
-The token must belong to a required reviewer of the configured environment.
-`GITHUB_TOKEN` acts as `github-actions[bot]` and cannot approve unless that bot
-is explicitly listed as an environment reviewer. A successful approval uses the
+The token must belong to a required reviewer of the configured environment
+and have Actions write. `GITHUB_TOKEN` acts as `github-actions[bot]` and
+cannot approve unless that bot is explicitly listed as an environment
+reviewer. A successful approval uses the
 existing visible `PR-GUARD:CI-AUTH:v1` EN/DE audit comment; the first approval in
 one guard invocation posts a new comment and later approvals in that invocation
 update it. Assessment JSON includes `environment_approvals`, and each successful
