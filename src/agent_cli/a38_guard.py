@@ -190,6 +190,7 @@ class Assessment:
     workflow_approvals: list[dict[str, Any]] = field(default_factory=list)
     environment_approval_enabled: bool = False
     environment_approvals: list[dict[str, Any]] = field(default_factory=list)
+    _auth_comment: dict[str, Any] | None = field(default=None, repr=False, compare=False)
     manual_workflows: list[dict[str, Any]] = field(default_factory=list)
     lifecycle_enabled: bool = False
     lifecycle: dict[str, Any] = field(default_factory=dict)
