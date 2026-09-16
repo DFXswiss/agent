@@ -293,6 +293,27 @@ def test_unexpected_environment_approval_status_fails_loudly() -> None:
     assert _auth_comments(fake) == []
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"not": "a list"},
+        [{"environment": "pr-ci"}],
+        [{"environment": {"id": ENVIRONMENT_ID, "name": ENVIRONMENT}},
+         {"environment": {"id": ENVIRONMENT_ID, "name": ENVIRONMENT}}],
+        [{"environment": {"id": 0, "name": ENVIRONMENT}}],
+        [{"environment": {"id": ENVIRONMENT_ID, "name": ""}}],
+    ],
+)
+def test_malformed_pending_inventory_fails_closed(payload: object) -> None:
+    fake = FakeEnvironmentApproval()
+    fake.pending_by_run[101] = payload  # type: ignore[assignment]
+
+    with pytest.raises(GuardError, match="pending deployment"):
+        reconcile_pull(fake.api(), REPO, 1)
+
+    assert fake.pending_posts == []
+
+
 def test_environment_approval_never_uses_other_mutation_endpoints() -> None:
     fake = FakeEnvironmentApproval()
 

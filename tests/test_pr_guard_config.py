@@ -107,6 +107,14 @@ def test_disabled_environment_approval_allows_empty_workflows() -> None:
             "environment": "pr-ci",
             "workflows": [".github/workflows/nested/pr.yml"],
         },
+        [PATH],
+        {
+            "enabled": True,
+            "environment": ["pr-ci"],
+            "workflows": [PATH],
+        },
+        {"enabled": True, "environment": "pr-ci", "workflows": PATH},
+        {"enabled": True, "environment": "pr-ci", "workflows": [1]},
     ],
 )
 def test_invalid_environment_approval_fails_closed(approval: object) -> None:
