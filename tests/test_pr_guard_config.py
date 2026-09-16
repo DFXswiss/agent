@@ -26,6 +26,26 @@ def test_omitted_environment_approval_is_not_normalized() -> None:
     assert "environment_approval" not in config
 
 
+def test_inclusive_environment_approval_bounds_are_accepted() -> None:
+    long_environment = "e" * 255
+    long_path = ".github/workflows/" + ("p" * 233) + ".yml"
+    paths = [f".github/workflows/w{i}.yml" for i in range(64)]
+    paths[0] = long_path
+    config = load_pr_guard_config(
+        json.dumps(
+            _config(
+                {
+                    "enabled": True,
+                    "environment": long_environment,
+                    "workflows": paths,
+                }
+            )
+        )
+    )
+    assert config["environment_approval"]["environment"] == long_environment
+    assert config["environment_approval"]["workflows"] == paths
+
+
 def test_valid_enabled_environment_approval_is_normalized() -> None:
     config = load_pr_guard_config(
         json.dumps(

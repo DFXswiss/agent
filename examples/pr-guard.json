@@ -4,10 +4,5 @@
     "enforce": ["integration"],
     "exclude": ["release"],
     "default": "enforce"
-  },
-  "environment_approval": {
-    "enabled": true,
-    "environment": "pr-ci",
-    "workflows": [".github/workflows/pr.yml"]
   }
 }
