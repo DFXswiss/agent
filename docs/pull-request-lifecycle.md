@@ -54,7 +54,7 @@ The blocking `A38 / report (<target>)` commit status is **omitted** on drafts wi
 Ready for review does **not** start GitHub Actions. Where the repository opts in to [bot-owned fork workflow approval](a38-guard.md#how-fork-github-actions-are-meant-to-work), the trusted guard approves held fork runs only after a fresh A38 **enforce pass** on this head. That approval starts execution; it is not itself a green check. The merger does not click **Approve and run workflows**.
 
 Repositories can enable the [guard's continuous readiness reconciliation](a38-guard.md#optional-continuous-readiness).
-Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded bases (for example a develop→main release PR) are left untouched. Exact target `main` is always out of scope for A38, not only when listed in `a38.exclude`.
+Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded bases (for example a develop→main release PR) are left untouched. Exact target `main` is out of scope for A38 when it is not the repository default branch, not only when listed in `a38.exclude`. A repository whose default branch is `main` may list `main` in `a38.enforce`.
 An open Ready PR on an enforced target returns to Draft with an explanatory comment when required CI
 is missing, queued, running, blocked or failed, or GitHub confirms merge conflicts.
 The visible comment names the actual blocker(s), not a canned "CI or merge conflicts" alternative.

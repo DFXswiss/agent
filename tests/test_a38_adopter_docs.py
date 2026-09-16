@@ -30,3 +30,4 @@ def test_adopter_guide_is_the_checklist_not_a_second_engine() -> None:
         encoding="utf-8"
     )
     assert "a38.md#adopting-a38-in-a-repository" in guard_md
+    assert "if the default branch is `main`, list `main` in `a38.enforce`" in lowered

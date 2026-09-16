@@ -182,6 +182,14 @@ class PrGuardConfigEvaluationTests(unittest.TestCase):
             )
         )
         self.assertEqual(evaluate_a38_scope(enforce_main, "main")[0], "exclude")
+        self.assertEqual(
+            evaluate_a38_scope(enforce_main, "main", default_branch="main")[0],
+            "enforce",
+        )
+        self.assertEqual(
+            evaluate_a38_scope(None, "main", default_branch="main")[0],
+            "enforce",
+        )
 
 
 class RunnerGuardEndToEndTests(unittest.TestCase):

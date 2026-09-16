@@ -64,7 +64,7 @@ Rules enforced centrally by the Agent:
 - Branch entries are exact, case-sensitive names (same 1–75 character limits as status contexts). There is no glob DSL.
 - No duplicates within a list, and no overlap between `enforce` and `exclude`.
 - Unknown JSON keys and duplicate JSON keys fail closed. The schema string must match exactly.
-- The only built-in branch-name rule is exact `main`: that target is always out of scope (nothing for A38 to check). Other names have no built-in meaning. The repository default branch is used only to **locate** this file, never as an implicit enforce.
+- The only built-in branch-name rule is exact `main` **when it is not the repository default branch**: that target is out of scope (nothing for A38 to check). When the default branch is `main`, `a38.enforce` / `a38.default` apply. Other names have no built-in meaning. The repository default branch is used to **locate** this file and to decide that `main` skip; it is never an implicit enforce by itself.
 - Evaluation order: exact `main`, else exact `enforce` match, else exact `exclude` match, else `a38.default`.
 - When the entire file is missing on the trusted revision, legacy **enforce-all** applies for every target **except** `main`. Malformed configuration, HTTP 403, or any non-404 configuration API error fails closed and cannot exempt a PR.
 - The live PR's `base.repo.default_branch` metadata (never the head repository) is validated, resolved to an immutable commit via `GET /repos/{repo}/commits/{urlencoded_default_branch}` (lowercase 40-hex SHA), then the file is read from that revision in the **base** repository. Configuration from the PR head can never self-exempt.
