@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_cli.health import (
     agent_config_problems,
+    runner_config_problems,
     unresolved_skills,
 )
 
@@ -213,9 +214,10 @@ def test_agent_config_problems_returns_exactly_one_problem_when_agent_config_is_
 
 
 def test_agent_config_problems_reports_a_problem_instead_of_raising_on_an_unhashable_skill() -> None:
-    # The list is the right length, so the set comparison is reached. An
-    # unhashable element there would make set() raise, and this module's
-    # contract is that unusable input is reported, never raised.
+    # Length is 3 so that, without the type guard, the set comparison would
+    # be reached and raise on the unhashable element. The guard short-circuits
+    # ahead of it and reports a problem instead, which is this module's
+    # contract: unusable input is reported, never raised.
     agent_config = {
         "cli": "agent",
         "session_kind": "runner",
@@ -237,3 +239,146 @@ def test_agent_config_problems_reports_a_problem_for_a_non_string_but_hashable_s
     result = agent_config_problems(agent_config)
     assert len(result) == 1
     assert "skills" in result[0]
+
+
+# ---------------------------------------------------------- runner_config_problems
+
+
+def test_runner_config_problems_returns_empty_for_a_fully_configured_runner() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {"timeout_minutes": 30}, "implement": {}},
+    }
+    assert runner_config_problems(runner_config) == []
+
+
+def test_runner_config_problems_reports_a_missing_stall_minutes() -> None:
+    # The per-skill check covers deny and timeout_minutes only, so without
+    # this rule nothing catches a missing stall_minutes and every running
+    # job is skipped once the supervisor asks for that budget.
+    runner_config = {
+        "defaults": {"timeout_minutes": 60},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {}},
+    }
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "stall_minutes" in problems[0]
+
+
+def test_runner_config_problems_reports_a_missing_clone_stall_minutes() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "skills": {},
+    }
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "clone_stall_minutes" in problems[0]
+
+
+def test_runner_config_problems_rejects_a_zero_budget() -> None:
+    # Strictly positive here, where _budget accepts zero at run time. The
+    # original is stricter in its check than in its runtime for these
+    # fields and that asymmetry is deliberate.
+    runner_config = {
+        "defaults": {"timeout_minutes": 0, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {},
+    }
+    problems = runner_config_problems(runner_config)
+    assert any("defaults.timeout_minutes" in p for p in problems)
+
+
+def test_runner_config_problems_rejects_a_bool_budget() -> None:
+    # bool is a subclass of int, so True must not read as a positive number.
+    runner_config = {
+        "defaults": {"timeout_minutes": True, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {},
+    }
+    assert any(
+        "defaults.timeout_minutes" in p for p in runner_config_problems(runner_config)
+    )
+
+
+def test_runner_config_problems_accepts_a_float_budget() -> None:
+    # The original tests jq's `type == "number"`, which covers floats.
+    runner_config = {
+        "defaults": {"timeout_minutes": 1.5, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {},
+    }
+    assert runner_config_problems(runner_config) == []
+
+
+def test_runner_config_problems_reports_a_skill_whose_effective_timeout_is_unusable() -> None:
+    # The skill's own value shadows a healthy default, so the effective
+    # timeout is the broken one.
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {"timeout_minutes": "soon"}},
+    }
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "pr-review" in problems[0]
+
+
+def test_runner_config_problems_lets_a_skill_inherit_a_healthy_default_timeout() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {}},
+    }
+    assert runner_config_problems(runner_config) == []
+
+
+def test_runner_config_problems_reports_a_skills_value_that_is_not_a_mapping() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": ["pr-review"],
+    }
+    problems = runner_config_problems(runner_config)
+    assert any("skills" in p for p in problems)
+
+
+def test_runner_config_problems_reports_a_problem_when_the_config_is_not_a_dict() -> None:
+    assert runner_config_problems("not-a-dict") == ["runner config is not a dict"]
+
+
+def test_unresolved_skills_names_the_catalogue_when_it_cannot_be_read() -> None:
+    # The sentinel is load-bearing: an empty list reads as healthy, so pin
+    # the actual string rather than merely asserting the list is non-empty.
+    assert unresolved_skills({"skills": "not-a-list"}, {}) == [
+        "the catalogue cannot be read"
+    ]
+
+
+def test_unresolved_skills_does_not_call_a_catalogue_of_only_unusable_entries_healthy() -> None:
+    # Every entry is skipped, so the result is [] — which reads as healthy.
+    # This pins that behaviour so the vacuous case is a deliberate choice
+    # on the record rather than an unnoticed one.
+    catalog = {"skills": ["not-a-dict", {"no_id": 1}, {"id": ""}]}
+    assert unresolved_skills(catalog, {"defaults": {"deny": [], "timeout_minutes": 5}}) == []
+
+
+def test_unresolved_skills_accepts_deny_from_the_skill_and_timeout_from_defaults() -> None:
+    # Mixed resolution: each setting is defended on its own path, so taking
+    # one from each level must resolve cleanly.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    runner_config = {
+        "skills": {"pr-review": {"deny": ["Bash"]}},
+        "defaults": {"timeout_minutes": 30},
+    }
+    assert unresolved_skills(catalog, runner_config) == []
+
+
+def test_unresolved_skills_accepts_timeout_from_the_skill_and_deny_from_defaults() -> None:
+    catalog = {"skills": [{"id": "pr-review"}]}
+    runner_config = {
+        "skills": {"pr-review": {"timeout_minutes": 30}},
+        "defaults": {"deny": ["Bash"]},
+    }
+    assert unresolved_skills(catalog, runner_config) == []

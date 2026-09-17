@@ -67,6 +67,58 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
     return problems
 
 
+def _positive_number(value: Any) -> bool:
+    """True for an int or float strictly greater than zero (bool rejected)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return value > 0
+
+
+def runner_config_problems(runner_config: Any) -> list[str]:
+    """Problems in the runner configuration's own budget settings.
+
+    The per-skill check above covers `deny` and `timeout_minutes`, which is
+    all the original checks per skill. `stall_minutes` is covered here
+    instead, as a property of the configuration as a whole — the original
+    draws the same line, and without this half nothing checks it at all,
+    so a config with no `stall_minutes` passes the skill check and then
+    skips every running job forever.
+
+    Three budgets must be positive numbers, `skills` must be a mapping, and
+    every skill's effective timeout — its own, or the default it inherits —
+    must be a positive number too.
+
+    Two deliberate differences from the original. It reports this whole
+    block as a single message; this returns one per broken rule, because a
+    caller that has to print them is better served naming the field. And
+    it requires *strictly* positive where `_budget` accepts zero at run
+    time: the original is stricter in its check than in its runtime for
+    these same fields, and that asymmetry is preserved rather than
+    smoothed over.
+    """
+    if not isinstance(runner_config, dict):
+        return ["runner config is not a dict"]
+    problems: list[str] = []
+    defaults = runner_config.get("defaults")
+    defaults_map = defaults if isinstance(defaults, dict) else {}
+    for field in ("timeout_minutes", "stall_minutes"):
+        if not _positive_number(defaults_map.get(field)):
+            problems.append(f"defaults.{field} is not a positive number")
+    if not _positive_number(runner_config.get("clone_stall_minutes")):
+        problems.append("clone_stall_minutes is not a positive number")
+    skills = runner_config.get("skills")
+    if not isinstance(skills, dict):
+        problems.append("skills is not a mapping")
+        return problems
+    default_timeout = defaults_map.get("timeout_minutes")
+    for skill_id, skill_cfg in skills.items():
+        own = skill_cfg.get("timeout_minutes") if isinstance(skill_cfg, dict) else None
+        effective = default_timeout if own is None else own
+        if not _positive_number(effective):
+            problems.append(f"skill {skill_id} has no positive timeout_minutes")
+    return problems
+
+
 def agent_config_problems(agent_config: Any) -> list[str]:
     """Problems in a runner's agent config, at most one per pin.
 
