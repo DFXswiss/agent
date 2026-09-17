@@ -499,6 +499,15 @@ def test_green_without_auth_auto_ready_when_nothing_was_held():
     assert "authorized CI runs" not in bodies[-1]
 
 
+def test_non_bot_auth_comment_is_ignored_like_missing_row():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization(head=BASE2, runs=[{"run_id": 999, "workflow": PATH}])
+    fake.comments[-1]["user"]["id"] = 77
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 @pytest.mark.parametrize("case", ["head", "base", "run", "report", "disabled"])
 def test_green_alone_does_not_authorize_auto_ready(case):
     fake = LifecycleAPI()
