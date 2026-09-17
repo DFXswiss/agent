@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_cli.finalize import (
+    _budget,
     done_kind,
     finalize_running,
     judge,
@@ -72,14 +73,14 @@ def _runner(
 
 def test_done_kind_returns_configured_value_as_is() -> None:
     # A configured value in DONE_KINDS is returned as-is.
-    policy = {"skills": {"pr-review": {"done_kind": "pr-reviewed"}}}
-    assert done_kind(policy, "pr-review") == "pr-reviewed"
+    runner_config = {"skills": {"pr-review": {"done_kind": "pr-reviewed"}}}
+    assert done_kind(runner_config, "pr-review") == "pr-reviewed"
 
 
 def test_done_kind_degrades_unrecognised_setting_to_marker() -> None:
     # A configured non-empty string that is NOT a known kind returns "marker".
-    policy = {"skills": {"pr-review": {"done_kind": "weird"}}}
-    assert done_kind(policy, "pr-review") == "marker"
+    runner_config = {"skills": {"pr-review": {"done_kind": "weird"}}}
+    assert done_kind(runner_config, "pr-review") == "marker"
 
 
 def test_done_kind_missing_or_empty_falls_through_to_derivation() -> None:
@@ -107,8 +108,8 @@ def test_done_kind_derives_marker_for_other_job_types() -> None:
     assert done_kind(None, "something-else") == "marker"
 
 
-def test_done_kind_non_dict_policy_falls_through() -> None:
-    # A policy that is not a dict falls through to derivation without raising.
+def test_done_kind_non_dict_runner_config_falls_through() -> None:
+    # A runner config that is not a dict falls through to derivation without raising.
     assert done_kind("not-a-dict", "pr-review") == "pr-reviewed"
     assert done_kind(["list"], "pr-review") == "pr-reviewed"
 
@@ -665,14 +666,14 @@ def test_overdue_worker_is_killed_and_recorded_timeout(tmp_path: Path) -> None:
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {"timeout_minutes": 1, "stall_minutes": 10}}}
+        runner_config = {"skills": {"pr-review": {"timeout_minutes": 1, "stall_minutes": 10}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -716,14 +717,14 @@ def test_worker_inside_budget_but_stalled_is_killed(tmp_path: Path) -> None:
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 1}}}
+        runner_config = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 1}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0, list_panes_stdout="1234\n", ps_stdout="1234 1 00:00:01\n"),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -763,14 +764,14 @@ def test_baseline_measurement_is_written_and_row_left_running(tmp_path: Path) ->
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
+        runner_config = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0, list_panes_stdout="1234\n", ps_stdout="1234 1 00:00:05\n"),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -815,14 +816,14 @@ def test_progress_measurement_updates_stored_values(tmp_path: Path) -> None:
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
+        runner_config = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0, list_panes_stdout="1234\n", ps_stdout="1234 1 00:00:10\n"),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -866,14 +867,14 @@ def test_wait_verdict_leaves_progress_fields_unchanged(tmp_path: Path) -> None:
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 60}}}
+        runner_config = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 60}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -920,14 +921,14 @@ def test_unmeasurable_cpu_skips_job_without_killing(tmp_path: Path) -> None:
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
+        runner_config = {"skills": {"pr-review": {"timeout_minutes": 60, "stall_minutes": 10}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0, list_panes_stdout="9999\n", ps_stdout="1234 1 00:00:01\n"),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -947,7 +948,7 @@ def test_unmeasurable_cpu_skips_job_without_killing(tmp_path: Path) -> None:
         store.close()
 
 
-def test_policy_without_budgets_skips_job(tmp_path: Path) -> None:
+def test_runner_config_without_budgets_skips_job(tmp_path: Path) -> None:
     # No timeout/stall budgets for job_type -> job skipped and left running.
     store = Store(tmp_path)
     try:
@@ -969,14 +970,14 @@ def test_policy_without_budgets_skips_job(tmp_path: Path) -> None:
         )
         store.write("job", "insert", row["id"], row)
         calls: list[list[str]] = []
-        policy = {"skills": {"pr-review": {}}}
+        runner_config = {"skills": {"pr-review": {}}}
 
         finalized, skipped = finalize_running(
             store,
             _runner(calls=calls, has_rc=0),
             socket="/tmp/agent.sock",
             repos_root="/tmp/repos",
-            runner_config=policy,
+            runner_config=runner_config,
             login="davidleomay",
             exit_code_of=lambda jid: None,
             transcript_of=lambda jid: "",
@@ -988,5 +989,90 @@ def test_policy_without_budgets_skips_job(tmp_path: Path) -> None:
         assert skipped == 1
         saved = store.row("job", row["id"])
         assert saved["state"] == "running"
+        # Skipped before the stall check, so no baseline was written. This is
+        # what separates this case from the defaults-only one below, which
+        # reports the same skipped count.
+        assert saved.get("progress_check_epoch") is None
+    finally:
+        store.close()
+
+
+def test_budget_falls_back_to_defaults_when_the_skill_has_no_setting() -> None:
+    # The single inheritance level the runner configuration allows, and the
+    # one the original resolves both budgets through. Without it a
+    # defaults-only configuration skips every running job forever.
+    runner_config = {"defaults": {"timeout_minutes": 60}}
+    assert _budget(runner_config, "pr-review", "timeout_minutes") == 60
+
+
+def test_budget_prefers_the_skills_own_setting_over_defaults() -> None:
+    runner_config = {
+        "skills": {"pr-review": {"timeout_minutes": 15}},
+        "defaults": {"timeout_minutes": 60},
+    }
+    assert _budget(runner_config, "pr-review", "timeout_minutes") == 15
+
+
+def test_budget_does_not_substitute_defaults_for_a_malformed_skill_setting() -> None:
+    # The fallback triggers on an absent value only. Replacing a broken
+    # setting with the default would hide the misconfiguration.
+    runner_config = {
+        "skills": {"pr-review": {"timeout_minutes": "soon"}},
+        "defaults": {"timeout_minutes": 60},
+    }
+    assert _budget(runner_config, "pr-review", "timeout_minutes") is None
+
+
+def test_defaults_only_runner_config_resolves_budgets_and_takes_a_stall_baseline(
+    tmp_path: Path,
+) -> None:
+    # Mirror of test_runner_config_without_budgets_skips_job. Both cases report
+    # skipped == 1, so that count is deliberately not the signal here: a first
+    # stall baseline also skips this pass. The discriminator is the progress
+    # write, which is only reached once both budgets resolve. Without the
+    # defaults fallback the budgets come back None and nothing is written.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        runner_config = {"defaults": {"timeout_minutes": 60, "stall_minutes": 10}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            runner_config=runner_config,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            now_epoch=1767226200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "running"
+        # The budgets resolved, so the stall check ran and took its baseline.
+        assert saved["progress_check_epoch"] == 1767226200
+        assert saved["progress_transcript_size"] == 100
+        assert saved["progress_cpu_seconds"] == 1
     finally:
         store.close()

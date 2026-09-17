@@ -26,16 +26,30 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _budget(runner_config: Any, job_type: str, key: str) -> int | None:
-    """Return a non-negative int budget or None if missing or invalid (bool rejected)."""
+    """Return a non-negative int budget or None if missing or invalid (bool rejected).
+
+    A skill without its own setting inherits the value from `defaults` —
+    the single fallback level the runner configuration allows, and the one
+    the original resolves these two budgets through. Without it a
+    defaults-only configuration, which is ordinary, yields None for every
+    skill and every running job is skipped forever.
+
+    A setting that is present but malformed is not replaced by the default.
+    The fallback triggers on an absent value only, so a broken setting stays
+    visible instead of being papered over by the default.
+    """
     if not isinstance(runner_config, dict):
         return None
+    raw: Any = None
     skills = runner_config.get("skills")
-    if not isinstance(skills, dict):
-        return None
-    skill = skills.get(job_type)
-    if not isinstance(skill, dict):
-        return None
-    raw = skill.get(key)
+    if isinstance(skills, dict):
+        skill = skills.get(job_type)
+        if isinstance(skill, dict):
+            raw = skill.get(key)
+    if raw is None:
+        defaults = runner_config.get("defaults")
+        if isinstance(defaults, dict):
+            raw = defaults.get(key)
     if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
         return raw
     return None
