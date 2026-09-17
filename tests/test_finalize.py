@@ -1076,3 +1076,56 @@ def test_defaults_only_runner_config_resolves_budgets_and_takes_a_stall_baseline
         assert saved["progress_cpu_seconds"] == 1
     finally:
         store.close()
+
+
+def test_an_overdue_job_is_killed_even_when_no_stall_budget_is_configured(
+    tmp_path: Path,
+) -> None:
+    # The stall budget is only needed on the not-overdue path. Resolving both
+    # up front would let a missing stall_minutes switch off the timeout
+    # watchdog too, so a job well past its limit would run forever over a
+    # setting that decision never consults.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        # timeout_minutes only: no stall_minutes anywhere in the config.
+        runner_config = {"defaults": {"timeout_minutes": 1}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            runner_config=runner_config,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            # Well past the one-minute budget.
+            now_epoch=1767229200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert skipped == 0
+        assert finalized == [row["id"]]
+        assert any("kill-session" in " ".join(argv) for argv in calls)
+        saved = store.row("job", row["id"])
+        assert saved["outcome"] == "timeout"
+    finally:
+        store.close()
