@@ -210,3 +210,30 @@ def test_agent_config_problems_reports_one_problem_naming_session_kind_when_sess
 def test_agent_config_problems_returns_exactly_one_problem_when_agent_config_is_not_a_dict() -> None:
     result = agent_config_problems("not-a-dict")
     assert len(result) == 1
+
+
+def test_agent_config_problems_reports_a_problem_instead_of_raising_on_an_unhashable_skill() -> None:
+    # The list is the right length, so the set comparison is reached. An
+    # unhashable element there would make set() raise, and this module's
+    # contract is that unusable input is reported, never raised.
+    agent_config = {
+        "cli": "agent",
+        "session_kind": "runner",
+        "skills": ["spine", "review-loop", {"id": "pr-review"}],
+    }
+    result = agent_config_problems(agent_config)
+    assert len(result) == 1
+    assert "skills" in result[0]
+
+
+def test_agent_config_problems_reports_a_problem_for_a_non_string_but_hashable_skill() -> None:
+    # A hashable non-string would not raise, so this pins the same rule on
+    # the path where only the type check can catch it.
+    agent_config = {
+        "cli": "agent",
+        "session_kind": "runner",
+        "skills": ["spine", "review-loop", 7],
+    }
+    result = agent_config_problems(agent_config)
+    assert len(result) == 1
+    assert "skills" in result[0]
