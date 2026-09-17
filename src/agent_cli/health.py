@@ -88,6 +88,10 @@ def agent_config_problems(agent_config: Any) -> list[str]:
     if (
         not isinstance(skills, list)
         or len(skills) != 3
+        # Every element must be a string before the set comparison: an
+        # unhashable element would make set() raise, and this function
+        # reports unusable input as a problem rather than raising.
+        or any(not isinstance(s, str) for s in skills)
         or set(skills) != {"spine", "review-loop", "pr-review"}
     ):
         problems.append(
