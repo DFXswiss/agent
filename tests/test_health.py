@@ -255,8 +255,9 @@ def test_runner_config_problems_returns_empty_for_a_fully_configured_runner() ->
 
 def test_runner_config_problems_reports_a_missing_stall_minutes() -> None:
     # The per-skill check covers deny and timeout_minutes only, so without
-    # this rule nothing catches a missing stall_minutes and every running
-    # job is skipped once the supervisor asks for that budget.
+    # this rule nothing catches a missing stall_minutes at all. A job that
+    # is not overdue is then skipped every pass; an overdue one is still
+    # killed, since the timeout watchdog no longer needs this budget.
     runner_config = {
         "defaults": {"timeout_minutes": 60},
         "clone_stall_minutes": 5,
@@ -302,14 +303,32 @@ def test_runner_config_problems_rejects_a_bool_budget() -> None:
     )
 
 
-def test_runner_config_problems_accepts_a_float_budget() -> None:
-    # The original tests jq's `type == "number"`, which covers floats.
+def test_runner_config_problems_reports_a_float_budget() -> None:
+    # The original's jq check admits a float, but _budget returns a budget
+    # only for an int, so a float would pass health and then skip every job
+    # at run time. Health must not certify a config the supervisor cannot
+    # run, so the laxer half of the original is not carried over.
     runner_config = {
         "defaults": {"timeout_minutes": 1.5, "stall_minutes": 10},
         "clone_stall_minutes": 5,
         "skills": {},
     }
-    assert runner_config_problems(runner_config) == []
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "defaults.timeout_minutes" in problems[0]
+
+
+def test_runner_config_problems_reports_a_float_skill_timeout() -> None:
+    # Same rule on the per-skill path, where the effective value is the
+    # skill's own rather than the inherited default.
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {"timeout_minutes": 1.5}},
+    }
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "pr-review" in problems[0]
 
 
 def test_runner_config_problems_reports_a_skill_whose_effective_timeout_is_unusable() -> None:
@@ -356,10 +375,12 @@ def test_unresolved_skills_names_the_catalogue_when_it_cannot_be_read() -> None:
     ]
 
 
-def test_unresolved_skills_does_not_call_a_catalogue_of_only_unusable_entries_healthy() -> None:
-    # Every entry is skipped, so the result is [] — which reads as healthy.
-    # This pins that behaviour so the vacuous case is a deliberate choice
-    # on the record rather than an unnoticed one.
+def test_unresolved_skills_reads_a_catalogue_of_only_unusable_entries_as_healthy() -> None:
+    # Every entry is skipped, so the result is [] — the module's own
+    # "healthy" answer. That is the behaviour, and the name says so. It is
+    # pinned deliberately: unlike an unreadable catalogue, which returns a
+    # sentinel, a readable catalogue of unusable entries is not reported.
+    # If that should ever change, this test is where it is decided.
     catalog = {"skills": ["not-a-dict", {"no_id": 1}, {"id": ""}]}
     assert unresolved_skills(catalog, {"defaults": {"deny": [], "timeout_minutes": 5}}) == []
 

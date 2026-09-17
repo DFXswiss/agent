@@ -1129,3 +1129,57 @@ def test_an_overdue_job_is_killed_even_when_no_stall_budget_is_configured(
         assert saved["outcome"] == "timeout"
     finally:
         store.close()
+
+
+def test_a_job_inside_its_timeout_is_skipped_when_no_stall_budget_is_configured(
+    tmp_path: Path,
+) -> None:
+    # The other half of the reordering. Its sibling above proves an overdue
+    # job is still killed without a stall budget; this pins that a job which
+    # is NOT overdue is still skipped, so the reorder moved exactly one cell
+    # of the table and left this one alone.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="pr-review",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        runner_config = {"defaults": {"timeout_minutes": 60}}
+
+        finalized, skipped = finalize_running(
+            store,
+            _runner(calls=calls, has_rc=0),
+            socket="/tmp/agent.sock",
+            repos_root="/tmp/repos",
+            runner_config=runner_config,
+            login="davidleomay",
+            exit_code_of=lambda jid: None,
+            transcript_of=lambda jid: "",
+            # Ten minutes in, well inside the sixty-minute budget.
+            now_epoch=1767226200,
+            transcript_size_of=lambda jid: 100,
+        )
+
+        assert finalized == []
+        assert skipped == 1
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "running"
+        assert not any("kill-session" in " ".join(argv) for argv in calls)
+        # Skipped before the stall check, so no baseline was written.
+        assert saved.get("progress_check_epoch") is None
+    finally:
+        store.close()

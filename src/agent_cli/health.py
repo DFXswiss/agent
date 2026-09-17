@@ -2,15 +2,15 @@
 
 The existing runner's health command mostly probes its environment —
 binaries on PATH, files readable, directories writable — which a pure
-module cannot do and which belongs where the command is wired. Two of
+module cannot do and which belongs where the command is wired. Three of
 its checks are pure config rules, and those are what this module
-carries: both catch a misconfiguration that otherwise stays invisible
+carries: each catches a misconfiguration that otherwise stays invisible
 until the first real job fails.
 
 Pure module: no subprocess, no network, no filesystem, no Store.
 Callers supply the parsed catalogue and configs; this module only
 applies the rules. Unusable input is reported as a problem, never
-silently treated as healthy. Neither function raises.
+silently treated as healthy. None of these functions raise.
 """
 
 from __future__ import annotations
@@ -67,9 +67,18 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
     return problems
 
 
-def _positive_number(value: Any) -> bool:
-    """True for an int or float strictly greater than zero (bool rejected)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+def _positive_budget(value: Any) -> bool:
+    """True for an int strictly greater than zero (bool rejected).
+
+    Int, not "number". The original tests jq's `type == "number"`, which
+    admits a float, but nothing downstream here can use one: `_budget`
+    returns a budget only when it is an `int`, so a float setting resolves
+    to None and the job is skipped. Accepting a float would mean this
+    check passes a configuration the supervisor cannot run — the exact
+    failure this module exists to prevent — so the laxer half of the
+    original is deliberately not carried over.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
         return False
     return value > 0
 
@@ -80,21 +89,22 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     The per-skill check above covers `deny` and `timeout_minutes`, which is
     all the original checks per skill. `stall_minutes` is covered here
     instead, as a property of the configuration as a whole — the original
-    draws the same line, and without this half nothing checks it at all,
-    so a config with no `stall_minutes` passes the skill check and then
-    skips every running job forever.
+    draws the same line, and without this half nothing checks it at all.
+    A config with no `stall_minutes` then passes the skill check and has
+    every non-overdue running job skipped forever; an overdue one is still
+    killed, because the timeout watchdog no longer depends on this budget.
 
-    Three budgets must be positive numbers, `skills` must be a mapping, and
+    Three budgets must be positive ints, `skills` must be a mapping, and
     every skill's effective timeout — its own, or the default it inherits —
-    must be a positive number too.
+    must be a positive int too.
 
     Two deliberate differences from the original. It reports this whole
     block as a single message; this returns one per broken rule, because a
     caller that has to print them is better served naming the field. And
     it requires *strictly* positive where `_budget` accepts zero at run
     time: the original is stricter in its check than in its runtime for
-    these same fields, and that asymmetry is preserved rather than
-    smoothed over.
+    these same fields, and that asymmetry is harmless — it rejects a
+    config the runtime would have tolerated, never the reverse.
     """
     if not isinstance(runner_config, dict):
         return ["runner config is not a dict"]
@@ -102,10 +112,10 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     defaults = runner_config.get("defaults")
     defaults_map = defaults if isinstance(defaults, dict) else {}
     for field in ("timeout_minutes", "stall_minutes"):
-        if not _positive_number(defaults_map.get(field)):
-            problems.append(f"defaults.{field} is not a positive number")
-    if not _positive_number(runner_config.get("clone_stall_minutes")):
-        problems.append("clone_stall_minutes is not a positive number")
+        if not _positive_budget(defaults_map.get(field)):
+            problems.append(f"defaults.{field} is not a positive whole number")
+    if not _positive_budget(runner_config.get("clone_stall_minutes")):
+        problems.append("clone_stall_minutes is not a positive whole number")
     skills = runner_config.get("skills")
     if not isinstance(skills, dict):
         problems.append("skills is not a mapping")
@@ -114,8 +124,8 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     for skill_id, skill_cfg in skills.items():
         own = skill_cfg.get("timeout_minutes") if isinstance(skill_cfg, dict) else None
         effective = default_timeout if own is None else own
-        if not _positive_number(effective):
-            problems.append(f"skill {skill_id} has no positive timeout_minutes")
+        if not _positive_budget(effective):
+            problems.append(f"skill {skill_id} has no positive whole-number timeout_minutes")
     return problems
 
 
