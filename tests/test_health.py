@@ -101,15 +101,14 @@ def test_unresolved_skills_returns_a_non_empty_list_when_catalogue_skills_is_not
 
 
 def test_unresolved_skills_skips_catalogue_entries_the_original_also_drops() -> None:
-    # These are exactly the shapes the original's reader drops without
-    # complaint: a null, a mapping with no id, an empty id. A numeric id is
-    # the one divergence — jq coerces it to "7" and checks it, this skips it.
+    # Exactly the shapes the original's reader drops without complaint: a
+    # null, a mapping with no id, an empty id. A numeric id is NOT among
+    # them — it is coerced and checked, which the next test pins.
     catalog = {
         "skills": [
             None,
             {"name": "no-id"},
             {"id": ""},
-            {"id": 7},
             {"id": "spine"},
         ]
     }
@@ -615,9 +614,10 @@ def test_unresolved_skills_reports_a_deny_that_is_present_but_not_a_list_of_stri
             "defaults": {},
         }
         problems = unresolved_skills(catalog, runner_config)
-        assert len(problems) == 1, f"{bad!r} was accepted"
-        assert "deny" in problems[0]
-        assert "pr-review" in problems[0]
+        # Exact string: "is missing deny" would also contain "deny" and
+        # "pr-review", so a substring check could not tell a malformed
+        # value being called absent from it being called unusable.
+        assert problems == ["skill pr-review has an unusable deny"], f"{bad!r}"
 
 
 def test_unresolved_skills_reports_a_malformed_deny_inherited_from_defaults() -> None:
@@ -625,9 +625,9 @@ def test_unresolved_skills_reports_a_malformed_deny_inherited_from_defaults() ->
     # no deny of its own actually resolves to.
     catalog = {"skills": [{"id": "pr-review"}]}
     runner_config = {"skills": {}, "defaults": {"deny": "Bash", "timeout_minutes": 30}}
-    problems = unresolved_skills(catalog, runner_config)
-    assert len(problems) == 1
-    assert "deny" in problems[0]
+    assert unresolved_skills(catalog, runner_config) == [
+        "skill pr-review has an unusable deny"
+    ]
 
 
 def test_unresolved_skills_accepts_an_empty_deny_list() -> None:
@@ -647,3 +647,62 @@ def test_unresolved_skills_prefers_a_skills_own_deny_over_a_malformed_default() 
         "defaults": {"deny": "broken", "timeout_minutes": 30},
     }
     assert unresolved_skills(catalog, runner_config) == []
+
+
+def test_unresolved_skills_calls_an_absent_deny_missing_not_unusable() -> None:
+    # The other side of the distinction the exact-string assertions above
+    # pin: absent and malformed must not collapse into one message.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    runner_config = {"skills": {}, "defaults": {"timeout_minutes": 30}}
+    assert unresolved_skills(catalog, runner_config) == ["skill pr-review is missing deny"]
+
+
+def test_unresolved_skills_reads_an_object_shaped_catalogue_by_its_values() -> None:
+    # Measured: `jq -r '.skills[]?.id // empty'` on an object-shaped
+    # catalogue yields every id at rc=0, so the original reads this shape.
+    # Condemning it would report a catalogue that works.
+    catalog = {"skills": {"a": {"id": "spine"}, "b": {"id": "pr-review"}}}
+    runner_config = {"skills": {}, "defaults": {"deny": [], "timeout_minutes": 30}}
+    assert unresolved_skills(catalog, runner_config) == []
+    # And it still reports per-skill problems found through that shape.
+    assert unresolved_skills(catalog, {"skills": {}, "defaults": {}}) == [
+        "skill spine is missing deny",
+        "skill spine is missing timeout_minutes",
+        "skill pr-review is missing deny",
+        "skill pr-review is missing timeout_minutes",
+    ]
+
+
+def test_unresolved_skills_reports_a_skill_entry_that_is_not_a_mapping() -> None:
+    # Measured: jq exits 5 indexing a string with "deny" where a proper
+    # mapping gives rc=0, and the worker then refuses the job. Falling
+    # through to defaults would call this configuration clean.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    for broken in ("broken", ["Bash"], 7, True):
+        runner_config = {
+            "skills": {"pr-review": broken},
+            "defaults": {"deny": ["Bash"], "timeout_minutes": 30},
+        }
+        assert unresolved_skills(catalog, runner_config) == [
+            "skill pr-review has an unusable entry"
+        ], f"{broken!r}"
+
+
+def test_unresolved_skills_coerces_a_numeric_catalogue_id_the_way_the_original_does() -> None:
+    # Measured: `jq -r` renders {"id": 7} as the skill "7" and the original
+    # goes on to check it. Dropping it would leave a skill unchecked that
+    # the original checks — the direction this module must not fail in.
+    catalog = {"skills": [{"id": 7}, {"id": 7.5}]}
+    problems = unresolved_skills(catalog, {"skills": {}, "defaults": {}})
+    assert problems == [
+        "skill 7 is missing deny",
+        "skill 7 is missing timeout_minutes",
+        "skill 7.5 is missing deny",
+        "skill 7.5 is missing timeout_minutes",
+    ]
+
+
+def test_unresolved_skills_does_not_coerce_a_bool_catalogue_id() -> None:
+    # bool is an int subclass, but jq renders it "true" where str() gives
+    # "True" — coercing would invent an id the original never produces.
+    assert unresolved_skills({"skills": [{"id": True}]}, {"skills": {}, "defaults": {}}) == []

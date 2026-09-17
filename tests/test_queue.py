@@ -367,8 +367,10 @@ def test_retry_payload_does_not_mutate_the_input_row() -> None:
     result = retry_payload(row)
     assert result is not None
     assert row == before
-    # And the returned row really is a different object, so a caller
-    # mutating it later cannot reach back into the stored one.
+    # The returned row is a distinct top-level mapping, so assigning to a
+    # key of it cannot write through to the input. _strip copies the
+    # mapping, not the values, so a nested mutable value would still be
+    # shared — no field this function handles is one today.
     assert result is not row
 
 
