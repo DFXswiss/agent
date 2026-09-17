@@ -22,6 +22,7 @@ SCHEMA_ID = "pr-guard/v1"
 CONFIG_PATH = ".github/pr-guard.json"
 TOP_KEYS = frozenset({"schema", "a38"})
 WORKFLOW_APPROVAL_KEYS = frozenset({"enabled", "workflows"})
+ENVIRONMENT_APPROVAL_KEYS = frozenset({"enabled", "environment", "workflows"})
 WORKFLOW_PATH_RE = re.compile(r"^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(?:yml|yaml)$")
 A38_KEYS = frozenset({"enforce", "exclude", "default"})
 SCOPE_MODES = frozenset({"enforce", "exclude"})
@@ -115,7 +116,15 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
     payload = _loads_json(text)
     if not isinstance(payload, dict):
         raise PrGuardConfigError("pr-guard config must be a JSON object")
-    _require_keys({k: v for k, v in payload.items() if k not in {"workflow_approval", "lifecycle"}}, TOP_KEYS, "pr-guard config")
+    _require_keys(
+        {
+            k: v
+            for k, v in payload.items()
+            if k not in {"workflow_approval", "environment_approval", "lifecycle"}
+        },
+        TOP_KEYS,
+        "pr-guard config",
+    )
     schema = payload["schema"]
     if not isinstance(schema, str) or schema != SCHEMA_ID:
         raise PrGuardConfigError(f"schema must be {SCHEMA_ID}")
@@ -158,6 +167,42 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
         if len(set(paths)) != len(paths) or (enabled and not paths):
             raise PrGuardConfigError("workflow approval needs a nonempty, duplicate-free allowlist when enabled")
         normalized["workflow_approval"] = {"enabled": enabled, "workflows": list(paths)}
+    if "environment_approval" in payload:
+        approval = payload["environment_approval"]
+        if not isinstance(approval, dict):
+            raise PrGuardConfigError("environment_approval must be an object")
+        _require_keys(approval, ENVIRONMENT_APPROVAL_KEYS, "environment_approval")
+        enabled = approval["enabled"]
+        environment = approval["environment"]
+        paths = approval["workflows"]
+        if type(enabled) is not bool:
+            raise PrGuardConfigError("environment_approval.enabled must be boolean")
+        if not isinstance(environment, str) or not environment or len(environment) > 255:
+            raise PrGuardConfigError(
+                "environment_approval.environment must be a non-empty string of at most 255 characters"
+            )
+        if not isinstance(paths, list) or len(paths) > 64:
+            raise PrGuardConfigError(
+                "environment_approval.workflows must be an array of at most 64 paths"
+            )
+        if any(
+            not isinstance(path, str)
+            or len(path) > 255
+            or WORKFLOW_PATH_RE.fullmatch(path) is None
+            for path in paths
+        ):
+            raise PrGuardConfigError(
+                "environment_approval.workflows must contain exact workflow YAML paths"
+            )
+        if len(set(paths)) != len(paths) or (enabled and not paths):
+            raise PrGuardConfigError(
+                "environment approval needs a nonempty, duplicate-free allowlist when enabled"
+            )
+        normalized["environment_approval"] = {
+            "enabled": enabled,
+            "environment": environment,
+            "workflows": list(paths),
+        }
     if "lifecycle" in payload:
         lifecycle = payload["lifecycle"]
         if not isinstance(lifecycle, dict):
