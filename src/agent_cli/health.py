@@ -71,12 +71,18 @@ def _positive_budget(value: Any) -> bool:
     """True for an int strictly greater than zero (bool rejected).
 
     Int, not "number". The original tests jq's `type == "number"`, which
-    admits a float, but the budgets this guards are read by `_budget`, and
-    that returns a value only when it is an `int` — a float resolves to
-    None and the job is skipped. Accepting a float would mean this check
-    passing a configuration the supervisor cannot run, the exact failure
-    this module exists to prevent, so the laxer half of the original is
-    deliberately not carried over.
+    admits a float. The two budgets `_budget` resolves — `timeout_minutes`
+    and `stall_minutes` — are usable only as ints, because `_budget`
+    returns a value only for an int: a float resolves to None and the job
+    is skipped. Accepting a float would mean this check passing a
+    configuration the supervisor cannot run, the exact failure this module
+    exists to prevent, so the laxer half of the original is deliberately
+    not carried over.
+
+    The one other field held to this rule, `clone_stall_minutes`, has no
+    reader in the ported Python yet. It is checked the same way for
+    consistency and because the clone path will read it, not because that
+    argument already applies to it.
     """
     if isinstance(value, bool) or not isinstance(value, int):
         return False

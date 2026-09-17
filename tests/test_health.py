@@ -468,11 +468,11 @@ def test_runner_config_problems_reports_a_float_clone_stall_minutes() -> None:
 def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
     # The property the per-skill rules exist for, and the one that was
     # actually false before a skill's stall override was checked. The
-    # candidate set deliberately mixes healthy and broken configs: the
-    # assertion is the implication, so dropping a rule makes some broken
-    # config report healthy and fail here. Checking only hand-picked
-    # healthy configs would pass no matter which rule was removed.
-    candidates = [
+    # candidates deliberately mix healthy and broken configs: the assertion
+    # is the implication, so dropping a rule makes some broken config report
+    # healthy and fails here. Checking only hand-picked healthy configs
+    # would pass no matter which rule was removed.
+    handwritten = [
         # Budgets inherited wholly from defaults.
         {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
          "clone_stall_minutes": 5, "skills": {"pr-review": {}}},
@@ -487,28 +487,42 @@ def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
          "clone_stall_minutes": 5, "skills": {"pr-review": {"stall_minutes": 3}}},
     ]
     # Every way a single field can be unusable, on the skill and on defaults.
+    # `None` is the one value here that is not broken: absent and explicitly
+    # None both mean "inherit", so those rows are expected to be healthy.
+    generated = []
     for bad in (1.5, "soon", True, -1, 0, None):
         for field in ("timeout_minutes", "stall_minutes"):
-            candidates.append(
+            generated.append(
                 {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
                  "clone_stall_minutes": 5, "skills": {"pr-review": {field: bad}}}
             )
             defaults = {"timeout_minutes": 60, "stall_minutes": 10}
             defaults[field] = bad
-            candidates.append(
+            generated.append(
                 {"defaults": defaults, "clone_stall_minutes": 5,
                  "skills": {"pr-review": {}}}
             )
 
-    healthy_seen = 0
-    for runner_config in candidates:
-        if runner_config_problems(runner_config) != []:
-            continue
-        healthy_seen += 1
-        for field in ("timeout_minutes", "stall_minutes"):
-            assert _budget(runner_config, "pr-review", field) is not None, (
-                f"health passed but {field} does not resolve: {runner_config}"
-            )
-    # Guard the guard: if every candidate were rejected the loop above would
-    # assert nothing at all and still pass.
-    assert healthy_seen >= 4
+    def healthy_count(configs: list[dict]) -> int:
+        healthy = 0
+        for runner_config in configs:
+            if runner_config_problems(runner_config) != []:
+                continue
+            healthy += 1
+            for field in ("timeout_minutes", "stall_minutes"):
+                assert _budget(runner_config, "pr-review", field) is not None, (
+                    f"health passed but {field} does not resolve: {runner_config}"
+                )
+        return healthy
+
+    handwritten_healthy = healthy_count(handwritten)
+    generated_healthy = healthy_count(generated)
+    # Guard the guard, counted per group. A single total would be satisfied
+    # by the handwritten rows alone, which are all healthy by construction,
+    # so the generated rows could stop contributing without anything
+    # noticing. Both sides have to stay non-trivial: every handwritten row
+    # healthy, the two explicit-None rows healthy, and the rest rejected —
+    # otherwise the implication above is being asserted over nothing.
+    assert handwritten_healthy == len(handwritten)
+    assert generated_healthy == 2
+    assert generated_healthy < len(generated)
