@@ -12,9 +12,11 @@ Callers supply the parsed catalogue and configs; this module only
 applies the rules. Unusable input is reported as a problem rather than
 silently read as healthy, with one documented exception: a catalogue entry
 the original's own reader drops without complaint — a null, or a mapping
-carrying no usable id — is dropped here too. `unresolved_skills` says
-where and why, and records the narrow shapes where this port is stricter
-than the original rather than laxer. None of these functions raise.
+whose id is null, false or empty — is dropped here too. Everywhere this
+port departs from the original it departs by being stricter, reporting
+something the original would have run; it never passes something the
+original refuses. `unresolved_skills` says where and why.
+None of these functions raise.
 """
 
 from __future__ import annotations
@@ -27,7 +29,9 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
 
     The catalogue's `skills` may be a list or a mapping; a mapping is read
     by its values, as the original's iterator does. Collect each entry's
-    `id` when the entry is a dict and `id` is a non-empty string.
+    `id` when the entry is a dict and `id` is a non-empty string. An id of
+    null, false or "" is dropped, which is what the original drops; any
+    other non-string id is reported rather than guessed at.
 
     `timeout_minutes` is resolved for presence only — its type rule lives
     in `runner_config_problems`. `deny` is resolved and then required to be
@@ -76,27 +80,31 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
             # reads `null.id` as null and drops it rather than raising.
             continue
         raw_id = entry.get("id")
-        # The original prints ids through `jq -r`, which stringifies a
-        # number: `{"id": 7}` becomes the skill "7" and is checked. Measured
-        # against Python's str() for both int and float, the two agree
-        # exactly, so a numeric id is coerced here as well rather than
-        # dropped. Skipping it would leave a skill unchecked that the
-        # original checks, which is the direction this module must not fail
-        # in. bool is excluded despite being an int subclass: jq renders it
-        # "true" where str() gives "True", so coercing it would invent an id
-        # the original never produces.
-        if isinstance(raw_id, (int, float)) and not isinstance(raw_id, bool):
-            skill_id = str(raw_id)
-        else:
-            skill_id = raw_id
-        if not isinstance(skill_id, str) or not skill_id:
-            # A dict with no usable `id` is dropped by the original too, via
-            # `// empty`. A bool, list or mapping id stays dropped: jq does
-            # render those, but a list or mapping comes out as multi-line
-            # JSON that the original then splits into several garbage ids,
-            # which is an artefact of reading ids line by line rather than a
-            # rule worth reproducing.
+        if raw_id is None or raw_id is False or raw_id == "":
+            # Exactly what the original drops. Its `// empty` discards null
+            # and false and nothing else, and the loop that consumes the ids
+            # then skips a blank line, which is what an empty id becomes.
             continue
+        if not isinstance(raw_id, str):
+            # Everything else non-string the original does process, but
+            # under a name produced by jq's rendering, and reproducing that
+            # is not worth it. Measured with jq 1.7.1: `true` becomes the
+            # skill "true"; a number keeps its source literal, so `7.50`
+            # stays "7.50" where Python's str() would say "7.5" and `1e2`
+            # stays "1E+2" where Python says "100.0"; and a list or mapping
+            # spreads across several lines, which the caller reads as that
+            # many separate garbage ids — three for a one-element list, four
+            # for two — while an empty one stays on a single line.
+            #
+            # So neither coercing nor dropping is right. Coercing would
+            # invent a name for some of these, and dropping would leave a
+            # skill unchecked that the original checks — the direction this
+            # module must not fail in. Reporting says plainly that the
+            # catalogue asks for something this cannot answer, which is
+            # stricter than the original and stricter in the safe direction.
+            problems.append(f"skill id {raw_id!r} is not a string")
+            continue
+        skill_id = raw_id
         # Each path is defended on its own. A setting resolves from the
         # skill's own entry or from defaults, and either alone is enough —
         # a config carrying only defaults is ordinary, and gating on both
@@ -104,9 +112,10 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
         skill_cfg = skills_table.get(skill_id) if isinstance(skills_table, dict) else None
         if skill_cfg is not None and not isinstance(skill_cfg, dict):
             # The worker reads `.skills[<id>].deny` through jq, and indexing
-            # a non-object raises: measured rc=5 where a proper mapping gives
-            # rc=0, and the worker then refuses the job. Falling through to
-            # defaults here would call that configuration clean.
+            # a non-object raises. Measured across every shape the test
+            # covers — string, list, number, bool — jq exits 5 where a proper
+            # mapping exits 0, and the worker then refuses the job. Falling
+            # through to defaults here would call that configuration clean.
             problems.append(f"skill {skill_id} has an unusable entry")
             continue
         skill_map = skill_cfg if isinstance(skill_cfg, dict) else {}
