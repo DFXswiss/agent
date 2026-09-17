@@ -422,7 +422,10 @@ def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
-def test_lock_acquire_waits_for_non_positive_holder_pid(tmp_path: Path) -> None:
+@pytest.mark.parametrize("holder_pid", [0, -999999], ids=["zero", "negative"])
+def test_lock_acquire_waits_for_non_positive_holder_pid(
+    tmp_path: Path, holder_pid: int
+) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
         adapter="commands",
@@ -432,16 +435,18 @@ def test_lock_acquire_waits_for_non_positive_holder_pid(tmp_path: Path) -> None:
         environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
     )
     artifacts = runtime.artifacts
-    lock = runtime.lock_root / "non-positive-pid.lock"
+    lock_name = f"non-positive-pid-{holder_pid}"
+    lock = runtime.lock_root / f"{lock_name}.lock"
     lock.mkdir()
     (lock / "holder").write_text(
-        "pid=0\nrun_id=invalid-run\njob=commands\nsince=2026-09-17T11:00:00Z\n",
+        f"pid={holder_pid}\nrun_id=invalid-run\njob=commands\n"
+        "since=2026-09-17T11:00:00Z\n",
         encoding="utf-8",
     )
     started = time.monotonic()
     try:
         with pytest.raises(JobError, match="not acquired") as raised:
-            runtime.lock_acquire("non-positive-pid", budget_s=0.03)
+            runtime.lock_acquire(lock_name, budget_s=0.03)
         assert time.monotonic() - started >= 0.02
         assert "no longer alive" not in str(raised.value)
         assert lock.is_dir()
