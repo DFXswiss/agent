@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import os
 import re
@@ -419,9 +420,11 @@ def test_lock_acquire_waits_for_incomplete_holder(tmp_path: Path) -> None:
     lock = runtime.lock_root / "incomplete.lock"
     lock.mkdir()
     (lock / "holder").write_text("pid=999999\n", encoding="utf-8")
+    started = time.monotonic()
     try:
         with pytest.raises(JobError, match="not acquired") as raised:
             runtime.lock_acquire("incomplete", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
         assert "no longer alive" not in str(raised.value)
         assert lock.is_dir()
     finally:
@@ -469,6 +472,55 @@ def test_lock_acquire_ignores_changed_dead_holder_snapshot(
         assert "no longer alive" not in str(raised.value)
         assert lock.is_dir()
         assert holder.read_text(encoding="utf-8") == new_holder
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_timeout_message_reflects_snapshot_updated_in_same_iteration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "changed-holder-timeout.lock"
+    holder = lock / "holder"
+    lock.mkdir()
+    holder.write_text(
+        "pid=999999\nrun_id=dead-run\njob=commands\n"
+        "since=2026-09-17T10:00:00Z\n",
+        encoding="utf-8",
+    )
+    new_holder = (
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T10:00:01Z\n"
+    )
+
+    def process_alive(pid: int) -> bool:
+        assert pid == 999999
+        holder.write_text(new_holder, encoding="utf-8")
+        return False
+
+    clock = itertools.chain([0.0, 1.0], itertools.repeat(1.0))
+    monkeypatch.setattr(common, "_process_alive", process_alive)
+    monkeypatch.setattr(common.time, "monotonic", lambda: next(clock))
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("changed-holder-timeout", budget_s=1)
+        message = str(raised.value)
+        assert "no longer alive" not in message
+        assert f"pid={os.getpid()}" in message
+        assert "run_id=live-run" in message
+        assert "pid=999999" not in message
+        assert "run_id=dead-run" not in message
+        assert lock.is_dir()
     finally:
         runtime.cleanup(1)
         shutil.rmtree(lock, ignore_errors=True)
@@ -632,8 +684,13 @@ def test_cleanup_continues_after_invalid_utf8_lock_holder(tmp_path: Path) -> Non
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
+@pytest.mark.parametrize(
+    "error_type", [BrokenPipeError, ValueError], ids=["broken-pipe", "closed-stream"]
+)
 def test_cleanup_continues_after_release_status_broken_pipe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
 ) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
@@ -647,17 +704,17 @@ def test_cleanup_continues_after_release_status_broken_pipe(
     first_lock = runtime.lock_root / "first.lock"
     trailing_lock = runtime.lock_root / "trailing.lock"
 
-    class BrokenPipeStdout:
+    class FailingStdout:
         def write(self, _value: str) -> int:
-            raise BrokenPipeError
+            raise error_type
 
         def flush(self) -> None:
-            raise BrokenPipeError
+            raise error_type
 
     try:
         runtime.lock_acquire("first", budget_s=0.1)
         runtime.lock_acquire("trailing", budget_s=0.1)
-        monkeypatch.setattr(sys, "stdout", BrokenPipeStdout())
+        monkeypatch.setattr(sys, "stdout", FailingStdout())
 
         assert runtime.cleanup(0) == 0
         assert not first_lock.exists()

@@ -1,7 +1,8 @@
 """Shared lifecycle for A38 local job adapters.
 
 Work and artifacts live outside the repository. Subprocess argv lists are never
-passed through a shell. Cleanup is bounded and ownership-aware.
+passed through a shell. Cleanup is bounded and ownership-aware, except that
+releasing a self-held lock is not subject to the cleanup deadline.
 """
 
 from __future__ import annotations
@@ -961,7 +962,7 @@ class JobRuntime:
         self._held_locks = [item for item in self._held_locks if item != name]
         try:
             print(f"a38: released lock {name}", flush=True)
-        except OSError:
+        except (OSError, ValueError):
             pass
 
     def ensure_node_modules(self) -> None:
