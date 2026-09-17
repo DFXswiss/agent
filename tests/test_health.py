@@ -529,16 +529,59 @@ def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
         [(str(i), cfg) for i, cfg in enumerate(handwritten)]
     )
     generated_healthy = healthy_labels(generated)
-    # Guard the guard, by identity rather than by count. A single total was
-    # satisfied by the handwritten rows alone, which are all healthy by
-    # construction, so the generated rows could have stopped contributing
-    # unnoticed. Counting per group fixes that much. Naming the rows is
-    # strictly stronger again — it also rejects one row going healthy while
-    # another stops, which leaves the total unchanged — though that is an
-    # argument from the shape of the assertion, not one a mutation here has
-    # had to demonstrate.
+    # Guard the guard, per group. A single total was satisfied by the
+    # handwritten rows alone, which are all healthy by construction, so the
+    # generated rows could have stopped contributing unnoticed.
+    #
+    # For the generated group, naming the rows is strictly stronger than
+    # counting them: 2 of its 24 are expected healthy, so identity also
+    # rejects one row going healthy while another stops. That is an argument
+    # from the shape of the assertion; no mutation here has had to show it.
+    # For the handwritten group it is not stronger at all — every row is
+    # expected healthy, so the expected set is the whole label space and
+    # set-equality says exactly what `== 4` would. It is written as a set
+    # only to match its neighbour.
     assert handwritten_healthy == {"0", "1", "2", "3"}
     assert generated_healthy == {
         "skill:timeout_minutes=None",
         "skill:stall_minutes=None",
     }
+
+
+def test_runner_config_problems_accepts_a_config_with_no_skills_table_at_all() -> None:
+    # The skills table holds overrides. A config taking every budget from
+    # defaults omits it, and that config runs: _budget resolves both budgets
+    # from defaults and unresolved_skills calls the same shape healthy. A
+    # missing table must therefore read the same as an empty one, or this
+    # check reports a problem in a configuration the supervisor is running.
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+    }
+    assert runner_config_problems(runner_config) == []
+    # And it agrees with both consumers on that same config.
+    assert _budget(runner_config, "pr-review", "timeout_minutes") == 60
+    assert _budget(runner_config, "pr-review", "stall_minutes") == 10
+
+
+def test_runner_config_problems_reads_an_absent_skills_table_like_an_empty_one() -> None:
+    absent = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+    }
+    empty = dict(absent, skills={})
+    assert runner_config_problems(absent) == runner_config_problems(empty) == []
+
+
+def test_runner_config_problems_still_reports_a_skills_table_set_to_a_non_mapping() -> None:
+    # Tolerating the absent case must not tolerate a present, wrong-typed
+    # one: that is a real mistake rather than an omission.
+    for wrong in (["pr-review"], "pr-review", 7):
+        runner_config = {
+            "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+            "clone_stall_minutes": 5,
+            "skills": wrong,
+        }
+        problems = runner_config_problems(runner_config)
+        assert len(problems) == 1, f"{wrong!r} was accepted"
+        assert "skills" in problems[0]
