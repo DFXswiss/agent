@@ -92,3 +92,63 @@ def prunable(rows: list[dict[str, Any]], *, state: str, now_epoch: int, days: in
         if stamp < cutoff:
             ids.append(job_id)
     return ids
+
+
+def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a new queued row with the previous attempt erased, or None.
+
+    `row` is not mutated. Return None when `row` is not a dict or its
+    `id` is not a non-empty string.
+
+    Caller obligation: the caller must delete the previous attempt's
+    exit-code and transcript artefacts before writing this returned row
+    back to storage. Otherwise the supervisor reads the old exit code
+    on its next pass and finalises the retry instantly with the
+    previous attempt's outcome. This is a caller obligation because
+    this is a pure module (no filesystem access).
+    """
+    if not isinstance(row, dict):
+        return None
+    job_id = row.get("id")
+    if not isinstance(job_id, str) or not job_id:
+        return None
+    attempts = row.get("attempts")
+    # bool is a subclass of int, so True/False must not count as a tally.
+    if not isinstance(attempts, int) or isinstance(attempts, bool):
+        attempts = 0
+    out = dict(row)
+    # The existing runner needed two separate steps to do this safely —
+    # reset the row's fields while it was still in the failed state, then
+    # move it to queued in a second step — so that a partially reset job
+    # could never be observed in the queued state. Writing the whole row
+    # at once, as this function does, makes that two-step ordering
+    # unnecessary here.
+    out["state"] = "queued"
+    out["attempts"] = attempts + 1
+    for key in (
+        "started",
+        "session",
+        "worktree",
+        "finished",
+        "exit_code",
+        "outcome",
+        "done_kind",
+        "work_performed",
+        "contract_followed",
+    ):
+        out[key] = None
+    # A retried job has to announce itself again, and its previous
+    # outcome must not be treated as already reported. Skipping this
+    # makes a retry invisible.
+    out["reported"] = False
+    out["announced"] = False
+    # A missing progress field is a first baseline for the stall check;
+    # leaving None behind would be a value that check would have to
+    # special-case instead.
+    for key in (
+        "progress_check_epoch",
+        "progress_transcript_size",
+        "progress_cpu_seconds",
+    ):
+        out.pop(key, None)
+    return out
