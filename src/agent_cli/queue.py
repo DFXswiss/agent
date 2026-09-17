@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from .jobs import TRANSITIONS
 from .watchdog import iso_epoch
+
+
+def _strip(row: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
 def state_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -97,8 +102,20 @@ def prunable(rows: list[dict[str, Any]], *, state: str, now_epoch: int, days: in
 def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     """Return a new queued row with the previous attempt erased, or None.
 
-    `row` is not mutated. Return None when `row` is not a dict or its
-    `id` is not a non-empty string.
+    `row` is not mutated. Return None when `row` is not a dict, when its
+    `id` is not a non-empty string, or when `queued` is not reachable from
+    its current state.
+
+    The state check is the job model's own rule, not a stricter one: both
+    `failed` and `done` may be re-queued, while `running` and `queued` may
+    not. Producing a queued payload from a running row would write a
+    transition `TRANSITIONS` forbids, and the row the supervisor is still
+    working on would silently become a queue entry.
+
+    Keys beginning with an underscore are dropped. The store adds
+    `_origin_device_id` to every row it hands out, and a write replaces the
+    whole row, so returning it unchanged would persist that bookkeeping
+    field as if it were part of the job.
 
     Caller obligation: the caller must delete the previous attempt's
     exit-code and transcript artefacts before writing this returned row
@@ -112,11 +129,14 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     job_id = row.get("id")
     if not isinstance(job_id, str) or not job_id:
         return None
+    state = row.get("state")
+    if not isinstance(state, str) or "queued" not in TRANSITIONS.get(state, ()):
+        return None
     attempts = row.get("attempts")
     # bool is a subclass of int, so True/False must not count as a tally.
     if not isinstance(attempts, int) or isinstance(attempts, bool):
         attempts = 0
-    out = dict(row)
+    out = _strip(row)
     # The existing runner needed two separate steps to do this safely —
     # reset the row's fields while it was still in the failed state, then
     # move it to queued in a second step — so that a partially reset job

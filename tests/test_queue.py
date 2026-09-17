@@ -373,3 +373,43 @@ def test_retry_payload_returns_none_for_a_dict_row_that_has_no_id_key() -> None:
 def test_retry_payload_returns_none_for_a_dict_row_whose_id_is_an_empty_string() -> None:
     # An empty id is not a job id, so there is nothing to retry.
     assert retry_payload({"id": "", "state": "failed"}) is None
+
+
+def test_retry_payload_drops_keys_that_begin_with_an_underscore() -> None:
+    # The store adds _origin_device_id to every row it hands out, and a
+    # write replaces the whole row, so returning it would persist the
+    # store's own bookkeeping as a job field.
+    row = {
+        "id": "job-1",
+        "state": "failed",
+        "_origin_device_id": "device-7",
+        "repo": "DFXswiss/agent",
+    }
+    result = retry_payload(row)
+    assert result is not None
+    assert "_origin_device_id" not in result
+    assert result["repo"] == "DFXswiss/agent"
+
+
+def test_retry_payload_returns_none_for_a_running_row() -> None:
+    # TRANSITIONS forbids running -> queued. Requeuing a row the supervisor
+    # is still working on would abandon that worker silently.
+    assert retry_payload({"id": "job-1", "state": "running"}) is None
+
+
+def test_retry_payload_returns_none_for_a_row_that_is_already_queued() -> None:
+    assert retry_payload({"id": "job-1", "state": "queued"}) is None
+
+
+def test_retry_payload_returns_none_when_the_state_is_missing_or_not_a_string() -> None:
+    assert retry_payload({"id": "job-1"}) is None
+    assert retry_payload({"id": "job-1", "state": 7}) is None
+
+
+def test_retry_payload_accepts_a_done_row_because_the_model_allows_requeuing_one() -> None:
+    # done -> queued is in TRANSITIONS: the same pull request reviewed again
+    # is the same job. Gating on "failed" alone would be stricter than the
+    # model this ports.
+    result = retry_payload({"id": "job-1", "state": "done"})
+    assert result is not None
+    assert result["state"] == "queued"
