@@ -499,6 +499,18 @@ def test_green_without_auth_auto_ready_when_nothing_was_held():
     assert "authorized CI runs" not in bodies[-1]
 
 
+def test_empty_bot_owned_auth_payload_does_not_count_as_nothing_held():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": AUTH_MARKER + "\n```json\n{}\n```",
+    })
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+
+
 def test_non_bot_auth_comment_is_ignored_like_missing_row():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
