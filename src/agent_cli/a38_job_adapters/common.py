@@ -896,7 +896,8 @@ class JobRuntime:
                     else:
                         if not _process_alive(pid):
                             # Re-read the holder to close the dead-holder TOCTOU window.
-                            if _read_holder(holder) == holder_values:
+                            current = _read_holder(holder)
+                            if current == holder_values:
                                 raise JobError(
                                     _lock_not_acquired_message(
                                         directory,
@@ -904,6 +905,7 @@ class JobRuntime:
                                         holder_values,
                                     )
                                 ) from None
+                            holder_values = current
                 age = time.monotonic() - started
                 if age >= budget_s:
                     raise JobError(
@@ -957,7 +959,10 @@ class JobRuntime:
         except OSError as exc:
             raise JobError(f"cannot release owned lock {name}: {exc}") from exc
         self._held_locks = [item for item in self._held_locks if item != name]
-        print(f"a38: released lock {name}", flush=True)
+        try:
+            print(f"a38: released lock {name}", flush=True)
+        except OSError:
+            pass
 
     def ensure_node_modules(self) -> None:
         if self.common.npm is None:

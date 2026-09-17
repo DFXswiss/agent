@@ -385,10 +385,13 @@ def test_lock_acquire_reports_dead_holder_without_waiting(
         return False
 
     monkeypatch.setattr(common, "_process_alive", process_alive)
+    started = time.monotonic()
     try:
         with pytest.raises(JobError, match="not acquired") as raised:
             runtime.lock_acquire("dead", budget_s=30)
+        assert time.monotonic() - started < 5
         message = str(raised.value)
+        assert "no longer alive" in message
         assert "pid=999999" in message
         assert "run_id=dead-run" in message
         assert "job=commands" in message
@@ -470,6 +473,22 @@ def test_lock_acquire_ignores_changed_dead_holder_snapshot(
         runtime.cleanup(1)
         shutil.rmtree(lock, ignore_errors=True)
         shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "error_type", [PermissionError, OverflowError], ids=["permission", "overflow"]
+)
+def test_process_alive_fails_safe_when_probe_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch, error_type: type[Exception]
+) -> None:
+    def kill(pid: int, signal_number: int) -> None:
+        assert pid == 12345
+        assert signal_number == 0
+        raise error_type
+
+    monkeypatch.setattr(common.os, "kill", kill)
+
+    assert common._process_alive(12345) is True
 
 
 def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
@@ -610,6 +629,41 @@ def test_cleanup_continues_after_invalid_utf8_lock_holder(tmp_path: Path) -> Non
     finally:
         runtime.cleanup(1)
         shutil.rmtree(corrupt_lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_continues_after_release_status_broken_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    first_lock = runtime.lock_root / "first.lock"
+    trailing_lock = runtime.lock_root / "trailing.lock"
+
+    class BrokenPipeStdout:
+        def write(self, _value: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
+    try:
+        runtime.lock_acquire("first", budget_s=0.1)
+        runtime.lock_acquire("trailing", budget_s=0.1)
+        monkeypatch.setattr(sys, "stdout", BrokenPipeStdout())
+
+        assert runtime.cleanup(0) == 0
+        assert not first_lock.exists()
+        assert not trailing_lock.exists()
+    finally:
+        runtime.cleanup(1)
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
