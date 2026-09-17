@@ -100,10 +100,13 @@ def test_unresolved_skills_returns_a_non_empty_list_when_catalogue_skills_is_not
     assert result != []
 
 
-def test_unresolved_skills_skips_catalogue_entries_that_are_not_usable_skill_ids() -> None:
+def test_unresolved_skills_skips_catalogue_entries_the_original_also_drops() -> None:
+    # These are exactly the shapes the original's reader drops without
+    # complaint: a null, a mapping with no id, an empty id. A numeric id is
+    # the one divergence — jq coerces it to "7" and checks it, this skips it.
     catalog = {
         "skills": [
-            "not-a-dict",
+            None,
             {"name": "no-id"},
             {"id": ""},
             {"id": 7},
@@ -376,13 +379,23 @@ def test_unresolved_skills_names_the_catalogue_when_it_cannot_be_read() -> None:
     ]
 
 
-def test_unresolved_skills_reads_a_catalogue_of_only_unusable_entries_as_healthy() -> None:
-    # Every entry is skipped, so the result is [] — the module's own
-    # "healthy" answer. That is the behaviour, and the name says so. It is
-    # pinned deliberately: unlike an unreadable catalogue, which returns a
-    # sentinel, a readable catalogue of unusable entries is not reported.
-    # If that should ever change, this test is where it is decided.
-    catalog = {"skills": ["not-a-dict", {"no_id": 1}, {"id": ""}]}
+def test_unresolved_skills_condemns_a_catalogue_holding_a_scalar_entry() -> None:
+    # This is the change the previous version of this test invited when it
+    # said the vacuous case was decided here. Measured against the original:
+    # `jq -r '.skills[]?.id // empty'` exits 5 on a bare string element where
+    # an all-object catalogue exits 0, and the original then reports the
+    # catalogue as unreadable. Returning [] would be the healthy answer for
+    # a catalogue nobody can read.
+    catalog = {"skills": [{"id": "spine"}, "not-a-dict"]}
+    assert unresolved_skills(
+        catalog, {"defaults": {"deny": [], "timeout_minutes": 5}}
+    ) == ["the catalogue cannot be read"]
+
+
+def test_unresolved_skills_reads_a_catalogue_of_only_droppable_entries_as_healthy() -> None:
+    # The shapes the original drops silently are still dropped silently, so
+    # the vacuous-healthy answer survives for them and only for them.
+    catalog = {"skills": [None, {"no_id": 1}, {"id": ""}]}
     assert unresolved_skills(catalog, {"defaults": {"deny": [], "timeout_minutes": 5}}) == []
 
 
@@ -589,3 +602,48 @@ def test_runner_config_problems_still_reports_a_skills_table_set_to_a_non_mappin
         problems = runner_config_problems(runner_config)
         assert len(problems) == 1, f"{wrong!r} was accepted"
         assert "skills" in problems[0]
+
+
+def test_unresolved_skills_reports_a_deny_that_is_present_but_not_a_list_of_strings() -> None:
+    # The worker requires an array of strings and refuses the job otherwise,
+    # so a present-but-malformed deny would pass a presence check here and
+    # fail the first real job. Same class as the float budget.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    for bad in ("Bash", ["Bash", 1], {"Bash": True}, 7, True):
+        runner_config = {
+            "skills": {"pr-review": {"deny": bad, "timeout_minutes": 30}},
+            "defaults": {},
+        }
+        problems = unresolved_skills(catalog, runner_config)
+        assert len(problems) == 1, f"{bad!r} was accepted"
+        assert "deny" in problems[0]
+        assert "pr-review" in problems[0]
+
+
+def test_unresolved_skills_reports_a_malformed_deny_inherited_from_defaults() -> None:
+    # The same rule on the inherited path, since that is what a skill with
+    # no deny of its own actually resolves to.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    runner_config = {"skills": {}, "defaults": {"deny": "Bash", "timeout_minutes": 30}}
+    problems = unresolved_skills(catalog, runner_config)
+    assert len(problems) == 1
+    assert "deny" in problems[0]
+
+
+def test_unresolved_skills_accepts_an_empty_deny_list() -> None:
+    # Empty is a legitimate deny list: it denies nothing, which is a choice
+    # rather than a gap, and the worker accepts it.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    runner_config = {"skills": {}, "defaults": {"deny": [], "timeout_minutes": 30}}
+    assert unresolved_skills(catalog, runner_config) == []
+
+
+def test_unresolved_skills_prefers_a_skills_own_deny_over_a_malformed_default() -> None:
+    # Resolution order is the skill's own value first, so a usable override
+    # must not be condemned by a broken default it never reaches.
+    catalog = {"skills": [{"id": "pr-review"}]}
+    runner_config = {
+        "skills": {"pr-review": {"deny": ["Bash"]}},
+        "defaults": {"deny": "broken", "timeout_minutes": 30},
+    }
+    assert unresolved_skills(catalog, runner_config) == []

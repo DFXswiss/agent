@@ -9,8 +9,12 @@ until the first real job fails.
 
 Pure module: no subprocess, no network, no filesystem, no Store.
 Callers supply the parsed catalogue and configs; this module only
-applies the rules. Unusable input is reported as a problem, never
-silently treated as healthy. None of these functions raise.
+applies the rules. Unusable input is reported as a problem rather than
+silently read as healthy — with one exception, carried over deliberately
+from the original: a catalogue entry that the original's own reader drops
+without complaint (a null, or a mapping carrying no usable id) is dropped
+here too. `unresolved_skills` says where and why. None of these functions
+raise.
 """
 
 from __future__ import annotations
@@ -43,10 +47,27 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
 
     problems: list[str] = []
     for entry in entries:
+        if entry is not None and not isinstance(entry, dict):
+            # The original reads the catalogue with `jq '.skills[]?.id'`,
+            # where the `?` guards the iteration only. A scalar element makes
+            # the field access raise, jq exits non-zero, and the whole
+            # coverage check reports the catalogue as unreadable. Measured:
+            # a bare string element gives rc=5 where an all-object catalogue
+            # gives rc=0. Skipping such an entry instead would return [] —
+            # the healthy answer — for a catalogue nobody can read.
+            return ["the catalogue cannot be read"]
         if not isinstance(entry, dict):
+            # `null` is the one non-dict the original tolerates, because jq
+            # reads `null.id` as null and drops it rather than raising.
             continue
         skill_id = entry.get("id")
         if not isinstance(skill_id, str) or not skill_id:
+            # A dict with no usable `id` is dropped by the original too, via
+            # `// empty`. One divergence: jq coerces a numeric id to its
+            # string form and would go on to check a skill named "7", where
+            # requiring a string here leaves that entry unchecked. A numeric
+            # skill id is pathological and the coercion is jq's weak typing
+            # rather than a rule worth porting.
             continue
         # Each path is defended on its own. A setting resolves from the
         # skill's own entry or from defaults, and either alone is enough —
@@ -57,8 +78,20 @@ def unresolved_skills(catalog: Any, runner_config: Any) -> list[str]:
         defaults_map = defaults if isinstance(defaults, dict) else {}
         # A key present with value None is the same as a missing key:
         # the worker would still discover the gap at run time.
-        if skill_map.get("deny") is None and defaults_map.get("deny") is None:
+        #
+        # `deny` is checked for usability, not merely presence. The worker
+        # requires an array of strings and refuses the job when it is not
+        # one, so a `deny` of `"Bash"` or `[1]` would satisfy a presence
+        # check here and then fail the first real job — the failure this
+        # module exists to prevent. `timeout_minutes` needs no equivalent
+        # here because `runner_config_problems` carries its type rule.
+        deny = skill_map.get("deny")
+        if deny is None:
+            deny = defaults_map.get("deny")
+        if deny is None:
             problems.append(f"skill {skill_id} is missing deny")
+        elif not isinstance(deny, list) or not all(isinstance(x, str) for x in deny):
+            problems.append(f"skill {skill_id} has an unusable deny")
         if (
             skill_map.get("timeout_minutes") is None
             and defaults_map.get("timeout_minutes") is None
