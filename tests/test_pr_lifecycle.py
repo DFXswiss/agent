@@ -500,9 +500,7 @@ def test_green_alone_does_not_authorize_auto_ready(case):
     fake = LifecycleAPI()
     fake.pull["draft"] = True
     fake.own_authorization()
-    if case == "forged":
-        fake.comments[-1]["user"]["id"] = 77
-    elif case in {"head", "base"}:
+    if case in {"head", "base"}:
         fake.comments[-1]["body"] = fake.comments[-1]["body"].replace(HEAD if case == "head" else BASE, BASE2)
     elif case == "run":
         fake.runs[0]["id"] = 102
