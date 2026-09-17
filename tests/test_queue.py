@@ -351,13 +351,25 @@ def test_retry_payload_leaves_unrelated_fields_untouched() -> None:
 
 
 def test_retry_payload_does_not_mutate_the_input_row() -> None:
-    # The original row dict must keep its pre-call state and attempts.
-    row = {"id": "job-1", "state": "failed", "attempts": 2}
-    original_state = row["state"]
-    original_attempts = row["attempts"]
-    retry_payload(row)
-    assert row["state"] == original_state
-    assert row["attempts"] == original_attempts
+    # Compare the whole dict, not the two fields the function is known to
+    # change. Checking only those would pass if it added a stray key or
+    # rewrote the id, which is what "does not mutate" has to rule out.
+    row = {
+        "id": "job-1",
+        "state": "failed",
+        "attempts": 2,
+        "repo": "DFXswiss/agent",
+        "reported": True,
+        "progress_check_epoch": 1768435200,
+        "_origin_device_id": "device-7",
+    }
+    before = dict(row)
+    result = retry_payload(row)
+    assert result is not None
+    assert row == before
+    # And the returned row really is a different object, so a caller
+    # mutating it later cannot reach back into the stored one.
+    assert result is not row
 
 
 def test_retry_payload_returns_none_for_a_non_dict_input() -> None:
@@ -442,3 +454,17 @@ def test_a_retention_of_none_passed_straight_into_prunable_deletes_nothing() -> 
     # configured, so the empty result above is the None and not the fixture.
     assert retention_days({"retention_days": {"done": 7}}, "done") == 7
     assert prunable(rows, state="done", now_epoch=1768435200, days=7) == ["a"]
+
+
+def test_prunable_skips_a_whitespace_only_job_id() -> None:
+    # The sibling modules that validate this field all reject a blank id
+    # with .strip(); a bare truthiness test would let " " through.
+    rows = [
+        {"id": " ", "state": "done", "finished": "2026-01-01T00:00:00Z"},
+        {"id": "keep", "state": "done", "finished": "2026-01-01T00:00:00Z"},
+    ]
+    assert prunable(rows, state="done", now_epoch=1768435200, days=7) == ["keep"]
+
+
+def test_retry_payload_returns_none_for_a_whitespace_only_job_id() -> None:
+    assert retry_payload({"id": "   ", "state": "failed"}) is None

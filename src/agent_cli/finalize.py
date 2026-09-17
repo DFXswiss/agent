@@ -37,6 +37,16 @@ def _budget(runner_config: Any, job_type: str, key: str) -> int | None:
     A setting that is present but malformed is not replaced by the default.
     The fallback triggers on an absent value only, so a broken setting stays
     visible instead of being papered over by the default.
+
+    This resolution rule is stated once here and relied on by
+    `health.runner_config_problems`, which must carry a validity rule for
+    every key this function resolves — otherwise a config passes the health
+    check and then fails to produce a budget. The two are not wired
+    together in code; what holds them in step is
+    `test_any_config_this_calls_healthy_yields_a_usable_budget`, which
+    asserts the implication over healthy and broken configs alike. A new
+    key resolved here, or a second inheritance level, needs that test and
+    that check updated with it.
     """
     if not isinstance(runner_config, dict):
         return None

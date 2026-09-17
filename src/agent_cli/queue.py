@@ -64,9 +64,9 @@ def prunable(rows: list[dict[str, Any]], *, state: str, now_epoch: int, days: in
     """Ids of rows in `state` whose `finished` time is strictly older
     than `now_epoch - days * 86400`.
 
-    Skip — never prune — a row whose `id` is not a non-empty string,
-    whose `finished` field is missing, or whose `finished` field does
-    not parse via `iso_epoch`. Wrong-shaped input yields an empty list.
+    Skip — never prune — a row whose `id` is not a string with
+    non-whitespace content, whose `finished` field is missing, or whose
+    `finished` field does not parse via `iso_epoch`. Wrong-shaped input yields an empty list.
     `days` must be a non-negative int (`bool` is rejected). Strictly
     less than.
     """
@@ -84,7 +84,7 @@ def prunable(rows: list[dict[str, Any]], *, state: str, now_epoch: int, days: in
         if row.get("state") != state:
             continue
         job_id = row.get("id")
-        if not isinstance(job_id, str) or not job_id:
+        if not isinstance(job_id, str) or not job_id.strip():
             continue
         finished = row.get("finished")
         # A job whose completion time cannot be established must not be
@@ -103,8 +103,8 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     """Return a new queued row with the previous attempt erased, or None.
 
     `row` is not mutated. Return None when `row` is not a dict, when its
-    `id` is not a non-empty string, or when `queued` is not reachable from
-    its current state.
+    `id` is not a string with non-whitespace content, or when `queued` is
+    not reachable from its current state.
 
     The state check is the job model's own rule, not a stricter one: both
     `failed` and `done` may be re-queued, while `running` and `queued` may
@@ -128,7 +128,7 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(row, dict):
         return None
     job_id = row.get("id")
-    if not isinstance(job_id, str) or not job_id:
+    if not isinstance(job_id, str) or not job_id.strip():
         return None
     state = row.get("state")
     if not isinstance(state, str) or "queued" not in TRANSITIONS.get(state, ()):
