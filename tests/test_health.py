@@ -674,9 +674,10 @@ def test_unresolved_skills_reads_an_object_shaped_catalogue_by_its_values() -> N
 
 
 def test_unresolved_skills_reports_a_skill_entry_that_is_not_a_mapping() -> None:
-    # Measured: jq exits 5 indexing a string with "deny" where a proper
-    # mapping gives rc=0, and the worker then refuses the job. Falling
-    # through to defaults would call this configuration clean.
+    # Measured for every shape below — string, list, number, bool: jq exits
+    # 5 indexing a non-object with "deny" where a proper mapping exits 0,
+    # and the worker then refuses the job. Falling through to defaults would
+    # call this configuration clean.
     catalog = {"skills": [{"id": "pr-review"}]}
     for broken in ("broken", ["Bash"], 7, True):
         runner_config = {
@@ -688,21 +689,28 @@ def test_unresolved_skills_reports_a_skill_entry_that_is_not_a_mapping() -> None
         ], f"{broken!r}"
 
 
-def test_unresolved_skills_coerces_a_numeric_catalogue_id_the_way_the_original_does() -> None:
-    # Measured: `jq -r` renders {"id": 7} as the skill "7" and the original
-    # goes on to check it. Dropping it would leave a skill unchecked that
-    # the original checks — the direction this module must not fail in.
-    catalog = {"skills": [{"id": 7}, {"id": 7.5}]}
-    problems = unresolved_skills(catalog, {"skills": {}, "defaults": {}})
-    assert problems == [
-        "skill 7 is missing deny",
-        "skill 7 is missing timeout_minutes",
-        "skill 7.5 is missing deny",
-        "skill 7.5 is missing timeout_minutes",
-    ]
+def test_unresolved_skills_reports_a_non_string_catalogue_id_rather_than_guessing() -> None:
+    # Measured with jq 1.7.1: the original does process these, but under a
+    # name from jq's rendering — `true` becomes the skill "true", a number
+    # keeps its source literal so `7.50` stays "7.50" where Python str()
+    # would say "7.5", and a non-empty list spreads across several lines the
+    # caller reads as that many garbage ids. Coercing would invent a name
+    # of these; dropping would leave a skill unchecked. Reporting says the
+    # catalogue asks for something this cannot answer.
+    for bad in (7, 7.5, True, [1], {"a": 1}):
+        catalog = {"skills": [{"id": bad}]}
+        problems = unresolved_skills(catalog, {"skills": {}, "defaults": {}})
+        assert problems == [f"skill id {bad!r} is not a string"], f"{bad!r}"
 
 
-def test_unresolved_skills_does_not_coerce_a_bool_catalogue_id() -> None:
-    # bool is an int subclass, but jq renders it "true" where str() gives
-    # "True" — coercing would invent an id the original never produces.
-    assert unresolved_skills({"skills": [{"id": True}]}, {"skills": {}, "defaults": {}}) == []
+def test_unresolved_skills_drops_exactly_the_ids_the_original_drops() -> None:
+    # Measured: `.id // empty` discards null and false and nothing else, and
+    # the loop consuming the ids then skips the blank line an empty id
+    # produces. Zero is NOT in that set — jq passes it through — so it is
+    # reported rather than dropped, which is the safe direction.
+    for dropped in (None, False, ""):
+        catalog = {"skills": [{"id": dropped}]}
+        assert unresolved_skills(catalog, {"skills": {}, "defaults": {}}) == [], f"{dropped!r}"
+    assert unresolved_skills(
+        {"skills": [{"id": 0}]}, {"skills": {}, "defaults": {}}
+    ) == ["skill id 0 is not a string"]
