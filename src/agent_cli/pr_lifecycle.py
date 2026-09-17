@@ -162,9 +162,9 @@ def visible_transition_sentences(
     draft = record.get("state") == "draft"
     if not draft and not reasons:
         return (
-            "The authorized CI runs are green and no merge conflicts exist; "
+            "Required CI is green and no merge conflicts exist; "
             "this pull request is ready for review.",
-            "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; "
+            "Die Required CI ist grün und es gibt keine Merge-Konflikte; "
             "dieser Pull Request ist bereit zum Review.",
         )
 

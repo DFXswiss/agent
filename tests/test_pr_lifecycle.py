@@ -175,11 +175,11 @@ def test_visible_transition_sentences_restore_author_write_action_required():
 def test_visible_transition_sentences_green_ready_unchanged():
     en, de = visible_transition_sentences({"state": "ready", "reasons": []})
     assert en == (
-        "The authorized CI runs are green and no merge conflicts exist; "
+        "Required CI is green and no merge conflicts exist; "
         "this pull request is ready for review."
     )
     assert de == (
-        "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; "
+        "Die Required CI ist grün und es gibt keine Merge-Konflikte; "
         "dieser Pull Request ist bereit zum Review."
     )
 
@@ -493,6 +493,10 @@ def test_green_without_auth_auto_ready_when_nothing_was_held():
     fake.pull["draft"] = True
     reconcile_pull(fake.api(), REPO, 1)
     assert fake.transitions == [False]
+    bodies = [c["body"] for c in fake.comments if "PR-GUARD:LIFECYCLE:v1" in c["body"]]
+    assert bodies
+    assert "Required CI is green" in bodies[-1]
+    assert "authorized CI runs" not in bodies[-1]
 
 
 @pytest.mark.parametrize("case", ["head", "base", "run", "report", "disabled"])
