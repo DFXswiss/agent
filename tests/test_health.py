@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent_cli.finalize import _budget
 from agent_cli.health import (
     agent_config_problems,
     runner_config_problems,
@@ -403,3 +404,111 @@ def test_unresolved_skills_accepts_timeout_from_the_skill_and_deny_from_defaults
         "defaults": {"deny": ["Bash"]},
     }
     assert unresolved_skills(catalog, runner_config) == []
+
+
+def test_runner_config_problems_reports_a_malformed_per_skill_stall_override() -> None:
+    # _budget reads a skill's own stall_minutes and substitutes the default
+    # only when the value is absent, so a present-but-broken override is
+    # what the supervisor gets. Health has to reject it here or the job is
+    # skipped at run time with nothing having complained.
+    for bad in (1.5, "soon", True, -1):
+        runner_config = {
+            "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+            "clone_stall_minutes": 5,
+            "skills": {"pr-review": {"stall_minutes": bad}},
+        }
+        problems = runner_config_problems(runner_config)
+        assert len(problems) == 1, f"{bad!r} was accepted"
+        assert "stall_minutes" in problems[0]
+        assert "pr-review" in problems[0]
+
+
+def test_runner_config_problems_accepts_a_healthy_per_skill_stall_override() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {"stall_minutes": 3}},
+    }
+    assert runner_config_problems(runner_config) == []
+
+
+def test_runner_config_problems_lets_a_skill_omit_its_stall_override() -> None:
+    # Absent is not broken: the skill inherits the default, which the rule
+    # above has already required to be usable.
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 5,
+        "skills": {"pr-review": {"timeout_minutes": 30}},
+    }
+    assert runner_config_problems(runner_config) == []
+
+
+def test_runner_config_problems_reports_a_float_default_stall_minutes() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 1.5},
+        "clone_stall_minutes": 5,
+        "skills": {},
+    }
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "defaults.stall_minutes" in problems[0]
+
+
+def test_runner_config_problems_reports_a_float_clone_stall_minutes() -> None:
+    runner_config = {
+        "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+        "clone_stall_minutes": 1.5,
+        "skills": {},
+    }
+    problems = runner_config_problems(runner_config)
+    assert len(problems) == 1
+    assert "clone_stall_minutes" in problems[0]
+
+
+def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
+    # The property the per-skill rules exist for, and the one that was
+    # actually false before a skill's stall override was checked. The
+    # candidate set deliberately mixes healthy and broken configs: the
+    # assertion is the implication, so dropping a rule makes some broken
+    # config report healthy and fail here. Checking only hand-picked
+    # healthy configs would pass no matter which rule was removed.
+    candidates = [
+        # Budgets inherited wholly from defaults.
+        {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+         "clone_stall_minutes": 5, "skills": {"pr-review": {}}},
+        # Both overridden on the skill.
+        {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+         "clone_stall_minutes": 5,
+         "skills": {"pr-review": {"timeout_minutes": 30, "stall_minutes": 3}}},
+        # One of each, in both directions.
+        {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+         "clone_stall_minutes": 5, "skills": {"pr-review": {"timeout_minutes": 30}}},
+        {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+         "clone_stall_minutes": 5, "skills": {"pr-review": {"stall_minutes": 3}}},
+    ]
+    # Every way a single field can be unusable, on the skill and on defaults.
+    for bad in (1.5, "soon", True, -1, 0, None):
+        for field in ("timeout_minutes", "stall_minutes"):
+            candidates.append(
+                {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
+                 "clone_stall_minutes": 5, "skills": {"pr-review": {field: bad}}}
+            )
+            defaults = {"timeout_minutes": 60, "stall_minutes": 10}
+            defaults[field] = bad
+            candidates.append(
+                {"defaults": defaults, "clone_stall_minutes": 5,
+                 "skills": {"pr-review": {}}}
+            )
+
+    healthy_seen = 0
+    for runner_config in candidates:
+        if runner_config_problems(runner_config) != []:
+            continue
+        healthy_seen += 1
+        for field in ("timeout_minutes", "stall_minutes"):
+            assert _budget(runner_config, "pr-review", field) is not None, (
+                f"health passed but {field} does not resolve: {runner_config}"
+            )
+    # Guard the guard: if every candidate were rejected the loop above would
+    # assert nothing at all and still pass.
+    assert healthy_seen >= 4

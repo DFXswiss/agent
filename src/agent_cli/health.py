@@ -71,12 +71,12 @@ def _positive_budget(value: Any) -> bool:
     """True for an int strictly greater than zero (bool rejected).
 
     Int, not "number". The original tests jq's `type == "number"`, which
-    admits a float, but nothing downstream here can use one: `_budget`
-    returns a budget only when it is an `int`, so a float setting resolves
-    to None and the job is skipped. Accepting a float would mean this
-    check passes a configuration the supervisor cannot run — the exact
-    failure this module exists to prevent — so the laxer half of the
-    original is deliberately not carried over.
+    admits a float, but the budgets this guards are read by `_budget`, and
+    that returns a value only when it is an `int` — a float resolves to
+    None and the job is skipped. Accepting a float would mean this check
+    passing a configuration the supervisor cannot run, the exact failure
+    this module exists to prevent, so the laxer half of the original is
+    deliberately not carried over.
     """
     if isinstance(value, bool) or not isinstance(value, int):
         return False
@@ -98,13 +98,30 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     every skill's effective timeout — its own, or the default it inherits —
     must be a positive int too.
 
+    Per skill, the effective timeout is checked; a `stall_minutes` override
+    is checked only when the skill actually carries one, because an absent
+    one inherits the default that was already checked above.
+
+    The point of the per-skill rules is that every value `_budget` could
+    resolve at run time has been checked here. Whatever it resolves — a
+    skill's own override or the inherited default — this has already
+    required it to be a positive whole number, so a config that passes
+    cannot then fail to produce a budget. Anything added to `_budget`'s
+    reads later needs a rule here too, or that property quietly lapses.
+
     Two deliberate differences from the original. It reports this whole
     block as a single message; this returns one per broken rule, because a
     caller that has to print them is better served naming the field. And
     it requires *strictly* positive where `_budget` accepts zero at run
-    time: the original is stricter in its check than in its runtime for
-    these same fields, and that asymmetry is harmless — it rejects a
-    config the runtime would have tolerated, never the reverse.
+    time — the original is likewise stricter in its check than in its
+    runtime for these fields. That direction is the safe one: it rejects a
+    config the runtime would have tolerated, rather than passing one the
+    runtime cannot use.
+
+    `clone_stall_minutes` is the exception to the paragraph above: nothing
+    in the ported Python reads it yet. It is checked because the original's
+    configuration rule covers it and the clone path will read it once that
+    is ported.
     """
     if not isinstance(runner_config, dict):
         return ["runner config is not a dict"]
@@ -122,10 +139,25 @@ def runner_config_problems(runner_config: Any) -> list[str]:
         return problems
     default_timeout = defaults_map.get("timeout_minutes")
     for skill_id, skill_cfg in skills.items():
-        own = skill_cfg.get("timeout_minutes") if isinstance(skill_cfg, dict) else None
-        effective = default_timeout if own is None else own
+        own_timeout = (
+            skill_cfg.get("timeout_minutes") if isinstance(skill_cfg, dict) else None
+        )
+        effective = default_timeout if own_timeout is None else own_timeout
         if not _positive_budget(effective):
             problems.append(f"skill {skill_id} has no positive whole-number timeout_minutes")
+        # The original has no per-skill rule for stall_minutes, but the
+        # supervisor reads a skill's own override for it exactly as it does
+        # the timeout, and it substitutes the default only when the value is
+        # absent — never when it is present and malformed. An override that
+        # exists therefore has to be usable by itself; inheriting a healthy
+        # default is not what would happen. Without this rule a skill
+        # carrying `stall_minutes: 1.5` passes every check here and then has
+        # each of its non-overdue jobs skipped for good.
+        own_stall = (
+            skill_cfg.get("stall_minutes") if isinstance(skill_cfg, dict) else None
+        )
+        if own_stall is not None and not _positive_budget(own_stall):
+            problems.append(f"skill {skill_id} has no positive whole-number stall_minutes")
     return problems
 
 
