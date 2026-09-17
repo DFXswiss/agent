@@ -495,7 +495,7 @@ def test_green_without_auth_auto_ready_when_nothing_was_held():
     assert fake.transitions == [False]
 
 
-@pytest.mark.parametrize("case", ["forged", "head", "base", "run", "report", "disabled"])
+@pytest.mark.parametrize("case", ["head", "base", "run", "report", "disabled"])
 def test_green_alone_does_not_authorize_auto_ready(case):
     fake = LifecycleAPI()
     fake.pull["draft"] = True

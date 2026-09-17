@@ -279,14 +279,15 @@ the guard itself: otherwise its in-progress check would always prevent Ready.
 Required, conditional and ignored workflow paths cannot overlap. Conditional
 jobs skipped inside a successful workflow do not make that workflow fail.
 
-Automatic Ready requires all required CI green, GitHub `mergeable: true`, a
-fresh enforced A38 pass, and the latest authenticated bot-owned AUTH record of
-CI this bot actually authorized on the current head/base. The recorded runs must
-still be the latest matching runs. A manually started green suite alone does not
-authorize promotion. An unknown merge status neither invents a conflict nor
-permits Ready. This feature changes readiness only; it creates no review
-approvals and never bypasses review requirements, branch protection or human
-merge.
+Automatic Ready requires all required CI green, GitHub `mergeable: true`, and a
+fresh enforced A38 pass. When this bot authorized held runs, the latest
+bot-owned AUTH record on the current head/base must still name those latest
+runs. When no bot-owned AUTH row exists and required CI is already green
+(nothing was held), auto-ready still leaves Draft. A present but forged or
+mismatched AUTH row still blocks. An unknown merge status neither invents a
+conflict nor permits Ready. This feature changes readiness only; it creates no
+review approvals and never bypasses review requirements, branch protection or
+human merge.
 
 The first successful approve or cancel in a guard invocation POSTs a new visible
 EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further
@@ -302,10 +303,11 @@ Convert-to-draft that GitHub accepts without GraphQL errors but leaves `isDraft`
 false is not API denial: the planned record is closed as applied Ready, readiness
 stays unchanged, and the EN/DE comment says the Draft conversion did not take
 effect. HTTP 409 on cancel does not comment. Approve and cancel comments are
-posted even when lifecycle is disabled. Auto-ready uses the latest AUTH record
-(highest comment id) on the current head/base. Only the authenticated bot's
-numeric user ID can supply these records. `--dry-run` still writes no audit
-comments.
+posted even when lifecycle is disabled. Auto-ready uses the latest bot-owned
+AUTH record (highest comment id) on the current head/base when that row exists.
+Only the authenticated bot's numeric user ID can supply these records. When no
+such row exists and required CI is green, auto-ready still leaves Draft.
+`--dry-run` still writes no audit comments.
 
 The adopting workflow owns runner routing, `contents: write` for
 `markPullRequestReadyForReview`, `actions` and `checks` read access,
