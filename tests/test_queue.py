@@ -424,3 +424,21 @@ def test_prunable_rejects_a_bool_now_epoch_that_would_otherwise_prune_a_row() ->
     assert prunable(rows, state="done", now_epoch=True, days=0) == []
     # Control: the same fixture with a real int now_epoch does prune.
     assert prunable(rows, state="done", now_epoch=1, days=0) == ["a"]
+
+
+def test_a_retention_of_none_passed_straight_into_prunable_deletes_nothing() -> None:
+    # The two functions are meant to be used together, and retention_days
+    # returns None where prunable declares an int. Pinning the handoff
+    # itself, not just prunable's guard in isolation: a caller that has been
+    # told "no retention configured" and forwards that answer must delete
+    # nothing, which is the safe direction for the one rule here that
+    # destroys data.
+    runner_config = {"retention_days": {}}
+    days = retention_days(runner_config, "done")
+    assert days is None
+    rows = [{"id": "a", "state": "done", "finished": "2020-01-01T00:00:00Z"}]
+    assert prunable(rows, state="done", now_epoch=1768435200, days=days) == []  # type: ignore[arg-type]
+    # Control: the same ancient row is prunable once a retention really is
+    # configured, so the empty result above is the None and not the fixture.
+    assert retention_days({"retention_days": {"done": 7}}, "done") == 7
+    assert prunable(rows, state="done", now_epoch=1768435200, days=7) == ["a"]

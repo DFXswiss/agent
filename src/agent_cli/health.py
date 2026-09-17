@@ -143,11 +143,13 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     if skills is None:
         # The skills table holds overrides, so a config that takes every
         # budget from defaults does not need to carry one. Absent and empty
-        # mean the same thing to every consumer: `_budget` resolves both to
-        # the defaults, and `unresolved_skills` reads a catalogue skill as
-        # resolved either way. Rejecting only the absent one would report a
-        # problem in a configuration the supervisor demonstrably runs, which
-        # is the opposite of this module's job. Deliberate divergence: the
+        # take the same path through every consumer: `_budget` falls through
+        # to the defaults from both, and `unresolved_skills` leaves the
+        # catalogue skill to resolve from defaults in both. Whether it then
+        # resolves depends on those defaults, not on which of the two shapes
+        # the table had. Rejecting only the absent one would report a problem
+        # in a configuration the supervisor demonstrably runs, which is the
+        # opposite of this module's job. Deliberate divergence: the
         # original's rule requires the object to be there.
         skills = {}
     elif not isinstance(skills, dict):
