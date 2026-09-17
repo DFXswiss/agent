@@ -118,11 +118,12 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     field as if it were part of the job.
 
     Caller obligation: the caller must delete the previous attempt's
-    exit-code and transcript artefacts before writing this returned row
-    back to storage. Otherwise the supervisor reads the old exit code
-    on its next pass and finalises the retry instantly with the
-    previous attempt's outcome. This is a caller obligation because
-    this is a pure module (no filesystem access).
+    exit-code and transcript artefacts before the retry is dispatched.
+    Not on the next finalize pass — that one only looks at rows in state
+    `running`, and this row is `queued`. The damage lands once the job is
+    running again: finalize finds the stale exit code, and records the
+    previous attempt's outcome for the new one. This is a caller
+    obligation because this is a pure module (no filesystem access).
     """
     if not isinstance(row, dict):
         return None
@@ -140,9 +141,10 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     # The existing runner needed two separate steps to do this safely —
     # reset the row's fields while it was still in the failed state, then
     # move it to queued in a second step — so that a partially reset job
-    # could never be observed in the queued state. Writing the whole row
-    # at once, as this function does, makes that two-step ordering
-    # unnecessary here.
+    # could never be observed in the queued state. Returning one complete
+    # replacement row lets the caller write once, which makes that
+    # ordering unnecessary. (This function writes nothing itself; the
+    # single write is the caller's.)
     out["state"] = "queued"
     out["attempts"] = attempts + 1
     for key in (
@@ -162,9 +164,12 @@ def retry_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     # makes a retry invisible.
     out["reported"] = False
     out["announced"] = False
-    # A missing progress field is a first baseline for the stall check;
-    # leaving None behind would be a value that check would have to
-    # special-case instead.
+    # Removed, not set to None — the one distinction the original draws
+    # here, nulling the nine fields above but deleting these three. It is
+    # not a behavioural difference: the stall check rejects a None the
+    # same way it rejects a missing key, and the caller reads both with
+    # .get(). Keeping the shape means a stored row carries no progress
+    # keys at all until the first real measurement writes them.
     for key in (
         "progress_check_epoch",
         "progress_transcript_size",
