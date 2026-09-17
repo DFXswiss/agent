@@ -706,9 +706,15 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             r for r in owned
             if isinstance(r, Mapping) and r.get("workflow") in latest
         ]
-        if (all(authorization.get(k) == v for k, v in identity.items()) and current
-                and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id")
-                        for r in current)):
+        auth_ok = (
+            all(authorization.get(k) == v for k, v in identity.items()) and current
+            and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id")
+                    for r in current)
+        )
+        # No AUTH row: GitHub already ran CI (org-member / in-repo). Held
+        # fork runs still block via ci_state reasons until they complete.
+        nothing_held = not authorization and not current
+        if auth_ok or nothing_held:
             fresh = assess_pull(
                 api, assessment.repo, assessment.pr, dry_run=True,
                 event_actor=assessment.event_actor,

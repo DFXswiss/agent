@@ -488,12 +488,18 @@ def test_multiple_auth_comments_use_latest_and_do_not_raise_ambiguous():
     assert fake.transitions == [False]
 
 
-@pytest.mark.parametrize("case", ["missing", "forged", "head", "base", "run", "report", "disabled"])
+def test_green_without_auth_auto_ready_when_nothing_was_held():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+@pytest.mark.parametrize("case", ["forged", "head", "base", "run", "report", "disabled"])
 def test_green_alone_does_not_authorize_auto_ready(case):
     fake = LifecycleAPI()
     fake.pull["draft"] = True
-    if case != "missing":
-        fake.own_authorization()
+    fake.own_authorization()
     if case == "forged":
         fake.comments[-1]["user"]["id"] = 77
     elif case in {"head", "base"}:
