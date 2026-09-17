@@ -550,16 +550,20 @@ def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
 
 def test_runner_config_problems_accepts_a_config_with_no_skills_table_at_all() -> None:
     # The skills table holds overrides. A config taking every budget from
-    # defaults omits it, and that config runs: _budget resolves both budgets
-    # from defaults and unresolved_skills calls the same shape healthy. A
-    # missing table must therefore read the same as an empty one, or this
-    # check reports a problem in a configuration the supervisor is running.
+    # defaults omits it, and its budgets still resolve: _budget reads both
+    # from defaults. So a missing table must read the same as an empty one,
+    # or this check reports a problem in a configuration the supervisor is
+    # running. (Whether a *catalogue* skill resolves is a separate question
+    # for unresolved_skills, which also needs a deny list — these defaults
+    # carry none, so it is deliberately not asserted here. The test that
+    # does demonstrate it is
+    # test_unresolved_skills_returns_an_empty_list_when_a_skill_is_resolved_only_by_defaults.)
     runner_config = {
         "defaults": {"timeout_minutes": 60, "stall_minutes": 10},
         "clone_stall_minutes": 5,
     }
     assert runner_config_problems(runner_config) == []
-    # And it agrees with both consumers on that same config.
+    # And it agrees with _budget on both budgets for that same config.
     assert _budget(runner_config, "pr-review", "timeout_minutes") == 60
     assert _budget(runner_config, "pr-review", "stall_minutes") == 10
 
