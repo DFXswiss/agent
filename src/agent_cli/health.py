@@ -100,9 +100,9 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     every non-overdue running job skipped forever; an overdue one is still
     killed, because the timeout watchdog no longer depends on this budget.
 
-    Three budgets must be positive ints, `skills` must be a mapping, and
-    every skill's effective timeout — its own, or the default it inherits —
-    must be a positive int too.
+    Three budgets must be positive ints, a `skills` table must be a mapping
+    if it is there at all, and every skill's effective timeout — its own, or
+    the default it inherits — must be a positive int too.
 
     Per skill, the effective timeout is checked; a `stall_minutes` override
     is checked only when the skill actually carries one, because an absent
@@ -140,7 +140,17 @@ def runner_config_problems(runner_config: Any) -> list[str]:
     if not _positive_budget(runner_config.get("clone_stall_minutes")):
         problems.append("clone_stall_minutes is not a positive whole number")
     skills = runner_config.get("skills")
-    if not isinstance(skills, dict):
+    if skills is None:
+        # The skills table holds overrides, so a config that takes every
+        # budget from defaults does not need to carry one. Absent and empty
+        # mean the same thing to every consumer: `_budget` resolves both to
+        # the defaults, and `unresolved_skills` reads a catalogue skill as
+        # resolved either way. Rejecting only the absent one would report a
+        # problem in a configuration the supervisor demonstrably runs, which
+        # is the opposite of this module's job. Deliberate divergence: the
+        # original's rule requires the object to be there.
+        skills = {}
+    elif not isinstance(skills, dict):
         problems.append("skills is not a mapping")
         return problems
     default_timeout = defaults_map.get("timeout_minutes")
