@@ -361,6 +361,152 @@ def test_runtime_dirs_ids_and_lock_ownership(tmp_path: Path) -> None:
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
+def test_lock_acquire_reports_dead_holder_without_waiting(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "dead.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        "pid=999999\nrun_id=dead-run\njob=commands\nsince=2026-09-17T10:00:00Z\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("dead", budget_s=30)
+        assert time.monotonic() - started < 5
+        message = str(raised.value)
+        assert "pid=999999" in message
+        assert "run_id=dead-run" in message
+        assert "job=commands" in message
+        assert "since=2026-09-17T10:00:00Z" in message
+        assert str(lock) in message
+        assert "lock must be removed manually" in message
+        assert "workload is truly gone" in message
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "missing-holder.lock"
+    lock.mkdir()
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired"):
+            runtime.lock_acquire("missing-holder", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        assert lock.is_dir()
+        assert not (lock / "holder").exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_waits_for_non_positive_holder_pid(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "non-positive-pid.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        "pid=0\nrun_id=invalid-run\njob=commands\nsince=2026-09-17T11:00:00Z\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("non-positive-pid", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        assert "no longer alive" not in str(raised.value)
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_waits_for_live_holder_and_reports_details(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "live.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T11:00:00Z\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("live", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        message = str(raised.value)
+        assert f"pid={os.getpid()}" in message
+        assert "run_id=live-run" in message
+        assert "job=commands" in message
+        assert "since=2026-09-17T11:00:00Z" in message
+        assert str(lock) in message
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_releases_lock_after_cleanup_deadline(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "expired-cleanup.lock"
+    runtime.lock_acquire("expired-cleanup", budget_s=0.1)
+    runtime.interrupted = True
+    runtime._cleanup_deadline = time.monotonic() - 1
+    try:
+        assert runtime.cleanup(0) == 0
+        assert not lock.exists()
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
 def test_npm_cache_requires_stamp_version_arch_and_canaries(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     base, head = _repo(repo)

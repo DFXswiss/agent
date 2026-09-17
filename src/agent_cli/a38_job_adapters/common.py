@@ -448,6 +448,51 @@ def npm_lock_name(root: Path) -> str:
     return f"node-modules-install-{digest}"
 
 
+def _process_alive(pid: int) -> bool:
+    if pid <= 0:
+        # Treat nonsensical holder values as alive to fail safe toward waiting.
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError):
+        return True
+    return True
+
+
+def _read_holder(holder: Path) -> dict[str, str]:
+    try:
+        text = holder.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or not key:
+            return {}
+        values[key] = value
+    return values
+
+
+def _format_holder_details(holder: Mapping[str, str]) -> str:
+    if not holder:
+        return ""
+    return (
+        f"; holder pid={holder.get('pid', '?')}, run_id={holder.get('run_id', '?')}, "
+        f"job={holder.get('job', '?')}, since={holder.get('since', '?')}"
+    )
+
+
+def _lock_not_acquired_message(
+    directory: Path, reason: str, holder: Mapping[str, str]
+) -> str:
+    return (
+        f"lock {directory} not acquired {reason}{_format_holder_details(holder)}; "
+        "the lock must be removed manually after verifying that the workload is truly gone"
+    )
+
+
 class JobRuntime:
     """Owns scratch dirs, locks, env scoping, and bounded subprocesses."""
 
@@ -839,11 +884,28 @@ class JobRuntime:
             try:
                 directory.mkdir(exist_ok=False)
             except FileExistsError:
+                holder_values = _read_holder(holder)
+                pid_text = holder_values.get("pid")
+                if pid_text is not None:
+                    try:
+                        pid = int(pid_text)
+                    except ValueError:
+                        pass
+                    else:
+                        if not _process_alive(pid):
+                            raise JobError(
+                                _lock_not_acquired_message(
+                                    directory,
+                                    "because its holder process is no longer alive",
+                                    holder_values,
+                                )
+                            ) from None
                 age = time.monotonic() - started
                 if age >= budget_s:
                     raise JobError(
-                        f"lock {directory} not acquired within {int(budget_s)}s; "
-                        "inspect its holder and active workloads manually before removing an abandoned lock"
+                        _lock_not_acquired_message(
+                            directory, f"within {int(budget_s)}s", holder_values
+                        )
                     ) from None
                 print(f"a38: waiting for lock {name} ({int(age)}s/{int(budget_s)}s)", flush=True)
                 time.sleep(self.lock_poll_s)
@@ -1124,8 +1186,6 @@ class JobRuntime:
                 print(f"a38: warning: Postgres cleanup failed: {exc}", file=sys.stderr)
             for name in list(self._held_locks):
                 try:
-                    if self._cleanup_deadline is not None and self._remaining_cleanup_s() <= 0:
-                        raise JobError("cleanup deadline exceeded before lock release")
                     self.lock_release(name)
                 except JobError as exc:
                     print(f"a38: {exc}", file=sys.stderr)
