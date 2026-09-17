@@ -162,9 +162,9 @@ def visible_transition_sentences(
     draft = record.get("state") == "draft"
     if not draft and not reasons:
         return (
-            "The authorized CI runs are green and no merge conflicts exist; "
+            "Required CI is green and no merge conflicts exist; "
             "this pull request is ready for review.",
-            "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; "
+            "Die Required CI ist grün und es gibt keine Merge-Konflikte; "
             "dieser Pull Request ist bereit zum Review.",
         )
 
@@ -694,7 +694,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         # write-collaborator Ready click, even when CI is still red.
         target = "ready"
     elif pull["draft"] and not reasons and pull.get("mergeable") is True and config["auto_ready"]:
-        _, authorization = _own_record(api, assessment, AUTH_MARKER)
+        auth_comment, authorization = _own_record(api, assessment, AUTH_MARKER)
         identity = {"repo": assessment.repo, "pr": assessment.pr, "head": snap.head_sha, "base": snap.base_sha}
         owned = authorization.get("runs", [])
         if not isinstance(owned, list):
@@ -706,9 +706,17 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             r for r in owned
             if isinstance(r, Mapping) and r.get("workflow") in latest
         ]
-        if (all(authorization.get(k) == v for k, v in identity.items()) and current
-                and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id")
-                        for r in current)):
+        auth_ok = (
+            all(authorization.get(k) == v for k, v in identity.items()) and current
+            and all(_field(latest.get(r.get("workflow")), "id") == r.get("run_id")
+                    for r in current)
+        )
+        # No AUTH comment: GitHub already ran CI (org-member / in-repo). Held
+        # fork runs still block via ci_state reasons until they complete.
+        # An empty bot-owned payload is still a present AUTH row and must not
+        # count as nothing-held.
+        nothing_held = auth_comment is None
+        if auth_ok or nothing_held:
             fresh = assess_pull(
                 api, assessment.repo, assessment.pr, dry_run=True,
                 event_actor=assessment.event_actor,

@@ -175,11 +175,11 @@ def test_visible_transition_sentences_restore_author_write_action_required():
 def test_visible_transition_sentences_green_ready_unchanged():
     en, de = visible_transition_sentences({"state": "ready", "reasons": []})
     assert en == (
-        "The authorized CI runs are green and no merge conflicts exist; "
+        "Required CI is green and no merge conflicts exist; "
         "this pull request is ready for review."
     )
     assert de == (
-        "Die freigegebenen CI-Läufe sind grün und es gibt keine Merge-Konflikte; "
+        "Die Required CI ist grün und es gibt keine Merge-Konflikte; "
         "dieser Pull Request ist bereit zum Review."
     )
 
@@ -488,15 +488,44 @@ def test_multiple_auth_comments_use_latest_and_do_not_raise_ambiguous():
     assert fake.transitions == [False]
 
 
-@pytest.mark.parametrize("case", ["missing", "forged", "head", "base", "run", "report", "disabled"])
+def test_green_without_auth_auto_ready_when_nothing_was_held():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+    bodies = [c["body"] for c in fake.comments if "PR-GUARD:LIFECYCLE:v1" in c["body"]]
+    assert bodies
+    assert "Required CI is green" in bodies[-1]
+    assert "authorized CI runs" not in bodies[-1]
+
+
+def test_empty_bot_owned_auth_payload_does_not_count_as_nothing_held():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": AUTH_MARKER + "\n```json\n{}\n```",
+    })
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+
+
+def test_non_bot_auth_comment_is_ignored_like_missing_row():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization(head=BASE2, runs=[{"run_id": 999, "workflow": PATH}])
+    fake.comments[-1]["user"]["id"] = 77
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+@pytest.mark.parametrize("case", ["head", "base", "run", "report", "disabled"])
 def test_green_alone_does_not_authorize_auto_ready(case):
     fake = LifecycleAPI()
     fake.pull["draft"] = True
-    if case != "missing":
-        fake.own_authorization()
-    if case == "forged":
-        fake.comments[-1]["user"]["id"] = 77
-    elif case in {"head", "base"}:
+    fake.own_authorization()
+    if case in {"head", "base"}:
         fake.comments[-1]["body"] = fake.comments[-1]["body"].replace(HEAD if case == "head" else BASE, BASE2)
     elif case == "run":
         fake.runs[0]["id"] = 102
