@@ -58,6 +58,11 @@ def test_state_counts_omits_states_that_do_not_appear_in_any_row() -> None:
     assert state_counts([{"state": "queued"}]) == {"queued": 1}
 
 
+def test_state_counts_returns_an_empty_mapping_when_rows_is_not_a_list() -> None:
+    # Without the guard this iterates the value instead of rejecting it.
+    assert state_counts(None) == {}  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------- retention_days
 
 
@@ -84,6 +89,17 @@ def test_retention_days_returns_none_for_a_negative_int() -> None:
 def test_retention_days_returns_none_for_a_bool_value() -> None:
     # bool is a subclass of int, so True must be rejected explicitly.
     assert retention_days({"retention_days": {"done": True}}, "done") is None
+
+
+def test_retention_days_returns_none_when_the_runner_config_is_not_a_dict() -> None:
+    # Without the guard this raises instead of answering "do not prune".
+    assert retention_days(None, "done") is None  # type: ignore[arg-type]
+
+
+def test_retention_days_returns_none_when_the_state_is_not_a_string() -> None:
+    # A non-string key would look up successfully, so this fixture puts a
+    # matching int key in the table: only the type guard rejects it.
+    assert retention_days({"retention_days": {7: 7}}, 7) is None  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------- prunable
@@ -180,6 +196,40 @@ def test_prunable_preserves_input_row_order_when_several_rows_qualify() -> None:
         {"id": "b", "state": "done", "finished": "2026-01-01T00:00:00Z"},
     ]
     assert prunable(rows, state="done", now_epoch=1768435200, days=7) == ["c", "a", "b"]
+
+
+def test_prunable_returns_an_empty_list_when_rows_is_not_a_list() -> None:
+    # Without the guard this raises on iteration rather than pruning nothing.
+    assert prunable(None, state="done", now_epoch=1768435200, days=7) == []  # type: ignore[arg-type]
+
+
+def test_prunable_skips_an_entry_of_rows_that_is_not_a_dict() -> None:
+    # A malformed entry must not abort the pass or be read as a row.
+    rows = [
+        {"id": "a", "state": "done", "finished": "2026-01-01T00:00:00Z"},
+        "not-a-dict",
+        {"id": "b", "state": "done", "finished": "2026-01-01T00:00:00Z"},
+    ]
+    assert prunable(rows, state="done", now_epoch=1768435200, days=7) == ["a", "b"]  # type: ignore[list-item]
+
+
+def test_prunable_returns_an_empty_list_when_now_epoch_is_not_an_int() -> None:
+    rows = [{"id": "a", "state": "done", "finished": "2026-01-01T00:00:00Z"}]
+    assert prunable(rows, state="done", now_epoch="1768435200", days=7) == []  # type: ignore[arg-type]
+
+
+def test_prunable_returns_an_empty_list_for_a_negative_days_value() -> None:
+    # A negative retention would push the cutoff into the future and delete a
+    # row that just finished, so the guard here protects live data.
+    rows = [{"id": "a", "state": "done", "finished": "2026-01-14T23:00:00Z"}]
+    assert prunable(rows, state="done", now_epoch=1768435200, days=-1) == []
+
+
+def test_prunable_returns_an_empty_list_for_a_bool_days_value() -> None:
+    # bool is a subclass of int: True would silently mean a one-day retention
+    # and prune a two-day-old row.
+    rows = [{"id": "a", "state": "done", "finished": "2026-01-13T00:00:00Z"}]
+    assert prunable(rows, state="done", now_epoch=1768435200, days=True) == []
 
 
 # ---------------------------------------------------------------- retry_payload
