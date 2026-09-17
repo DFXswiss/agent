@@ -486,43 +486,59 @@ def test_any_config_this_calls_healthy_yields_a_usable_budget() -> None:
         {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
          "clone_stall_minutes": 5, "skills": {"pr-review": {"stall_minutes": 3}}},
     ]
-    # Every way a single field can be unusable, on the skill and on defaults.
-    # `None` is the one value here that is not broken: absent and explicitly
-    # None both mean "inherit", so those rows are expected to be healthy.
-    generated = []
+    # Every way a single field can be unusable, placed on the skill and on
+    # defaults in turn. `None` is the only value here that is not always
+    # broken, and only in one of the two places: on the skill it means
+    # "inherit", and the default it inherits was already checked. Sitting in
+    # defaults it has nothing to inherit from, so it is rejected like the
+    # rest. Two of the twenty-four rows are therefore healthy, not four.
+    generated: list[tuple[str, dict]] = []
     for bad in (1.5, "soon", True, -1, 0, None):
         for field in ("timeout_minutes", "stall_minutes"):
-            generated.append(
+            generated.append((
+                f"skill:{field}={bad!r}",
                 {"defaults": {"timeout_minutes": 60, "stall_minutes": 10},
-                 "clone_stall_minutes": 5, "skills": {"pr-review": {field: bad}}}
-            )
+                 "clone_stall_minutes": 5, "skills": {"pr-review": {field: bad}}},
+            ))
             defaults = {"timeout_minutes": 60, "stall_minutes": 10}
             defaults[field] = bad
-            generated.append(
+            generated.append((
+                f"defaults:{field}={bad!r}",
                 {"defaults": defaults, "clone_stall_minutes": 5,
-                 "skills": {"pr-review": {}}}
-            )
+                 "skills": {"pr-review": {}}},
+            ))
 
-    def healthy_count(configs: list[dict]) -> int:
-        healthy = 0
-        for runner_config in configs:
+    def healthy_labels(rows: list[tuple[str, dict]]) -> set[str]:
+        """Labels of the rows reporting no problems, asserting the implication.
+
+        The assertion runs for every row counted here; a failure raises out
+        of this helper rather than being folded into the returned set.
+        """
+        healthy = set()
+        for label, runner_config in rows:
             if runner_config_problems(runner_config) != []:
                 continue
-            healthy += 1
+            healthy.add(label)
             for field in ("timeout_minutes", "stall_minutes"):
                 assert _budget(runner_config, "pr-review", field) is not None, (
                     f"health passed but {field} does not resolve: {runner_config}"
                 )
         return healthy
 
-    handwritten_healthy = healthy_count(handwritten)
-    generated_healthy = healthy_count(generated)
-    # Guard the guard, counted per group. A single total would be satisfied
-    # by the handwritten rows alone, which are all healthy by construction,
-    # so the generated rows could stop contributing without anything
-    # noticing. Both sides have to stay non-trivial: every handwritten row
-    # healthy, the two explicit-None rows healthy, and the rest rejected —
-    # otherwise the implication above is being asserted over nothing.
-    assert handwritten_healthy == len(handwritten)
-    assert generated_healthy == 2
-    assert generated_healthy < len(generated)
+    handwritten_healthy = healthy_labels(
+        [(str(i), cfg) for i, cfg in enumerate(handwritten)]
+    )
+    generated_healthy = healthy_labels(generated)
+    # Guard the guard, by identity rather than by count. A single total was
+    # satisfied by the handwritten rows alone, which are all healthy by
+    # construction, so the generated rows could have stopped contributing
+    # unnoticed. Counting per group fixes that much. Naming the rows is
+    # strictly stronger again — it also rejects one row going healthy while
+    # another stops, which leaves the total unchanged — though that is an
+    # argument from the shape of the assertion, not one a mutation here has
+    # had to demonstrate.
+    assert handwritten_healthy == {"0", "1", "2", "3"}
+    assert generated_healthy == {
+        "skill:timeout_minutes=None",
+        "skill:stall_minutes=None",
+    }
