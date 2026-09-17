@@ -472,6 +472,8 @@ def _read_holder(holder: Path) -> dict[str, str]:
         if not separator or not key:
             return {}
         values[key] = value
+    if not {"pid", "run_id", "job", "since"}.issubset(values):
+        return {}
     return values
 
 
@@ -937,7 +939,7 @@ class JobRuntime:
             raise JobError(f"owned lock {name} disappeared before release")
         try:
             text = holder.read_text(encoding="utf-8") if holder.is_file() else ""
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             raise JobError(f"cannot read lock ownership for {name}: {exc}") from exc
         pid_line = ""
         run_ok = False

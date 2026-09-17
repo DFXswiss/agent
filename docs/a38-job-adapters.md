@@ -106,7 +106,8 @@ cleanup removal failures are warnings and never replace an earlier test failure.
 
 SIGINT and SIGTERM terminate the active subprocess process group, including
 descendants, and bound all remaining cleanup to one 25-second deadline. Diagnostics
-are skipped on interruption. Normal long-running work has no adapter-imposed timeout;
+are skipped on interruption. Releasing a lock owned by the current run is deliberately
+not bounded by that cleanup window. Normal long-running work has no adapter-imposed timeout;
 the enclosing A38 job timeout remains authoritative. If an argv leader exits after
 starting background descendants, the adapter terminates that still-owned process group
 before returning; inherited output descriptors cannot leave the adapter hung or permit
