@@ -203,9 +203,14 @@ def finalize_running(
             completed = runner(workspace.has_session_argv(socket, session))
             if completed.returncode == 0:
                 # Session alive and no exit code: apply timeout/stall budgets.
+                # The two are resolved separately, and the stall budget only
+                # once the job is known not to be overdue. Requiring both up
+                # front would let a missing stall_minutes disable the timeout
+                # watchdog as well, so a job that has blown its limit would
+                # run forever over a setting that check does not need. The
+                # original orders it this way for the same reason.
                 timeout_minutes = _budget(runner_config, job_type, "timeout_minutes")
-                stall_minutes = _budget(runner_config, job_type, "stall_minutes")
-                if timeout_minutes is None or stall_minutes is None:
+                if timeout_minutes is None:
                     skipped += 1
                     continue
                 overdue = watchdog.is_overdue(started, now_epoch, timeout_minutes)
@@ -216,6 +221,10 @@ def finalize_running(
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "timeout"
                 else:
+                    stall_minutes = _budget(runner_config, job_type, "stall_minutes")
+                    if stall_minutes is None:
+                        skipped += 1
+                        continue
                     pane = runner(watchdog.pane_pids_argv(socket, session))
                     if pane.returncode != 0:
                         skipped += 1
