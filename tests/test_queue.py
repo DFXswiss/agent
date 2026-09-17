@@ -59,7 +59,7 @@ def test_state_counts_omits_states_that_do_not_appear_in_any_row() -> None:
 
 
 def test_state_counts_returns_an_empty_mapping_when_rows_is_not_a_list() -> None:
-    # Without the guard this iterates the value instead of rejecting it.
+    # Without the guard the for-loop raises TypeError rather than answering {}.
     assert state_counts(None) == {}  # type: ignore[arg-type]
 
 
@@ -295,10 +295,10 @@ def test_retry_payload_resets_the_previous_attempt_fields_to_none() -> None:
     assert result["contract_followed"] is None
 
 
-# Without this reset a retried job never announces itself again and its
-# old outcome counts as already reported, so the retry becomes invisible
+# Without this reset a retried job never announces itself again and its old
+# outcome counts as already reported, so the retry becomes invisible to the
+# supervisor and to any UI that surfaces job status.
 def test_retry_payload_resets_reported_and_announced_to_false() -> None:
-    # to the supervisor and to any UI that surfaces job status.
     row = {
         "id": "job-1",
         "state": "failed",
@@ -311,10 +311,11 @@ def test_retry_payload_resets_reported_and_announced_to_false() -> None:
     assert result["announced"] is False
 
 
-# The stall check reads a missing progress field as "take a first
-# baseline"; a None value would be a value the stall check would have
+# The original deletes these three keys while nulling the nine beside them,
+# and the port keeps that shape. Behaviour is the same either way — the stall
+# check rejects a None exactly as it rejects a missing key — so what this pins
+# is the stored shape: no progress keys until a real measurement writes them.
 def test_retry_payload_omits_the_progress_keys_from_the_result_rather_than_setting_them_to_none() -> None:
-    # to special-case instead of simply being absent.
     row = {
         "id": "job-1",
         "state": "failed",
@@ -413,3 +414,13 @@ def test_retry_payload_accepts_a_done_row_because_the_model_allows_requeuing_one
     result = retry_payload({"id": "job-1", "state": "done"})
     assert result is not None
     assert result["state"] == "queued"
+
+
+def test_prunable_rejects_a_bool_now_epoch_that_would_otherwise_prune_a_row() -> None:
+    # True is 1, so with days=0 the cutoff would be epoch 1 and a row
+    # finished at epoch 0 would be deleted. A fixture with a realistic
+    # timestamp survives either way and would pass for the wrong reason.
+    rows = [{"id": "a", "state": "done", "finished": "1970-01-01T00:00:00Z"}]
+    assert prunable(rows, state="done", now_epoch=True, days=0) == []
+    # Control: the same fixture with a real int now_epoch does prune.
+    assert prunable(rows, state="done", now_epoch=1, days=0) == ["a"]
