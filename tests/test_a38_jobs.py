@@ -19,7 +19,7 @@ import pytest
 
 from agent_cli import a38
 from agent_cli import a38_jobs
-from agent_cli.a38_job_adapters import commands, compose, http_smoke, immutable
+from agent_cli.a38_job_adapters import commands, common, compose, http_smoke, immutable
 from agent_cli.a38_job_adapters.common import (
     DIAGNOSTIC_TIMEOUT_S,
     CommonConfig,
@@ -391,6 +391,51 @@ def test_lock_acquire_reports_dead_holder_without_waiting(tmp_path: Path) -> Non
         assert "lock must be removed manually" in message
         assert "workload is truly gone" in message
         assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_ignores_changed_dead_holder_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "changed-holder.lock"
+    holder = lock / "holder"
+    lock.mkdir()
+    holder.write_text(
+        "pid=999999\nrun_id=dead-run\njob=commands\n"
+        "since=2026-09-17T10:00:00Z\n",
+        encoding="utf-8",
+    )
+    new_holder = (
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T10:00:01Z\n"
+    )
+
+    def process_alive(pid: int) -> bool:
+        if pid == 999999:
+            holder.write_text(new_holder, encoding="utf-8")
+            return False
+        assert pid == os.getpid()
+        return True
+
+    monkeypatch.setattr(common, "_process_alive", process_alive)
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("changed-holder", budget_s=0.03)
+        assert "no longer alive" not in str(raised.value)
+        assert lock.is_dir()
+        assert holder.read_text(encoding="utf-8") == new_holder
     finally:
         runtime.cleanup(1)
         shutil.rmtree(lock, ignore_errors=True)

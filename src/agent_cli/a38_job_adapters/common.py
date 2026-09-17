@@ -893,13 +893,15 @@ class JobRuntime:
                         pass
                     else:
                         if not _process_alive(pid):
-                            raise JobError(
-                                _lock_not_acquired_message(
-                                    directory,
-                                    "because its holder process is no longer alive",
-                                    holder_values,
-                                )
-                            ) from None
+                            # Re-read the holder to close the dead-holder TOCTOU window.
+                            if _read_holder(holder) == holder_values:
+                                raise JobError(
+                                    _lock_not_acquired_message(
+                                        directory,
+                                        "because its holder process is no longer alive",
+                                        holder_values,
+                                    )
+                                ) from None
                 age = time.monotonic() - started
                 if age >= budget_s:
                     raise JobError(
