@@ -499,7 +499,7 @@ def _lock_not_acquired_message(
 def _print_best_effort(message: str, *, stream: TextIO | None = None) -> None:
     try:
         print(message, file=stream if stream is not None else sys.stdout, flush=True)
-    except (OSError, ValueError):
+    except Exception:  # noqa: BLE001
         pass
 
 

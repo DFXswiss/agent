@@ -840,7 +840,9 @@ def test_cleanup_continues_after_invalid_utf8_lock_holder(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    "error_type", [BrokenPipeError, ValueError], ids=["broken-pipe", "closed-stream"]
+    "error_type",
+    [BrokenPipeError, ValueError, RuntimeError],
+    ids=["broken-pipe", "closed-stream", "runtime-error"],
 )
 def test_cleanup_continues_after_lock_error_stderr_failure(
     tmp_path: Path,
@@ -883,7 +885,9 @@ def test_cleanup_continues_after_lock_error_stderr_failure(
 
 
 @pytest.mark.parametrize(
-    "error_type", [BrokenPipeError, ValueError], ids=["broken-pipe", "closed-stream"]
+    "error_type",
+    [BrokenPipeError, ValueError, RuntimeError],
+    ids=["broken-pipe", "closed-stream", "runtime-error"],
 )
 def test_cleanup_continues_after_release_status_broken_pipe(
     tmp_path: Path,
