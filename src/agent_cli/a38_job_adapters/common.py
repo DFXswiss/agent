@@ -945,7 +945,11 @@ class JobRuntime:
             raise JobError(f"invalid lock name: {name}")
         directory = self.lock_root / f"{name}.lock"
         holder = directory / "holder"
-        if not directory.exists():
+        try:
+            directory_exists = directory.exists()
+        except OSError as exc:
+            raise JobError(f"cannot read lock ownership for {name}: {exc}") from exc
+        if not directory_exists:
             raise JobError(f"owned lock {name} disappeared before release")
         try:
             text = holder.read_text(encoding="utf-8") if holder.is_file() else ""
@@ -1096,21 +1100,21 @@ class JobRuntime:
             return
         docker = shutil.which("docker", path=self.env.get("PATH"))
         if not docker:
-            print(
+            _print_best_effort(
                 f"a38: warning: could not remove owned Postgres container {self._pg_container}; "
                 "inspect it on this host",
-                file=sys.stderr,
+                stream=sys.stderr,
             )
             return
         completed = self.bounded(20, [docker, "rm", "-f", self._pg_container])
         if completed.returncode == 0:
-            print(f"a38: removed postgres {self._pg_container}", flush=True)
+            _print_best_effort(f"a38: removed postgres {self._pg_container}")
             self._pg_container = None
         else:
-            print(
+            _print_best_effort(
                 f"a38: warning: could not remove owned Postgres container {self._pg_container}; "
                 "inspect it on this host",
-                file=sys.stderr,
+                stream=sys.stderr,
             )
 
     def isolate_docker_config(self) -> None:
@@ -1180,37 +1184,45 @@ class JobRuntime:
             self._begin_cleanup_deadline()
         result = primary_status
         try:
-            if self._job_cleanup is not None:
-                try:
-                    hook_status = int(self._job_cleanup(result))
-                except JobError as exc:
-                    _print_best_effort(f"a38: {exc}", stream=sys.stderr)
-                    hook_status = 1
-                except OSError as exc:
-                    _print_best_effort(f"a38: cleanup OSError: {exc}", stream=sys.stderr)
-                    hook_status = 1
-                except Exception as exc:  # noqa: BLE001
-                    _print_best_effort(
-                        f"a38: cleanup hook failed: {type(exc).__name__}", stream=sys.stderr
-                    )
-                    hook_status = 1
-                if hook_status != 0 and result == 0:
-                    result = 1
             try:
-                self.postgres_stop()
-            except (JobError, OSError) as exc:
-                _print_best_effort(
-                    f"a38: warning: Postgres cleanup failed: {exc}", stream=sys.stderr
-                )
-            for name in list(self._held_locks):
-                try:
-                    self.lock_release(name)
-                except JobError as exc:
-                    _print_best_effort(f"a38: {exc}", stream=sys.stderr)
-                    if result == 0:
+                if self._job_cleanup is not None:
+                    try:
+                        hook_status = int(self._job_cleanup(result))
+                    except JobError as exc:
+                        _print_best_effort(f"a38: {exc}", stream=sys.stderr)
+                        hook_status = 1
+                    except OSError as exc:
+                        _print_best_effort(f"a38: cleanup OSError: {exc}", stream=sys.stderr)
+                        hook_status = 1
+                    except Exception as exc:  # noqa: BLE001
+                        _print_best_effort(
+                            f"a38: cleanup hook failed: {type(exc).__name__}", stream=sys.stderr
+                        )
+                        hook_status = 1
+                    if hook_status != 0 and result == 0:
                         result = 1
-            if self._group_cleanup_uncertain and result == 0:
-                result = 1
+                try:
+                    self.postgres_stop()
+                except (JobError, OSError) as exc:
+                    _print_best_effort(
+                        f"a38: warning: Postgres cleanup failed: {exc}", stream=sys.stderr
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _print_best_effort(
+                    f"a38: cleanup failed: {type(exc).__name__}", stream=sys.stderr
+                )
+                if result == 0:
+                    result = 1
+            finally:
+                for name in list(self._held_locks):
+                    try:
+                        self.lock_release(name)
+                    except Exception as exc:  # noqa: BLE001
+                        _print_best_effort(f"a38: {exc}", stream=sys.stderr)
+                        if result == 0:
+                            result = 1
+                if self._group_cleanup_uncertain and result == 0:
+                    result = 1
         finally:
             if self.work is not None:
                 shutil.rmtree(self.work, ignore_errors=True)

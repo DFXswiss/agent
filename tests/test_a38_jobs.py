@@ -658,6 +658,111 @@ def test_cleanup_releases_lock_after_cleanup_deadline(tmp_path: Path) -> None:
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
+def test_cleanup_releases_lock_when_postgres_warning_stream_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "postgres-warning.lock"
+
+    class FailingStderr:
+        def write(self, _value: str) -> int:
+            raise ValueError
+
+        def flush(self) -> None:
+            raise ValueError
+
+    try:
+        runtime.lock_acquire("postgres-warning", budget_s=0.1)
+        runtime._pg_container = "fake-container"
+        monkeypatch.setattr(common.shutil, "which", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(sys, "stderr", FailingStderr())
+
+        result = runtime.cleanup(0)
+
+        assert isinstance(result, int)
+        assert not lock.exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_continues_after_unexpected_lock_release_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    first_lock = runtime.lock_root / "first.lock"
+    second_lock = runtime.lock_root / "second.lock"
+
+    try:
+        runtime.lock_acquire("first", budget_s=0.1)
+        runtime.lock_acquire("second", budget_s=0.1)
+        original_lock_release = runtime.lock_release
+
+        def lock_release(name: str) -> None:
+            if name == "first":
+                raise RuntimeError("unexpected lock release failure")
+            original_lock_release(name)
+
+        monkeypatch.setattr(runtime, "lock_release", lock_release)
+
+        assert runtime.cleanup(0) == 1
+        assert not second_lock.exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(first_lock, ignore_errors=True)
+        shutil.rmtree(second_lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_releases_lock_after_unexpected_postgres_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "unexpected-postgres.lock"
+
+    def postgres_stop() -> None:
+        raise RuntimeError("unexpected postgres cleanup failure")
+
+    try:
+        runtime.lock_acquire("unexpected-postgres", budget_s=0.1)
+        monkeypatch.setattr(runtime, "postgres_stop", postgres_stop)
+
+        result = runtime.cleanup(0)
+
+        assert isinstance(result, int)
+        assert result == 1
+        assert not lock.exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
 def test_cleanup_continues_after_invalid_utf8_lock_holder(tmp_path: Path) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
