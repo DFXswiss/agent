@@ -501,9 +501,11 @@ def test_lock_acquire_ignores_changed_dead_holder_snapshot(
         return True
 
     monkeypatch.setattr(common, "_process_alive", process_alive)
+    started = time.monotonic()
     try:
         with pytest.raises(JobError, match="not acquired") as raised:
             runtime.lock_acquire("changed-holder", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
         assert "no longer alive" not in str(raised.value)
         assert lock.is_dir()
         assert holder.read_text(encoding="utf-8") == new_holder
