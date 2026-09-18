@@ -111,7 +111,10 @@ not bounded by that cleanup window. Normal long-running work has no adapter-impo
 the enclosing A38 job timeout remains authoritative. If an argv leader exits after
 starting background descendants, the adapter terminates that still-owned process group
 before returning; inherited output descriptors cannot leave the adapter hung or permit
-an orphaned background process to masquerade as success.
+an orphaned background process to masquerade as success. A process group that exists
+but cannot be signalled is treated as still present and re-polled within the same bounded
+budget, including while its last member is an unreaped orphan. Only a group still
+unconfirmed when the budget expires is reported as uncertain cleanup.
 
 ## `commands`
 

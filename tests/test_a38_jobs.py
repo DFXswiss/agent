@@ -593,6 +593,58 @@ def test_process_alive_returns_false_when_process_is_missing(
     assert common._process_alive(12345) is False
 
 
+def test_terminate_process_group_repolls_transiently_unsignalable_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripted = [
+        PermissionError("not signalable"),
+        PermissionError("not signalable"),
+        ProcessLookupError(),
+    ]
+
+    def killpg(pgid: int, signal_number: int) -> None:
+        assert pgid == 12345
+        assert signal_number in (signal.SIGTERM, 0)
+        assert scripted
+        raise scripted.pop(0)
+
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=5) is True
+    assert scripted == []
+
+
+def test_terminate_process_group_persistently_unsignalable_is_uncertain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def killpg(pgid: int, signal_number: int) -> None:
+        nonlocal calls
+        assert pgid == 12345
+        assert signal_number in (signal.SIGTERM, signal.SIGKILL, 0)
+        calls += 1
+        raise PermissionError("not signalable")
+
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=0.03) is False
+    assert calls > 1
+
+
+def test_terminate_process_group_exhausted_deadline_unsignalable_is_uncertain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def killpg(pgid: int, signal_number: int) -> None:
+        assert pgid == 12345
+        assert signal_number == 0
+        raise PermissionError("not signalable")
+
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=0) is False
+
+
 def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
