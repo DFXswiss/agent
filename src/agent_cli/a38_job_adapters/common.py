@@ -921,7 +921,11 @@ class JobRuntime:
                             directory, f"within {int(budget_s)}s", holder_values
                         )
                     ) from None
-                print(f"a38: waiting for lock {name} ({int(age)}s/{int(budget_s)}s)", flush=True)
+                print(
+                    f"a38: waiting for lock {name} ({int(age)}s/{int(budget_s)}s)"
+                    f"{_format_holder_details(holder_values)}",
+                    flush=True,
+                )
                 time.sleep(self.lock_poll_s)
                 continue
             try:

@@ -96,7 +96,10 @@ holder so the lock can be removed manually after inspection. npm installation ha
 separate per-worktree lock even when a job also has a shared lock. A cached
 `node_modules` is reused only when the package-lock digest, exact Node version,
 architecture stamp, and every configured canary match. Canary paths are relative to
-`node_modules`, not the repo.
+`node_modules`, not the repo. Waiting is not first-come-first-served: a waiter has no
+claim from how long it has already waited, and a newly started run can take a released
+lock ahead of it. Every waiting line names the current holder, so a holder that changes
+while a job waits is visible in the log.
 
 Postgres is optional and owned by container ID: the adapter creates the container,
 records the returned ID, starts it, obtains a dynamic loopback port, waits for
