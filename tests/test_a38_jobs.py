@@ -773,7 +773,9 @@ def test_lock_acquire_waits_for_live_holder_and_reports_details(tmp_path: Path) 
 
 
 def test_lock_acquire_wait_line_names_current_holder(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
@@ -791,6 +793,17 @@ def test_lock_acquire_wait_line_names_current_holder(
         "since=2026-09-17T11:00:00Z\n",
         encoding="utf-8",
     )
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 0.001
+        return 99.0
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
     try:
         with pytest.raises(JobError, match="not acquired"):
             runtime.lock_acquire("wait-detail", budget_s=0.03)
@@ -799,10 +812,58 @@ def test_lock_acquire_wait_line_names_current_holder(
             for line in capsys.readouterr().out.splitlines()
             if line.startswith("a38: waiting for lock wait-detail ")
         ]
-        assert waiting_lines
+        assert calls["n"] >= 3
+        assert len(waiting_lines) == 1
         assert f"holder pid={os.getpid()}" in waiting_lines[0]
         assert "run_id=live-run" in waiting_lines[0]
         assert "job=commands" in waiting_lines[0]
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_wait_line_omits_details_for_unreadable_holder(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "unreadable-holder.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(f"pid={os.getpid()}\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 0.001
+        return 99.0
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    try:
+        with pytest.raises(JobError, match="not acquired"):
+            runtime.lock_acquire("unreadable-holder", budget_s=0.03)
+        waiting_lines = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("a38: waiting for lock unreadable-holder ")
+        ]
+        assert calls["n"] >= 3
+        assert len(waiting_lines) == 1
+        assert "a38: waiting for lock unreadable-holder " in waiting_lines[0]
+        assert "(0s/0s)" in waiting_lines[0]
+        assert "; holder pid=" not in waiting_lines[0]
     finally:
         runtime.cleanup(1)
         shutil.rmtree(lock, ignore_errors=True)
