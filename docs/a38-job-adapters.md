@@ -90,10 +90,13 @@ Every adapter accepts these optional keys:
 values are deliberately applied. Configured values may use placeholders.
 
 `lock` uses an atomic directory and an owner token. Waiting is finite; an abandoned
-lock is never reclaimed automatically. npm installation has a separate per-worktree
-lock even when a job also has a shared lock. A cached `node_modules` is reused only
-when the package-lock digest, exact Node version, architecture stamp, and every
-configured canary match. Canary paths are relative to `node_modules`, not the repo.
+lock is never reclaimed automatically. Waiting ends early when the process recorded
+in the `holder` file is proven not to exist, and the resulting error identifies that
+holder so the lock can be removed manually after inspection. npm installation has a
+separate per-worktree lock even when a job also has a shared lock. A cached
+`node_modules` is reused only when the package-lock digest, exact Node version,
+architecture stamp, and every configured canary match. Canary paths are relative to
+`node_modules`, not the repo.
 
 Postgres is optional and owned by container ID: the adapter creates the container,
 records the returned ID, starts it, obtains a dynamic loopback port, waits for
@@ -103,7 +106,8 @@ cleanup removal failures are warnings and never replace an earlier test failure.
 
 SIGINT and SIGTERM terminate the active subprocess process group, including
 descendants, and bound all remaining cleanup to one 25-second deadline. Diagnostics
-are skipped on interruption. Normal long-running work has no adapter-imposed timeout;
+are skipped on interruption. Releasing a lock owned by the current run is deliberately
+not bounded by that cleanup window. Normal long-running work has no adapter-imposed timeout;
 the enclosing A38 job timeout remains authoritative. If an argv leader exits after
 starting background descendants, the adapter terminates that still-owned process group
 before returning; inherited output descriptors cannot leave the adapter hung or permit

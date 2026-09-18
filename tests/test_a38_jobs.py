@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import os
 import re
@@ -19,7 +20,7 @@ import pytest
 
 from agent_cli import a38
 from agent_cli import a38_jobs
-from agent_cli.a38_job_adapters import commands, compose, http_smoke, immutable
+from agent_cli.a38_job_adapters import commands, common, compose, http_smoke, immutable
 from agent_cli.a38_job_adapters.common import (
     DIAGNOSTIC_TIMEOUT_S,
     CommonConfig,
@@ -358,6 +359,570 @@ def test_runtime_dirs_ids_and_lock_ownership(tmp_path: Path) -> None:
     finally:
         runtime.cleanup(1)
         shutil.rmtree(runtime.lock_root / "owned.lock", ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_release_reports_ownership_error_on_unexpected_stat_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    name = "stat-error"
+    lock = runtime.lock_root / f"{name}.lock"
+
+    try:
+        runtime.lock_acquire(name, budget_s=0.1)
+
+        def stat(path: Path) -> None:
+            assert path == lock
+            raise PermissionError
+
+        monkeypatch.setattr(common.os, "stat", stat)
+
+        with pytest.raises(JobError, match="cannot read lock ownership") as raised:
+            runtime.lock_release(name)
+        message = str(raised.value)
+        assert "cannot read lock ownership" in message
+        assert "disappeared before release" not in message
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_reports_dead_holder_without_waiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "dead.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        "pid=999999\nrun_id=dead-run\njob=commands\nsince=2026-09-17T10:00:00Z\n",
+        encoding="utf-8",
+    )
+
+    def process_alive(pid: int) -> bool:
+        assert pid == 999999
+        return False
+
+    monkeypatch.setattr(common, "_process_alive", process_alive)
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("dead", budget_s=30)
+        assert time.monotonic() - started < 5
+        message = str(raised.value)
+        assert "no longer alive" in message
+        assert "pid=999999" in message
+        assert "run_id=dead-run" in message
+        assert "job=commands" in message
+        assert "since=2026-09-17T10:00:00Z" in message
+        assert str(lock) in message
+        assert "lock must be removed manually" in message
+        assert "workload is truly gone" in message
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_waits_for_incomplete_holder(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "incomplete.lock"
+    lock.mkdir()
+    (lock / "holder").write_text("pid=999999\n", encoding="utf-8")
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("incomplete", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        assert "no longer alive" not in str(raised.value)
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_ignores_changed_dead_holder_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "changed-holder.lock"
+    holder = lock / "holder"
+    lock.mkdir()
+    holder.write_text(
+        "pid=999999\nrun_id=dead-run\njob=commands\n"
+        "since=2026-09-17T10:00:00Z\n",
+        encoding="utf-8",
+    )
+    new_holder = (
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T10:00:01Z\n"
+    )
+
+    def process_alive(pid: int) -> bool:
+        if pid == 999999:
+            holder.write_text(new_holder, encoding="utf-8")
+            return False
+        assert pid == os.getpid()
+        return True
+
+    monkeypatch.setattr(common, "_process_alive", process_alive)
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("changed-holder", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        assert "no longer alive" not in str(raised.value)
+        assert lock.is_dir()
+        assert holder.read_text(encoding="utf-8") == new_holder
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_timeout_message_reflects_snapshot_updated_in_same_iteration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "changed-holder-timeout.lock"
+    holder = lock / "holder"
+    lock.mkdir()
+    holder.write_text(
+        "pid=999999\nrun_id=dead-run\njob=commands\n"
+        "since=2026-09-17T10:00:00Z\n",
+        encoding="utf-8",
+    )
+    new_holder = (
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T10:00:01Z\n"
+    )
+
+    def process_alive(pid: int) -> bool:
+        assert pid == 999999
+        holder.write_text(new_holder, encoding="utf-8")
+        return False
+
+    clock = itertools.chain([0.0, 1.0], itertools.repeat(1.0))
+    monkeypatch.setattr(common, "_process_alive", process_alive)
+    monkeypatch.setattr(common.time, "monotonic", lambda: next(clock))
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("changed-holder-timeout", budget_s=1)
+        message = str(raised.value)
+        assert "no longer alive" not in message
+        assert f"pid={os.getpid()}" in message
+        assert "run_id=live-run" in message
+        assert "pid=999999" not in message
+        assert "run_id=dead-run" not in message
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "error_type", [PermissionError, OverflowError], ids=["permission", "overflow"]
+)
+def test_process_alive_fails_safe_when_probe_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch, error_type: type[Exception]
+) -> None:
+    def kill(pid: int, signal_number: int) -> None:
+        assert pid == 12345
+        assert signal_number == 0
+        raise error_type
+
+    monkeypatch.setattr(common.os, "kill", kill)
+
+    assert common._process_alive(12345) is True
+
+
+def test_process_alive_returns_false_when_process_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def kill(pid: int, signal_number: int) -> None:
+        assert pid == 12345
+        assert signal_number == 0
+        raise ProcessLookupError
+
+    monkeypatch.setattr(common.os, "kill", kill)
+
+    assert common._process_alive(12345) is False
+
+
+def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "missing-holder.lock"
+    lock.mkdir()
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired"):
+            runtime.lock_acquire("missing-holder", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        assert lock.is_dir()
+        assert not (lock / "holder").exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize("holder_pid", [0, -999999], ids=["zero", "negative"])
+def test_lock_acquire_waits_for_non_positive_holder_pid(
+    tmp_path: Path, holder_pid: int
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock_name = f"non-positive-pid-{holder_pid}"
+    lock = runtime.lock_root / f"{lock_name}.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        f"pid={holder_pid}\nrun_id=invalid-run\njob=commands\n"
+        "since=2026-09-17T11:00:00Z\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire(lock_name, budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        assert "no longer alive" not in str(raised.value)
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_waits_for_live_holder_and_reports_details(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "live.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T11:00:00Z\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(JobError, match="not acquired") as raised:
+            runtime.lock_acquire("live", budget_s=0.03)
+        assert time.monotonic() - started >= 0.02
+        message = str(raised.value)
+        assert f"pid={os.getpid()}" in message
+        assert "run_id=live-run" in message
+        assert "job=commands" in message
+        assert "since=2026-09-17T11:00:00Z" in message
+        assert str(lock) in message
+        assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_releases_lock_after_cleanup_deadline(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "expired-cleanup.lock"
+    runtime.lock_acquire("expired-cleanup", budget_s=0.1)
+    runtime.interrupted = True
+    runtime._cleanup_deadline = time.monotonic() - 1
+    try:
+        assert runtime.cleanup(0) == 0
+        assert not lock.exists()
+    finally:
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_releases_lock_when_postgres_warning_stream_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "postgres-warning.lock"
+
+    class FailingStderr:
+        def write(self, _value: str) -> int:
+            raise ValueError
+
+        def flush(self) -> None:
+            raise ValueError
+
+    try:
+        runtime.lock_acquire("postgres-warning", budget_s=0.1)
+        runtime._pg_container = "fake-container"
+        monkeypatch.setattr(common.shutil, "which", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(sys, "stderr", FailingStderr())
+
+        result = runtime.cleanup(0)
+
+        assert result == 0
+        assert not lock.exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_continues_after_unexpected_lock_release_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    first_lock = runtime.lock_root / "first.lock"
+    second_lock = runtime.lock_root / "second.lock"
+
+    try:
+        runtime.lock_acquire("first", budget_s=0.1)
+        runtime.lock_acquire("second", budget_s=0.1)
+        original_lock_release = runtime.lock_release
+
+        def lock_release(name: str) -> None:
+            if name == "first":
+                raise RuntimeError("unexpected lock release failure")
+            original_lock_release(name)
+
+        monkeypatch.setattr(runtime, "lock_release", lock_release)
+
+        assert runtime.cleanup(0) == 1
+        assert not second_lock.exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(first_lock, ignore_errors=True)
+        shutil.rmtree(second_lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_releases_lock_after_unexpected_postgres_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "unexpected-postgres.lock"
+
+    def postgres_stop() -> None:
+        raise RuntimeError("unexpected postgres cleanup failure")
+
+    try:
+        runtime.lock_acquire("unexpected-postgres", budget_s=0.1)
+        monkeypatch.setattr(runtime, "postgres_stop", postgres_stop)
+
+        result = runtime.cleanup(0)
+
+        assert isinstance(result, int)
+        assert result == 1
+        assert not lock.exists()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_cleanup_continues_after_invalid_utf8_lock_holder(tmp_path: Path) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    corrupt_lock = runtime.lock_root / "corrupt.lock"
+    trailing_lock = runtime.lock_root / "trailing.lock"
+    try:
+        runtime.lock_acquire("corrupt", budget_s=0.1)
+        (corrupt_lock / "holder").write_bytes(b"pid=1\xff\xfe")
+        runtime.lock_acquire("trailing", budget_s=0.1)
+
+        assert runtime.cleanup(0) == 1
+        assert not trailing_lock.exists()
+        assert corrupt_lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(corrupt_lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [BrokenPipeError, ValueError, RuntimeError],
+    ids=["broken-pipe", "closed-stream", "runtime-error"],
+)
+def test_cleanup_continues_after_lock_error_stderr_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    corrupt_lock = runtime.lock_root / "corrupt.lock"
+    trailing_lock = runtime.lock_root / "trailing.lock"
+
+    class FailingStderr:
+        def write(self, _value: str) -> int:
+            raise error_type
+
+        def flush(self) -> None:
+            raise error_type
+
+    try:
+        runtime.lock_acquire("corrupt", budget_s=0.1)
+        (corrupt_lock / "holder").write_bytes(b"pid=1\xff\xfe")
+        runtime.lock_acquire("trailing", budget_s=0.1)
+        monkeypatch.setattr(sys, "stderr", FailingStderr())
+
+        assert runtime.cleanup(0) == 1
+        assert not trailing_lock.exists()
+        assert corrupt_lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(corrupt_lock, ignore_errors=True)
+        shutil.rmtree(trailing_lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [BrokenPipeError, ValueError, RuntimeError],
+    ids=["broken-pipe", "closed-stream", "runtime-error"],
+)
+def test_cleanup_continues_after_release_status_broken_pipe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    first_lock = runtime.lock_root / "first.lock"
+    trailing_lock = runtime.lock_root / "trailing.lock"
+
+    class FailingStdout:
+        def write(self, _value: str) -> int:
+            raise error_type
+
+        def flush(self) -> None:
+            raise error_type
+
+    try:
+        runtime.lock_acquire("first", budget_s=0.1)
+        runtime.lock_acquire("trailing", budget_s=0.1)
+        monkeypatch.setattr(sys, "stdout", FailingStdout())
+
+        assert runtime.cleanup(0) == 0
+        assert not first_lock.exists()
+        assert not trailing_lock.exists()
+    finally:
+        runtime.cleanup(1)
         shutil.rmtree(artifacts, ignore_errors=True)
 
 

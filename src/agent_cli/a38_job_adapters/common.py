@@ -1,7 +1,8 @@
 """Shared lifecycle for A38 local job adapters.
 
 Work and artifacts live outside the repository. Subprocess argv lists are never
-passed through a shell. Cleanup is bounded and ownership-aware.
+passed through a shell. Cleanup is bounded and ownership-aware, except that
+releasing a self-held lock is not subject to the cleanup deadline.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, TextIO
 
 PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 LOCK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -448,6 +449,60 @@ def npm_lock_name(root: Path) -> str:
     return f"node-modules-install-{digest}"
 
 
+def _process_alive(pid: int) -> bool:
+    if pid <= 0:
+        # Treat nonsensical holder values as alive to fail safe toward waiting.
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError):
+        return True
+    return True
+
+
+def _read_holder(holder: Path) -> dict[str, str]:
+    try:
+        text = holder.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or not key:
+            return {}
+        values[key] = value
+    if not {"pid", "run_id", "job", "since"}.issubset(values):
+        return {}
+    return values
+
+
+def _format_holder_details(holder: Mapping[str, str]) -> str:
+    if not holder:
+        return ""
+    return (
+        f"; holder pid={holder.get('pid', '?')}, run_id={holder.get('run_id', '?')}, "
+        f"job={holder.get('job', '?')}, since={holder.get('since', '?')}"
+    )
+
+
+def _lock_not_acquired_message(
+    directory: Path, reason: str, holder: Mapping[str, str]
+) -> str:
+    return (
+        f"lock {directory} not acquired {reason}{_format_holder_details(holder)}; "
+        "the lock must be removed manually after verifying that the workload is truly gone"
+    )
+
+
+def _print_best_effort(message: str, *, stream: TextIO | None = None) -> None:
+    try:
+        print(message, file=stream if stream is not None else sys.stdout, flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class JobRuntime:
     """Owns scratch dirs, locks, env scoping, and bounded subprocesses."""
 
@@ -839,11 +894,32 @@ class JobRuntime:
             try:
                 directory.mkdir(exist_ok=False)
             except FileExistsError:
+                holder_values = _read_holder(holder)
+                pid_text = holder_values.get("pid")
+                if pid_text is not None:
+                    try:
+                        pid = int(pid_text)
+                    except ValueError:
+                        pass
+                    else:
+                        if not _process_alive(pid):
+                            # Re-read the holder to close the dead-holder TOCTOU window.
+                            current = _read_holder(holder)
+                            if current == holder_values:
+                                raise JobError(
+                                    _lock_not_acquired_message(
+                                        directory,
+                                        "because its holder process is no longer alive",
+                                        holder_values,
+                                    )
+                                ) from None
+                            holder_values = current
                 age = time.monotonic() - started
                 if age >= budget_s:
                     raise JobError(
-                        f"lock {directory} not acquired within {int(budget_s)}s; "
-                        "inspect its holder and active workloads manually before removing an abandoned lock"
+                        _lock_not_acquired_message(
+                            directory, f"within {int(budget_s)}s", holder_values
+                        )
                     ) from None
                 print(f"a38: waiting for lock {name} ({int(age)}s/{int(budget_s)}s)", flush=True)
                 time.sleep(self.lock_poll_s)
@@ -869,11 +945,15 @@ class JobRuntime:
             raise JobError(f"invalid lock name: {name}")
         directory = self.lock_root / f"{name}.lock"
         holder = directory / "holder"
-        if not directory.exists():
-            raise JobError(f"owned lock {name} disappeared before release")
+        try:
+            os.stat(directory)
+        except (FileNotFoundError, NotADirectoryError):
+            raise JobError(f"owned lock {name} disappeared before release") from None
+        except OSError as exc:
+            raise JobError(f"cannot read lock ownership for {name}: {exc}") from exc
         try:
             text = holder.read_text(encoding="utf-8") if holder.is_file() else ""
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             raise JobError(f"cannot read lock ownership for {name}: {exc}") from exc
         pid_line = ""
         run_ok = False
@@ -891,7 +971,7 @@ class JobRuntime:
         except OSError as exc:
             raise JobError(f"cannot release owned lock {name}: {exc}") from exc
         self._held_locks = [item for item in self._held_locks if item != name]
-        print(f"a38: released lock {name}", flush=True)
+        _print_best_effort(f"a38: released lock {name}")
 
     def ensure_node_modules(self) -> None:
         if self.common.npm is None:
@@ -1020,21 +1100,21 @@ class JobRuntime:
             return
         docker = shutil.which("docker", path=self.env.get("PATH"))
         if not docker:
-            print(
+            _print_best_effort(
                 f"a38: warning: could not remove owned Postgres container {self._pg_container}; "
                 "inspect it on this host",
-                file=sys.stderr,
+                stream=sys.stderr,
             )
             return
         completed = self.bounded(20, [docker, "rm", "-f", self._pg_container])
         if completed.returncode == 0:
-            print(f"a38: removed postgres {self._pg_container}", flush=True)
+            _print_best_effort(f"a38: removed postgres {self._pg_container}")
             self._pg_container = None
         else:
-            print(
+            _print_best_effort(
                 f"a38: warning: could not remove owned Postgres container {self._pg_container}; "
                 "inspect it on this host",
-                file=sys.stderr,
+                stream=sys.stderr,
             )
 
     def isolate_docker_config(self) -> None:
@@ -1104,35 +1184,45 @@ class JobRuntime:
             self._begin_cleanup_deadline()
         result = primary_status
         try:
-            if self._job_cleanup is not None:
-                try:
-                    hook_status = int(self._job_cleanup(result))
-                except JobError as exc:
-                    print(f"a38: {exc}", file=sys.stderr)
-                    hook_status = 1
-                except OSError as exc:
-                    print(f"a38: cleanup OSError: {exc}", file=sys.stderr)
-                    hook_status = 1
-                except Exception as exc:  # noqa: BLE001
-                    print(f"a38: cleanup hook failed: {type(exc).__name__}", file=sys.stderr)
-                    hook_status = 1
-                if hook_status != 0 and result == 0:
-                    result = 1
             try:
-                self.postgres_stop()
-            except (JobError, OSError) as exc:
-                print(f"a38: warning: Postgres cleanup failed: {exc}", file=sys.stderr)
-            for name in list(self._held_locks):
-                try:
-                    if self._cleanup_deadline is not None and self._remaining_cleanup_s() <= 0:
-                        raise JobError("cleanup deadline exceeded before lock release")
-                    self.lock_release(name)
-                except JobError as exc:
-                    print(f"a38: {exc}", file=sys.stderr)
-                    if result == 0:
+                if self._job_cleanup is not None:
+                    try:
+                        hook_status = int(self._job_cleanup(result))
+                    except JobError as exc:
+                        _print_best_effort(f"a38: {exc}", stream=sys.stderr)
+                        hook_status = 1
+                    except OSError as exc:
+                        _print_best_effort(f"a38: cleanup OSError: {exc}", stream=sys.stderr)
+                        hook_status = 1
+                    except Exception as exc:  # noqa: BLE001
+                        _print_best_effort(
+                            f"a38: cleanup hook failed: {type(exc).__name__}", stream=sys.stderr
+                        )
+                        hook_status = 1
+                    if hook_status != 0 and result == 0:
                         result = 1
-            if self._group_cleanup_uncertain and result == 0:
-                result = 1
+                try:
+                    self.postgres_stop()
+                except (JobError, OSError) as exc:
+                    _print_best_effort(
+                        f"a38: warning: Postgres cleanup failed: {exc}", stream=sys.stderr
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _print_best_effort(
+                    f"a38: cleanup failed: {type(exc).__name__}", stream=sys.stderr
+                )
+                if result == 0:
+                    result = 1
+            finally:
+                for name in list(self._held_locks):
+                    try:
+                        self.lock_release(name)
+                    except Exception as exc:  # noqa: BLE001
+                        _print_best_effort(f"a38: {exc}", stream=sys.stderr)
+                        if result == 0:
+                            result = 1
+                if self._group_cleanup_uncertain and result == 0:
+                    result = 1
         finally:
             if self.work is not None:
                 shutil.rmtree(self.work, ignore_errors=True)
