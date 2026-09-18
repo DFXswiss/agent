@@ -593,6 +593,108 @@ def test_process_alive_returns_false_when_process_is_missing(
     assert common._process_alive(12345) is False
 
 
+def test_terminate_process_group_repolls_transiently_unsignalable_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripted = [
+        PermissionError("not signalable"),
+        PermissionError("not signalable"),
+        ProcessLookupError(),
+    ]
+    # Script the clock so descheduling cannot reach SIGKILL and fail the mock.
+    timeline = [0.0, 0.0, 1.0, 1.0, 2.0]
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        index = calls["n"]
+        calls["n"] += 1
+        if index < len(timeline):
+            return timeline[index]
+        return 1e9
+
+    def killpg(pgid: int, signal_number: int) -> None:
+        assert pgid == 12345
+        assert signal_number in (signal.SIGTERM, 0)
+        assert scripted
+        raise scripted.pop(0)
+
+    def sleep(duration: float) -> None:
+        return None
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(common.time, "sleep", sleep)
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=5) is True
+    assert scripted == []
+    assert calls["n"] == len(timeline)
+
+
+def test_terminate_process_group_persistently_unsignalable_is_uncertain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def killpg(pgid: int, signal_number: int) -> None:
+        nonlocal calls
+        assert pgid == 12345
+        assert signal_number in (signal.SIGTERM, signal.SIGKILL, 0)
+        calls += 1
+        raise PermissionError("not signalable")
+
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=0.03) is False
+    assert calls > 1
+
+
+def test_terminate_process_group_sleep_never_exceeds_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nine scripted clock reads drive exactly one iteration of each poll loop. The
+    # values never decrease because a monotonic clock cannot go backwards, and both
+    # clamped sleeps are observed without depending on how fast the machine runs.
+    timeline = [0.0, 0.0, 4.98, 4.99, 5.0, 5.0, 6.99, 6.995, 7.0]
+    calls = {"n": 0}
+    sleep_durations: list[float] = []
+
+    def fake_monotonic() -> float:
+        index = calls["n"]
+        calls["n"] += 1
+        if index < len(timeline):
+            return timeline[index]
+        return 1e9
+
+    def killpg(pgid: int, signal_number: int) -> None:
+        assert pgid == 12345
+        assert signal_number in (signal.SIGTERM, signal.SIGKILL, 0)
+        raise PermissionError("not signalable")
+
+    def sleep(duration: float) -> None:
+        sleep_durations.append(duration)
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(common.time, "sleep", sleep)
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=10) is False
+    assert calls["n"] == len(timeline)
+    assert sleep_durations == pytest.approx([0.01, 0.005])
+
+
+def test_terminate_process_group_exhausted_deadline_unsignalable_is_uncertain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def killpg(pgid: int, signal_number: int) -> None:
+        assert pgid == 12345
+        assert signal_number == 0
+        raise PermissionError("not signalable")
+
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=0) is False
+
+
 def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
@@ -681,6 +783,152 @@ def test_lock_acquire_waits_for_live_holder_and_reports_details(tmp_path: Path) 
         assert "since=2026-09-17T11:00:00Z" in message
         assert str(lock) in message
         assert lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_wait_line_names_current_holder(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "wait-detail.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(
+        f"pid={os.getpid()}\nrun_id=live-run\njob=commands\n"
+        "since=2026-09-17T11:00:00Z\n",
+        encoding="utf-8",
+    )
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 0.001
+        return 99.0
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    try:
+        with pytest.raises(JobError, match="not acquired"):
+            runtime.lock_acquire("wait-detail", budget_s=0.03)
+        waiting_lines = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("a38: waiting for lock wait-detail ")
+        ]
+        assert calls["n"] >= 3
+        assert len(waiting_lines) == 1
+        assert f"holder pid={os.getpid()}" in waiting_lines[0]
+        assert "run_id=live-run" in waiting_lines[0]
+        assert "job=commands" in waiting_lines[0]
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_wait_line_omits_details_for_incomplete_holder(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "incomplete-holder.lock"
+    lock.mkdir()
+    (lock / "holder").write_text(f"pid={os.getpid()}\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 0.001
+        return 99.0
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    try:
+        with pytest.raises(JobError, match="not acquired"):
+            runtime.lock_acquire("incomplete-holder", budget_s=0.03)
+        waiting_lines = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("a38: waiting for lock incomplete-holder ")
+        ]
+        assert calls["n"] >= 3
+        assert len(waiting_lines) == 1
+        assert "a38: waiting for lock incomplete-holder " in waiting_lines[0]
+        assert "(0s/0s)" in waiting_lines[0]
+        assert "; holder pid=" not in waiting_lines[0]
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+def test_lock_acquire_wait_line_omits_details_for_unreadable_holder(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head, A38_LOCK_POLL_SECONDS="0.01"),
+    )
+    artifacts = runtime.artifacts
+    lock = runtime.lock_root / "unreadable-holder.lock"
+    lock.mkdir()
+    # Keep these bytes invalid UTF-8 so reading the holder raises UnicodeError.
+    (lock / "holder").write_bytes(b"\xff\xfe pid=1\n")
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0.0
+        if calls["n"] == 2:
+            return 0.001
+        return 99.0
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    try:
+        with pytest.raises(JobError, match="not acquired"):
+            runtime.lock_acquire("unreadable-holder", budget_s=0.03)
+        waiting_lines = [
+            line
+            for line in capsys.readouterr().out.splitlines()
+            if line.startswith("a38: waiting for lock unreadable-holder ")
+        ]
+        assert calls["n"] >= 3
+        assert len(waiting_lines) == 1
+        assert "a38: waiting for lock unreadable-holder " in waiting_lines[0]
+        assert "(0s/0s)" in waiting_lines[0]
+        assert "; holder pid=" not in waiting_lines[0]
     finally:
         runtime.cleanup(1)
         shutil.rmtree(lock, ignore_errors=True)

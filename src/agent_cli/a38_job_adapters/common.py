@@ -921,7 +921,11 @@ class JobRuntime:
                             directory, f"within {int(budget_s)}s", holder_values
                         )
                     ) from None
-                print(f"a38: waiting for lock {name} ({int(age)}s/{int(budget_s)}s)", flush=True)
+                print(
+                    f"a38: waiting for lock {name} ({int(age)}s/{int(budget_s)}s)"
+                    f"{_format_holder_details(holder_values)}",
+                    flush=True,
+                )
                 time.sleep(self.lock_poll_s)
                 continue
             try:
@@ -1278,18 +1282,27 @@ def _terminate_process_group(
     target = pgid if pgid is not None else (proc.pid if proc is not None else None)
     if target is None:
         return True
+    unsignalable_reported = False
+
+    def note_unsignalable(operation: str, exc: BaseException) -> None:
+        nonlocal unsignalable_reported
+        if unsignalable_reported:
+            return
+        unsignalable_reported = True
+        print(
+            f"a38: owned process group is not signalable during {operation} "
+            f"(pgid={target}): {exc}; treating it as still present",
+            file=sys.stderr,
+        )
+
     if budget_s <= 0:
         try:
             os.killpg(target, 0)
         except ProcessLookupError:
             return True
         except PermissionError as exc:
-            print(
-                f"a38: PermissionError during deadline-exhausted liveness probe "
-                f"(pgid={target}): {exc}",
-                file=sys.stderr,
-            )
-            raise
+            note_unsignalable("deadline-exhausted liveness probe", exc)
+            return False
         return False
     deadline = time.monotonic() + budget_s
     term_deadline = min(deadline, time.monotonic() + 5.0)
@@ -1300,11 +1313,8 @@ def _terminate_process_group(
         except ProcessLookupError:
             return False
         except PermissionError as exc:
-            print(
-                f"a38: PermissionError during {operation} (pgid={target}): {exc}",
-                file=sys.stderr,
-            )
-            raise
+            note_unsignalable(operation, exc)
+            return True
         return True
 
     sent = signal_owned_group(signal.SIGTERM, "SIGTERM")
@@ -1326,13 +1336,8 @@ def _terminate_process_group(
         except ProcessLookupError:
             return True
         except PermissionError as exc:
-            print(
-                f"a38: PermissionError during liveness probe after SIGTERM "
-                f"(pgid={target}): {exc}",
-                file=sys.stderr,
-            )
-            raise
-        time.sleep(0.05)
+            note_unsignalable("liveness probe after SIGTERM", exc)
+        time.sleep(min(0.05, max(0.0, term_deadline - time.monotonic())))
 
     sent = signal_owned_group(signal.SIGKILL, "SIGKILL")
     if not sent:
@@ -1354,13 +1359,8 @@ def _terminate_process_group(
         except ProcessLookupError:
             return True
         except PermissionError as exc:
-            print(
-                f"a38: PermissionError during liveness probe after SIGKILL "
-                f"(pgid={target}): {exc}",
-                file=sys.stderr,
-            )
-            raise
-        time.sleep(0.02)
+            note_unsignalable("liveness probe after SIGKILL", exc)
+        time.sleep(min(0.02, max(0.0, kill_deadline - time.monotonic())))
 
     try:
         leader_alive = proc is not None and proc.poll() is None
@@ -1386,11 +1386,7 @@ def _terminate_process_group(
     except ProcessLookupError:
         return True
     except PermissionError as exc:
-        print(
-            f"a38: PermissionError during final liveness probe (pgid={target}): {exc}",
-            file=sys.stderr,
-        )
-        raise
+        note_unsignalable("final liveness probe", exc)
     return False
 
 
