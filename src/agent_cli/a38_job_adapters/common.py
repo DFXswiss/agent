@@ -946,11 +946,11 @@ class JobRuntime:
         directory = self.lock_root / f"{name}.lock"
         holder = directory / "holder"
         try:
-            directory_exists = directory.exists()
+            os.stat(directory)
+        except (FileNotFoundError, NotADirectoryError):
+            raise JobError(f"owned lock {name} disappeared before release") from None
         except OSError as exc:
             raise JobError(f"cannot read lock ownership for {name}: {exc}") from exc
-        if not directory_exists:
-            raise JobError(f"owned lock {name} disappeared before release")
         try:
             text = holder.read_text(encoding="utf-8") if holder.is_file() else ""
         except (OSError, UnicodeError) as exc:

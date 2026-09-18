@@ -362,6 +362,41 @@ def test_runtime_dirs_ids_and_lock_ownership(tmp_path: Path) -> None:
         shutil.rmtree(artifacts, ignore_errors=True)
 
 
+def test_lock_release_reports_ownership_error_on_unexpected_stat_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    name = "stat-error"
+    lock = runtime.lock_root / f"{name}.lock"
+
+    try:
+        runtime.lock_acquire(name, budget_s=0.1)
+
+        def stat(path: Path) -> None:
+            assert path == lock
+            raise PermissionError
+
+        monkeypatch.setattr(common.os, "stat", stat)
+
+        with pytest.raises(JobError, match="cannot read lock ownership") as raised:
+            runtime.lock_release(name)
+        message = str(raised.value)
+        assert "cannot read lock ownership" in message
+        assert "disappeared before release" not in message
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
 def test_lock_acquire_reports_dead_holder_without_waiting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -543,6 +578,19 @@ def test_process_alive_fails_safe_when_probe_is_inconclusive(
     assert common._process_alive(12345) is True
 
 
+def test_process_alive_returns_false_when_process_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def kill(pid: int, signal_number: int) -> None:
+        assert pid == 12345
+        assert signal_number == 0
+        raise ProcessLookupError
+
+    monkeypatch.setattr(common.os, "kill", kill)
+
+    assert common._process_alive(12345) is False
+
+
 def test_lock_acquire_waits_when_holder_file_is_missing(tmp_path: Path) -> None:
     base, head = _repo(tmp_path / "repo")
     runtime = JobRuntime(
@@ -687,7 +735,7 @@ def test_cleanup_releases_lock_when_postgres_warning_stream_fails(
 
         result = runtime.cleanup(0)
 
-        assert isinstance(result, int)
+        assert result == 0
         assert not lock.exists()
     finally:
         runtime.cleanup(1)
