@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, TextIO
 
 PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 LOCK_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -496,6 +496,13 @@ def _lock_not_acquired_message(
     )
 
 
+def _print_best_effort(message: str, *, stream: TextIO | None = None) -> None:
+    try:
+        print(message, file=stream if stream is not None else sys.stdout, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
 class JobRuntime:
     """Owns scratch dirs, locks, env scoping, and bounded subprocesses."""
 
@@ -960,10 +967,7 @@ class JobRuntime:
         except OSError as exc:
             raise JobError(f"cannot release owned lock {name}: {exc}") from exc
         self._held_locks = [item for item in self._held_locks if item != name]
-        try:
-            print(f"a38: released lock {name}", flush=True)
-        except (OSError, ValueError):
-            pass
+        _print_best_effort(f"a38: released lock {name}")
 
     def ensure_node_modules(self) -> None:
         if self.common.npm is None:
@@ -1180,25 +1184,29 @@ class JobRuntime:
                 try:
                     hook_status = int(self._job_cleanup(result))
                 except JobError as exc:
-                    print(f"a38: {exc}", file=sys.stderr)
+                    _print_best_effort(f"a38: {exc}", stream=sys.stderr)
                     hook_status = 1
                 except OSError as exc:
-                    print(f"a38: cleanup OSError: {exc}", file=sys.stderr)
+                    _print_best_effort(f"a38: cleanup OSError: {exc}", stream=sys.stderr)
                     hook_status = 1
                 except Exception as exc:  # noqa: BLE001
-                    print(f"a38: cleanup hook failed: {type(exc).__name__}", file=sys.stderr)
+                    _print_best_effort(
+                        f"a38: cleanup hook failed: {type(exc).__name__}", stream=sys.stderr
+                    )
                     hook_status = 1
                 if hook_status != 0 and result == 0:
                     result = 1
             try:
                 self.postgres_stop()
             except (JobError, OSError) as exc:
-                print(f"a38: warning: Postgres cleanup failed: {exc}", file=sys.stderr)
+                _print_best_effort(
+                    f"a38: warning: Postgres cleanup failed: {exc}", stream=sys.stderr
+                )
             for name in list(self._held_locks):
                 try:
                     self.lock_release(name)
                 except JobError as exc:
-                    print(f"a38: {exc}", file=sys.stderr)
+                    _print_best_effort(f"a38: {exc}", stream=sys.stderr)
                     if result == 0:
                         result = 1
             if self._group_cleanup_uncertain and result == 0:

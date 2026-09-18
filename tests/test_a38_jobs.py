@@ -687,6 +687,49 @@ def test_cleanup_continues_after_invalid_utf8_lock_holder(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     "error_type", [BrokenPipeError, ValueError], ids=["broken-pipe", "closed-stream"]
 )
+def test_cleanup_continues_after_lock_error_stderr_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    base, head = _repo(tmp_path / "repo")
+    runtime = JobRuntime(
+        adapter="commands",
+        common=CommonConfig(),
+        cwd=tmp_path / "repo",
+        lock_root=tmp_path / "locks",
+        environ=_env(base, head),
+    )
+    artifacts = runtime.artifacts
+    corrupt_lock = runtime.lock_root / "corrupt.lock"
+    trailing_lock = runtime.lock_root / "trailing.lock"
+
+    class FailingStderr:
+        def write(self, _value: str) -> int:
+            raise error_type
+
+        def flush(self) -> None:
+            raise error_type
+
+    try:
+        runtime.lock_acquire("corrupt", budget_s=0.1)
+        (corrupt_lock / "holder").write_bytes(b"pid=1\xff\xfe")
+        runtime.lock_acquire("trailing", budget_s=0.1)
+        monkeypatch.setattr(sys, "stderr", FailingStderr())
+
+        assert runtime.cleanup(0) == 1
+        assert not trailing_lock.exists()
+        assert corrupt_lock.is_dir()
+    finally:
+        runtime.cleanup(1)
+        shutil.rmtree(corrupt_lock, ignore_errors=True)
+        shutil.rmtree(trailing_lock, ignore_errors=True)
+        shutil.rmtree(artifacts, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "error_type", [BrokenPipeError, ValueError], ids=["broken-pipe", "closed-stream"]
+)
 def test_cleanup_continues_after_release_status_broken_pipe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
