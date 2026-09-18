@@ -1337,7 +1337,7 @@ def _terminate_process_group(
             return True
         except PermissionError as exc:
             note_unsignalable("liveness probe after SIGTERM", exc)
-        time.sleep(0.05)
+        time.sleep(min(0.05, max(0.0, term_deadline - time.monotonic())))
 
     sent = signal_owned_group(signal.SIGKILL, "SIGKILL")
     if not sent:
@@ -1360,7 +1360,7 @@ def _terminate_process_group(
             return True
         except PermissionError as exc:
             note_unsignalable("liveness probe after SIGKILL", exc)
-        time.sleep(0.02)
+        time.sleep(min(0.02, max(0.0, kill_deadline - time.monotonic())))
 
     try:
         leader_alive = proc is not None and proc.poll() is None

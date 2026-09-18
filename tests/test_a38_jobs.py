@@ -632,6 +632,39 @@ def test_terminate_process_group_persistently_unsignalable_is_uncertain(
     assert calls > 1
 
 
+def test_terminate_process_group_sleep_never_exceeds_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nine scripted clock reads drive exactly one iteration of each poll loop, so both
+    # clamped sleeps are observed without depending on how fast the machine runs.
+    timeline = [0.0, 0.0, 4.99, 4.98, 5.0, 5.0, 6.995, 6.995, 7.0]
+    calls = {"n": 0}
+    sleep_durations: list[float] = []
+
+    def fake_monotonic() -> float:
+        index = calls["n"]
+        calls["n"] += 1
+        if index < len(timeline):
+            return timeline[index]
+        return 1e9
+
+    def killpg(pgid: int, signal_number: int) -> None:
+        assert pgid == 12345
+        assert signal_number in (signal.SIGTERM, signal.SIGKILL, 0)
+        raise PermissionError("not signalable")
+
+    def sleep(duration: float) -> None:
+        sleep_durations.append(duration)
+
+    monkeypatch.setattr(common.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(common.time, "sleep", sleep)
+    monkeypatch.setattr(common.os, "killpg", killpg)
+
+    assert common._terminate_process_group(None, pgid=12345, budget_s=10) is False
+    assert calls["n"] == len(timeline)
+    assert sleep_durations == pytest.approx([0.02, 0.005])
+
+
 def test_terminate_process_group_exhausted_deadline_unsignalable_is_uncertain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
