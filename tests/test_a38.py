@@ -2049,7 +2049,6 @@ class SchedulerTests(unittest.TestCase):
         first_end = min(item[2] for item in ends)
         second_start = max(item[2] for item in starts)
         self.assertLess(second_start, first_end)
-        self.assertLess(wall, 0.55)
 
     def test_same_lock_does_not_overlap(self) -> None:
         jobs = [

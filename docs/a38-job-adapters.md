@@ -96,7 +96,11 @@ holder so the lock can be removed manually after inspection. npm installation ha
 separate per-worktree lock even when a job also has a shared lock. A cached
 `node_modules` is reused only when the package-lock digest, exact Node version,
 architecture stamp, and every configured canary match. Canary paths are relative to
-`node_modules`, not the repo.
+`node_modules`, not the repo. Waiting is not first-come-first-served: a waiter has no
+claim from how long it has already waited, and a newly started run can take a released
+lock ahead of it. A waiting line names the current holder when the holder file is readable
+and complete, so a holder that changes while a job waits is visible in the log; an
+unreadable or incomplete holder file leaves that detail off the line.
 
 Postgres is optional and owned by container ID: the adapter creates the container,
 records the returned ID, starts it, obtains a dynamic loopback port, waits for
@@ -111,7 +115,10 @@ not bounded by that cleanup window. Normal long-running work has no adapter-impo
 the enclosing A38 job timeout remains authoritative. If an argv leader exits after
 starting background descendants, the adapter terminates that still-owned process group
 before returning; inherited output descriptors cannot leave the adapter hung or permit
-an orphaned background process to masquerade as success.
+an orphaned background process to masquerade as success. A process group that exists
+but cannot be signalled is treated as still present and re-polled within the same bounded
+budget, including while its last member is an unreaped orphan. Only a group still
+unconfirmed when the budget expires is reported as uncertain cleanup.
 
 ## `commands`
 
