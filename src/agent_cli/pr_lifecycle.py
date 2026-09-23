@@ -534,8 +534,15 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     for path in sorted(required):
         suite = _field(latest.get(path), "check_suite_id")
         for name in config.get("required_checks", {}).get(path, []):
-            matches = [c for c in checks if suite is not None and _field(c, "check_suite", "id") == suite
-                       and required_check_matches(c.get("name"), name)]
+            matches = [
+                c for c in checks
+                if suite is not None and _field(c, "check_suite", "id") == suite
+                and required_check_matches(c.get("name"), name)
+                and not (
+                    c.get("conclusion") in {"skipped", "neutral"}
+                    and is_unexpanded_github_expression(c.get("name"))
+                )
+            ]
             latest_by_name: dict[str, Mapping] = {}
             for candidate in matches:
                 check_name = candidate.get("name")

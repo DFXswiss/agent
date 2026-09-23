@@ -272,8 +272,10 @@ that intentionally skip are not counted as successful required tests. Pending
 or failed independent check runs and commit statuses also block Ready. A
 skipped check whose GitHub name still contains an unevaluated `${{`
 expression is a matrix placeholder (the job-level `if:` never ran), not a
-test result, and does not block. Optional skipped or neutral jobs that are
-not listed in `required_checks` do not block. The newest workflow run
+test result, and does not block — including when that placeholder is nested
+under a reusable-workflow prefix that `required_checks` matches. Optional
+skipped or neutral jobs that are not listed in `required_checks` do not
+block. The newest workflow run
 supersedes historical results; both workflow inventories and checks are
 inspected, including approval-blocked runs absent from GitHub's rollup.
 

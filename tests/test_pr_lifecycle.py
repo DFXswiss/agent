@@ -704,6 +704,32 @@ def test_required_check_matches_reusable_workflow_names(check_name, required, ex
     assert required_check_matches(check_name, required) is expect
 
 
+def test_reusable_prefix_unexpanded_placeholder_does_not_hide_expanded_success():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["CodeQL"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 30,
+            "name": "CodeQL / Analyze (${{ matrix.language }})",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+        {
+            "id": 31,
+            "name": "CodeQL / Analyze (actions)",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "success",
+        },
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
 def test_reusable_prefix_cannot_hide_a_skipped_sibling_required_job():
     fake = LifecycleAPI()
     fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
