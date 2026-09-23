@@ -583,6 +583,7 @@ def test_independent_check_blocks_ready(status, conclusion):
         ("Analyze (${{ matrix.language }})", "skipped"),
         ("Analyze (${{ matrix.language }})", "neutral"),
         ("security", "skipped"),
+        ("security", "neutral"),
     ],
 )
 def test_optional_skipped_check_does_not_block_ready(name, conclusion):
