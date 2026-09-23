@@ -577,6 +577,85 @@ def test_independent_check_blocks_ready(status, conclusion):
     assert fake.transitions == [True]
 
 
+@pytest.mark.parametrize(
+    "name,conclusion",
+    [
+        ("Analyze (${{ matrix.language }})", "skipped"),
+        ("Analyze (${{ matrix.language }})", "neutral"),
+        ("security", "skipped"),
+    ],
+)
+def test_optional_skipped_check_does_not_block_ready(name, conclusion):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.checks = [
+        dict(id=11, name=name, check_suite={"id": 300}, status="completed", conclusion=conclusion),
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_unexpanded_skipped_placeholder_does_not_hide_failed_expanded_job():
+    fake = LifecycleAPI()
+    fake.checks = [
+        dict(
+            id=11,
+            name="Analyze (${{ matrix.language }})",
+            check_suite={"id": 300},
+            status="completed",
+            conclusion="skipped",
+        ),
+        dict(
+            id=12,
+            name="Analyze (javascript-typescript)",
+            check_suite={"id": 301},
+            status="completed",
+            conclusion="failure",
+        ),
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [True]
+
+
+def test_leftover_unexpanded_skip_with_later_expanded_success_is_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.checks = [
+        dict(
+            id=11,
+            name="Analyze (${{ matrix.language }})",
+            check_suite={"id": 300},
+            status="completed",
+            conclusion="skipped",
+        ),
+        dict(
+            id=12,
+            name="Analyze (javascript-typescript)",
+            check_suite={"id": 301},
+            status="completed",
+            conclusion="success",
+        ),
+        dict(
+            id=13,
+            name="Analyze (actions)",
+            check_suite={"id": 301},
+            status="completed",
+            conclusion="success",
+        ),
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_is_unexpanded_github_expression():
+    from agent_cli.pr_lifecycle import is_unexpanded_github_expression
+    assert is_unexpanded_github_expression("Analyze (${{ matrix.language }})") is True
+    assert is_unexpanded_github_expression("Analyze (javascript-typescript)") is False
+    assert is_unexpanded_github_expression(None) is False
+
+
 def test_commit_status_pending_blocks():
     fake = LifecycleAPI()
     fake.statuses.append({"sha": HEAD, "context": "external", "state": "pending"})
