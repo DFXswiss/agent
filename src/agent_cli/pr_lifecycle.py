@@ -366,21 +366,37 @@ def _result_already_posted(api: Any, assessment: Any, runs: list[dict]) -> bool:
     return False
 
 
+def _latest_matching_auth_record(api: Any, assessment: Any) -> dict:
+    # Newest own AUTH for this head/base. Do not fall back to an older match.
+    from .a38_guard import collect_comments
+    own_id, _ = api.resolve_own_user()
+    comments = collect_comments(api, assessment.repo, assessment.pr)
+    records = [c for c in comments if _field(c, "user", "id") == own_id
+               and str(c.get("body", "")).startswith(AUTH_MARKER + "\n")]
+    matches: list[tuple[Mapping, dict]] = []
+    for comment in records:
+        payload = _audit_payload(comment)
+        if (
+            payload.get("repo") != assessment.repo
+            or payload.get("pr") != assessment.pr
+            or payload.get("head") != assessment.head_sha
+            or payload.get("base") != assessment.base_sha
+        ):
+            continue
+        matches.append((comment, payload))
+    if not matches:
+        return {}
+    return max(matches, key=lambda item: item[0]["id"])[1]
+
+
 def note_authorized_run_results(api: Any, assessment: Any, *, dry_run: bool = False) -> list[dict]:
     """Post a new result comment once every run in the latest matching AUTH record has finished.
 
     Returns a one-element list, or [] when there is nothing to say.
     Status values: "waiting", "unread", "planned", "posted", "exists".
     """
-    _comment, payload = _own_record(api, assessment, AUTH_MARKER)
-    if _comment is None or not isinstance(payload, dict):
-        return []
-    if (
-        payload.get("repo") != assessment.repo
-        or payload.get("pr") != assessment.pr
-        or payload.get("head") != assessment.head_sha
-        or payload.get("base") != assessment.base_sha
-    ):
+    payload = _latest_matching_auth_record(api, assessment)
+    if not payload:
         return []
     auth_runs = payload.get("runs")
     if not isinstance(auth_runs, list) or not auth_runs:

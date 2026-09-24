@@ -1144,9 +1144,16 @@ def test_dry_run_plans_result_comment_without_posting() -> None:
     fake = FakeApproval()
     reconcile_pull(fake.api(), REPO, 1)
     fake.runs[0].update(status="completed", conclusion="success")
+    auths = _marker_comments(fake, AUTH_MARKER)
+    auth_body = auths[0]["body"]
+    comment_count = len(fake.comments)
+    writes = list(fake.writes)
     planned = reconcile_pull(fake.api(), REPO, 1, dry_run=True)
     assert not _marker_comments(fake, RESULT_MARKER)
     assert planned.ci_results[0]["status"] == "planned"
+    assert auths[0]["body"] == auth_body
+    assert len(fake.comments) == comment_count
+    assert fake.writes == writes
 
 
 def test_mismatched_auth_head_posts_no_result_comment() -> None:
@@ -1170,6 +1177,49 @@ def test_mismatched_auth_head_posts_no_result_comment() -> None:
     assert result.ci_results == []
     planted = next(c for c in fake.comments if c["id"] == 500)
     assert planted["body"] == planted_body
+
+
+def test_older_matching_auth_is_used_when_newer_auth_is_another_head() -> None:
+    fake = FakeApproval()
+    fake.runs[0].update(status="completed", conclusion="success")
+    matching_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
+            "runs": [{"run_id": 101, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    other_head_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": BASE2, "base": BASE,
+            "runs": [{"run_id": 202, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": matching_body,
+    })
+    fake.comments.append({
+        "id": 501,
+        "user": {"id": BOT_ID},
+        "body": other_head_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    posted = _comment_record(results[0])["runs"]
+    assert posted[0]["run_id"] == 101
+    assert posted[0]["conclusion"] == "success"
+    planted_matching = next(c for c in fake.comments if c["id"] == 500)
+    planted_other = next(c for c in fake.comments if c["id"] == 501)
+    assert planted_matching["body"] == matching_body
+    assert planted_other["body"] == other_head_body
+    assert result.ci_results[0]["status"] == "posted"
+    assert 101 not in fake.posts
 
 
 def test_unreadable_run_get_posts_no_result_comment() -> None:
