@@ -77,6 +77,27 @@ def required_check_matches(check_name: object, required: str) -> bool:
     return check_name == required or check_name.startswith(required + " / ")
 
 
+def is_unexpanded_github_expression(name: object) -> bool:
+    """True when a GitHub check name still contains an unevaluated expression.
+
+    A matrix job whose ``if:`` never ran is recorded as
+    ``Analyze (${{ matrix.language }})`` instead of ``Analyze (javascript-typescript)``.
+    That placeholder is not a test result.
+    """
+    return isinstance(name, str) and "${{" in name
+
+
+def check_name_is_required(name: object, config: Mapping) -> bool:
+    """True when ``name`` matches any lifecycle ``required_checks`` entry."""
+    if not isinstance(name, str):
+        return False
+    for names in config.get("required_checks", {}).values():
+        for required in names:
+            if required_check_matches(name, required):
+                return True
+    return False
+
+
 def _audit_payload(comment: Mapping) -> dict:
     from .a38_guard import GuardError
     try:
@@ -513,8 +534,15 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     for path in sorted(required):
         suite = _field(latest.get(path), "check_suite_id")
         for name in config.get("required_checks", {}).get(path, []):
-            matches = [c for c in checks if suite is not None and _field(c, "check_suite", "id") == suite
-                       and required_check_matches(c.get("name"), name)]
+            matches = [
+                c for c in checks
+                if suite is not None and _field(c, "check_suite", "id") == suite
+                and required_check_matches(c.get("name"), name)
+                and not (
+                    c.get("conclusion") in {"skipped", "neutral"}
+                    and is_unexpanded_github_expression(c.get("name"))
+                )
+            ]
             latest_by_name: dict[str, Mapping] = {}
             for candidate in matches:
                 check_name = candidate.get("name")
@@ -541,8 +569,18 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
         if key not in newest or check["id"] > newest[key]["id"]:
             newest[key] = check
     for check in newest.values():
+        name = check.get("name")
+        conclusion = check.get("conclusion")
+        # GitHub records a skipped placeholder when a matrix job never
+        # instantiates (job-level ``if:`` false). Optional skipped jobs that
+        # are not listed in required_checks are not failed tests. Pending,
+        # cancelled, and failed independent checks still block.
+        if conclusion in {"skipped", "neutral"} and (
+            is_unexpanded_github_expression(name) or not check_name_is_required(name, config)
+        ):
+            continue
         # A workflow can intentionally skip individual conditional jobs while
-        # succeeding overall. Standalone skipped checks cannot establish green.
+        # succeeding overall. Standalone skipped required checks cannot establish green.
         suite = _field(check, "check_suite", "id")
         successful_suite = suite is not None and any(r.get("check_suite_id") == suite
             and r.get("status") == "completed" and (r.get("conclusion") == "success"

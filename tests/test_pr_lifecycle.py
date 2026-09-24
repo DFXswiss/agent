@@ -577,6 +577,86 @@ def test_independent_check_blocks_ready(status, conclusion):
     assert fake.transitions == [True]
 
 
+@pytest.mark.parametrize(
+    "name,conclusion",
+    [
+        ("Analyze (${{ matrix.language }})", "skipped"),
+        ("Analyze (${{ matrix.language }})", "neutral"),
+        ("security", "skipped"),
+        ("security", "neutral"),
+    ],
+)
+def test_optional_skipped_check_does_not_block_ready(name, conclusion):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.checks = [
+        dict(id=11, name=name, check_suite={"id": 300}, status="completed", conclusion=conclusion),
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_unexpanded_skipped_placeholder_does_not_hide_failed_expanded_job():
+    fake = LifecycleAPI()
+    fake.checks = [
+        dict(
+            id=11,
+            name="Analyze (${{ matrix.language }})",
+            check_suite={"id": 300},
+            status="completed",
+            conclusion="skipped",
+        ),
+        dict(
+            id=12,
+            name="Analyze (javascript-typescript)",
+            check_suite={"id": 301},
+            status="completed",
+            conclusion="failure",
+        ),
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [True]
+
+
+def test_leftover_unexpanded_skip_with_later_expanded_success_is_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.checks = [
+        dict(
+            id=11,
+            name="Analyze (${{ matrix.language }})",
+            check_suite={"id": 300},
+            status="completed",
+            conclusion="skipped",
+        ),
+        dict(
+            id=12,
+            name="Analyze (javascript-typescript)",
+            check_suite={"id": 301},
+            status="completed",
+            conclusion="success",
+        ),
+        dict(
+            id=13,
+            name="Analyze (actions)",
+            check_suite={"id": 301},
+            status="completed",
+            conclusion="success",
+        ),
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_is_unexpanded_github_expression():
+    from agent_cli.pr_lifecycle import is_unexpanded_github_expression
+    assert is_unexpanded_github_expression("Analyze (${{ matrix.language }})") is True
+    assert is_unexpanded_github_expression("Analyze (javascript-typescript)") is False
+    assert is_unexpanded_github_expression(None) is False
+
+
 def test_commit_status_pending_blocks():
     fake = LifecycleAPI()
     fake.statuses.append({"sha": HEAD, "context": "external", "state": "pending"})
@@ -622,6 +702,32 @@ def test_successful_workflow_cannot_hide_a_missing_or_skipped_required_test(conc
 def test_required_check_matches_reusable_workflow_names(check_name, required, expect):
     from agent_cli.pr_lifecycle import required_check_matches
     assert required_check_matches(check_name, required) is expect
+
+
+def test_reusable_prefix_unexpanded_placeholder_does_not_hide_expanded_success():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["CodeQL"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 30,
+            "name": "CodeQL / Analyze (${{ matrix.language }})",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+        {
+            "id": 31,
+            "name": "CodeQL / Analyze (actions)",
+            "check_suite": {"id": 201},
+            "status": "completed",
+            "conclusion": "success",
+        },
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
 
 
 def test_reusable_prefix_cannot_hide_a_skipped_sibling_required_job():
