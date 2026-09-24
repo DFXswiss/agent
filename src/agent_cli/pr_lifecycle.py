@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import posixpath
 import re
+from collections import Counter
 from typing import Any, Mapping
 
 from .readme_only import pull_is_guard_docs_only
@@ -17,6 +18,12 @@ AUTH_MARKER = "<!-- PR-GUARD:CI-AUTH:v1 -->"
 STATE_MARKER = "<!-- PR-GUARD:LIFECYCLE:v1 -->"
 CANCEL_MARKER = "<!-- PR-GUARD:CI-CANCEL:v1 -->"
 MANUAL_MARKER = "<!-- PR-GUARD:CI-MANUAL:v1 -->"
+RESULT_MARKER = "<!-- PR-GUARD:CI-RESULT:v1 -->"
+
+_FINISHED_CONCLUSIONS = frozenset({
+    "success", "failure", "cancelled", "skipped", "timed_out",
+    "neutral", "startup_failure", "stale",
+})
 
 _GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _MANUAL_EVENTS = frozenset({"pull_request", "workflow_dispatch", "repository_dispatch"})
@@ -318,6 +325,137 @@ def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: b
         "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der Allowlist sind, damit sie nicht weiter auf Freigabe warten.",
         create=create, existing=existing,
     )
+
+
+def _result_already_posted(api: Any, assessment: Any, runs: list[dict]) -> bool:
+    from .a38_guard import collect_comments
+    own_id, _ = api.resolve_own_user()
+    comments = collect_comments(api, assessment.repo, assessment.pr)
+    wanted = Counter((row["run_id"], row["conclusion"]) for row in runs)
+    identity = {
+        "repo": assessment.repo,
+        "pr": assessment.pr,
+        "head": assessment.head_sha,
+        "base": assessment.base_sha,
+    }
+    for comment in comments:
+        if _field(comment, "user", "id") != own_id:
+            continue
+        if not str(comment.get("body", "")).startswith(RESULT_MARKER + "\n"):
+            continue
+        previous = _audit_payload(comment)
+        if any(previous.get(key) != value for key, value in identity.items()):
+            continue
+        previous_runs = previous.get("runs")
+        if not isinstance(previous_runs, list):
+            continue
+        pairs: list[tuple[int, str]] = []
+        valid = True
+        for item in previous_runs:
+            if not isinstance(item, Mapping):
+                valid = False
+                break
+            run_id = item.get("run_id")
+            conclusion = item.get("conclusion")
+            if type(run_id) is not int or not isinstance(conclusion, str):
+                valid = False
+                break
+            pairs.append((run_id, conclusion))
+        if valid and Counter(pairs) == wanted:
+            return True
+    return False
+
+
+def _latest_matching_auth_record(api: Any, assessment: Any) -> dict:
+    # Newest own AUTH for this head/base. Do not fall back to an older match.
+    from .a38_guard import collect_comments
+    own_id, _ = api.resolve_own_user()
+    comments = collect_comments(api, assessment.repo, assessment.pr)
+    records = [c for c in comments if _field(c, "user", "id") == own_id
+               and str(c.get("body", "")).startswith(AUTH_MARKER + "\n")]
+    matches: list[tuple[Mapping, dict]] = []
+    for comment in records:
+        payload = _audit_payload(comment)
+        if (
+            payload.get("repo") != assessment.repo
+            or payload.get("pr") != assessment.pr
+            or payload.get("head") != assessment.head_sha
+            or payload.get("base") != assessment.base_sha
+        ):
+            continue
+        matches.append((comment, payload))
+    if not matches:
+        return {}
+    return max(matches, key=lambda item: item[0]["id"])[1]
+
+
+def note_authorized_run_results(api: Any, assessment: Any, *, dry_run: bool = False) -> list[dict]:
+    """Post a new result comment once every run in the latest matching AUTH record has finished.
+
+    Returns a one-element list, or [] when there is nothing to say.
+    Status values: "waiting", "unread", "planned", "posted", "exists".
+    """
+    if assessment.closed or assessment.scope_decision == "exclude":
+        return []
+    payload = _latest_matching_auth_record(api, assessment)
+    if not payload:
+        return []
+    auth_runs = payload.get("runs")
+    if not isinstance(auth_runs, list) or not auth_runs:
+        return []
+    parsed: list[tuple[int, str]] = []
+    for entry in auth_runs:
+        if not isinstance(entry, Mapping):
+            return [{"status": "unread"}]
+        run_id = entry.get("run_id")
+        workflow = entry.get("workflow")
+        if type(run_id) is not int or not isinstance(workflow, str):
+            return [{"status": "unread"}]
+        parsed.append((run_id, workflow))
+    fetched: list[tuple[int, str, int, Any]] = []
+    for run_id, workflow in parsed:
+        status, body, _ = api.request(
+            "GET", f"/repos/{assessment.repo}/actions/runs/{run_id}", retry=False
+        )
+        fetched.append((run_id, workflow, status, body))
+    for run_id, _workflow, status, body in fetched:
+        if status != 200 or not isinstance(body, Mapping) or body.get("id") != run_id:
+            return [{"status": "unread"}]
+    runs: list[dict] = []
+    for run_id, workflow, _status, body in fetched:
+        conclusion = body.get("conclusion")
+        if (
+            body.get("status") != "completed"
+            or not isinstance(conclusion, str)
+            or conclusion not in _FINISHED_CONCLUSIONS
+        ):
+            return [{"status": "waiting"}]
+        runs.append({
+            "run_id": run_id,
+            "workflow": workflow,
+            "status": "completed",
+            "conclusion": conclusion,
+        })
+    runs.sort(key=lambda row: row["run_id"])
+    if _result_already_posted(api, assessment, runs):
+        return [{"status": "exists", "runs": runs}]
+    if dry_run:
+        return [{"status": "planned", "runs": runs}]
+    if all(row["conclusion"] == "success" for row in runs):
+        en = "The recorded CI runs finished successfully."
+        de = "Die dokumentierten CI-Läufe sind erfolgreich abgeschlossen."
+    else:
+        en = "The recorded CI runs finished; not every run succeeded."
+        de = "Die dokumentierten CI-Läufe sind abgeschlossen; nicht jeder Lauf war erfolgreich."
+    record = {
+        "repo": assessment.repo,
+        "pr": assessment.pr,
+        "head": assessment.head_sha,
+        "base": assessment.base_sha,
+        "runs": runs,
+    }
+    _save_record(api, assessment, RESULT_MARKER, record, en, de, create=True)
+    return [{"status": "posted", "runs": runs}]
 
 
 def _is_guard_workflow_path(path: str) -> bool:

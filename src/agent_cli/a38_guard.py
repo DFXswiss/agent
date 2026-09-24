@@ -192,6 +192,7 @@ class Assessment:
     environment_approvals: list[dict[str, Any]] = field(default_factory=list)
     _auth_comment: dict[str, Any] | None = field(default=None, repr=False, compare=False)
     manual_workflows: list[dict[str, Any]] = field(default_factory=list)
+    ci_results: list[dict[str, Any]] = field(default_factory=list)
     lifecycle_enabled: bool = False
     lifecycle: dict[str, Any] = field(default_factory=dict)
     draft: bool = False
@@ -243,6 +244,7 @@ class Assessment:
             "workflow_approvals": list(self.workflow_approvals),
             "environment_approvals": list(self.environment_approvals),
             "manual_workflows": list(self.manual_workflows),
+            "ci_results": list(self.ci_results),
             "lifecycle": dict(self.lifecycle),
             "comment_body": self.comment_body,
         }
@@ -2404,12 +2406,17 @@ def publish_assessment(
 def _apply_guard_side_effects(api: GitHubApi, assessment: Assessment, *, dry_run: bool) -> None:
     """Authorize waiting CI, note manual activations, then apply Ready/Draft."""
     from .environment_approval import approve_environment_deployments
-    from .pr_lifecycle import note_manual_workflow_activation, reconcile_lifecycle
+    from .pr_lifecycle import (
+        note_authorized_run_results,
+        note_manual_workflow_activation,
+        reconcile_lifecycle,
+    )
     from .workflow_approval import approve_workflow_runs
     assessment.workflow_approvals = approve_workflow_runs(api, assessment, dry_run=dry_run)
     assessment.environment_approvals = approve_environment_deployments(
         api, assessment, dry_run=dry_run
     )
+    assessment.ci_results = note_authorized_run_results(api, assessment, dry_run=dry_run)
     assessment.manual_workflows = note_manual_workflow_activation(api, assessment, dry_run=dry_run)
     assessment.lifecycle = reconcile_lifecycle(api, assessment, dry_run=dry_run)
 

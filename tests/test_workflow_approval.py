@@ -17,7 +17,7 @@ from agent_cli.a38_guard import (
     reconcile_pull,
 )
 from agent_cli.pr_guard_config import PrGuardConfigError, load_pr_guard_config
-from agent_cli.pr_lifecycle import AUTH_MARKER, CANCEL_MARKER
+from agent_cli.pr_lifecycle import AUTH_MARKER, CANCEL_MARKER, RESULT_MARKER
 from test_a38_guard import (
     BASE,
     BASE2,
@@ -71,6 +71,7 @@ class FakeApproval(FakeAPI):
         self.compare_urls: list[str] = []
         self.event_reads = 0
         self.post_status = 201
+        self.run_get_status = 200
         self.inventory = None
         self.on_inventory = None
         self.before_run_read = None
@@ -118,6 +119,13 @@ class FakeApproval(FakeAPI):
             return 200, {"total_count": len(self.runs), "workflow_runs": copy.deepcopy(chunk)}, {}
         if path.startswith(f"{root}/actions/runs/"):
             ident = int(path.split("/actions/runs/")[1].split("/")[0])
+            remainder = path.split("/actions/runs/", 1)[1]
+            if (
+                not any(r["id"] == ident for r in self.runs)
+                and method == "GET"
+                and "/" not in remainder
+            ):
+                return 404, {}, {}
             run = next(r for r in self.runs if r["id"] == ident)
             if method == "POST":
                 if path.endswith("/cancel"):
@@ -135,7 +143,12 @@ class FakeApproval(FakeAPI):
                 callback, self.before_run_read = self.before_run_read, None
                 callback(self)
             payload = self.run_override if self.run_override is not None else run
-            return 200, copy.deepcopy(payload), {}
+            status = (
+                self.run_get_status
+                if method == "GET" and "/" not in remainder
+                else 200
+            )
+            return status, copy.deepcopy(payload), {}
         if method == "GET" and path == f"{root}/pulls":
             if self.listed_pulls is not None:
                 return 200, copy.deepcopy(self.listed_pulls), {}
@@ -302,6 +315,8 @@ def test_opt_in_disabled_or_missing_never_approves(case: str) -> None:
     assert "workflow_approvals" in result.to_json()
     assert result.to_json()["workflow_approvals"] == []
     assert "manual_workflows" in result.to_json()
+    assert "ci_results" in result.to_json()
+    assert isinstance(result.to_json()["ci_results"], list)
     assert fake.posts == []
     assert fake.cancels == []
     if case == "closed":
@@ -852,6 +867,10 @@ CANCEL_DE = (
     "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der "
     "Allowlist sind, damit sie nicht weiter auf Freigabe warten."
 )
+RESULT_OK_EN = "The recorded CI runs finished successfully."
+RESULT_OK_DE = "Die dokumentierten CI-Läufe sind erfolgreich abgeschlossen."
+RESULT_BAD_EN = "The recorded CI runs finished; not every run succeeded."
+RESULT_BAD_DE = "Die dokumentierten CI-Läufe sind abgeschlossen; nicht jeder Lauf war erfolgreich."
 
 
 def _marker_comments(fake: FakeApproval, marker: str) -> list[dict]:
@@ -993,4 +1012,301 @@ def test_create_false_patches_this_invocation_comment_not_latest_by_id() -> None
     assert fresh[0]["id"] < 500
     ids = {row["run_id"] for row in _comment_record(fresh[0])["runs"]}
     assert ids == {101, 202}
+
+
+# --- authorized run result comments -----------------------------------------
+
+
+def test_finished_success_posts_result_comment_without_patching_auth() -> None:
+    fake = FakeApproval()
+    first = reconcile_pull(fake.api(), REPO, 1)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    auth_body = auths[0]["body"]
+    assert AUTH_EN in auth_body
+    assert AUTH_DE in auth_body
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert first.ci_results == [{"status": "waiting"}]
+    fake.runs[0].update(status="completed", conclusion="success")
+    second = reconcile_pull(fake.api(), REPO, 1)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert auths[0]["body"] == auth_body
+    assert AUTH_EN in auths[0]["body"]
+    assert AUTH_DE in auths[0]["body"]
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    assert results[0]["id"] > auths[0]["id"]
+    body = results[0]["body"]
+    assert RESULT_OK_EN in body
+    assert RESULT_OK_DE in body
+    assert RESULT_BAD_EN not in body
+    assert RESULT_BAD_DE not in body
+    assert _comment_record(results[0])["runs"][0]["conclusion"] == "success"
+    assert second.ci_results[0]["status"] == "posted"
+    assert second.to_json()["ci_results"][0]["status"] == "posted"
+
+
+def test_excluded_target_posts_no_result_comment() -> None:
+    fake = FakeApproval()
+    cfg = _cfg({"enabled": True, "workflows": [PATH]})
+    cfg["a38"]["enforce"] = []
+    cfg["a38"]["default"] = "exclude"
+    fake.set_pr_guard_config(cfg)
+    fake.runs[0].update(status="completed", conclusion="success")
+    planted_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
+            "runs": [{"run_id": 101, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": planted_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert result.ci_results == []
+    planted = next(c for c in fake.comments if c["id"] == 500)
+    assert planted["body"] == planted_body
+    assert result.scope_decision == "exclude"
+
+
+def test_same_conclusion_does_not_repost_result_comment() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="success")
+    reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    body = results[0]["body"]
+    third = reconcile_pull(fake.api(), REPO, 1)
+    assert third.ci_results[0]["status"] == "exists"
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    assert results[0]["body"] == body
+
+
+def test_finished_failure_uses_not_every_run_succeeded_sentences() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="failure")
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    body = results[0]["body"]
+    assert RESULT_BAD_EN in body
+    assert RESULT_BAD_DE in body
+    assert RESULT_OK_EN not in body
+    assert RESULT_OK_DE not in body
+    assert _comment_record(results[0])["runs"][0]["conclusion"] == "failure"
+    assert result.ci_results[0]["status"] == "posted"
+
+
+def test_finished_skipped_uses_not_every_run_succeeded_sentences() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="skipped")
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    body = results[0]["body"]
+    assert RESULT_BAD_EN in body
+    assert RESULT_BAD_DE in body
+    assert RESULT_OK_EN not in body
+    assert RESULT_OK_DE not in body
+    assert _comment_record(results[0])["runs"][0]["conclusion"] == "skipped"
+    assert result.ci_results[0]["status"] == "posted"
+
+
+def test_finished_neutral_uses_not_every_run_succeeded_sentences() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="neutral")
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    body = results[0]["body"]
+    assert RESULT_BAD_EN in body
+    assert RESULT_BAD_DE in body
+    assert RESULT_OK_EN not in body
+    assert RESULT_OK_DE not in body
+    assert _comment_record(results[0])["runs"][0]["conclusion"] == "neutral"
+    assert result.ci_results[0]["status"] == "posted"
+
+
+def test_queued_run_posts_no_result_comment() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert second.ci_results[0]["status"] == "waiting"
+
+
+def test_completed_action_required_posts_no_result_comment() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    fake.set_pr_guard_config(_cfg({"enabled": False, "workflows": [PATH]}))
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert second.ci_results[0]["status"] == "waiting"
+    assert fake.runs[0]["conclusion"] == "action_required"
+
+
+def test_one_of_two_authorized_runs_still_queued_posts_no_result() -> None:
+    fake = FakeApproval()
+    fake.config = _cfg({"enabled": True, "workflows": [PATH, OTHER]})
+    fake.set_pr_guard_config(fake.config)
+    fake.runs = [fake.run(id=101, path=PATH), fake.run(id=202, path=OTHER)]
+    reconcile_pull(fake.api(), REPO, 1)
+    next(run for run in fake.runs if run["id"] == 101).update(
+        status="completed", conclusion="success"
+    )
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert second.ci_results[0]["status"] == "waiting"
+
+
+def test_dry_run_plans_result_comment_without_posting() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="success")
+    auths = _marker_comments(fake, AUTH_MARKER)
+    auth_body = auths[0]["body"]
+    comment_count = len(fake.comments)
+    writes = list(fake.writes)
+    planned = reconcile_pull(fake.api(), REPO, 1, dry_run=True)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert planned.ci_results[0]["status"] == "planned"
+    assert auths[0]["body"] == auth_body
+    assert len(fake.comments) == comment_count
+    assert fake.writes == writes
+
+
+def test_mismatched_auth_head_posts_no_result_comment() -> None:
+    fake = FakeApproval()
+    fake.runs[0].update(status="completed", conclusion="success")
+    planted_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": BASE2, "base": BASE,
+            "runs": [{"run_id": 101, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": planted_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert result.ci_results == []
+    planted = next(c for c in fake.comments if c["id"] == 500)
+    assert planted["body"] == planted_body
+
+
+def test_older_matching_auth_is_used_when_newer_auth_is_another_head() -> None:
+    fake = FakeApproval()
+    fake.runs[0].update(status="completed", conclusion="success")
+    matching_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
+            "runs": [{"run_id": 101, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    other_head_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": BASE2, "base": BASE,
+            "runs": [{"run_id": 202, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": matching_body,
+    })
+    fake.comments.append({
+        "id": 501,
+        "user": {"id": BOT_ID},
+        "body": other_head_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    posted = _comment_record(results[0])["runs"]
+    assert posted[0]["run_id"] == 101
+    assert posted[0]["conclusion"] == "success"
+    planted_matching = next(c for c in fake.comments if c["id"] == 500)
+    planted_other = next(c for c in fake.comments if c["id"] == 501)
+    assert planted_matching["body"] == matching_body
+    assert planted_other["body"] == other_head_body
+    assert result.ci_results[0]["status"] == "posted"
+    assert 101 not in fake.posts
+
+
+def test_unreadable_run_get_posts_no_result_comment() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="success")
+    fake.run_get_status = 500
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert result.ci_results[0]["status"] == "unread"
+
+
+def test_missing_run_get_is_unread_without_raising() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    auth_body = auths[0]["body"]
+    fake.runs.clear()
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert result.ci_results == [{"status": "unread"}]
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert auths[0]["body"] == auth_body
+
+
+def test_new_auth_set_posts_second_result_after_new_run_finishes() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="success")
+    first_posted = reconcile_pull(fake.api(), REPO, 1)
+    assert first_posted.ci_results[0]["status"] == "posted"
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    first_body = results[0]["body"]
+    fake.config = _cfg({"enabled": True, "workflows": [PATH, OTHER]})
+    fake.set_pr_guard_config(fake.config)
+    fake.runs.append(fake.run(id=202, path=OTHER, created_at="2026-09-05T11:02:00Z"))
+    waiting = reconcile_pull(fake.api(), REPO, 1)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 2
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    assert results[0]["body"] == first_body
+    assert waiting.ci_results[0]["status"] == "waiting"
+    next(run for run in fake.runs if run["id"] == 202).update(
+        status="completed", conclusion="success"
+    )
+    posted = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 2
+    older, latest = sorted(results, key=lambda c: c["id"])
+    assert older["body"] == first_body
+    ids = {row["run_id"] for row in _comment_record(latest)["runs"]}
+    assert ids == {101, 202}
+    assert posted.ci_results[0]["status"] == "posted"
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 2
 
