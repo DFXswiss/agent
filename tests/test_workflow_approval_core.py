@@ -54,6 +54,13 @@ class ApprovalAPI(FakeAPI):
             return 200, copy.deepcopy(data), {}
         if path.startswith(root + "/actions/runs/"):
             ident = int(path.split("/actions/runs/")[1].split("/")[0])
+            remainder = path.split("/actions/runs/", 1)[1]
+            if (
+                not any(r["id"] == ident for r in self.runs)
+                and method == "GET"
+                and "/" not in remainder
+            ):
+                return 404, {}, {}
             run = next(r for r in self.runs if r["id"] == ident)
             if method == "POST":
                 if path.endswith("/cancel"):

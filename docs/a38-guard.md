@@ -146,6 +146,10 @@ Enable `actions: write` in the trusted guard workflow (or equivalent Actions wri
 
 The first successful approve or cancel in a guard invocation POSTs a new visible EN/DE comment (`PR-GUARD:CI-AUTH:v1` / `PR-GUARD:CI-CANCEL:v1`). Further successful same-kind mutations in that same invocation PATCH that comment. A later invocation POSTs a new comment; it must not PATCH an older one (GitHub PATCH does not move the comment in the timeline). Ready/Draft still POST a new `PR-GUARD:LIFECYCLE:v1` comment per transition. HTTP 409 on cancel does not comment. Approve and cancel comments are posted even when lifecycle is disabled. Auto-ready uses the latest bot-owned AUTH record (highest comment id) on the current head/base when the guard authorized held runs. When no bot-owned AUTH row exists and required CI is already green (nothing was held), auto-ready still performs leave-draft (`isDraft=false`). A present but mismatched bot-owned AUTH row still blocks.
 
+### Result comment when authorized runs finish
+
+A later reconcile reads the latest bot-owned `PR-GUARD:CI-AUTH:v1` comment for the current head and base. When every recorded run is completed with a conclusion of success, failure, cancelled, skipped, timed_out, neutral, startup_failure, or stale, the guard POSTs a new `PR-GUARD:CI-RESULT:v1` comment. It does not PATCH the authorization comment. All success: EN `The recorded CI runs finished successfully.` DE `Die dokumentierten CI-Läufe sind erfolgreich abgeschlossen.` Any other finished conclusion: EN `The recorded CI runs finished; not every run succeeded.` DE `Die dokumentierten CI-Läufe sind abgeschlossen; nicht jeder Lauf war erfolgreich.` Details JSON lists `run_id`, `workflow`, `status`, and `conclusion`. A still-running run, `action_required`, or an unreadable run produces no result comment. The next reconcile tries again. The same head, base, and `(run_id, conclusion)` multiset does not post a second comment. A new authorization comment waits until that new set finishes, then posts another result comment. `--dry-run` does not post. Assessment JSON includes `ci_results`. This follow-up runs even when lifecycle is disabled, because the authorization comment already does.
+
 The trusted default-branch workflow and config must be installed before optional fork workflow approval is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
 
 ## Optional environment deployment approval
@@ -195,7 +199,7 @@ existing visible `PR-GUARD:CI-AUTH:v1` EN/DE audit comment; the first approval i
 one guard invocation posts a new comment and later approvals in that invocation
 update it. Assessment JSON includes `environment_approvals`, and each successful
 write adds `environment:approve:<run-id>` to `writes`. `--dry-run` reports
-`planned` approvals without POSTs or audit comments.
+`planned` approvals without POSTs or audit comments. When those runs later finish, the guard posts `PR-GUARD:CI-RESULT:v1` as documented under "Result comment when authorized runs finish"; it does not patch the authorization comment.
 
 
 ## Optional continuous readiness
@@ -311,7 +315,7 @@ Convert-to-draft that GitHub accepts without GraphQL errors but leaves `isDraft`
 false is not API denial: the planned record is closed as applied Ready, readiness
 stays unchanged, and the EN/DE comment says the Draft conversion did not take
 effect. HTTP 409 on cancel does not comment. Approve and cancel comments are
-posted even when lifecycle is disabled. Auto-ready uses the latest bot-owned
+posted even when lifecycle is disabled. When those runs later finish, the guard posts `PR-GUARD:CI-RESULT:v1` as documented under "Result comment when authorized runs finish"; it does not patch the authorization comment. Auto-ready uses the latest bot-owned
 AUTH record (highest comment id) on the current head/base when that row exists.
 Only the authenticated bot's numeric user ID can supply these records. When no
 such row exists and required CI is green, auto-ready still performs
