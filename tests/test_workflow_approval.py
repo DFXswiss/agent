@@ -315,6 +315,8 @@ def test_opt_in_disabled_or_missing_never_approves(case: str) -> None:
     assert "workflow_approvals" in result.to_json()
     assert result.to_json()["workflow_approvals"] == []
     assert "manual_workflows" in result.to_json()
+    assert "ci_results" in result.to_json()
+    assert isinstance(result.to_json()["ci_results"], list)
     assert fake.posts == []
     assert fake.cancels == []
     if case == "closed":
@@ -1042,6 +1044,35 @@ def test_finished_success_posts_result_comment_without_patching_auth() -> None:
     assert RESULT_BAD_DE not in body
     assert _comment_record(results[0])["runs"][0]["conclusion"] == "success"
     assert second.ci_results[0]["status"] == "posted"
+    assert second.to_json()["ci_results"][0]["status"] == "posted"
+
+
+def test_excluded_target_posts_no_result_comment() -> None:
+    fake = FakeApproval()
+    cfg = _cfg({"enabled": True, "workflows": [PATH]})
+    cfg["a38"]["enforce"] = []
+    cfg["a38"]["default"] = "exclude"
+    fake.set_pr_guard_config(cfg)
+    fake.runs[0].update(status="completed", conclusion="success")
+    planted_body = (
+        AUTH_MARKER + "\n```json\n"
+        + json.dumps({
+            "repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
+            "runs": [{"run_id": 101, "workflow": PATH}],
+        })
+        + "\n```"
+    )
+    fake.comments.append({
+        "id": 500,
+        "user": {"id": BOT_ID},
+        "body": planted_body,
+    })
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert result.ci_results == []
+    planted = next(c for c in fake.comments if c["id"] == 500)
+    assert planted["body"] == planted_body
+    assert result.scope_decision == "exclude"
 
 
 def test_same_conclusion_does_not_repost_result_comment() -> None:

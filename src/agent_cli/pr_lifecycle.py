@@ -395,6 +395,8 @@ def note_authorized_run_results(api: Any, assessment: Any, *, dry_run: bool = Fa
     Returns a one-element list, or [] when there is nothing to say.
     Status values: "waiting", "unread", "planned", "posted", "exists".
     """
+    if assessment.closed or assessment.scope_decision == "exclude":
+        return []
     payload = _latest_matching_auth_record(api, assessment)
     if not payload:
         return []
