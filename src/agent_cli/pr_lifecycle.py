@@ -509,6 +509,12 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
             latest[path] = run
         else:
             superseded_suites.add(run.get("check_suite_id"))
+    # Skipped/neutral/missing required checks are accepted when the PR file
+    # inventory is independently README-only, markdown-only, or guard-docs-only.
+    # Cancelled, failed, and pending required checks still block.
+    accept_skipped_required = pull_is_guard_docs_only(
+        api, assessment.repo, assessment.pr
+    )
     reasons = [f"Missing required CI: {path}" for path in sorted(required) if path not in latest]
     for path, run in sorted(latest.items()):
         accepted = {"success"} if path in required else {"success", "skipped", "neutral"}
@@ -518,13 +524,6 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     excluded = (ignored_suites | superseded_suites) - {None}
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
-    # Skipped/neutral required checks are accepted when the PR file inventory
-    # is independently README-only, markdown-only, or guard-docs-only, or a
-    # verified author A38 report on this head passed a matching job. Cancelled,
-    # failed, and missing checks still block.
-    accept_skipped_required = pull_is_guard_docs_only(
-        api, assessment.repo, assessment.pr
-    )
     accepted_required = (
         {"success", "skipped", "neutral"}
         if accept_skipped_required
@@ -556,7 +555,12 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
                 if a38_covers_required_check(passed_a38, name)
                 else accepted_required
             )
-            if not latest_by_name or any(
+            if not latest_by_name:
+                if accept_skipped_required:
+                    continue
+                reasons.append(f"Required CI check not green: {path} / {name}")
+                continue
+            if any(
                 check.get("status") != "completed" or check.get("conclusion") not in accepted
                 for check in latest_by_name.values()
             ):
@@ -576,7 +580,9 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
         # are not listed in required_checks are not failed tests. Pending,
         # cancelled, and failed independent checks still block.
         if conclusion in {"skipped", "neutral"} and (
-            is_unexpanded_github_expression(name) or not check_name_is_required(name, config)
+            is_unexpanded_github_expression(name)
+            or not check_name_is_required(name, config)
+            or accept_skipped_required
         ):
             continue
         # A workflow can intentionally skip individual conditional jobs while

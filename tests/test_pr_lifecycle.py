@@ -927,6 +927,90 @@ def test_guard_docs_only_accepts_skipped_required_test_for_auto_ready():
     assert fake.transitions == [False]
 
 
+def test_guard_docs_only_accepts_missing_required_e2e_for_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = []
+    fake.pull_files = [
+        {"filename": ".github/workflows/a38-guard.yml", "status": "modified"},
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_guard_docs_only_accepts_required_e2e_on_a_different_suite():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 40,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 999},
+            "status": "completed",
+            "conclusion": "success",
+        },
+    ]
+    fake.pull_files = [
+        {"filename": ".github/workflows/a38-guard.yml", "status": "modified"},
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_guard_docs_only_accepts_skipped_nested_e2e_on_a_different_suite():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = [
+        {
+            "id": 41,
+            "name": "Full-stack E2E / Full-stack E2E",
+            "check_suite": {"id": 999},
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+    ]
+    fake.pull_files = [
+        {"filename": ".github/workflows/a38-guard.yml", "status": "modified"},
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_guard_docs_skipped_required_workflow_still_blocks_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.runs[0].update(conclusion="skipped")
+    fake.pull_files = [
+        {"filename": ".github/workflows/a38-guard.yml", "status": "modified"},
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+    assert fake.pull["draft"] is True
+
+
+def test_product_pr_missing_required_e2e_still_blocks_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.config["lifecycle"]["required_checks"] = {PATH: ["Full-stack E2E"]}
+    fake.set_pr_guard_config(fake.config)
+    fake.checks = []
+    fake.pull_files = [{"filename": "src/app.ts", "status": "modified"}]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+    assert fake.pull["draft"] is True
+
+
 def test_dry_run_is_read_only():
     fake = LifecycleAPI()
     fake.runs.clear()
