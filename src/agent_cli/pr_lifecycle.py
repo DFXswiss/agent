@@ -509,22 +509,24 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
             latest[path] = run
         else:
             superseded_suites.add(run.get("check_suite_id"))
+    # Skipped/neutral/missing required checks are accepted when the PR file
+    # inventory is independently README-only, markdown-only, or guard-docs-only.
+    # Cancelled, failed, and pending required checks still block.
+    accept_skipped_required = pull_is_guard_docs_only(
+        api, assessment.repo, assessment.pr
+    )
     reasons = [f"Missing required CI: {path}" for path in sorted(required) if path not in latest]
     for path, run in sorted(latest.items()):
-        accepted = {"success"} if path in required else {"success", "skipped", "neutral"}
+        if path in required and not accept_skipped_required:
+            accepted = {"success"}
+        else:
+            accepted = {"success", "skipped", "neutral"}
         if run.get("status") != "completed" or run.get("conclusion") not in accepted:
             reasons.append(f"CI not green: {path} ({run.get('conclusion') or run.get('status') or 'unknown'})")
     # An old run's check suite must not override the latest workflow result.
     excluded = (ignored_suites | superseded_suites) - {None}
     excluded -= {r.get("check_suite_id") for r in latest.values()}
     checks = _checks(api, assessment.repo, assessment.head_sha)
-    # Skipped/neutral required checks are accepted when the PR file inventory
-    # is independently README-only, markdown-only, or guard-docs-only, or a
-    # verified author A38 report on this head passed a matching job. Cancelled,
-    # failed, and missing checks still block.
-    accept_skipped_required = pull_is_guard_docs_only(
-        api, assessment.repo, assessment.pr
-    )
     accepted_required = (
         {"success", "skipped", "neutral"}
         if accept_skipped_required
@@ -556,7 +558,12 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
                 if a38_covers_required_check(passed_a38, name)
                 else accepted_required
             )
-            if not latest_by_name or any(
+            if not latest_by_name:
+                if accept_skipped_required or a38_covers_required_check(passed_a38, name):
+                    continue
+                reasons.append(f"Required CI check not green: {path} / {name}")
+                continue
+            if any(
                 check.get("status") != "completed" or check.get("conclusion") not in accepted
                 for check in latest_by_name.values()
             ):

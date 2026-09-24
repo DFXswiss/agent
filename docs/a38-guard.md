@@ -275,7 +275,11 @@ expression is a matrix placeholder (the job-level `if:` never ran), not a
 test result, and does not block — including when that placeholder is nested
 under a reusable-workflow prefix that `required_checks` matches. Optional
 skipped or neutral jobs that are not listed in `required_checks` do not
-block. The newest workflow run
+block. Independently confirmed README-only, markdown-only, and guard-docs
+change sets also accept missing, skipped, or neutral required checks,
+including a required E2E job that is absent from the latest workflow
+suite. Failed, cancelled, and pending required checks still block.
+The newest workflow run
 supersedes historical results; both workflow inventories and checks are
 inspected, including approval-blocked runs absent from GitHub's rollup.
 
