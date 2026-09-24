@@ -985,6 +985,19 @@ def test_guard_docs_only_accepts_skipped_nested_e2e_on_a_different_suite():
     assert fake.transitions == [False]
 
 
+def test_guard_docs_skipped_required_workflow_still_blocks_auto_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.runs[0].update(conclusion="skipped")
+    fake.pull_files = [
+        {"filename": ".github/workflows/a38-guard.yml", "status": "modified"},
+    ]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == []
+    assert fake.pull["draft"] is True
+
+
 def test_product_pr_missing_required_e2e_still_blocks_auto_ready():
     fake = LifecycleAPI()
     fake.pull["draft"] = True

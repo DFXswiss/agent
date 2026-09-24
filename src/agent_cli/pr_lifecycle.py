@@ -517,10 +517,7 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     )
     reasons = [f"Missing required CI: {path}" for path in sorted(required) if path not in latest]
     for path, run in sorted(latest.items()):
-        if path in required and not accept_skipped_required:
-            accepted = {"success"}
-        else:
-            accepted = {"success", "skipped", "neutral"}
+        accepted = {"success"} if path in required else {"success", "skipped", "neutral"}
         if run.get("status") != "completed" or run.get("conclusion") not in accepted:
             reasons.append(f"CI not green: {path} ({run.get('conclusion') or run.get('status') or 'unknown'})")
     # An old run's check suite must not override the latest workflow result.
