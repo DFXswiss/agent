@@ -559,7 +559,7 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
                 else accepted_required
             )
             if not latest_by_name:
-                if accept_skipped_required or a38_covers_required_check(passed_a38, name):
+                if accept_skipped_required:
                     continue
                 reasons.append(f"Required CI check not green: {path} / {name}")
                 continue
@@ -583,7 +583,9 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
         # are not listed in required_checks are not failed tests. Pending,
         # cancelled, and failed independent checks still block.
         if conclusion in {"skipped", "neutral"} and (
-            is_unexpanded_github_expression(name) or not check_name_is_required(name, config)
+            is_unexpanded_github_expression(name)
+            or not check_name_is_required(name, config)
+            or accept_skipped_required
         ):
             continue
         # A workflow can intentionally skip individual conditional jobs while

@@ -247,9 +247,12 @@ confirmed guard-docs (every path is a markdown file and/or exactly
 **or** a verified author A38 report on this head has a passing job whose
 name matches that required check (so a draft that skips GitHub E2E by design
 stays Ready-eligible when local E2E already passed). Then a completed
-required check may conclude `success`, `skipped`, or `neutral`. `cancelled`
-and failed GitHub required checks still block. Missing required checks still
-block. The guard does not trust a report's `readme_only` /
+required check may conclude `success`, `skipped`, or `neutral`. Independently
+confirmed README-only, markdown-only, and guard-docs inventories also accept
+a listed required check that is missing from the latest workflow suite
+(including nested E2E on another suite). A38 coverage applies only to a
+matching completed check. `cancelled`, failed, and pending required checks
+still block. The guard does not trust a report's `readme_only` /
 `markdown_only` flags or `not_applicable` results without independently listing
 the pull request files. There is no guard-docs report flag; confirmation is
 inventory-only.
@@ -275,11 +278,7 @@ expression is a matrix placeholder (the job-level `if:` never ran), not a
 test result, and does not block — including when that placeholder is nested
 under a reusable-workflow prefix that `required_checks` matches. Optional
 skipped or neutral jobs that are not listed in `required_checks` do not
-block. Independently confirmed README-only, markdown-only, and guard-docs
-change sets also accept missing, skipped, or neutral required checks,
-including a required E2E job that is absent from the latest workflow
-suite. Failed, cancelled, and pending required checks still block.
-The newest workflow run
+block. The newest workflow run
 supersedes historical results; both workflow inventories and checks are
 inspected, including approval-blocked runs absent from GitHub's rollup.
 
