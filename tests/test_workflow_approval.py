@@ -1075,6 +1075,38 @@ def test_finished_failure_uses_not_every_run_succeeded_sentences() -> None:
     assert result.ci_results[0]["status"] == "posted"
 
 
+def test_finished_skipped_uses_not_every_run_succeeded_sentences() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="skipped")
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    body = results[0]["body"]
+    assert RESULT_BAD_EN in body
+    assert RESULT_BAD_DE in body
+    assert RESULT_OK_EN not in body
+    assert RESULT_OK_DE not in body
+    assert _comment_record(results[0])["runs"][0]["conclusion"] == "skipped"
+    assert result.ci_results[0]["status"] == "posted"
+
+
+def test_finished_neutral_uses_not_every_run_succeeded_sentences() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    fake.runs[0].update(status="completed", conclusion="neutral")
+    result = reconcile_pull(fake.api(), REPO, 1)
+    results = _marker_comments(fake, RESULT_MARKER)
+    assert len(results) == 1
+    body = results[0]["body"]
+    assert RESULT_BAD_EN in body
+    assert RESULT_BAD_DE in body
+    assert RESULT_OK_EN not in body
+    assert RESULT_OK_DE not in body
+    assert _comment_record(results[0])["runs"][0]["conclusion"] == "neutral"
+    assert result.ci_results[0]["status"] == "posted"
+
+
 def test_queued_run_posts_no_result_comment() -> None:
     fake = FakeApproval()
     reconcile_pull(fake.api(), REPO, 1)
@@ -1148,6 +1180,20 @@ def test_unreadable_run_get_posts_no_result_comment() -> None:
     result = reconcile_pull(fake.api(), REPO, 1)
     assert not _marker_comments(fake, RESULT_MARKER)
     assert result.ci_results[0]["status"] == "unread"
+
+
+def test_missing_run_get_is_unread_without_raising() -> None:
+    fake = FakeApproval()
+    reconcile_pull(fake.api(), REPO, 1)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    auth_body = auths[0]["body"]
+    fake.runs.clear()
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not _marker_comments(fake, RESULT_MARKER)
+    assert result.ci_results == [{"status": "unread"}]
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert auths[0]["body"] == auth_body
 
 
 def test_new_auth_set_posts_second_result_after_new_run_finishes() -> None:
