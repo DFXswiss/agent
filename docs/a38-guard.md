@@ -372,7 +372,7 @@ The latest author report-like comment, ordered by `updated_at` and numeric comme
 
 Configured `not_applicable` exclusions still publish success on the target enforce context to clear a wrong prior status, including on drafts; that success is not a test-pass claim.
 
-Contexts use the **target branch name**, not the moving base SHA. Thus branch protection can require a stable name while a head targeting different branches gets distinct contexts. Supported branch names are bounded to 75 ASCII letters/digits, dots, underscores, hyphens and slashes; unsupported names fail closed. The exact base SHA remains in the comment and approval binding.
+Contexts use the **target branch name**, not the moving base SHA. Thus branch protection can require a stable name while a head targeting different branches gets distinct contexts. Supported branch names are bounded to 75 ASCII letters/digits, dots, underscores, hyphens and slashes; unsupported names fail closed. The exact base SHA remains in the comment. Policy-migration approval is bound to the current head only; a base-only move does not require a new approval.
 
 After exercising missing, valid, failed, edited, deleted and stale reports, configure branch protection to require the enforced context for each target branch. The JSON verdict remains false for an invalid report even in advisory mode. This gate does not remove other required checks or human merge rules.
 
