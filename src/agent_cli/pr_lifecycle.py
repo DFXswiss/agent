@@ -613,8 +613,39 @@ def _checks(api: Any, repo: str, head: str) -> list[Mapping]:
     raise GuardError("CI check inventory exceeds page bound")
 
 
-def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = None) -> tuple[list[str], dict[str, Mapping]]:
-    """Missing, waiting, running and failed required workflows all block Ready."""
+def _workflow_run_never_started(api: Any, assessment: Any, run: Mapping) -> bool:
+    from .a38_guard import GuardError
+    run_id = run.get("id")
+    if type(run_id) is not int or run_id <= 0:
+        raise GuardError("workflow job inventory invalid")
+    status, body, _ = api.request(
+        "GET", f"/repos/{assessment.repo}/actions/runs/{run_id}/jobs"
+    )
+    if status != 200 or not isinstance(body, Mapping):
+        raise GuardError("workflow job inventory invalid")
+    total_count = body.get("total_count")
+    jobs = body.get("jobs")
+    if type(total_count) is not int or total_count < 0 or not isinstance(jobs, list):
+        raise GuardError("workflow job inventory invalid")
+    if total_count == 0:
+        if jobs:
+            raise GuardError("workflow job inventory invalid")
+        return True
+    return False
+
+
+def ci_state(
+    api: Any,
+    assessment: Any,
+    config: Mapping,
+    pull: Mapping | None = None,
+    *,
+    approval_allowlist: frozenset[str] | None = None,
+) -> tuple[list[str], dict[str, Mapping]]:
+    """Missing, waiting, running and failed required workflows all block Ready.
+
+    A non-allowlisted hold that never started a job does not block Ready.
+    """
     from .a38_guard import GuardError
     required = set(config["required_workflows"])
     labels = {_field(label, "name") for label in (pull or {}).get("labels", [])}
@@ -657,6 +688,15 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     for path, run in sorted(latest.items()):
         accepted = {"success"} if path in required else {"success", "skipped", "neutral"}
         if run.get("status") != "completed" or run.get("conclusion") not in accepted:
+            # Non-allowlisted holds that never started a job do not block Ready.
+            if (
+                path not in required
+                and approval_allowlist is not None
+                and path not in approval_allowlist
+                and run.get("conclusion") in {"action_required", "cancelled"}
+                and _workflow_run_never_started(api, assessment, run)
+            ):
+                continue
             reasons.append(f"CI not green: {path} ({run.get('conclusion') or run.get('status') or 'unknown'})")
     # An old run's check suite must not override the latest workflow result.
     excluded = (ignored_suites | superseded_suites) - {None}
@@ -821,7 +861,16 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             and previous.get("base") == snap.base_sha
             and previous.get("state") == ("draft" if pull["draft"] else "ready") and not dry_run):
         _complete_transition_comment(api, assessment, previous)
-    reasons, latest = ci_state(api, assessment, config, pull)
+    approval_allowlist: frozenset[str] | None = None
+    if isinstance(trusted.config, Mapping):
+        workflow_approval = trusted.config.get("workflow_approval")
+        if isinstance(workflow_approval, Mapping) and workflow_approval.get("enabled") is True:
+            workflows = workflow_approval.get("workflows")
+            if isinstance(workflows, list):
+                approval_allowlist = frozenset(workflows)
+    reasons, latest = ci_state(
+        api, assessment, config, pull, approval_allowlist=approval_allowlist
+    )
     if _has_merge_conflicts(api, pull):
         reasons.insert(0, "Merge conflicts")
     target = None
@@ -916,7 +965,9 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             or final_config.config_revision != trusted.config_revision
             or final_pull.get("draft") != pull["draft"]):
         raise GuardError("pull or configuration changed before lifecycle transition")
-    final_reasons, _ = ci_state(api, assessment, config, final_pull)
+    final_reasons, _ = ci_state(
+        api, assessment, config, final_pull, approval_allowlist=approval_allowlist
+    )
     if _has_merge_conflicts(api, final_pull):
         final_reasons.insert(0, "Merge conflicts")
     if target == "ready" and (

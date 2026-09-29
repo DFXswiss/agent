@@ -1411,6 +1411,107 @@ def test_hold_clears_draft_record_so_later_human_draft_does_not_restore():
     assert fake.pull["draft"]
 
 
+def test_non_allowlisted_hold_does_not_block_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.cancel_clears_hold = False
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="action_required",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "ready"
+    assert fake.transitions == [False]
+    assert not any("live-e2e.yml" in str(reason) for reason in result.lifecycle["reasons"])
+    assert fake.cancels == [202]
+
+
+def test_non_allowlisted_cancelled_hold_does_not_block_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="action_required",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "ready"
+    assert fake.transitions == [False]
+    assert not any("live-e2e.yml" in str(reason) for reason in result.lifecycle["reasons"])
+    assert fake.cancels == [202]
+
+
+def test_non_allowlisted_failure_still_blocks_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="failure",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"] is True
+    assert fake.transitions == []
+    assert "CI not green: .github/workflows/live-e2e.yml (failure)" in result.lifecycle["reasons"]
+    assert fake.cancels == []
+
+
+def test_non_allowlisted_cancel_after_job_started_still_blocks_ready():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="cancelled",
+        status="completed",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    fake.jobs_by_run[202] = [{"id": 1, "name": "e2e"}]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"] is True
+    assert fake.transitions == []
+    assert "CI not green: .github/workflows/live-e2e.yml (cancelled)" in result.lifecycle["reasons"]
+    assert fake.cancels == []
+
+
+def test_required_workflow_action_required_still_blocks_when_not_allowlisted():
+    fake = LifecycleAPI()
+    fake.runs[0].update(status="completed", conclusion="action_required")
+    fake.config["workflow_approval"]["workflows"] = [".github/workflows/other.yml"]
+    fake.set_pr_guard_config(fake.config)
+    fake.cancel_clears_hold = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert "CI not green: .github/workflows/test.yml (action_required)" in result.lifecycle["reasons"]
+
+
 HUMAN = {"id": 42, "login": "TaprootFreak", "type": "User"}
 AUTHOR = {"id": 315477232, "login": "TaprootFreakAI", "type": "User"}
 BOT_ACTOR = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
