@@ -10,7 +10,6 @@ import pytest
 
 from agent_cli import workflow_approval as wa
 from agent_cli.a38_guard import (
-    POLICY_APPROVAL_PREFIX,
     Assessment,
     GuardError,
     assess_pull,
@@ -723,7 +722,7 @@ def _add_maintainer_approval(fake: FakeApproval) -> None:
             "state": "APPROVED",
             "commit_id": HEAD,
             "submitted_at": "2026-09-05T13:00:00Z",
-            "body": f"{POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+            "body": "Looks good",
         }
     ]
 
