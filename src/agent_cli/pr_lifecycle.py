@@ -644,8 +644,13 @@ def ci_state(
 ) -> tuple[list[str], dict[str, Mapping]]:
     """Missing, waiting, running and failed required workflows all block Ready.
 
-    A non-allowlisted hold that never started a job does not block Ready
-    and does not hide an older same-head run of that workflow.
+    While workflow approval is enabled, a hold that is not required, not
+    allowlisted, and never started a job does not block Ready and does not
+    hide an older same-head result of that workflow. The newest remaining
+    run is judged by the existing rule: success is green, and failure,
+    timeout, cancellation after a job started, and a run that is still
+    going are not. Required workflows, allowlisted workflows, and the same
+    hold while approval is disabled still block.
     """
     from .a38_guard import GuardError
     required = set(config["required_workflows"])
