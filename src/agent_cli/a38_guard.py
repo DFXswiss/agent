@@ -1919,6 +1919,8 @@ def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
             continue
         if type(review.get("id")) is not int or not isinstance(review.get("submitted_at"), str):
             raise GuardError("submitted review identity/timestamp missing")
+        if review.get("commit_id") != pull.head_sha:
+            continue
         previous = latest.get(uid)
         key = (review["submitted_at"], review["id"])
         if previous is None or key > (previous["submitted_at"], previous["id"]):

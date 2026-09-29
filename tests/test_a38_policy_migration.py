@@ -98,6 +98,59 @@ def test_latest_substantive_review_and_other_changes_request_block() -> None:
     assert not guard.assess_pull(fake.api(), REPO, 1).ok
 
 
+@pytest.mark.parametrize("stale_state", ["DISMISSED", "APPROVED"])
+def test_later_stale_review_does_not_displace_current_head_approval(stale_state: str) -> None:
+    fake = migration()
+    fake.reviews.append(
+        dict(
+            fake.reviews[0],
+            id=101,
+            state=stale_state,
+            commit_id=BASE2,
+            submitted_at="2026-09-05T14:00:00Z",
+        )
+    )
+    result = guard.assess_pull(fake.api(), REPO, 1)
+    assert result.ok
+    assert result.policy_sha == HEAD
+    assert result.approval_fingerprint
+
+
+def test_later_stale_review_does_not_clear_current_head_changes_request() -> None:
+    fake = migration()
+    fake.reviews[0]["state"] = "CHANGES_REQUESTED"
+    fake.reviews.append(
+        dict(
+            fake.reviews[0],
+            id=101,
+            state="APPROVED",
+            commit_id=BASE2,
+            submitted_at="2026-09-05T14:00:00Z",
+        )
+    )
+    fake.reviews.append({
+        "id": 4040, "user": {"id": 4040, "login": "other"},
+        "state": "APPROVED", "commit_id": HEAD,
+        "submitted_at": "2026-09-05T15:00:00Z",
+        "body": "",
+    })
+    fake.permissions["other"] = {"permission": "admin", "user": {"id": 4040}}
+    assert not guard.assess_pull(fake.api(), REPO, 1).ok
+
+
+def test_base_only_move_keeps_current_head_approval() -> None:
+    fake = migration()
+    fake.pull["base"]["sha"] = BASE2
+    fake.tree_paths[BASE2] = fake.tree_paths[BASE]
+    for (sha, path), content in list(fake.files.items()):
+        if sha == BASE:
+            fake.files[(BASE2, path)] = content
+    result = guard.assess_pull(fake.api(), REPO, 1)
+    assert result.ok
+    assert result.policy_sha == HEAD
+    assert result.approval_fingerprint
+
+
 def test_permission_identity_and_api_refusal_fail_closed() -> None:
     fake = migration()
     fake.permissions["maintainer"]["user"]["id"] = 9999
