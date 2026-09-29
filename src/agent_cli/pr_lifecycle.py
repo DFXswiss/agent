@@ -644,7 +644,8 @@ def ci_state(
 ) -> tuple[list[str], dict[str, Mapping]]:
     """Missing, waiting, running and failed required workflows all block Ready.
 
-    A non-allowlisted hold that never started a job does not block Ready.
+    A non-allowlisted hold that never started a job does not block Ready
+    and does not hide an older same-head run of that workflow.
     """
     from .a38_guard import GuardError
     required = set(config["required_workflows"])
@@ -656,6 +657,7 @@ def ci_state(
     latest: dict[str, Mapping] = {}
     ignored_suites = set()
     superseded_suites = set()
+    by_path: dict[str, list[Mapping]] = {}
     for run in runs:
         if run.get("head_sha") != assessment.head_sha:
             raise GuardError("CI workflow inventory contains another head")
@@ -671,13 +673,30 @@ def ci_state(
         links = run.get("pull_requests")
         if isinstance(links, list) and links and not any(_field(p, "number") == assessment.pr for p in links):
             continue
-        previous = latest.get(path)
-        if previous is None or (_timestamp(run.get("created_at")), run["id"]) > (_timestamp(previous.get("created_at")), previous["id"]):
-            if previous:
-                superseded_suites.add(previous.get("check_suite_id"))
-            latest[path] = run
-        else:
-            superseded_suites.add(run.get("check_suite_id"))
+        by_path.setdefault(path, []).append(run)
+    for path, path_runs in by_path.items():
+        path_runs.sort(
+            key=lambda run: (_timestamp(run.get("created_at")), run["id"]),
+            reverse=True,
+        )
+        deciding = None
+        for run in path_runs:
+            if deciding is not None:
+                superseded_suites.add(run.get("check_suite_id"))
+                continue
+            # Skip a non-allowlisted never-started hold; the first other run decides.
+            if (
+                path not in required
+                and approval_allowlist is not None
+                and path not in approval_allowlist
+                and run.get("conclusion") in {"action_required", "cancelled"}
+                and _workflow_run_never_started(api, assessment, run)
+            ):
+                superseded_suites.add(run.get("check_suite_id"))
+                continue
+            deciding = run
+        if deciding is not None:
+            latest[path] = deciding
     # Skipped/neutral/missing required checks are accepted when the PR file
     # inventory is independently README-only, markdown-only, or guard-docs-only.
     # Cancelled, failed, and pending required checks still block.
@@ -688,15 +707,6 @@ def ci_state(
     for path, run in sorted(latest.items()):
         accepted = {"success"} if path in required else {"success", "skipped", "neutral"}
         if run.get("status") != "completed" or run.get("conclusion") not in accepted:
-            # Non-allowlisted holds that never started a job do not block Ready.
-            if (
-                path not in required
-                and approval_allowlist is not None
-                and path not in approval_allowlist
-                and run.get("conclusion") in {"action_required", "cancelled"}
-                and _workflow_run_never_started(api, assessment, run)
-            ):
-                continue
             reasons.append(f"CI not green: {path} ({run.get('conclusion') or run.get('status') or 'unknown'})")
     # An old run's check suite must not override the latest workflow result.
     excluded = (ignored_suites | superseded_suites) - {None}

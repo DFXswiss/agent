@@ -257,7 +257,10 @@ inventory-only.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
 conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
-or failed cause a Draft transition. A write collaborator holds Ready through
+or failed cause a Draft transition. A non-allowlisted hold that never started a
+job does not by itself force Draft, and it does not replace an older same-head
+run that failed, timed out, is still running, or was cancelled after a job
+started. Required workflows are unchanged. A write collaborator holds Ready through
 missing or red CI only: the PR author currently has `write`/`maintain`/`admin`
 on the target, or the latest human `ready_for_review` timeline actor does.
 Confirmed merge conflicts always return Ready to Draft, including while that
@@ -277,8 +280,10 @@ test result, and does not block — including when that placeholder is nested
 under a reusable-workflow prefix that `required_checks` matches. Optional
 skipped or neutral jobs that are not listed in `required_checks` do not
 block. The newest workflow run
-supersedes historical results; both workflow inventories and checks are
-inspected, including approval-blocked runs absent from GitHub's rollup.
+supersedes historical results, except a non-allowlisted hold with no jobs is
+not a result and does not hide an older same-head run; both workflow inventories
+and checks are inspected, including approval-blocked runs absent from GitHub's
+rollup.
 
 Ignore only repository control workflows that are not product CI, particularly
 the guard itself: otherwise its in-progress check would always prevent Ready.

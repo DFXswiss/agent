@@ -1512,6 +1512,192 @@ def test_required_workflow_action_required_still_blocks_when_not_allowlisted():
     assert "CI not green: .github/workflows/test.yml (action_required)" in result.lifecycle["reasons"]
 
 
+def test_newer_non_allowlisted_hold_does_not_hide_older_failure():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.cancel_clears_hold = False
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="failure",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    fake.runs.append(fake.run(
+        id=203,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="action_required",
+        run_attempt=1,
+        created_at="2026-09-05T13:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"] is True
+    assert fake.transitions == []
+    assert "CI not green: .github/workflows/live-e2e.yml (failure)" in result.lifecycle["reasons"]
+
+
+@pytest.mark.parametrize("hold_conclusion", ["action_required", "cancelled"])
+def test_newer_failure_wins_over_older_non_allowlisted_hold(hold_conclusion):
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion=hold_conclusion,
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    fake.runs.append(fake.run(
+        id=203,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="failure",
+        run_attempt=1,
+        created_at="2026-09-05T13:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.pull["draft"] is True
+    assert fake.transitions == []
+    assert "CI not green: .github/workflows/live-e2e.yml (failure)" in result.lifecycle["reasons"]
+
+
+def test_newer_success_wins_over_older_failure():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="failure",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    fake.runs.append(fake.run(
+        id=203,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="success",
+        run_attempt=1,
+        created_at="2026-09-05T13:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "ready"
+    assert fake.transitions == [False]
+    assert "CI not green: .github/workflows/live-e2e.yml (failure)" not in result.lifecycle["reasons"]
+
+
+def test_allowlisted_cancelled_zero_job_hold_still_blocks_ready():
+    fake = LifecycleAPI()
+    fake.config["workflow_approval"]["workflows"] = [PATH, ".github/workflows/live-e2e.yml"]
+    fake.set_pr_guard_config(fake.config)
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="cancelled",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert "CI not green: .github/workflows/live-e2e.yml (cancelled)" in result.lifecycle["reasons"]
+
+
+def test_approval_disabled_cancelled_zero_job_hold_still_blocks_ready():
+    fake = LifecycleAPI()
+    fake.config["workflow_approval"]["enabled"] = False
+    fake.config["lifecycle"]["auto_ready"] = False
+    fake.set_pr_guard_config(fake.config)
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="cancelled",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert fake.transitions == [True]
+    assert "CI not green: .github/workflows/live-e2e.yml (cancelled)" in result.lifecycle["reasons"]
+
+
+@pytest.mark.parametrize("status,body", [
+    (500, {}),
+    (200, {"total_count": "0", "jobs": []}),
+    (200, {"total_count": -1, "jobs": []}),
+    (200, {"total_count": 0, "jobs": {"id": 1}}),
+    (200, {"total_count": 0, "jobs": [{"id": 1}]}),
+    (200, []),
+])
+def test_malformed_workflow_job_inventory_fails_closed(status, body):
+    fake = LifecycleAPI()
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="cancelled",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    fake.jobs_override[202] = (status, body)
+    with pytest.raises(GuardError, match="workflow job inventory invalid"):
+        reconcile_pull(fake.api(), REPO, 1)
+
+
+def test_nonzero_job_total_with_empty_list_is_started():
+    fake = LifecycleAPI()
+    fake.runs.append(fake.run(
+        id=202,
+        path=".github/workflows/live-e2e.yml",
+        event="pull_request",
+        head_sha=HEAD,
+        conclusion="cancelled",
+        run_attempt=1,
+        created_at="2026-09-05T12:00:00Z",
+        pull_requests=[],
+        head_repository={"full_name": "author/public-app"},
+    ))
+    fake.jobs_override[202] = (200, {"total_count": 1, "jobs": []})
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert "CI not green: .github/workflows/live-e2e.yml (cancelled)" in result.lifecycle["reasons"]
+    # The pre-mutation re-read classifies the same run again, so there is one inventory read per ci_state call and no second page.
+    assert fake.jobs_gets == [202, 202]
+
+
 HUMAN = {"id": 42, "login": "TaprootFreak", "type": "User"}
 AUTHOR = {"id": 315477232, "login": "TaprootFreakAI", "type": "User"}
 BOT_ACTOR = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
