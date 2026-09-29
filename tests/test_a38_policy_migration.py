@@ -38,7 +38,7 @@ def migration() -> FakeAPI:
         "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
         "state": "APPROVED", "commit_id": HEAD,
         "submitted_at": "2026-09-05T13:00:00Z",
-        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+        "body": "",
     }]
     return fake
 
@@ -51,25 +51,17 @@ def test_explicit_maintainer_approval_allows_changed_workflows() -> None:
     assert result.context == "A38 / report (develop)"
 
 
-@pytest.mark.parametrize("body", [
-    f"{guard.POLICY_APPROVAL_PREFIX}   head={HEAD}\t\tbase={BASE}",
-    f" \t{guard.POLICY_APPROVAL_PREFIX}\thead={HEAD}  base={BASE}\t ",
-    (
-        "Reviewed against the proposed policy.\n"
-        f"{guard.POLICY_APPROVAL_PREFIX}\n"
-        f"  head={HEAD}\n"
-        f"\tbase={BASE}\n"
-        "Approval rationale is above."
-    ),
-    (
-        "Reviewed against the proposed policy.\r\n\r\n"
-        f"  {guard.POLICY_APPROVAL_PREFIX}\r\n"
-        f"  head={HEAD}\r\n"
-        f"  base={BASE}  \r\n\r\n"
-        "Approved after review."
-    ),
-])
-def test_explicit_approval_accepts_benign_whitespace(body: str) -> None:
+@pytest.mark.parametrize(
+    "body",
+    [
+        "",
+        "Looks good",
+        None,
+        f"A38-POLICY-APPROVAL:v1 head={HEAD} base={BASE}",
+        "not a declaration",
+    ],
+)
+def test_current_head_approval_ignores_review_body(body: str | None) -> None:
     fake = migration()
     fake.reviews[0]["body"] = body
     result = guard.assess_pull(fake.api(), REPO, 1)
@@ -78,49 +70,12 @@ def test_explicit_approval_accepts_benign_whitespace(body: str) -> None:
     assert result.approval_fingerprint
 
 
-@pytest.mark.parametrize("body", [
-    f"{guard.POLICY_APPROVAL_PREFIX} head={BASE2} base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE2}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD[:-1]}g base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD}0 base={BASE}",
-    f"x{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
-    f"Approval: {guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE} approved",
-    f"{guard.POLICY_APPROVAL_PREFIX} base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} head={HEAD} base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE} base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} HEAD={HEAD} base={BASE}",
-    f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD.upper()} base={BASE}",
-    (
-        f"{guard.POLICY_APPROVAL_PREFIX}\n"
-        f"head={HEAD[:20]}\n{HEAD[20:]}\n"
-        f"base={BASE}"
-    ),
-    (
-        f"{guard.POLICY_APPROVAL_PREFIX}\nhead={HEAD}\n"
-        f"{guard.POLICY_APPROVAL_PREFIX}\nbase={BASE}"
-    ),
-])
-def test_explicit_approval_rejects_non_exact_declarations(body: str) -> None:
-    fake = migration()
-    fake.reviews[0]["body"] = body
-    result = guard.assess_pull(fake.api(), REPO, 1)
-    assert not result.ok
-    assert result.policy_sha == BASE
-    assert result.approval_fingerprint == ""
-
-
-@pytest.mark.parametrize("change", ["ordinary", "stale-head", "stale-base", "author", "read", "dismissed"])
+@pytest.mark.parametrize("change", ["stale-head", "author", "read", "dismissed"])
 def test_invalid_approval_cannot_adopt_head_policy(change: str) -> None:
     fake = migration()
     review = fake.reviews[0]
-    if change == "ordinary":
-        review["body"] = "Looks good"
-    elif change == "stale-head":
+    if change == "stale-head":
         review["commit_id"] = BASE2
-    elif change == "stale-base":
-        review["body"] = str(review["body"]).replace(BASE, BASE2)
     elif change == "author":
         review["user"]["id"] = AUTHOR_ID
     elif change == "read":
@@ -195,7 +150,7 @@ def test_pr_guard_config_change_requires_migration_approval_and_does_not_activat
         "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
         "state": "APPROVED", "commit_id": HEAD,
         "submitted_at": "2026-09-05T13:00:00Z",
-        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+        "body": "Looks good",
     }]
     fake.files[(HEAD, ".github/a38.json")] = json.dumps(_policy()).encode()
     passed = guard.assess_pull(fake.api(), REPO, 1)
@@ -239,7 +194,7 @@ def test_approved_malformed_pr_guard_config_remains_blocked(
         "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
         "state": "APPROVED", "commit_id": HEAD,
         "submitted_at": "2026-09-05T13:00:00Z",
-        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+        "body": "Looks good",
     }]
     fake.files[(HEAD, ".github/a38.json")] = json.dumps(_policy()).encode()
     result = guard.assess_pull(fake.api(), REPO, 1)
@@ -262,14 +217,14 @@ def test_approved_pr_guard_config_removal_remains_approval_gated() -> None:
     assert not blocked.ok
     assert blocked.scope_decision == "enforce"
     assert any("pr-guard.json" in reason for reason in blocked.reasons)
-    assert any("approval" in reason for reason in blocked.reasons)
+    assert any("must approve the current head" in reason for reason in blocked.reasons)
 
     fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}
     fake.reviews = [{
         "id": 100, "user": {"id": MAINTAINER, "login": "maintainer"},
         "state": "APPROVED", "commit_id": HEAD,
         "submitted_at": "2026-09-05T13:00:00Z",
-        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+        "body": "Looks good",
     }]
     fake.files[(HEAD, ".github/a38.json")] = json.dumps(_policy()).encode()
     passed = guard.assess_pull(fake.api(), REPO, 1)
@@ -729,7 +684,7 @@ def test_ineligible_reviewer_does_not_invalidate_report(reviewer: str, review_st
         "id": 100, "user": {"id": 9090, "login": reviewer},
         "state": review_state, "commit_id": HEAD,
         "submitted_at": "2026-09-05T13:00:00Z",
-        "body": f"{guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+        "body": "Looks good",
     }]
     original = fake.request_fn
 

@@ -1911,7 +1911,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
                 "state": "APPROVED",
                 "commit_id": HEAD,
                 "submitted_at": "2026-09-05T13:00:00Z",
-                "body": f"{a38_guard.POLICY_APPROVAL_PREFIX} head={HEAD} base={BASE}",
+                "body": "Looks good",
             }
         ]
         fake.files[(HEAD, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]

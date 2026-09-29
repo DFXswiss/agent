@@ -25,7 +25,8 @@ def test_adopter_guide_is_the_checklist_not_a_second_engine() -> None:
     assert "examples/a38-guard.yml" in text
     assert "USES_REF_PIN_ME" in text
     assert "agent a38 policy --file .github/a38.json" in text
-    assert "A38-POLICY-APPROVAL:v1" in text
+    assert "No special review text is required." in text
+    assert "A38-POLICY-APPROVAL:v1" not in text
     lowered = text.lower()
     assert "yaml interpreter" in lowered or "step runner" in lowered
     assert "do not point `steps` at a helper that re-parses the workflow yaml" in lowered
@@ -34,4 +35,5 @@ def test_adopter_guide_is_the_checklist_not_a_second_engine() -> None:
         encoding="utf-8"
     )
     assert "a38.md#adopting-a38-in-a-repository" in guard_md
+    assert "A38-POLICY-APPROVAL:v1" not in guard_md
     assert "if the default branch is `main`, list `main` in `a38.enforce`" in lowered

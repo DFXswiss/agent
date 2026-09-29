@@ -78,7 +78,6 @@ MAX_STATUS_DESC = 140
 MAX_COMMENT_BODY = 12000
 MAX_FILE_BYTES = 1024 * 1024
 MAX_API_BYTES = 16 * 1024 * 1024
-POLICY_APPROVAL_PREFIX = "A38-POLICY-APPROVAL:v1"
 NOT_APPLICABLE_DESCRIPTION = (
     "Not applicable: target branch excluded by pr-guard configuration."
 )
@@ -1108,8 +1107,8 @@ def check_pr_guard_config_migration(
     if allow_changes:
         return []
     return [
-        f"{PR_GUARD_CONFIG_PATH} bytes changed vs base; explicit current-head/base "
-        "maintainer A38 policy approval is required"
+        f"{PR_GUARD_CONFIG_PATH} bytes changed vs base; "
+        "a maintainer must approve the current head"
     ]
 
 
@@ -1239,8 +1238,8 @@ def check_workflows_against_policy(
             continue
         if head_bytes != base_bytes and not allow_changes and path not in skip_bytes:
             problems.append(
-                f"{path} bytes changed vs base; explicit current-head/base maintainer "
-                "A38 policy approval is required"
+                f"{path} bytes changed vs base; "
+                "a maintainer must approve the current head"
             )
         if head_bytes is None:
             # Removed at head: still fine for classification; no head jobs to require.
@@ -1413,8 +1412,8 @@ def build_comment_body(assessment: Assessment) -> str:
         f"- Guard docs: {assessment.guard_docs_url or GUARD_DOCS}\n"
         f"- Required jobs: {names}\n"
         f"- Problems: {problems}\n"
-        "- For a workflow/policy migration, another maintainer must submit an approved review with "
-        f"`{POLICY_APPROVAL_PREFIX} head={assessment.head_sha} base={assessment.base_sha}`.\n"
+        "- For a workflow or policy change, another maintainer must approve "
+        "this pull request on the current head. No special review text is required.\n"
         f"- Run (outside the repo output paths): `{run_cmd}`\n"
         + (
             (
@@ -1898,7 +1897,12 @@ def resolve_write_ready(
 
 
 def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
-    """Return a fingerprint of explicit, current maintainer authorization, or empty."""
+    """Return a fingerprint of a maintainer approval of this head, or empty.
+
+    An APPROVED review is enough. The review body is ignored. The review must
+    be on the current head, from someone other than the author, who currently
+    has write, maintain or admin. A changes request from such a person blocks.
+    """
     reviews = api.paginate(f"/repos/{pull.repo}/pulls/{pull.number}/reviews")
     latest: dict[int, Mapping[str, Any]] = {}
     for review in reviews:
@@ -1919,24 +1923,12 @@ def migration_approval(api: GitHubApi, pull: PullSnapshot) -> str:
         key = (review["submitted_at"], review["id"])
         if previous is None or key > (previous["submitted_at"], previous["id"]):
             latest[uid] = review
-    token_separator = r"(?:[ \t]+|[ \t]*\r?\n[ \t]*)"
-    approval_declaration = re.compile(
-        rf"^[ \t]*{re.escape(POLICY_APPROVAL_PREFIX)}"
-        rf"{token_separator}head={re.escape(pull.head_sha)}"
-        rf"{token_separator}base={re.escape(pull.base_sha)}[ \t]*\r?$",
-        re.MULTILINE,
-    )
     approved: list[tuple[int, int, str]] = []
     for uid, review in latest.items():
         if review.get("commit_id") != pull.head_sha:
             continue
         state = review["state"]
-        body = review.get("body")
-        explicit = (
-            isinstance(body, str)
-            and approval_declaration.search(body) is not None
-        )
-        if state != "CHANGES_REQUESTED" and not (state == "APPROVED" and explicit):
+        if state not in {"APPROVED", "CHANGES_REQUESTED"}:
             continue
         login = review["user"].get("login")
         if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login):
