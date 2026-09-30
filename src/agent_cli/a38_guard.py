@@ -1531,6 +1531,13 @@ def _apply_review_result(
                 merged.append(reason)
         assessment.reasons = merged
         _status_bits(assessment)
+        # Prefix after _status_bits: that helper runs before the review gate
+        # and must not relabel a real A38 failure.
+        if not assessment.hard_fail and not assessment.draft:
+            reason = (
+                review_reasons[0] if review_reasons else "review completion missing"
+            )
+            assessment.description = truncate_desc(f"review_fail: {reason}")
         assessment.comment_body = build_comment_body(assessment)
     elif assessment.draft and not review_ok:
         # Observe stays pass and does not draft. A missing declaration still
@@ -2309,7 +2316,7 @@ def publish_assessment(
                 if prev_gate_state == "success":
                     reason = gate_reasons[0] if gate_reasons else "review completion missing"
                     state = "failure"
-                    description = truncate_desc(f"fail: {reason}")
+                    description = truncate_desc(f"review_fail: {reason}")
                     require_report = False
                 else:
                     assessment.writes.append("status:skipped:draft")
@@ -2486,10 +2493,13 @@ def publish_assessment(
             hard_fail_left = prev_state == "failure" and str(prev_desc).startswith(
                 "hard_fail:"
             )
+            review_fail_left = prev_state == "failure" and str(prev_desc).startswith(
+                "review_fail:"
+            )
             if not assessment.review_ok:
                 # Do not success-clear, and do not leave a prior waiver success.
-                # No status at all stays omitted. hard_fail stays until the
-                # declaration is valid again.
+                # No status at all stays omitted. hard_fail and review_fail stay
+                # until the declaration is valid again.
                 if prev_state == "success":
                     reason = (
                         assessment.review_reasons[0]
@@ -2499,15 +2509,15 @@ def publish_assessment(
                     _post_status(
                         context,
                         "failure",
-                        truncate_desc(f"fail: {reason}"),
+                        truncate_desc(f"review_fail: {reason}"),
                         require_report=False,
                     )
                 else:
                     assessment.writes.append("status:skipped:draft")
-            elif hard_fail_left:
+            elif hard_fail_left or review_fail_left:
                 # GitHub statuses are append-only per context/SHA. Clear only a
-                # leftover draft hard_fail so Checks is not stuck red after the
-                # violation is gone. Other enforce failures stay.
+                # leftover draft hard_fail or review_fail so Checks is not stuck
+                # red after the violation is gone. Other enforce failures stay.
                 assessment.state_for_status = "success"
                 _post_status(
                     context,

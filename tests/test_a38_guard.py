@@ -2296,6 +2296,9 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertFalse(result.hard_fail)
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue(
+            (matching[0].get("description") or "").startswith("review_fail:")
+        )
         self.assertIn("review completion comment missing", matching[0]["description"])
         self.assertIn("Thanks for your contribution", result.comment_body)
 
@@ -2323,6 +2326,53 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(len(matching), 1)
         self.assertEqual(matching[0]["state"], "failure")
         self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
+
+    def test_ready_review_failure_posts_review_fail_status(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.pull_files = [{"filename": "app.py", "status": "modified"}]
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=401
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.draft)
+        self.assertFalse(result.review_ok)
+        self.assertFalse(result.hard_fail)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        desc = matching[0].get("description") or ""
+        self.assertTrue(desc.startswith("review_fail:"))
+        self.assertFalse(desc.startswith("hard_fail:"))
+
+    def test_ready_review_fail_then_draft_valid_review_clears(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.pull_files = [{"filename": "app.py", "status": "modified"}]
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=402
+        )
+        first = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(first.draft)
+        self.assertFalse(first.review_ok)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue(
+            (matching[0].get("description") or "").startswith("review_fail:")
+        )
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.satisfy_review = True
+        second = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(second.draft)
+        self.assertTrue(second.review_ok)
+        self.assertFalse(second.hard_fail)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertIn("omitted until Ready", matching[0].get("description") or "")
 
     def _later_author_note(self) -> dict[str, Any]:
         return {
