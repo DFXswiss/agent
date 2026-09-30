@@ -11,6 +11,7 @@ import re
 from collections import Counter
 from typing import Any, Mapping
 
+from .a38_review import LIFECYCLE_REASON
 from .readme_only import pull_is_guard_docs_only
 from .workflow_approval import _field, _runs, _timestamp
 
@@ -177,6 +178,13 @@ def _join_de_phrases(parts: list[str]) -> str:
     return ", ".join(parts[:-1]) + f" und {parts[-1]}"
 
 
+def _note_review(reasons: list[str], assessment: Any) -> None:
+    """Enforce-only. Same class as merge conflicts: a write hold must not keep Ready."""
+    if assessment.mode == "enforce" and not assessment.review_ok:
+        if LIFECYCLE_REASON not in reasons:
+            reasons.insert(0, LIFECYCLE_REASON)
+
+
 def visible_transition_sentences(
     record: Mapping, write_ready_reason: str = ""
 ) -> tuple[str, str]:
@@ -190,14 +198,17 @@ def visible_transition_sentences(
     draft = record.get("state") == "draft"
     if not draft and not reasons:
         return (
-            "Required CI is green and no merge conflicts exist; "
-            "this pull request is ready for review.",
-            "Die Required CI ist grün und es gibt keine Merge-Konflikte; "
-            "dieser Pull Request ist bereit zum Review.",
+            "Required CI is green, the review completion is present, "
+            "and no merge conflicts exist; this pull request is ready for review.",
+            "Die Required CI ist grün, der Review-Abschluss liegt vor "
+            "und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit zum Review.",
         )
 
     conflicts = "Merge conflicts" in reasons
-    ci_reasons = [r for r in reasons if r != "Merge conflicts"]
+    review_missing = LIFECYCLE_REASON in reasons
+    ci_reasons = [
+        r for r in reasons if r not in {"Merge conflicts", LIFECYCLE_REASON}
+    ]
 
     missing = any(
         isinstance(r, str) and r.startswith("Missing required CI:") for r in ci_reasons
@@ -221,6 +232,9 @@ def visible_transition_sentences(
     if conflicts:
         en_parts.append("merge conflicts exist")
         de_parts.append("Merge-Konflikte bestehen")
+    if review_missing:
+        en_parts.append("the review completion is missing or invalid")
+        de_parts.append("der Review-Abschluss fehlt oder ungültig ist")
 
     ci_en: list[str] = []
     ci_de: list[str] = []
@@ -888,6 +902,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     )
     if _has_merge_conflicts(api, pull):
         reasons.insert(0, "Merge conflicts")
+    _note_review(reasons, assessment)
     target = None
     we_drafted = (
         previous.get("state") == "draft"
@@ -903,12 +918,19 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         pull["draft"] and write_hold and we_drafted
         and pull.get("mergeable") is True
         and "Merge conflicts" not in reasons
+        and LIFECYCLE_REASON not in reasons
     )
     # Write collaborator Ready hold: do not auto-draft for red/missing CI while
     # author or the latest ready_for_review actor has write/maintain/admin.
     # Confirmed merge conflicts always return Ready to Draft, including in a hold.
     # Markdown-only and guard-docs are report waivers only — they do not hold Ready through red CI.
-    if not pull["draft"] and reasons and write_hold and "Merge conflicts" not in reasons:
+    if (
+        not pull["draft"]
+        and reasons
+        and write_hold
+        and "Merge conflicts" not in reasons
+        and LIFECYCLE_REASON not in reasons
+    ):
         hold = {
             "repo": assessment.repo,
             "pr": assessment.pr,
@@ -967,7 +989,14 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 api, assessment.repo, assessment.pr, dry_run=True,
                 event_actor=assessment.event_actor,
             )
-            if fresh.ok and fresh.status == "pass" and fresh.mode == "enforce" and fresh.head_sha == snap.head_sha and fresh.base_sha == snap.base_sha:
+            if (
+                fresh.ok
+                and fresh.status == "pass"
+                and fresh.mode == "enforce"
+                and fresh.review_ok
+                and fresh.head_sha == snap.head_sha
+                and fresh.base_sha == snap.base_sha
+            ):
                 target = "ready"
     result = {"action": target or "unchanged", "reasons": reasons, "dry_run": dry_run}
     if target is None or dry_run:
@@ -985,6 +1014,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
     )
     if _has_merge_conflicts(api, final_pull):
         final_reasons.insert(0, "Merge conflicts")
+    _note_review(final_reasons, assessment)
     if target == "ready" and (
         "Merge conflicts" in final_reasons or final_pull.get("mergeable") is not True
     ):
@@ -995,7 +1025,12 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         and (final_reasons or final_pull.get("mergeable") is not True)
     ):
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
-    if target == "draft" and write_hold and "Merge conflicts" not in final_reasons:
+    if (
+        target == "draft"
+        and write_hold
+        and "Merge conflicts" not in final_reasons
+        and LIFECYCLE_REASON not in final_reasons
+    ):
         hold = {
             "repo": assessment.repo,
             "pr": assessment.pr,
@@ -1036,6 +1071,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         )
         fields = ("head_sha", "base_sha", "config_revision", "config_fingerprint", "report_fingerprint", "approval_fingerprint")
         if (not fresh.ok or fresh.status != "pass" or fresh.mode != "enforce"
+                or not fresh.review_ok
                 or any(getattr(fresh, f) != getattr(assessment, f) for f in fields)):
             raise GuardError("A38 evidence changed before Ready transition")
         if restore_write_ready and not fresh.write_ready:

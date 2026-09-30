@@ -197,6 +197,8 @@ class FakeAPI:
     def __init__(self) -> None:
         self.pull: dict[str, Any] = self._pull(HEAD, BASE, state="open")
         self.comments: list[dict[str, Any]] = []
+        self.satisfy_review = True
+        self.review_threads: list[dict[str, Any]] = []
         self.files: dict[tuple[str, str], bytes] = {}
         self.tree_paths: dict[str, list[str]] = {
             HEAD: [".github/workflows/test.yml"],
@@ -280,6 +282,26 @@ class FakeAPI:
             if path_only.startswith(prefix) or path.startswith(prefix):
                 return 403, {"message": "denied"}, {}
 
+        if method_u == "POST" and path_only == "/graphql":
+            raw = body.decode() if isinstance(body, (bytes, bytearray)) else (body or "")
+            try:
+                payload = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if "reviewThreads" in str(payload.get("query", "")):
+                return 200, {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "reviewThreads": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": list(self.review_threads),
+                                }
+                            }
+                        }
+                    }
+                }, {}
+
         if method_u == "GET" and path_only == "/user":
             if self.user_endpoint_denied or self.user is None:
                 return 403, {"message": "denied"}, {}
@@ -361,6 +383,46 @@ class FakeAPI:
             start = (page - 1) * per_page
             chunk = self.comments[start : start + per_page]
             headers: dict[str, str] = {}
+            if self.satisfy_review and start + per_page >= len(self.comments):
+                head = self.pull["head"]["sha"]
+                lanes = [
+                    {"id": lane, "result": "pass", "status": "complete"}
+                    for lane in (
+                        "conformity-a",
+                        "logic-a",
+                        "conformity-b",
+                        "logic-b",
+                    )
+                ]
+                declaration = {
+                    "schema": "a38-review/v1",
+                    "head": head,
+                    "passes": 1,
+                    "defects": 0,
+                    "lanes": lanes,
+                }
+                chunk = list(chunk)
+                chunk.append({
+                    "id": 9_000_000_000,
+                    "created_at": "2099-01-01T00:00:00Z",
+                    "updated_at": "2099-01-01T00:00:00Z",
+                    "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+                    "body": (
+                        "EN:\n"
+                        "Ready after 1 review passes.\n"
+                        "The change is covered.\n"
+                        "\n"
+                        "DE:\n"
+                        "Bereit nach 1 Review-Durchläufen.\n"
+                        "Die Änderung ist abgedeckt.\n"
+                        "\n"
+                        "<!-- A38-REVIEW:v1 -->\n"
+                        "```json\n"
+                        + json.dumps(declaration)
+                        + "\n```\n"
+                        "<!-- /A38-REVIEW:v1 -->\n"
+                    ),
+                })
             if start + per_page < len(self.comments):
                 next_page = page + 1
                 headers["link"] = (
@@ -2187,6 +2249,36 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             "path is a markdown file",
             result.comment_body,
         )
+
+    def test_draft_markdown_only_missing_review_omits_success(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.draft)
+        self.assertFalse(result.review_ok)
+        self.assertFalse(result.ok)
+        self.assertNotEqual(result.status, "pass")
+        self.assertFalse(result.hard_fail)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertFalse(matching)
+
+    def test_observe_missing_review_stays_advisory(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.files[(BASE, ".github/a38.json")] = json.dumps(
+            _policy(mode="observe")
+        ).encode()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=311
+        )
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.review_ok)
+        self.assertEqual(result.mode, "observe")
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
 
     def test_empty_pull_files_do_not_waive_for_markdown(self) -> None:
         fake = FakeAPI()

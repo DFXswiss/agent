@@ -199,6 +199,10 @@ class Assessment:
     # / guard-docs (report/suite only; does not hold Ready through red CI).
     write_ready: bool = False
     write_ready_reason: str = ""
+    # False until assess_pull runs the review gate. Closed and excluded
+    # pulls set True because the gate does not apply.
+    review_ok: bool = False
+    review_reasons: list[str] = field(default_factory=list)
     # In-memory webhook sender for this reconcile; not serialized.
     event_actor: tuple[int, str] | None = None
     hard_fail: bool = False
@@ -236,6 +240,8 @@ class Assessment:
             "draft": self.draft,
             "write_ready": self.write_ready,
             "write_ready_reason": self.write_ready_reason,
+            "review_ok": self.review_ok,
+            "review_reasons": list(self.review_reasons),
             "hard_fail": self.hard_fail,
             "skip_publish": self.skip_publish,
             "dry_run": self.dry_run,
@@ -2007,6 +2013,8 @@ def _out_of_scope_assessment(
         draft=snap.draft,
         title=snap.title,
         body=snap.body,
+        review_ok=True,
+        review_reasons=[],
     )
     _attach_trusted_config(assessment, trusted)
     return assessment
@@ -2068,6 +2076,7 @@ def assess_pull(
             trusted_default_branch=snap.default_branch,
             head_repo=snap.head_repo, private=snap.private,
             state_for_status="", dry_run=dry_run, draft=snap.draft,
+            review_ok=True, review_reasons=[],
         )
     # Open PRs require trusted default_branch metadata to locate configuration.
     if not snap.default_branch:
@@ -2152,6 +2161,29 @@ def assess_pull(
         assessment.status = "fail"
         assessment.reasons = attribution + list(assessment.reasons)
         assessment.hard_fail = True
+        _status_bits(assessment)
+        assessment.comment_body = build_comment_body(assessment)
+    from .a38_review import evaluate_review_gate
+
+    review_ok, review_reasons = evaluate_review_gate(
+        api,
+        repo=snap.repo,
+        number=snap.number,
+        head=snap.head_sha,
+        author_id=snap.author_id,
+        comments=comments,
+        markdown_only=markdown_only,
+    )
+    assessment.review_ok = review_ok
+    assessment.review_reasons = list(review_reasons)
+    if assessment.mode == "enforce" and not review_ok:
+        assessment.ok = False
+        assessment.status = "fail"
+        merged: list[str] = []
+        for reason in list(review_reasons) + list(assessment.reasons):
+            if reason not in merged:
+                merged.append(reason)
+        assessment.reasons = merged
         _status_bits(assessment)
         assessment.comment_body = build_comment_body(assessment)
     return assessment
