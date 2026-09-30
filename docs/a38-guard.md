@@ -274,7 +274,7 @@ does not waive policy, workflow inventory, or migration failures, and it does
 not skip auto-ready when A38 is already a fresh enforce `pass`. Restore after
 an auto-draft requires GitHub `mergeable` true, no conflicts, and a valid
 review completion (CI may still
-be red). Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded
+be red). That restore does not require `auto_ready`. Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded
 bases (for example a develop→main release PR) are left untouched. Missing
 required workflows are not an empty green result.
 Only completed, successful required workflows satisfy CI. Optional workflows
