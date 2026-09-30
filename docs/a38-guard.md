@@ -256,7 +256,8 @@ the pull request files. There is no guard-docs report flag; confirmation is
 inventory-only.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
-conflicts, or CI that is missing, queued, waiting, running, or failed, cause a
+conflicts, CI that is missing, queued, waiting, running, or failed, or a
+missing or invalid review completion, cause a
 Draft transition. While workflow approval is enabled, a hold that is not
 required, not allowlisted, and never started a job does not block Ready and
 does not hide an older same-head result of that workflow. The newest remaining
@@ -266,11 +267,13 @@ Required workflows, allowlisted workflows, and the same hold while approval is
 disabled still block. A write collaborator holds Ready through
 missing or red CI only: the PR author currently has `write`/`maintain`/`admin`
 on the target, or the latest human `ready_for_review` timeline actor does.
-Confirmed merge conflicts always return Ready to Draft, including while that
+Confirmed merge conflicts and a missing or invalid review completion always
+return Ready to Draft, including while that
 write hold would otherwise apply. That hold skips auto-draft for CI only; it
 does not waive policy, workflow inventory, or migration failures, and it does
 not skip auto-ready when A38 is already a fresh enforce `pass`. Restore after
-an auto-draft requires GitHub `mergeable` true and no conflicts (CI may still
+an auto-draft requires GitHub `mergeable` true, no conflicts, and a valid
+review completion (CI may still
 be red). Lifecycle Draft/Ready writes run only on A38-enforced targets; excluded
 bases (for example a develop→main release PR) are left untouched. Missing
 required workflows are not an empty green result.
