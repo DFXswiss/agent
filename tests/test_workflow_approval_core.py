@@ -27,6 +27,10 @@ class ApprovalAPI(FakeAPI):
         self.runs = [self.run()]
         self.posts = []
         self.cancels = []
+        self.jobs_by_run = {}
+        self.jobs_override = {}
+        self.jobs_gets = []
+        self.cancel_clears_hold = True
         self.actions_gets = []
         self.post_status = 201
         self.before_run_read = None
@@ -54,6 +58,13 @@ class ApprovalAPI(FakeAPI):
             return 200, copy.deepcopy(data), {}
         if path.startswith(root + "/actions/runs/"):
             ident = int(path.split("/actions/runs/")[1].split("/")[0])
+            if method == "GET" and path.endswith("/jobs"):
+                self.jobs_gets.append(ident)
+                if ident in self.jobs_override:
+                    status, data = self.jobs_override[ident]
+                    return status, copy.deepcopy(data), {}
+                jobs = self.jobs_by_run.get(ident, [])
+                return 200, {"total_count": len(jobs), "jobs": jobs}, {}
             remainder = path.split("/actions/runs/", 1)[1]
             if (
                 not any(r["id"] == ident for r in self.runs)
@@ -65,7 +76,8 @@ class ApprovalAPI(FakeAPI):
             if method == "POST":
                 if path.endswith("/cancel"):
                     self.cancels.append(ident)
-                    run.update(status="completed", conclusion="cancelled")
+                    if self.cancel_clears_hold:
+                        run.update(status="completed", conclusion="cancelled")
                     return 202, {}, {}
                 assert path.endswith("/approve"), "no rerun/dispatch endpoint allowed"
                 self.posts.append(ident)

@@ -65,6 +65,9 @@ class FakeApproval(FakeAPI):
         self.runs = [self.run()]
         self.posts: list[int] = []
         self.cancels: list[int] = []
+        self.jobs_by_run: dict = {}
+        self.jobs_override: dict = {}
+        self.jobs_gets: list[int] = []
         self.cancel_status = 202
         self.actions_pages: list[int] = []
         self.compare_urls: list[str] = []
@@ -118,6 +121,13 @@ class FakeApproval(FakeAPI):
             return 200, {"total_count": len(self.runs), "workflow_runs": copy.deepcopy(chunk)}, {}
         if path.startswith(f"{root}/actions/runs/"):
             ident = int(path.split("/actions/runs/")[1].split("/")[0])
+            if method == "GET" and path.endswith("/jobs"):
+                self.jobs_gets.append(ident)
+                if ident in self.jobs_override:
+                    status, data = self.jobs_override[ident]
+                    return status, copy.deepcopy(data), {}
+                jobs = self.jobs_by_run.get(ident, [])
+                return 200, {"total_count": len(jobs), "jobs": jobs}, {}
             remainder = path.split("/actions/runs/", 1)[1]
             if (
                 not any(r["id"] == ident for r in self.runs)

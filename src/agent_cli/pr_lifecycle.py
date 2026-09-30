@@ -613,8 +613,45 @@ def _checks(api: Any, repo: str, head: str) -> list[Mapping]:
     raise GuardError("CI check inventory exceeds page bound")
 
 
-def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = None) -> tuple[list[str], dict[str, Mapping]]:
-    """Missing, waiting, running and failed required workflows all block Ready."""
+def _workflow_run_never_started(api: Any, assessment: Any, run: Mapping) -> bool:
+    from .a38_guard import GuardError
+    run_id = run.get("id")
+    if type(run_id) is not int or run_id <= 0:
+        raise GuardError("workflow job inventory invalid")
+    status, body, _ = api.request(
+        "GET", f"/repos/{assessment.repo}/actions/runs/{run_id}/jobs"
+    )
+    if status != 200 or not isinstance(body, Mapping):
+        raise GuardError("workflow job inventory invalid")
+    total_count = body.get("total_count")
+    jobs = body.get("jobs")
+    if type(total_count) is not int or total_count < 0 or not isinstance(jobs, list):
+        raise GuardError("workflow job inventory invalid")
+    if total_count == 0:
+        if jobs:
+            raise GuardError("workflow job inventory invalid")
+        return True
+    return False
+
+
+def ci_state(
+    api: Any,
+    assessment: Any,
+    config: Mapping,
+    pull: Mapping | None = None,
+    *,
+    approval_allowlist: frozenset[str] | None = None,
+) -> tuple[list[str], dict[str, Mapping]]:
+    """Missing, waiting, running and failed required workflows all block Ready.
+
+    While workflow approval is enabled, a hold that is not required, not
+    allowlisted, and never started a job does not block Ready and does not
+    hide an older same-head result of that workflow. The newest remaining
+    run is judged by the existing rule: success is green, and failure,
+    timeout, cancellation after a job started, and a run that is still
+    going are not. Required workflows, allowlisted workflows, and the same
+    hold while approval is disabled still block.
+    """
     from .a38_guard import GuardError
     required = set(config["required_workflows"])
     labels = {_field(label, "name") for label in (pull or {}).get("labels", [])}
@@ -625,6 +662,7 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
     latest: dict[str, Mapping] = {}
     ignored_suites = set()
     superseded_suites = set()
+    by_path: dict[str, list[Mapping]] = {}
     for run in runs:
         if run.get("head_sha") != assessment.head_sha:
             raise GuardError("CI workflow inventory contains another head")
@@ -640,13 +678,30 @@ def ci_state(api: Any, assessment: Any, config: Mapping, pull: Mapping | None = 
         links = run.get("pull_requests")
         if isinstance(links, list) and links and not any(_field(p, "number") == assessment.pr for p in links):
             continue
-        previous = latest.get(path)
-        if previous is None or (_timestamp(run.get("created_at")), run["id"]) > (_timestamp(previous.get("created_at")), previous["id"]):
-            if previous:
-                superseded_suites.add(previous.get("check_suite_id"))
-            latest[path] = run
-        else:
-            superseded_suites.add(run.get("check_suite_id"))
+        by_path.setdefault(path, []).append(run)
+    for path, path_runs in by_path.items():
+        path_runs.sort(
+            key=lambda run: (_timestamp(run.get("created_at")), run["id"]),
+            reverse=True,
+        )
+        deciding = None
+        for run in path_runs:
+            if deciding is not None:
+                superseded_suites.add(run.get("check_suite_id"))
+                continue
+            # Skip a non-allowlisted never-started hold; the first other run decides.
+            if (
+                path not in required
+                and approval_allowlist is not None
+                and path not in approval_allowlist
+                and run.get("conclusion") in {"action_required", "cancelled"}
+                and _workflow_run_never_started(api, assessment, run)
+            ):
+                superseded_suites.add(run.get("check_suite_id"))
+                continue
+            deciding = run
+        if deciding is not None:
+            latest[path] = deciding
     # Skipped/neutral/missing required checks are accepted when the PR file
     # inventory is independently README-only, markdown-only, or guard-docs-only.
     # Cancelled, failed, and pending required checks still block.
@@ -821,7 +876,16 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             and previous.get("base") == snap.base_sha
             and previous.get("state") == ("draft" if pull["draft"] else "ready") and not dry_run):
         _complete_transition_comment(api, assessment, previous)
-    reasons, latest = ci_state(api, assessment, config, pull)
+    approval_allowlist: frozenset[str] | None = None
+    if isinstance(trusted.config, Mapping):
+        workflow_approval = trusted.config.get("workflow_approval")
+        if isinstance(workflow_approval, Mapping) and workflow_approval.get("enabled") is True:
+            workflows = workflow_approval.get("workflows")
+            if isinstance(workflows, list):
+                approval_allowlist = frozenset(workflows)
+    reasons, latest = ci_state(
+        api, assessment, config, pull, approval_allowlist=approval_allowlist
+    )
     if _has_merge_conflicts(api, pull):
         reasons.insert(0, "Merge conflicts")
     target = None
@@ -916,7 +980,9 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             or final_config.config_revision != trusted.config_revision
             or final_pull.get("draft") != pull["draft"]):
         raise GuardError("pull or configuration changed before lifecycle transition")
-    final_reasons, _ = ci_state(api, assessment, config, final_pull)
+    final_reasons, _ = ci_state(
+        api, assessment, config, final_pull, approval_allowlist=approval_allowlist
+    )
     if _has_merge_conflicts(api, final_pull):
         final_reasons.insert(0, "Merge conflicts")
     if target == "ready" and (

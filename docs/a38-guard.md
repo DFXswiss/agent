@@ -132,7 +132,7 @@ This is an optional top-level object alongside `schema` and `a38`. Omission disa
 
 The bot approves only an **initial** `pull_request` run waiting in `completed` / `action_required`, with `run_attempt: 1`, for an allowlisted workflow on the exact current head, fork repository and branch. A fresh A38 `pass` under `enforce` is required. Failed or incomplete evidence, observe mode, excluded targets, closed PRs and same-repository PRs cannot trigger approval. Existing migration authorization remains required for policy/workflow/config changes.
 
-For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The fork workflow-approval path never calls a rerun, dispatch, merge, review-approval or environment-approval endpoint. It **cancels** superseded or non-allowlisted `action_required` runs on the current head so GitHub does not keep the pull request banner “workflows awaiting approval”. It never cancels an in-progress or queued test. Approval authorizes execution; it is not a test result or a Ready verdict.
+For each workflow, the newest matching run across **all** states wins. A queued, successful, failed or rerun attempt supersedes an older blocked run. The fork workflow-approval path never calls a rerun, dispatch, merge, review-approval or environment-approval endpoint. It **cancels** superseded or non-allowlisted `action_required` runs on the current head so GitHub does not keep the pull request banner “workflows awaiting approval”. It never cancels an in-progress or queued test. Approval authorizes execution; it is not a test result or a Ready verdict. Ready uses a narrower rule. While workflow approval is enabled, a hold that is not required, not allowlisted, and never started a job does not block Ready and does not hide an older same-head result of that workflow. The newest remaining run is judged by the existing rule: success is green, and failure, timeout, cancellation after a job started, and a run that is still going are not. Required workflows, allowlisted workflows, and the same hold while approval is disabled still block.
 
 The run's PR association must match the current PR/head/base. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, its head must include the current base, and the run must not predate the PR or a later recorded target/lifecycle change. Ambiguous association, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, latest author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
 
@@ -256,8 +256,14 @@ the pull request files. There is no guard-docs report flag; confirmation is
 inventory-only.
 
 For **every open Ready PR targeting an A38-enforced branch**, confirmed merge
-conflicts or CI that is missing, queued, waiting, running, blocked, cancelled
-or failed cause a Draft transition. A write collaborator holds Ready through
+conflicts, or CI that is missing, queued, waiting, running, or failed, cause a
+Draft transition. While workflow approval is enabled, a hold that is not
+required, not allowlisted, and never started a job does not block Ready and
+does not hide an older same-head result of that workflow. The newest remaining
+run is judged by the existing rule: success is green, and failure, timeout,
+cancellation after a job started, and a run that is still going are not.
+Required workflows, allowlisted workflows, and the same hold while approval is
+disabled still block. A write collaborator holds Ready through
 missing or red CI only: the PR author currently has `write`/`maintain`/`admin`
 on the target, or the latest human `ready_for_review` timeline actor does.
 Confirmed merge conflicts always return Ready to Draft, including while that
@@ -276,9 +282,15 @@ expression is a matrix placeholder (the job-level `if:` never ran), not a
 test result, and does not block — including when that placeholder is nested
 under a reusable-workflow prefix that `required_checks` matches. Optional
 skipped or neutral jobs that are not listed in `required_checks` do not
-block. The newest workflow run
-supersedes historical results; both workflow inventories and checks are
-inspected, including approval-blocked runs absent from GitHub's rollup.
+block. The newest workflow run supersedes historical results. While workflow
+approval is enabled, a hold that is not required, not allowlisted, and never
+started a job does not block Ready and does not hide an older same-head result
+of that workflow. The newest remaining run is judged by the existing rule:
+success is green, and failure, timeout, cancellation after a job started, and
+a run that is still going are not. Required workflows, allowlisted workflows,
+and the same hold while approval is disabled still block. Both workflow
+inventories and checks are inspected, including approval-blocked
+runs absent from GitHub's rollup.
 
 Ignore only repository control workflows that are not product CI, particularly
 the guard itself: otherwise its in-progress check would always prevent Ready.
