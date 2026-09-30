@@ -197,6 +197,8 @@ class FakeAPI:
     def __init__(self) -> None:
         self.pull: dict[str, Any] = self._pull(HEAD, BASE, state="open")
         self.comments: list[dict[str, Any]] = []
+        self.comment_reads = 0
+        self.append_author_comment_on_read: tuple[int, dict[str, Any]] | None = None
         self.satisfy_review = True
         self.review_threads: list[dict[str, Any]] = []
         self.files: dict[tuple[str, str], bytes] = {}
@@ -378,6 +380,11 @@ class FakeAPI:
 
         if method_u == "GET" and path_only.startswith(f"/repos/{REPO}/issues/1/comments"):
             # Simple single-page or multi-page via page= query
+            self.comment_reads += 1
+            pending = self.append_author_comment_on_read
+            if pending is not None and self.comment_reads == pending[0]:
+                self.comments.append(pending[1])
+                self.append_author_comment_on_read = None
             page = int(parse_qs(urlparse(path).query).get("page", ["1"])[0])
             per_page = 100
             start = (page - 1) * per_page
@@ -2264,6 +2271,122 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         enforce = status_context_enforce("develop")
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertFalse(matching)
+        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertNotIn("optional for this markdown-only waiver", result.comment_body)
+        self.assertTrue(any(w == "status:skipped:draft" for w in result.writes))
+
+    def test_draft_markdown_missing_review_replaces_leftover_success(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        enforce = status_context_enforce("develop")
+        fake.statuses.insert(
+            0,
+            {
+                "id": 1,
+                "sha": HEAD,
+                "state": "success",
+                "description": "pass: markdown-only change set; A38 report not required",
+                "context": enforce,
+            },
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.review_ok)
+        self.assertFalse(result.hard_fail)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertIn("review completion comment missing", matching[0]["description"])
+        self.assertIn("Thanks for your contribution", result.comment_body)
+
+    def test_draft_missing_review_does_not_clear_hard_fail_status(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        enforce = status_context_enforce("develop")
+        fake.statuses.insert(
+            0,
+            {
+                "id": 1,
+                "sha": HEAD,
+                "state": "failure",
+                "description": "hard_fail: PR body: generated-with banner",
+                "context": enforce,
+            },
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.review_ok)
+        self.assertFalse(result.hard_fail)
+        self.assertTrue(any(w == "status:skipped:draft" for w in result.writes))
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue((matching[0].get("description") or "").startswith("hard_fail:"))
+
+    def _later_author_note(self) -> dict[str, Any]:
+        return {
+            "id": 9_000_000_001,
+            "created_at": "2100-01-01T00:00:00Z",
+            "updated_at": "2100-01-01T00:00:00Z",
+            "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+            "body": "A later note without the review block.",
+        }
+
+    def test_publish_retries_when_review_changes_before_ready_success(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=320
+        )
+        fake.append_author_comment_on_read = (2, self._later_author_note())
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.review_ok)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertTrue(
+            all(s.get("state") != "success" for s in matching),
+            msg=matching,
+        )
+
+    def test_draft_review_invalidated_before_publish_posts_no_success(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        fake.append_author_comment_on_read = (2, self._later_author_note())
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.review_ok)
+        self.assertIn("Thanks for your contribution", result.comment_body)
+        enforce = status_context_enforce("develop")
+        self.assertFalse(
+            any(
+                s.get("context") == enforce and s.get("state") == "success"
+                for s in fake.statuses
+            )
+        )
+
+    def test_observe_draft_missing_review_keeps_short_greeting(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review = False
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
+        fake.files[(BASE, ".github/a38.json")] = json.dumps(
+            _policy(mode="observe")
+        ).encode()
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertFalse(result.review_ok)
+        self.assertTrue(result.ok, msg=result.reasons)
+        self.assertEqual(result.status, "pass")
+        self.assertEqual(result.mode, "observe")
+        self.assertIn("Thanks for your contribution", result.comment_body)
+        self.assertNotIn("optional for this markdown-only waiver", result.comment_body)
+        observe = status_context_observe("develop")
+        matching = [s for s in fake.statuses if s.get("context") == observe]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        enforce = status_context_enforce("develop")
+        self.assertFalse(any(s.get("context") == enforce for s in fake.statuses))
 
     def test_observe_missing_review_stays_advisory(self) -> None:
         fake = FakeAPI()

@@ -43,6 +43,7 @@ from .readme_only import (
     markdown_and_guard_docs_only,
     pull_is_guard_docs_only,
     pull_is_markdown_only,
+    pull_markdown_and_guard_docs,
 )
 
 API_ORIGIN = "https://api.github.com"
@@ -1295,6 +1296,7 @@ def _draft_docs_waiver_pass(assessment: Assessment) -> bool:
         and not assessment.hard_fail
         and assessment.write_ready
         and _docs_report_waiver(assessment.write_ready_reason)
+        and assessment.review_ok
         and assessment.status == "pass"
     )
 
@@ -1512,6 +1514,33 @@ def _status_bits(assessment: Assessment) -> None:
         assessment.state_for_status = "failure"
         reason = assessment.reasons[0] if assessment.reasons else assessment.status
         assessment.description = truncate_desc(f"{assessment.status}: {reason}")
+
+
+def _apply_review_result(
+    assessment: Assessment, review_ok: bool, review_reasons: Sequence[str]
+) -> None:
+    """Record the review gate. Enforce fails closed; observe only keeps the draft greeting."""
+    assessment.review_ok = review_ok
+    assessment.review_reasons = list(review_reasons)
+    if assessment.mode == "enforce" and not review_ok:
+        assessment.ok = False
+        assessment.status = "fail"
+        merged: list[str] = []
+        for reason in list(review_reasons) + list(assessment.reasons):
+            if reason not in merged:
+                merged.append(reason)
+        assessment.reasons = merged
+        _status_bits(assessment)
+        assessment.comment_body = build_comment_body(assessment)
+    elif assessment.draft and not review_ok:
+        # Observe stays pass and does not draft. A missing declaration still
+        # keeps the short greeting, including a docs-waiver draft.
+        assessment.comment_body = build_comment_body(assessment)
+    elif assessment.draft and review_ok:
+        # The first comment and status bits are built before this gate, while
+        # review_ok is still false. Rebuild once the declaration is valid.
+        _status_bits(assessment)
+        assessment.comment_body = build_comment_body(assessment)
 
 
 def _apply_write_ready_pass(assessment: Assessment) -> None:
@@ -2174,18 +2203,7 @@ def assess_pull(
         comments=comments,
         markdown_only=markdown_only,
     )
-    assessment.review_ok = review_ok
-    assessment.review_reasons = list(review_reasons)
-    if assessment.mode == "enforce" and not review_ok:
-        assessment.ok = False
-        assessment.status = "fail"
-        merged: list[str] = []
-        for reason in list(review_reasons) + list(assessment.reasons):
-            if reason not in merged:
-                merged.append(reason)
-        assessment.reasons = merged
-        _status_bits(assessment)
-        assessment.comment_body = build_comment_body(assessment)
+    _apply_review_result(assessment, review_ok, review_reasons)
     return assessment
 
 
@@ -2257,6 +2275,45 @@ def publish_assessment(
         require_report: bool,
     ) -> None:
         prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
+        if state == "success" and assessment.status != "not_applicable" and assessment.mode == "enforce":
+            from .a38_review import evaluate_review_gate
+
+            gate_comments = collect_comments(api, assessment.repo, assessment.pr)
+            gate_markdown, _gate_guard_docs = pull_markdown_and_guard_docs(
+                api, assessment.repo, assessment.pr
+            )
+            gate_ok, gate_reasons = evaluate_review_gate(
+                api,
+                repo=assessment.repo,
+                number=assessment.pr,
+                head=assessment.head_sha,
+                author_id=fresh.author_id,
+                comments=gate_comments,
+                markdown_only=gate_markdown,
+            )
+            if not gate_ok:
+                # Statuses are append-only. Never leave or write enforce success
+                # once the declaration is gone. A non-draft retries assessment.
+                assessment.review_ok = False
+                assessment.review_reasons = list(gate_reasons)
+                if not assessment.draft:
+                    raise GuardError(
+                        "review completion changed before publish; retry assessment"
+                    )
+                prev_gate = _existing_status(
+                    api, assessment.repo, assessment.head_sha, context
+                )
+                prev_gate_state = (
+                    (prev_gate or {}).get("state") if isinstance(prev_gate, dict) else None
+                )
+                if prev_gate_state == "success":
+                    reason = gate_reasons[0] if gate_reasons else "review completion missing"
+                    state = "failure"
+                    description = truncate_desc(f"fail: {reason}")
+                    require_report = False
+                else:
+                    assessment.writes.append("status:skipped:draft")
+                    return
         if state == "success":
             latest_pull = fetch_pull(api, assessment.repo, assessment.pr)
             if not _snapshot_matches_assessment(latest_pull, assessment):
@@ -2349,6 +2406,27 @@ def publish_assessment(
         raise GuardError("author report changed before publish; retry assessment")
     if migration_approval(api, fresh) != assessment.approval_fingerprint:
         raise GuardError("maintainer approval changed before publish; retry assessment")
+    from .a38_review import evaluate_review_gate
+
+    fresh_markdown, _fresh_guard_docs = pull_markdown_and_guard_docs(
+        api, assessment.repo, assessment.pr
+    )
+    fresh_ok, fresh_reasons = evaluate_review_gate(
+        api,
+        repo=assessment.repo,
+        number=assessment.pr,
+        head=assessment.head_sha,
+        author_id=fresh.author_id,
+        comments=comments,
+        markdown_only=fresh_markdown,
+    )
+    review_changed = fresh_ok != assessment.review_ok or list(fresh_reasons) != list(
+        assessment.review_reasons
+    )
+    if review_changed and not fresh_ok and (assessment.draft or assessment.mode == "observe"):
+        _apply_review_result(assessment, fresh_ok, fresh_reasons)
+    elif review_changed:
+        raise GuardError("review completion changed before publish; retry assessment")
     existing = _find_own_guard_comment(comments, own_id)
     body = assessment.comment_body or build_comment_body(assessment)
 
@@ -2405,7 +2483,28 @@ def publish_assessment(
             prev = _existing_status(api, assessment.repo, assessment.head_sha, context)
             prev_state = (prev or {}).get("state") if isinstance(prev, dict) else None
             prev_desc = (prev or {}).get("description") or ""
-            if prev_state == "failure" and prev_desc.startswith("hard_fail:"):
+            hard_fail_left = prev_state == "failure" and str(prev_desc).startswith(
+                "hard_fail:"
+            )
+            if not assessment.review_ok:
+                # Do not success-clear, and do not leave a prior waiver success.
+                # No status at all stays omitted. hard_fail stays until the
+                # declaration is valid again.
+                if prev_state == "success":
+                    reason = (
+                        assessment.review_reasons[0]
+                        if assessment.review_reasons
+                        else "review completion missing"
+                    )
+                    _post_status(
+                        context,
+                        "failure",
+                        truncate_desc(f"fail: {reason}"),
+                        require_report=False,
+                    )
+                else:
+                    assessment.writes.append("status:skipped:draft")
+            elif hard_fail_left:
                 # GitHub statuses are append-only per context/SHA. Clear only a
                 # leftover draft hard_fail so Checks is not stuck red after the
                 # violation is gone. Other enforce failures stay.
