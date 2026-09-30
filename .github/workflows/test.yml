@@ -25,8 +25,8 @@ jobs:
       AGENT_TEST_PG: host=127.0.0.1 port=5432 user=agent dbname=postgres
       A38_TEST_DOCKER: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -e ".[test]"
