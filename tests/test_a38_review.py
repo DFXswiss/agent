@@ -477,6 +477,7 @@ def test_na_result_wording_does_not_reject_an_explanation() -> None:
         "Result: n_a. A pass was not required.",
         "Result: n_a. A pass wasn't required.",
         "Result: n_a. It didn't fail.",
+        "Result: n_a. It doesn't fail.",
     )
     for line in accepted:
         worded = body.replace("Result: n_a\n", f"{line}\n")
@@ -488,6 +489,8 @@ def test_na_result_wording_does_not_reject_an_explanation() -> None:
         "Result: n_a was not recorded.",
         "Result: n_a wasn't recorded.",
         "Result: this isn't n_a.",
+        "Result: this doesn't n_a.",
+        "Result: don't n_a.",
     )
     for line in rejected:
         worded = body.replace("Result: n_a\n", f"{line}\n")
@@ -508,6 +511,7 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
         "Result: pass. n_a was not required.",
         "Result: pass. It didn't fail.",
         "Result: pass. It didn\u2019t fail.",
+        "Result: pass. It doesn't fail.",
     )
     for line in accepted:
         worded = body.replace("Result: pass\n", f"{line}\n")
@@ -527,6 +531,10 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
         "Result: pass was not achieved.",
         "Result: pass wasn't achieved.",
         "Result: this isn't a pass.",
+        "Result: this doesn't pass.",
+        "Result: pass. This doesn't pass.",
+        "Result: don't pass.",
+        "Result: this doesn\u2019t pass.",
     )
     for line in rejected:
         worded = body.replace("Result: pass\n", f"{line}\n")

@@ -455,7 +455,7 @@ def _same_named(values: Sequence[str]) -> bool:
 
 def _expand_negations(folded: str) -> str:
     """Punctuation stays so a later negated clause does not cross the sentence."""
-    return re.sub(r"\b(is|are|was|were|did)n['\u2019]?t\b", r"\1 not", folded)
+    return re.sub(r"\b(is|are|was|were|does|did|do)n['\u2019]?t\b", r"\1 not", folded)
 
 
 def _scrub_negated(folded: str, word: str) -> str:
