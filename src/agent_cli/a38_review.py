@@ -455,11 +455,19 @@ def _same_named(values: Sequence[str]) -> bool:
 
 def _expand_negations(folded: str) -> str:
     """Punctuation stays so a later negated clause does not cross the sentence."""
-    return re.sub(r"\b(is|are|was|were|does|did|do)n['\u2019]?t\b", r"\1 not", folded)
+    folded = re.sub(r"\bcannot\b", "can not", folded)
+    folded = re.sub(r"\bcan['\u2019]t\b", "can not", folded)
+    folded = re.sub(r"\bwon['\u2019]t\b", "will not", folded)
+    folded = re.sub(
+        r"\b(is|are|was|were|does|did|do)n['\u2019]?t\b",
+        r"\1 not",
+        folded,
+    )
+    return re.sub(r"\b([a-z]+)n['\u2019]t\b", r"\1 not", folded)
 
 
 def _scrub_negated(folded: str, word: str) -> str:
-    scrubbed = re.sub(rf"\b(?:not|no)\s+(?:an?\s+)?{word}\b", " ", folded)
+    scrubbed = re.sub(rf"\b(?:not|no|never)\s+(?:an?\s+)?{word}\b", " ", folded)
     scrubbed = re.sub(
         rf"\b{word}\b(?:\s+[A-Za-z]+){{0,3}}\s+(?:was|is|were)\s+not\b",
         " ",
@@ -475,7 +483,7 @@ def _result_is_pass(value: str) -> bool:
         return False
     if re.match(r"(?:not|no|fail|n_a)\b", folded):
         return False
-    if re.search(r"\b(?:not|no)\s+(?:a\s+)?pass(?:ed)?\b", folded):
+    if re.search(r"\b(?:not|no|never)\s+(?:a\s+)?pass(?:ed)?\b", folded):
         return False
     if re.search(r"\bn_a\b", _scrub_negated(folded, "n_a")):
         return False
@@ -491,7 +499,7 @@ def _is_na_result(value: str) -> bool:
         return False
     if re.match(r"(?:not|no|pass|fail)\b", folded):
         return False
-    if re.search(r"\b(?:not|no)\s+(?:an?\s+)?n_a\b", folded):
+    if re.search(r"\b(?:not|no|never)\s+(?:an?\s+)?n_a\b", folded):
         return False
     if re.search(r"\bpass(?:ed)?\b", _scrub_negated(folded, r"pass(?:ed)?")):
         return False
