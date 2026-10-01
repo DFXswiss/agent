@@ -88,6 +88,22 @@ def test_visible_text_rejects_a_line_between_required_steps() -> None:
     assert validate_visible(broken, 2) == ["review visible text missing"]
     trailing = _body(payload) + "\n<details>\n<summary>Details</summary>\n\nMore.\n</details>\n"
     assert validate_visible(trailing, 2) == []
+    record = (
+        "<details>\n<summary>Details</summary>\n\n"
+        f"Head: `{HEAD}`\n"
+        "Runs: `conformity-a` with `logic-a`, and `conformity-b` with `logic-b`.\n"
+        "Lane `conformity-a`:\n"
+        "Provider: Example\n"
+        "Model: Example model\n"
+        "Model number: example-1\n"
+        "Prompt:\n"
+        "```\nnot the declaration\n```\n"
+        "Result: pass, no findings left.\n"
+        "Set aside: a note judged not relevant because it contradicted the repo convention.\n\n"
+    )
+    recorded = _body(payload).replace(f"{REVIEW_BEGIN}\n", record + f"{REVIEW_BEGIN}\n", 1)
+    assert validate_visible(recorded, 2) == []
+    assert parse_review_block(recorded) == payload
 
 
 def test_comment_page_without_false_has_next_page_fails_closed() -> None:
