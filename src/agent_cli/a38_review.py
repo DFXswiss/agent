@@ -37,7 +37,7 @@ _SCHEMA_V2 = "a38-review/v2"
 
 
 class ReviewError(ValueError):
-    """The comment is not a readable a38-review/v1 block."""
+    """The comment is not a readable A38 review block."""
 
 
 def looks_like_review(body: str | None) -> bool:
@@ -809,11 +809,11 @@ def select_review_comment(
     for comment in comments:
         user = comment.get("user") if isinstance(comment, Mapping) else None
         if not isinstance(user, Mapping):
-            return None, ["review comment inventory invalid"]
+            continue
         if user.get("id") == guard_user_id:
             continue
         if not isinstance(comment.get("id"), int) or not isinstance(comment.get("created_at"), str):
-            return None, ["review comment inventory invalid"]
+            continue
         if user.get("id") != author_id:
             continue
         body = comment.get("body")

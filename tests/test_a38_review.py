@@ -307,6 +307,28 @@ def test_declaration_must_be_after_the_head_commit() -> None:
     assert chosen is posted
 
 
+def test_unreadable_other_comment_keeps_an_older_declaration() -> None:
+    good = _comment(_body(_pass_payload()), cid=1, user=10)
+    deleted = {
+        "id": 5,
+        "created_at": "2026-09-05T00:00:00Z",
+        "user": None,
+        "body": "account gone",
+    }
+    broken = {
+        "id": "not-an-int",
+        "created_at": None,
+        "user": {"id": 12, "login": "other", "type": "User"},
+        "body": "<!-- A38-REVIEW:v1 -->",
+    }
+    chosen, reasons = _select([good, deleted, broken, "not-a-comment"])
+    assert reasons == []
+    assert chosen is good
+    only, reasons = _select([deleted, broken])
+    assert only is None
+    assert reasons == ["review completion comment missing"]
+
+
 def test_another_author_cannot_satisfy_the_gate() -> None:
     foreign = _comment(
         _body(_pass_payload()), cid=4, user=11, created="2026-09-04T00:00:00Z"
