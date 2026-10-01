@@ -175,23 +175,31 @@ def test_na_only_when_markdown_only_and_sha_differs() -> None:
     )
 
 
-def test_selection_ignores_later_guard_comment_and_rejects_later_human() -> None:
+def _select(comments: list[dict], **overrides: object) -> tuple:
+    kwargs = {
+        "author_id": 10,
+        "guard_user_id": 99,
+        "committed_at": "2026-08-01T00:00:00Z",
+        "head": HEAD,
+        "markdown_only": False,
+    }
+    kwargs.update(overrides)
+    return select_review_comment(comments, **kwargs)
+
+
+def test_later_comments_do_not_invalidate_a_declaration() -> None:
     declaration = _comment(_body(_pass_payload()), cid=1, user=10)
     guard = _comment("guard note", cid=2, user=99, created="2026-09-02T00:00:00Z")
-    chosen, reasons = select_review_comment(
-        [declaration, guard], author_id=10, guard_user_id=99
-    )
+    chosen, reasons = _select([declaration, guard])
     assert reasons == []
     assert chosen is declaration
     later = _comment("please look again", cid=3, user=11, created="2026-09-03T00:00:00Z")
-    chosen, reasons = select_review_comment(
-        [declaration, later], author_id=10, guard_user_id=99
-    )
-    assert chosen is None
-    assert reasons == ["review completion is not the latest non-guard comment"]
+    chosen, reasons = _select([declaration, guard, later])
+    assert reasons == []
+    assert chosen is declaration
 
 
-def test_malformed_later_block_does_not_fall_back() -> None:
+def test_malformed_later_block_falls_back_to_older_valid() -> None:
     good = _comment(_body(_pass_payload()), cid=1, user=10)
     bad = _comment(
         "<!-- A38-REVIEW:v1 --> not json <!-- /A38-REVIEW:v1 -->",
@@ -199,11 +207,51 @@ def test_malformed_later_block_does_not_fall_back() -> None:
         user=10,
         created="2026-09-02T00:00:00Z",
     )
-    chosen, reasons = select_review_comment([good, bad], author_id=10, guard_user_id=99)
+    chosen, reasons = _select([good, bad])
     assert reasons == []
-    assert chosen is bad
-    with pytest.raises(Exception, match="json fence"):
-        parse_review_block(str(chosen["body"]))
+    assert chosen is good
+    chosen, reasons = _select([bad])
+    assert chosen is None
+    assert any("json fence" in reason for reason in reasons)
+
+
+def test_declaration_must_be_after_the_head_commit() -> None:
+    early = _comment(_body(_pass_payload()), cid=1, user=10, created="2026-09-01T00:00:00Z")
+    chosen, reasons = _select([early], committed_at="2026-09-02T00:00:00Z")
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+    same_instant = _comment(
+        _body(_pass_payload()), cid=2, user=10, created="2026-09-02T00:00:00Z"
+    )
+    chosen, reasons = _select([same_instant], committed_at="2026-09-02T00:00:00Z")
+    assert chosen is None
+    edited = _comment(
+        _body(_pass_payload()), cid=3, user=10, created="2026-09-01T00:00:00Z"
+    )
+    edited["updated_at"] = "2026-09-03T00:00:00Z"
+    chosen, reasons = _select([edited], committed_at="2026-09-02T00:00:00Z")
+    assert reasons == []
+    assert chosen is edited
+
+
+def test_another_author_cannot_satisfy_the_gate() -> None:
+    foreign = _comment(
+        _body(_pass_payload()), cid=4, user=11, created="2026-09-04T00:00:00Z"
+    )
+    chosen, reasons = _select([foreign])
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+    own = _comment(_body(_pass_payload()), cid=1, user=10)
+    chosen, reasons = _select([own, foreign])
+    assert reasons == []
+    assert chosen is own
+
+
+def test_unreadable_commit_time_fails_closed() -> None:
+    declaration = _comment(_body(_pass_payload()), cid=1, user=10)
+    chosen, reasons = _select([declaration], committed_at="yesterday")
+    assert chosen is None
+    assert reasons == ["review commit time unavailable"]
 
 
 def test_threads() -> None:

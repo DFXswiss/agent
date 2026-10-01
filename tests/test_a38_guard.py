@@ -200,6 +200,8 @@ class FakeAPI:
         self.comment_reads = 0
         self.append_author_comment_on_read: tuple[int, dict[str, Any]] | None = None
         self.satisfy_review = True
+        # Comment reads after this one no longer inject a declaration.
+        self.satisfy_review_until_read: int | None = None
         self.review_threads: list[dict[str, Any]] = []
         self.files: dict[tuple[str, str], bytes] = {}
         self.tree_paths: dict[str, list[str]] = {
@@ -368,10 +370,11 @@ class FakeAPI:
             from urllib.parse import unquote
 
             ref = unquote(path_only[len(f"/repos/{REPO}/commits/") :])
+            committed = {"commit": {"committer": {"date": "2020-01-01T00:00:00Z"}}}
             if ref in self.ref_commits:
-                return 200, {"sha": self.ref_commits[ref]}, {}
+                return 200, {"sha": self.ref_commits[ref], **committed}, {}
             if a38_guard.HEAD_SHA_RE.fullmatch(ref.lower() if isinstance(ref, str) else ""):
-                return 200, {"sha": ref.lower()}, {}
+                return 200, {"sha": ref.lower(), **committed}, {}
             return 404, {"message": "Not Found"}, {}
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls":
@@ -381,6 +384,11 @@ class FakeAPI:
         if method_u == "GET" and path_only.startswith(f"/repos/{REPO}/issues/1/comments"):
             # Simple single-page or multi-page via page= query
             self.comment_reads += 1
+            if (
+                self.satisfy_review_until_read is not None
+                and self.comment_reads > self.satisfy_review_until_read
+            ):
+                self.satisfy_review = False
             pending = self.append_author_comment_on_read
             if pending is not None and self.comment_reads == pending[0]:
                 self.comments.append(pending[1])
@@ -2383,28 +2391,60 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             "body": "A later note without the review block.",
         }
 
-    def test_publish_retries_when_review_changes_before_ready_success(self) -> None:
+    def test_later_author_note_does_not_block_ready_success(self) -> None:
         fake = FakeAPI()
         fake.add_author_report(
             _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=320
         )
         fake.append_author_comment_on_read = (2, self._later_author_note())
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.review_ok, msg=result.review_reasons)
+        self.assertTrue(result.ok, msg=result.reasons)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertFalse(
+            (matching[0].get("description") or "").startswith("review_fail:")
+        )
+
+    def test_declaration_gone_before_ready_success_posts_review_fail(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review_until_read = 1
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=321
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertFalse(result.review_ok)
+        self.assertIn("review completion comment missing", result.review_reasons)
         enforce = status_context_enforce("develop")
         matching = [s for s in fake.statuses if s.get("context") == enforce]
         self.assertTrue(matching)
         self.assertEqual(matching[0]["state"], "failure")
         self.assertTrue(
-            all(s.get("state") != "success" for s in matching),
-            msg=matching,
+            (matching[0].get("description") or "").startswith("review_fail:")
         )
+        self.assertTrue(all(s.get("state") != "success" for s in matching), msg=matching)
 
-    def test_draft_review_invalidated_before_publish_posts_no_success(self) -> None:
+    def test_draft_later_author_note_still_posts_waiver_success(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)
         fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
         fake.append_author_comment_on_read = (2, self._later_author_note())
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.review_ok, msg=result.review_reasons)
+        self.assertTrue(result.ok, msg=result.reasons)
+        enforce = status_context_enforce("develop")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertIn("markdown-only", matching[0].get("description") or "")
+
+    def test_draft_declaration_gone_before_publish_posts_no_success(self) -> None:
+        fake = FakeAPI()
+        fake.satisfy_review_until_read = 1
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.pull_files = [{"filename": "docs/guide.md", "status": "modified"}]
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertFalse(result.review_ok)
         self.assertIn("Thanks for your contribution", result.comment_body)

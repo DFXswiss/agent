@@ -362,7 +362,7 @@ until the trusted installation is deployed.
 
 ## Review completion
 
-The latest issue comment that is not from the guard's own account must be the author's `a38-review/v1` declaration for the current head. Guard comments are ignored, so the declaration can stay authoritative after the guard posts. A newer comment by anyone else invalidates it. A newer malformed declaration does not fall back to an older success. Another author cannot satisfy it.
+The author must have an `a38-review/v1` declaration for the current head that was created or last edited after that head commit. Other issue comments, before or after it, do not remove it. Guard comments are ignored. Another author cannot satisfy it. When several of the author's declarations qualify, the guard uses the latest one that is valid for this head. An older valid declaration still counts when a newer one is malformed.
 
 The guard also reads review threads. An open bot thread fails the gate. An open human thread fails unless the latest marker line in that thread is `User-Entscheid:` and no later line is `User-Entscheid aufgehoben:`. A thread whose author cannot be classified is treated as human. Thread-query failures fail closed.
 
@@ -412,7 +412,7 @@ Supported events:
 - Scheduled all-open reconciliation on the trusted default branch; cadence is repository configuration.
 - `workflow_dispatch`: an explicit repository and PR number, or `all_open=true` reconciliation.
 
-Issue-only events and the bot's own comments are ignored. The installed workflow deliberately has no `pull_request_review` trigger because that event loads workflow code from PR context. After approving or dismissing a policy review, dispatch the default-branch workflow for immediate reassessment. Do not post a separate comment such as `A38 recheck`: the latest issue comment that is not from the guard must remain the author's review-completion declaration, and a later comment invalidates it until the author posts that declaration again as the latest such comment. Scheduled reconciliation catches other review/base changes. The CLI can consume submitted/edited/dismissed review events supplied by an external trusted event handler, but never grant elevated credentials to PR-context workflow code. Never check out the PR head in a privileged bot job.
+Issue-only events and the bot's own comments are ignored. The installed workflow deliberately has no `pull_request_review` trigger because that event loads workflow code from PR context. After approving or dismissing a policy review, dispatch the default-branch workflow for immediate reassessment. Do not post a separate comment such as `A38 recheck`. Further comments do not invalidate a declaration that is already valid for the current head. Scheduled reconciliation catches other review and base changes. The CLI can consume submitted/edited/dismissed review events supplied by an external trusted event handler, but never grant elevated credentials to PR-context workflow code. Never check out the PR head in a privileged bot job.
 
 ## Publication and failures
 

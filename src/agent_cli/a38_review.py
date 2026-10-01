@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 REVIEW_BEGIN = "<!-- A38-REVIEW:v1 -->"
@@ -202,13 +203,66 @@ def validate_declaration(
     return reasons
 
 
+def _utc(value: str) -> datetime | None:
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _comment_stamp(comment: Mapping[str, Any]) -> datetime | None:
+    """When the author last set this comment: the later of created and updated."""
+    created_raw = comment.get("created_at")
+    updated_raw = comment.get("updated_at")
+    created = _utc(created_raw) if isinstance(created_raw, str) else None
+    updated = _utc(updated_raw) if isinstance(updated_raw, str) else None
+    if created is None:
+        return updated
+    if updated is None:
+        return created
+    return updated if updated >= created else created
+
+
+def _declaration_reasons(body: str, *, head: str, markdown_only: bool) -> list[str]:
+    reasons: list[str] = []
+    try:
+        payload = parse_review_block(body)
+    except ReviewError as exc:
+        _add(reasons, str(exc))
+        return reasons
+    reasons.extend(validate_declaration(payload, head=head, markdown_only=markdown_only))
+    passes = payload.get("passes")
+    if _is_int(passes) and passes >= 1:
+        reasons.extend(validate_visible(body, passes))
+    else:
+        _add(reasons, "review visible text missing")
+    return reasons
+
+
 def select_review_comment(
     comments: Sequence[Mapping[str, Any]],
     *,
     author_id: int,
     guard_user_id: int,
+    committed_at: str,
+    head: str,
+    markdown_only: bool,
 ) -> tuple[Mapping[str, Any] | None, list[str]]:
-    remaining: list[Mapping[str, Any]] = []
+    """Latest valid author declaration created or edited after the head commit.
+
+    Other comments, including later ones, do not remove an earlier valid
+    declaration. A newer malformed declaration falls back to an older valid one.
+    """
+    committed = _utc(committed_at)
+    if committed is None:
+        return None, ["review commit time unavailable"]
+    candidates: list[tuple[datetime, int, Mapping[str, Any]]] = []
     for comment in comments:
         user = comment.get("user") if isinstance(comment, Mapping) else None
         if not isinstance(user, Mapping):
@@ -217,18 +271,28 @@ def select_review_comment(
             continue
         if not isinstance(comment.get("id"), int) or not isinstance(comment.get("created_at"), str):
             return None, ["review comment inventory invalid"]
-        remaining.append(comment)
-    if not remaining:
+        if user.get("id") != author_id:
+            continue
+        body = comment.get("body")
+        if not looks_like_review(body if isinstance(body, str) else None):
+            continue
+        stamp = _comment_stamp(comment)
+        if stamp is None or stamp <= committed:
+            continue
+        candidates.append((stamp, int(comment["id"]), comment))
+    if not candidates:
         return None, ["review completion comment missing"]
-    remaining.sort(key=lambda item: (str(item.get("created_at")), int(item["id"])))
-    last = remaining[-1]
-    user = last.get("user") if isinstance(last.get("user"), Mapping) else {}
-    body = last.get("body")
-    if not looks_like_review(body if isinstance(body, str) else None):
-        return None, ["review completion is not the latest non-guard comment"]
-    if not isinstance(user, Mapping) or user.get("id") != author_id:
-        return None, ["review completion comment is not by the pull request author"]
-    return last, []
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    newest_reasons: list[str] = []
+    for _stamp, _cid, comment in candidates:
+        body = comment.get("body")
+        text = body if isinstance(body, str) else ""
+        reasons = _declaration_reasons(text, head=head, markdown_only=markdown_only)
+        if not reasons:
+            return comment, []
+        if not newest_reasons:
+            newest_reasons = reasons
+    return None, newest_reasons
 
 
 def _is_bot(author: Any) -> bool:
@@ -382,6 +446,24 @@ def _load_threads(api: Any, repo: str, number: int) -> list[str]:
     return ["review thread query failed"]
 
 
+def _head_committed_at(api: Any, repo: str, head: str) -> str | None:
+    """Committer time of the current head. Missing or unreadable time fails closed."""
+    if _SHA.fullmatch(head) is None:
+        return None
+    try:
+        status, data, _headers = api.request("GET", f"/repos/{repo}/commits/{head}")
+    except Exception:
+        return None
+    if status != 200 or not isinstance(data, Mapping):
+        return None
+    commit = data.get("commit")
+    committer = commit.get("committer") if isinstance(commit, Mapping) else None
+    date = committer.get("date") if isinstance(committer, Mapping) else None
+    if not isinstance(date, str) or _utc(date) is None:
+        return None
+    return date
+
+
 def evaluate_review_gate(
     api: Any,
     *,
@@ -403,26 +485,19 @@ def evaluate_review_gate(
     if not isinstance(guard_id, int):
         return False, ["guard identity unavailable"]
     reasons: list[str] = []
-    comment, selected = select_review_comment(
-        comments, author_id=author_id, guard_user_id=guard_id
-    )
-    reasons.extend(selected)
-    if comment is not None:
-        body = comment.get("body")
-        text = body if isinstance(body, str) else ""
-        try:
-            payload = parse_review_block(text)
-        except ReviewError as exc:
-            _add(reasons, str(exc))
-        else:
-            reasons.extend(
-                validate_declaration(payload, head=head, markdown_only=markdown_only)
-            )
-            passes = payload.get("passes")
-            if _is_int(passes) and passes >= 1:
-                reasons.extend(validate_visible(text, passes))
-            else:
-                _add(reasons, "review visible text missing")
+    committed_at = _head_committed_at(api, repo, head)
+    if committed_at is None:
+        _add(reasons, "review commit time unavailable")
+    else:
+        _comment, selected = select_review_comment(
+            comments,
+            author_id=author_id,
+            guard_user_id=guard_id,
+            committed_at=committed_at,
+            head=head,
+            markdown_only=markdown_only,
+        )
+        reasons.extend(selected)
     reasons.extend(_load_threads(api, repo, number))
     if reasons:
         return False, reasons
