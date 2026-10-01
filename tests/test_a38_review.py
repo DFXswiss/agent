@@ -317,8 +317,13 @@ def test_another_author_cannot_satisfy_the_gate() -> None:
 def test_review_record_requires_prompt_model_and_set_aside() -> None:
     payload = _pass_payload()
     assert validate_review_record(_body(payload), payload) == []
-    missing_prompt = _body(payload).replace("```text\n", "```\n", 1)
-    assert "review prompt missing" in validate_review_record(missing_prompt, payload)
+    bare_fence = _body(payload).replace("```text\n", "```\n", 1)
+    assert validate_review_record(bare_fence, payload) == []
+    placeholder_prompt = _body(payload).replace(
+        "Review the diff and report each defect with its file and line.",
+        "not recorded",
+    )
+    assert "review prompt missing" in validate_review_record(placeholder_prompt, payload)
     placeholder = _body(payload).replace("Provider: Example\n", "Provider: not recorded\n", 1)
     assert validate_review_record(placeholder, payload) == ["review provider missing"]
     wrong_runs = _body(payload).replace(
@@ -354,6 +359,12 @@ def test_one_run_record_and_na_lane_shape() -> None:
         1,
     )
     assert "review n_a lane must not name a model" in validate_review_record(named, na)
+    explained = na_body.replace(
+        "Lane `conformity-a`:\nResult: n_a\n",
+        "Lane `conformity-a`:\nResult: n_a\nMarkdown-only rebase, previously approved.\n",
+        1,
+    )
+    assert validate_review_record(explained, na) == []
 
 
 def test_set_aside_rejects_placeholder_and_accepts_none() -> None:
@@ -373,6 +384,31 @@ def test_set_aside_rejects_placeholder_and_accepts_none() -> None:
         "Set aside:\n- A style note, not counted because it does not cover this diff.",
     )
     assert validate_review_record(bullets, payload) == []
+
+
+def test_review_record_ignores_field_order_and_extra_lines() -> None:
+    payload = _pass_payload(passes=1)
+    payload["lanes"] = _run("a")
+    body = _body(payload, passes=1)
+    reordered = body.replace(
+        "Provider: Example\nModel: Example model\nModel number: example-1\nResult: pass\nPrompt:",
+        "Prompt:\nResult: pass, complete.\nModel number: example-1\nModel: Example model\nProvider: Example",
+    )
+    worded = reordered.replace(
+        "Runs: `conformity-a` with `logic-a`. The second run may be omitted.",
+        "Runs: logic-a with conformity-a (the other run is omitted).",
+    )
+    extra = worded.replace(
+        "Set aside: none.\n",
+        "Set aside: none.\n</details>\nNothing else was dropped.\n",
+    )
+    assert validate_review_record(extra, payload) == []
+    contradicted = body.replace(
+        "Provider: Example\n",
+        "Provider: Example\nProvider: Someone else\n",
+        1,
+    )
+    assert validate_review_record(contradicted, payload) == ["review provider missing"]
 
 
 def test_unreadable_commit_time_fails_closed() -> None:

@@ -939,6 +939,266 @@ def _add_reason(reasons: list[str], text: str) -> None:
         reasons.append(text)
 
 
+def _label_text(line: str) -> str:
+    """Drop leading emphasis so a bold label is still that label."""
+    return re.sub(r"^[*_\s]+", "", line).strip()
+
+
+def _starts_with_label(line: str, label: str) -> bool:
+    return _label_text(line).casefold().startswith(label.casefold() + ":")
+
+
+def _prose_outside_fences(body: str) -> list[str]:
+    """Comment lines that are not inside a fenced block.
+
+    Pipe characters inside the machine block are not job-table rows.
+    """
+    prose: list[str] = []
+    in_fence = False
+    for raw in body.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and stripped:
+            prose.append(stripped)
+    return prose
+
+
+def _sha_line_ok(line: str, sha: str) -> bool:
+    found = re.findall(r"[0-9a-f]{40}", line.casefold())
+    return found == [sha.casefold()]
+
+
+def _recorded_line_ok(line: str, recorded_at: str) -> bool:
+    if recorded_at not in line:
+        return False
+    stamps = re.findall(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", line)
+    return stamps == [recorded_at]
+
+
+def _md_claim(text: str) -> bool | None:
+    """True when every path is markdown, False when not, None when unstated."""
+    folded = text.casefold().replace("`", "")
+    negative = bool(
+        re.search(r"\bnot every\b.{0,80}\.md\b", folded)
+        or re.search(r"\bnot all\b.{0,80}markdown\b", folded)
+    )
+    positive = bool(
+        re.search(r"(?<!not )\bevery\b.{0,80}\.md\b", folded)
+        or re.search(r"(?<!not )\ball\b.{0,40}markdown\b", folded)
+    )
+    if negative and positive:
+        return None
+    if negative:
+        return False
+    if positive:
+        return True
+    return None
+
+
+def _changed_path_chunks(prose: Sequence[str]) -> list[str]:
+    """Each Changed-paths line, plus one following wrap line when it is not a new fact."""
+    labels = ("head:", "recorded:", "base:", "policy:", "changed paths:", "omitted:")
+    chunks: list[str] = []
+    index = 0
+    while index < len(prose):
+        line = prose[index]
+        if _starts_with_label(line, "Changed paths"):
+            chunk = _label_text(line)
+            if index + 1 < len(prose):
+                nxt = prose[index + 1]
+                folded = _label_text(nxt).casefold()
+                if not nxt.startswith("|") and not any(folded.startswith(label) for label in labels):
+                    chunk = f"{chunk} {nxt}"
+                    index += 1
+            chunks.append(chunk)
+        index += 1
+    return chunks
+
+
+def _changed_paths_ok(chunk: str, paths: Sequence[str]) -> bool:
+    if re.search(r"\bunknown\b", chunk.casefold()):
+        return False
+    numbers = re.findall(r"\d+", chunk)
+    if not numbers or int(numbers[0]) != len(paths):
+        return False
+    all_md = len(paths) > 0 and all(path.endswith(".md") for path in paths)
+    return _md_claim(chunk) is all_md
+
+
+def _accepted_omit_reasons(paths: Sequence[str]) -> frozenset[str]:
+    """Reasons that are true of this inventory, not only the runner's preferred one.
+
+    The generated line still prefers markdown-only, then guard-docs, then README-only.
+    A comment may name any of those three that this inventory actually is.
+    """
+    if len(paths) > MAX_FILES:
+        return frozenset()
+    accepted: set[str] = set()
+    markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
+    if markdown_only:
+        accepted.add("markdown-only change set")
+    if guard_docs_only:
+        accepted.add("guard-docs change set")
+    if paths_are_readme_only(paths):
+        accepted.add("README-only change set")
+    return frozenset(accepted)
+
+
+def _omit_claims(line: str) -> set[str]:
+    folded = line.casefold()
+    claimed: set[str] = set()
+    for reason in _OMIT_REASONS:
+        token = reason.casefold()
+        start = 0
+        while True:
+            index = folded.find(token, start)
+            if index < 0:
+                break
+            prefix = folded[max(0, index - 48) : index]
+            tail = re.split(r"[.!;]", prefix)[-1]
+            if not re.search(r"\b(not|no|kein|keine|nicht)\b", tail):
+                claimed.add(reason)
+            start = index + len(token)
+    return claimed
+
+
+def _split_row(line: str) -> list[str]:
+    text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    return [cell.strip() for cell in text.split("|")]
+
+
+def _markdown_tables(prose: Sequence[str]) -> list[list[list[str]]]:
+    tables: list[list[list[str]]] = []
+    current: list[list[str]] = []
+    for line in prose:
+        if line.startswith("|"):
+            current.append(_split_row(line))
+            continue
+        if current:
+            tables.append(current)
+            current = []
+    if current:
+        tables.append(current)
+    return tables
+
+
+_HEADER_WORDS = (
+    ("label", ("check", "prüfung", "prufung")),
+    ("duration", ("duration", "laufzeit")),
+    ("timeout", ("timeout", "zeitlimit")),
+    ("result", ("result", "ergebnis")),
+    ("exit", ("exit",)),
+)
+_DEFAULT_COLUMNS = {"label": 0, "duration": 1, "timeout": 2, "result": 3, "exit": 4}
+
+
+def _is_separator(cells: Sequence[str]) -> bool:
+    if not cells:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell) or cell == "" for cell in cells)
+
+
+def _column_map(cells: Sequence[str]) -> dict[str, int] | None:
+    found: dict[str, int] = {}
+    for index, cell in enumerate(cells):
+        folded = cell.casefold()
+        for key, words in _HEADER_WORDS:
+            if key in found:
+                continue
+            if any(word in folded for word in words):
+                found[key] = index
+                break
+    if not {"duration", "timeout", "result", "exit"} <= found.keys():
+        return None
+    if "label" not in found:
+        used = set(found.values())
+        found["label"] = next((index for index in range(len(cells)) if index not in used), 0)
+    return found
+
+
+def _mentions_id(cell: str, run_id: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9_-]){re.escape(run_id)}(?![A-Za-z0-9_-])",
+        cell,
+    ) is not None
+
+
+def _first_whole(cell: str) -> int | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", cell)
+    if match is None:
+        return None
+    number = float(match.group())
+    if not number.is_integer():
+        return None
+    return int(number)
+
+
+def _result_token(cell: str, result: str) -> bool:
+    return re.search(
+        rf"(?<![A-Za-z0-9_]){re.escape(result)}(?![A-Za-z0-9_])",
+        cell,
+        re.IGNORECASE,
+    ) is not None
+
+
+def _cell(cells: Sequence[str], mapping: Mapping[str, int], key: str) -> str:
+    index = mapping[key]
+    if index >= len(cells):
+        return ""
+    return cells[index]
+
+
+def _job_row_ok(cells: Sequence[str], mapping: Mapping[str, int], run: Any) -> bool:
+    if _first_whole(_cell(cells, mapping, "duration")) != math.ceil(run.duration_s):
+        return False
+    if _first_whole(_cell(cells, mapping, "timeout")) != math.ceil(run.timeout_s):
+        return False
+    if _first_whole(_cell(cells, mapping, "exit")) != run.exit_code:
+        return False
+    return _result_token(_cell(cells, mapping, "result"), run.result)
+
+
+def _table_covers_runs(prose: Sequence[str], report: LocalCiReport) -> bool:
+    confirmed: set[str] = set()
+    for rows in _markdown_tables(prose):
+        mapping = dict(_DEFAULT_COLUMNS)
+        header: list[str] | None = None
+        for cells in rows:
+            if _is_separator(cells):
+                continue
+            mapped = _column_map(cells)
+            if mapped is None:
+                continue
+            label = _cell(cells, mapped, "label")
+            if any(_mentions_id(label, run.id) for run in report.runs):
+                continue
+            mapping = mapped
+            header = cells
+            break
+        for cells in rows:
+            if _is_separator(cells) or cells is header:
+                continue
+            label = _cell(cells, mapping, "label")
+            mentioned = [run for run in report.runs if _mentions_id(label, run.id)]
+            if len(mentioned) != 1:
+                continue
+            run = mentioned[0]
+            if not _job_row_ok(cells, mapping, run):
+                return False
+            confirmed.add(run.id)
+    return all(run.id in confirmed for run in report.runs)
+
+
+def _labeled(prose: Sequence[str], label: str) -> list[str]:
+    return [_label_text(line) for line in prose if _starts_with_label(line, label)]
+
+
 def report_fact_reasons(
     body: str,
     report: LocalCiReport,
@@ -946,10 +1206,13 @@ def report_fact_reasons(
     base_sha: str | None,
     changed_paths: Sequence[str] | None,
 ) -> list[str]:
-    """Require the generated outcome lines to match this pull request.
+    """Require the outcome facts to match this pull request.
 
-    The path count comes from the guard's inventory, not from the comment.
-    ``Changed paths: unknown`` does not satisfy a known inventory.
+    Wording, punctuation, column order, and an extra sentence do not matter.
+    The path count and the markdown claim come from the guard's inventory.
+    ``Changed paths: unknown`` does not satisfy a known inventory. An omission
+    reason is accepted when it is true of that inventory, not only when it is
+    the runner's preferred sentence.
     """
     reasons: list[str] = []
     if (
@@ -964,34 +1227,42 @@ def report_fact_reasons(
             _add_reason(reasons, "report outcome does not match the pull request")
         return reasons
 
-    not_applicable = any(run.result == "not_applicable" for run in report.runs)
-    derived = inventory_omit_reason(changed_paths)
-    omit_reason = derived if not_applicable and derived else None
-    expected = [
-        line
-        for line in report_outcome_lines(
-            report,
-            base_sha=base_sha,
-            changed_paths=changed_paths,
-            omit_reason=omit_reason,
+    prose = _prose_outside_fences(body)
+    heads = _labeled(prose, "Head")
+    recorded = _labeled(prose, "Recorded")
+    bases = _labeled(prose, "Base")
+    policies = _labeled(prose, "Policy")
+    changed = _changed_path_chunks(prose)
+    if (
+        not heads
+        or any(not _sha_line_ok(line, report.head) for line in heads)
+        or not recorded
+        or any(not _recorded_line_ok(line, report.recorded_at) for line in recorded)
+        or not bases
+        or any(not _sha_line_ok(line, base_sha) for line in bases)
+        or not policies
+        or any(
+            ".github/a38.json" not in line or not _sha_line_ok(line, base_sha)
+            for line in policies
         )
-        if not line.startswith("Omitted:")
-    ]
-    present = [line.strip() for line in body.splitlines() if line.strip()]
-    for line in expected:
-        prefix = line.split(":", 1)[0] + ":"
-        found = [item for item in present if item.startswith(prefix)]
-        if found != [line]:
-            _add_reason(reasons, "report outcome does not match the pull request")
-    table = report_table_lines(report)
-    if [item for item in present if item.startswith("|")] != table:
+        or not changed
+        or any(not _changed_paths_ok(line, changed_paths) for line in changed)
+        or not _table_covers_runs(prose, report)
+    ):
         _add_reason(reasons, "report outcome does not match the pull request")
-    omitted = [item for item in present if item.startswith("Omitted:")]
+
+    not_applicable = any(run.result == "not_applicable" for run in report.runs)
+    omitted = _labeled(prose, "Omitted")
     if not not_applicable:
         if omitted:
             _add_reason(reasons, "report states an omission without not_applicable")
-    elif not derived or omitted != [f"Omitted: {derived}."]:
-        _add_reason(reasons, "report omission does not match the change set")
+    else:
+        accepted = _accepted_omit_reasons(changed_paths)
+        if not omitted or not accepted or any(
+            not (claimed := _omit_claims(line)) or not claimed <= accepted
+            for line in omitted
+        ):
+            _add_reason(reasons, "report omission does not match the change set")
     return reasons
 
 

@@ -242,7 +242,7 @@ _PLACEHOLDERS = frozenset({
     "todo",
 })
 _RECORD_PROMPT = "Review the diff and report each defect with its file and line."
-_LANE_HEADER = re.compile(r"^Lane `([a-z0-9-]+)`:$")
+_LANE_HEADER = re.compile(r"^\**\s*Lane `([a-z0-9-]+)`:")
 
 
 def _is_placeholder(value: str, *, allow_none: bool = False) -> bool:
@@ -306,16 +306,30 @@ def render_review_record(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _extract_text_fences(text: str) -> tuple[list[str], list[str], bool]:
-    """Prose lines and ```text bodies. Any other fence is an error."""
-    prose: list[str] = []
-    prompts: list[str] = []
+def _plain(value: str) -> str:
+    """Drop emphasis marks. Keep the underscore inside tokens such as n_a."""
+    text = re.sub(r"[*`]+", "", value)
+    text = re.sub(r"(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])", "", text)
+    return text.strip()
+
+
+def _starts_with_label(line: str, label: str) -> bool:
+    prefix = re.sub(r"^[*_\s]+", "", line)
+    return prefix.casefold().startswith(label.casefold() + ":")
+
+
+def _record_items(text: str) -> tuple[list[tuple[str, str]], bool]:
+    """Prose lines and fenced bodies. The fence tag is not significant.
+
+    An unclosed fence, or a review marker inside a fence, is an error.
+    """
+    items: list[tuple[str, str]] = []
     error = False
-    index = 0
     lines = text.splitlines()
+    index = 0
     while index < len(lines):
         stripped = lines[index].strip()
-        if stripped == "```text":
+        if stripped.startswith("```"):
             index += 1
             body: list[str] = []
             closed = False
@@ -330,102 +344,238 @@ def _extract_text_fences(text: str) -> tuple[list[str], list[str], bool]:
                 index += 1
             if not closed:
                 error = True
-            prompts.append("\n".join(body))
+            items.append(("fence", "\n".join(body)))
             continue
-        if stripped.startswith("```"):
-            error = True
-            index += 1
-            while index < len(lines) and lines[index].strip() != "```":
-                index += 1
-            if index < len(lines):
-                index += 1
-            continue
-        prose.append(lines[index])
+        if stripped:
+            items.append(("prose", stripped))
         index += 1
-    return prose, prompts, error
+    return items, error
+
+
+def _fences_between(
+    items: Sequence[tuple[str, str]],
+    start: int,
+    end: int,
+) -> list[str]:
+    seen = -1
+    fences: list[str] = []
+    for kind, text in items:
+        if kind == "prose":
+            seen += 1
+            if seen >= end:
+                break
+            continue
+        if seen >= start:
+            fences.append(text)
+    return fences
 
 
 def _prompt_ok(text: str) -> bool:
     if REVIEW_BEGIN in text or REVIEW_END in text:
         return False
     stripped = text.strip()
-    return len(stripped) >= 40 and not _is_placeholder(stripped)
+    if not stripped or _is_placeholder(stripped):
+        return False
+    words = [word for word in stripped.split() if word]
+    return len(words) >= 3 and len(stripped) >= 12
 
 
-def _pass_lane_reasons(section: list[str], prompt: str | None) -> list[str]:
+def _lane_label(line: str) -> tuple[str, str] | None:
+    prefix = re.sub(r"^[*_\s]+", "", line)
+    folded = prefix.casefold()
+    for label in ("Provider", "Model number", "Model", "Result", "Prompt"):
+        token = label.casefold() + ":"
+        if folded.startswith(token):
+            return label, prefix.split(":", 1)[1].strip()
+    return None
+
+
+def _same_named(values: Sequence[str]) -> bool:
+    cleaned = [_plain(value) for value in values if _plain(value)]
+    if not cleaned or any(not _named_value(value) for value in cleaned):
+        return False
+    return len({value.casefold() for value in cleaned}) == 1
+
+
+def _result_is_pass(value: str) -> bool:
+    folded = _plain(value).casefold()
+    if re.search(r"\b(not|no|fail|n_a)\b", folded):
+        return False
+    return re.search(r"\bpass(?:ed)?\b", folded) is not None
+
+
+def _is_na_result(value: str) -> bool:
+    folded = _plain(value).casefold()
+    if re.search(r"\b(pass|fail)\b", folded):
+        return False
+    return re.search(r"\bn_a\b", folded) is not None
+
+
+def _pass_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
     reasons: list[str] = []
-    expected = (
-        ("Provider: ", "review provider missing", False),
-        ("Model: ", "review model missing", False),
-        ("Model number: ", "review model number missing", False),
-        ("Result: ", "review result missing", True),
-    )
-    if len(section) != 5:
-        _add(reasons, "review lane record missing")
-    for index, (prefix, reason, is_result) in enumerate(expected):
-        if index >= len(section) or not section[index].startswith(prefix):
+    found: dict[str, list[str]] = {
+        "Provider": [],
+        "Model": [],
+        "Model number": [],
+        "Result": [],
+        "Prompt": [],
+    }
+    for line in section:
+        labeled = _lane_label(line)
+        if labeled is not None:
+            found[labeled[0]].append(labeled[1])
+    for label, reason in (
+        ("Provider", "review provider missing"),
+        ("Model", "review model missing"),
+        ("Model number", "review model number missing"),
+    ):
+        if not _same_named(found[label]):
             _add(reasons, reason)
-            continue
-        value = section[index][len(prefix):].strip()
-        if is_result:
-            if "pass" not in value.casefold():
-                _add(reasons, reason)
-        elif not _named_value(value):
-            _add(reasons, reason)
-    if len(section) < 5 or section[4] != "Prompt:":
-        _add(reasons, "review prompt missing")
-    elif prompt is None or not _prompt_ok(prompt):
+    if not found["Result"] or any(not _result_is_pass(value) for value in found["Result"]):
+        _add(reasons, "review result missing")
+    candidates = [text for text in fences if text.strip()]
+    inline = " ".join(value for value in found["Prompt"] if value.strip())
+    if inline:
+        candidates.append(inline)
+    if not any(_prompt_ok(text) for text in candidates):
         _add(reasons, "review prompt missing")
     return reasons
 
 
-def _na_lane_reasons(section: list[str]) -> list[str]:
-    if section == ["Result: n_a"]:
-        return []
-    named = ("Provider:", "Model:", "Model number:", "Prompt:")
-    if any(line.startswith(named) for line in section):
+def _na_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
+    for line in section:
+        labeled = _lane_label(line)
+        if labeled is not None and labeled[0] != "Result":
+            return ["review n_a lane must not name a model"]
+    if any(text.strip() for text in fences):
         return ["review n_a lane must not name a model"]
-    return ["review result missing"]
+    results = [
+        labeled[1]
+        for line in section
+        if (labeled := _lane_label(line)) is not None and labeled[0] == "Result"
+    ]
+    if not results or any(not _is_na_result(value) for value in results):
+        return ["review result missing"]
+    return []
 
 
-def _set_aside_reasons(lines_after: list[str]) -> list[str]:
-    if not lines_after:
+def _set_aside_reasons(lines: list[str]) -> list[str]:
+    indexes = [
+        index for index, line in enumerate(lines) if _starts_with_label(line, "Set aside")
+    ]
+    if not indexes:
         return ["review set aside missing"]
-    first = lines_after[0]
-    if first == "Set aside:":
-        bullets = lines_after[1:]
-        if bullets and all(item.startswith("- ") and item[2:].strip() for item in bullets):
-            return []
-        return ["review set aside missing"]
-    if first.startswith("Set aside: "):
-        value = first[len("Set aside: "):].strip()
-        if value and not _is_placeholder(value, allow_none=True) and len(lines_after) == 1:
-            return []
-    return ["review set aside missing"]
+    for index in indexes:
+        value = _plain(lines[index].split(":", 1)[1])
+        if value == "":
+            bullets: list[str] = []
+            for line in lines[index + 1 :]:
+                if _starts_with_label(line, "Set aside"):
+                    break
+                if line.startswith("- "):
+                    bullets.append(_plain(line[2:]))
+            if not bullets or any(not item or _is_placeholder(item) for item in bullets):
+                return ["review set aside missing"]
+            continue
+        if _is_placeholder(value, allow_none=True):
+            return ["review set aside missing"]
+    return []
+
+
+def _one_sha(line: str, expected: object) -> bool:
+    if not isinstance(expected, str):
+        return False
+    found = re.findall(r"[0-9a-f]{40}", line.casefold())
+    return found == [expected.casefold()]
+
+
+def _expected_pairs(lane_ids: Sequence[str]) -> set[tuple[str, str]] | None:
+    present = set(lane_ids)
+    complete = [pair for pair in RUNS if all(lane_id in present for lane_id in pair)]
+    if not complete:
+        return None
+    covered = {lane_id for pair in complete for lane_id in pair}
+    if any(lane_id not in covered for lane_id in lane_ids):
+        return None
+    return set(complete)
+
+
+def _claimed_pairs(line: str) -> set[tuple[str, str]] | None:
+    body = line.split(":", 1)[1]
+    parts = re.split(r"\band\b|\bund\b|;|,", body, flags=re.IGNORECASE)
+    claimed: set[tuple[str, str]] = set()
+    allowed = set(RUNS)
+    for part in parts:
+        ids = re.findall(
+            r"\b(?:conformity-a|logic-a|conformity-b|logic-b)\b",
+            part,
+        )
+        if not ids:
+            continue
+        if len(ids) != 2 or len(set(ids)) != 2:
+            return None
+        pair = (ids[0], ids[1])
+        if pair not in allowed:
+            pair = (ids[1], ids[0])
+        if pair not in allowed:
+            return None
+        claimed.add(pair)
+    if not claimed:
+        return None
+    return claimed
+
+
+def _final_result_ok(line: str, passes: object) -> bool:
+    if not _is_int(passes):
+        return False
+    if not _starts_with_label(line, "Final result"):
+        return False
+    rest = line.split(":", 1)[1]
+    without_passes = re.sub(r"passes\W{0,8}\d+", " ", rest, flags=re.IGNORECASE)
+    without_passes = re.sub(r"\d+\W{0,8}passes\b", " ", without_passes, flags=re.IGNORECASE)
+    defects = re.findall(r"\bdefects?\W{0,8}(\d+)\b", without_passes, flags=re.IGNORECASE)
+    defects += re.findall(r"\b(\d+)\W{0,8}defects?\b", without_passes, flags=re.IGNORECASE)
+    if not defects or any(number != "0" for number in defects):
+        return False
+    without_defects = re.sub(r"\bdefects?\W{0,8}\d+\b", " ", rest, flags=re.IGNORECASE)
+    without_defects = re.sub(r"\b\d+\W{0,8}defects?\b", " ", without_defects, flags=re.IGNORECASE)
+    found = re.findall(r"\bpasses\W{0,8}(\d+)\b", without_defects, flags=re.IGNORECASE)
+    found += re.findall(r"\b(\d+)\W{0,8}passes\b", without_defects, flags=re.IGNORECASE)
+    return bool(found) and all(int(number) == passes for number in found)
+
+
+def _looks_like_record(lines: Sequence[str]) -> bool:
+    for line in lines:
+        if _starts_with_label(line, "Head") or _starts_with_label(line, "Runs"):
+            return True
+        if _starts_with_label(line, "Final result") or _starts_with_label(line, "Set aside"):
+            return True
+        if _LANE_HEADER.match(line):
+            return True
+    return False
 
 
 def validate_review_record(body: str, payload: Mapping[str, Any]) -> list[str]:
     """Require the human record to agree with the declaration.
 
-    Lines inside a ```text fence are the prompt, not record fields.
+    Field order, the fence tag, and extra explanation do not matter.
+    A missing fact, a placeholder, or a contradiction still invalidates it.
+    Lines inside a fence are the prompt, not record fields.
     """
     if not isinstance(body, str) or not isinstance(payload, Mapping):
         return ["review record missing"]
     begin = body.find(REVIEW_BEGIN)
     record = body[:begin] if begin >= 0 else body
-    prose, prompts, fence_error = _extract_text_fences(record)
-    lines = [line.strip() for line in prose if line.strip()]
-    if not any(
-        line.startswith(("Head:", "Runs:", "Lane `", "Final result:", "Set aside:"))
-        for line in lines
-    ):
+    items, fence_error = _record_items(record)
+    lines = [text for kind, text in items if kind == "prose"]
+    if not _looks_like_record(lines):
         return ["review record missing"]
     reasons: list[str] = []
     if fence_error:
         _add(reasons, "review prompt missing")
     head = payload.get("head")
-    heads = [line for line in lines if line.startswith("Head:")]
-    if heads != [f"Head: `{head}`"]:
+    heads = [line for line in lines if _starts_with_label(line, "Head")]
+    if not heads or any(not _one_sha(line, head) for line in heads):
         _add(reasons, "review head line does not match")
     lanes = payload.get("lanes")
     lane_ids: list[str] = []
@@ -439,46 +589,47 @@ def validate_review_record(body: str, payload: Mapping[str, Any]) -> list[str]:
             else:
                 lane_ids.append("")
                 lane_results.append("")
-    runs = [line for line in lines if line.startswith("Runs:")]
-    expected_runs = _runs_line(lane_ids)
-    if expected_runs is None or runs != [expected_runs]:
+    run_lines = [line for line in lines if _starts_with_label(line, "Runs")]
+    expected_pairs = _expected_pairs(lane_ids)
+    if (
+        expected_pairs is None
+        or not run_lines
+        or any(
+            (claimed := _claimed_pairs(line)) is None or claimed != expected_pairs
+            for line in run_lines
+        )
+    ):
         _add(reasons, "review runs line does not match")
     headers = [
         (index, match.group(1))
         for index, line in enumerate(lines)
-        if (match := _LANE_HEADER.fullmatch(line)) is not None
+        if (match := _LANE_HEADER.match(line)) is not None
     ]
     if [lane_id for _, lane_id in headers] != lane_ids:
         _add(reasons, "review lane record missing")
     passes = payload.get("passes")
-    prefix = f"Final result: `passes` {passes}, `defects` 0."
-    finals = [index for index, line in enumerate(lines) if line.startswith("Final result:")]
-    final_at = finals[0] if len(finals) == 1 else None
-    if final_at is None or not lines[final_at].startswith(prefix):
+    finals = [line for line in lines if _starts_with_label(line, "Final result")]
+    if not finals or any(not _final_result_ok(line, passes) for line in finals):
         _add(reasons, "review final result does not match")
-    prompt_at = 0
+    final_at = next(
+        (index for index, line in enumerate(lines) if _starts_with_label(line, "Final result")),
+        None,
+    )
     if len(headers) == len(lane_ids):
         for position, (start, _lane_id) in enumerate(headers):
             end = headers[position + 1][0] if position + 1 < len(headers) else len(lines)
             if final_at is not None:
                 end = min(end, final_at)
             section = lines[start + 1 : end]
+            fences = _fences_between(items, start, end)
             if lane_results[position] == "n_a":
-                for reason in _na_lane_reasons(section):
+                for reason in _na_lane_reasons(section, fences):
                     _add(reasons, reason)
             else:
-                prompt = prompts[prompt_at] if prompt_at < len(prompts) else None
-                prompt_at += 1
-                for reason in _pass_lane_reasons(section, prompt):
+                for reason in _pass_lane_reasons(section, fences):
                     _add(reasons, reason)
-    expected_prompts = sum(1 for result in lane_results if result != "n_a")
-    if prompt_at != expected_prompts or len(prompts) != expected_prompts:
-        _add(reasons, "review prompt missing")
-    if final_at is None:
-        _add(reasons, "review set aside missing")
-    else:
-        for reason in _set_aside_reasons(lines[final_at + 1 :]):
-            _add(reasons, reason)
+    for reason in _set_aside_reasons(lines):
+        _add(reasons, reason)
     return reasons
 
 

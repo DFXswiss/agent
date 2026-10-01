@@ -859,7 +859,7 @@ class ReportPresentationTests(unittest.TestCase):
             ),
         )
 
-    def test_omission_line_must_match_markdown_before_readme(self) -> None:
+    def test_omission_line_accepts_only_a_reason_the_inventory_makes_true(self) -> None:
         recorded = "2026-10-01T09:04:19Z"
         original = _report_comment(
             recorded_at=recorded,
@@ -893,6 +893,23 @@ class ReportPresentationTests(unittest.TestCase):
             report_fact_reasons(
                 readme_line, report, base_sha=HEAD_B, changed_paths=["README.md"]
             ),
+            [],
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                readme_line, report, base_sha=HEAD_B, changed_paths=["docs/guide.md"]
+            ),
+            ["report omission does not match the change set"],
+        )
+        bogus = comment.replace(
+            "Omitted: markdown-only change set.",
+            "Omitted: full suite skipped.",
+            1,
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                bogus, report, base_sha=HEAD_B, changed_paths=["README.md"]
+            ),
             ["report omission does not match the change set"],
         )
         code_only = comment.replace("Changed paths: 1. Every path ends in `.md`, so the local run is not required.", "Changed paths: 1. Not every path ends in `.md`, so the local run is required.", 1)
@@ -904,8 +921,52 @@ class ReportPresentationTests(unittest.TestCase):
             ),
         )
 
-
-class OriginTests(unittest.TestCase):
+    def test_outcome_wording_can_vary_when_the_facts_match(self) -> None:
+        recorded = "2026-10-01T09:04:19Z"
+        original = _report_comment(
+            recorded_at=recorded,
+            runs=[_run_payload(duration_s=28.371, timeout_s=600)],
+        )
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                payload,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            )
+            comment = output.read_text()
+        report = parse_comment(comment)
+        reworded = comment.replace(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.",
+            "Changed paths: 1 file. Not every path ends in .md.",
+            1,
+        ).replace("| 29 s |", "| 29s |", 1).replace(
+            "```json\n",
+            "```json\n| unit: Unit | 1 s | 1 s | fail | 7 |\n",
+            1,
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                reworded, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
+            ),
+            [],
+        )
+        short = reworded.replace("| 29s |", "| 28 s |", 1)
+        self.assertIn(
+            "report outcome does not match the pull request",
+            report_fact_reasons(
+                short, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
+            ),
+        )
+        wrong_count = reworded.replace("Changed paths: 1 file.", "Changed paths: 2 files.", 1)
+        self.assertIn(
+            "report outcome does not match the pull request",
+            report_fact_reasons(
+                wrong_count, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
+            ),
+        )
     def test_https_and_ssh(self) -> None:
         self.assertEqual(
             parse_github_origin("https://github.com/Acme/App.git"),
