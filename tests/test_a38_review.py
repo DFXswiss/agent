@@ -466,6 +466,29 @@ def test_review_record_ignores_field_order_and_extra_lines() -> None:
     assert validate_review_record(contradicted, payload) == ["review provider missing"]
 
 
+def test_na_result_wording_does_not_reject_an_explanation() -> None:
+    evidence = f"markdown-only rebase, previously approved at {OTHER}"
+    payload = _pass_payload()
+    payload["lanes"] = _run("a", result="n_a", evidence=evidence)
+    body = _body(payload)
+    assert validate_review_record(body, payload) == []
+    accepted = (
+        "Result: n_a. It did not fail.",
+        "Result: n_a. A pass was not required.",
+    )
+    for line in accepted:
+        worded = body.replace("Result: n_a\n", f"{line}\n")
+        assert validate_review_record(worded, payload) == []
+    rejected = (
+        "Result: not n_a",
+        "Result: this is not n_a",
+        "Result: n_a but it passed",
+    )
+    for line in rejected:
+        worded = body.replace("Result: n_a\n", f"{line}\n")
+        assert validate_review_record(worded, payload) == ["review result missing"]
+
+
 def test_pass_result_wording_does_not_reject_an_explanation() -> None:
     payload = _pass_payload(passes=1)
     payload["lanes"] = _run("a")
@@ -477,6 +500,7 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
         "Result: pass. It did not fail.",
         "Result: passed, no findings left.",
         "Result: **pass**, no findings left.",
+        "Result: pass. n_a was not required.",
     )
     for line in accepted:
         worded = body.replace("Result: pass\n", f"{line}\n")
@@ -491,6 +515,8 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
         "Result: this is not a pass",
         "Result: pass but fail",
         "Result: no, it passed",
+        "Result: pass, n_a",
+        "Result: pass n_a",
     )
     for line in rejected:
         worded = body.replace("Result: pass\n", f"{line}\n")

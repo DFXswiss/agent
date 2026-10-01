@@ -1036,8 +1036,6 @@ def _changed_path_chunks(prose: Sequence[str]) -> list[str]:
 
 
 def _changed_paths_ok(chunk: str, paths: Sequence[str]) -> bool:
-    if re.search(r"\bunknown\b", chunk.casefold()):
-        return False
     numbers = re.findall(r"\d+", chunk)
     if not numbers or int(numbers[0]) != len(paths):
         return False
@@ -1228,9 +1226,10 @@ def report_fact_reasons(
 
     Wording, punctuation, column order, and an extra sentence do not matter.
     The path count and the markdown claim come from the guard's inventory.
-    ``Changed paths: unknown`` does not satisfy a known inventory. An omission
-    reason is accepted when it is true of that inventory, not only when it is
-    the runner's preferred sentence.
+    ``Changed paths: unknown`` does not satisfy a known inventory. A later
+    use of the word unknown does not undo a count and markdown claim that
+    already match. An omission reason is accepted when it is true of that
+    inventory, not only when it is the runner's preferred sentence.
     """
     reasons: list[str] = []
     if (

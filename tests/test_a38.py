@@ -847,6 +847,21 @@ class ReportPresentationTests(unittest.TestCase):
                 invented, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
             ),
         )
+        later_unknown = comment.replace(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.",
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required."
+            " Path names stay unknown in this comment.",
+            1,
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                later_unknown,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
         with_omit = comment.replace(
             "Changed paths: 1. Not every path ends in `.md`, so the local run is required.\n",
             "Changed paths: 1. Not every path ends in `.md`, so the local run is required.\n"

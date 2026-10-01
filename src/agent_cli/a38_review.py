@@ -453,27 +453,44 @@ def _same_named(values: Sequence[str]) -> bool:
     return len({value.casefold() for value in cleaned}) == 1
 
 
+def _scrub_negated(folded: str, word: str) -> str:
+    scrubbed = re.sub(rf"\b(?:not|no)\s+(?:an?\s+)?{word}\b", " ", folded)
+    scrubbed = re.sub(
+        rf"\b{word}\b(?:\s+[A-Za-z]+){{0,3}}\s+(?:was|is|were)\s+not\b",
+        " ",
+        scrubbed,
+    )
+    return scrubbed
+
+
 def _result_is_pass(value: str) -> bool:
     folded = _plain(value).casefold().strip()
     if not re.search(r"\bpass(?:ed)?\b", folded):
         return False
     if re.match(r"(?:not|no|fail|n_a)\b", folded):
         return False
-    if re.search(r"\bn_a\b", folded):
-        return False
     if re.search(r"\b(?:not|no)\s+(?:a\s+)?pass(?:ed)?\b", folded):
         return False
-    scrubbed = re.sub(r"\b(?:not|no)\s+fail\b", " ", folded)
-    if re.search(r"\bfail\b", scrubbed):
+    if re.search(r"\bn_a\b", _scrub_negated(folded, "n_a")):
+        return False
+    if re.search(r"\bfail\b", _scrub_negated(folded, "fail")):
         return False
     return True
 
 
 def _is_na_result(value: str) -> bool:
-    folded = _plain(value).casefold()
-    if re.search(r"\b(pass|fail)\b", folded):
+    folded = _plain(value).casefold().strip()
+    if not re.search(r"\bn_a\b", folded):
         return False
-    return re.search(r"\bn_a\b", folded) is not None
+    if re.match(r"(?:not|no|pass|fail)\b", folded):
+        return False
+    if re.search(r"\b(?:not|no)\s+(?:an?\s+)?n_a\b", folded):
+        return False
+    if re.search(r"\bpass(?:ed)?\b", _scrub_negated(folded, r"pass(?:ed)?")):
+        return False
+    if re.search(r"\bfail\b", _scrub_negated(folded, "fail")):
+        return False
+    return True
 
 
 def _pass_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
