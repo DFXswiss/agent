@@ -1357,15 +1357,25 @@ def _draft_docs_waiver_pass(assessment: Assessment) -> bool:
     )
 
 
+def _steps_url(url: str) -> str:
+    """Draft greeting target: the author steps, not the contract title."""
+    base = url or "docs/a38.md"
+    if "#" in base.split("?", 1)[0]:
+        return base
+    return base + "#what-you-must-do"
+
+
 def build_comment_body(assessment: Assessment) -> str:
     if assessment.draft and not _draft_docs_waiver_pass(assessment):
-        url = assessment.standard_url or "docs/a38.md"
+        url = _steps_url(assessment.standard_url)
         return (
             f"{GUARD_MARKER}\n\n"
             "EN:\n"
-            f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n\n"
+            f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n"
+            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, and leave the pull request in draft so the guard can mark it ready when those comments and the required checks pass.\n\n"
             "DE:\n"
             f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
+            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, und lass den Pull Request im Draft, damit der Guard Ready setzen kann, wenn diese Kommentare und die erforderlichen Checks stimmen.\n"
         )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
