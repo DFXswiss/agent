@@ -1,6 +1,7 @@
 """A38 policy load, local runner, and pure report verification.
 
-Uses the frozen ``dfx-local-ci/v1`` comment schema. Report consistency is
+``dfx-local-ci/v1`` stays valid. A newly written report is
+``dfx-local-ci/v2`` inside the same comment markers. Report consistency is
 checked against a trusted policy manifest; this is not cryptographic proof
 of execution. Guard and backend integration live elsewhere.
 """

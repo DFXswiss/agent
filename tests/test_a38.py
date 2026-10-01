@@ -1017,6 +1017,8 @@ class ReportPresentationTests(unittest.TestCase):
             ),
         )
 
+
+class OriginTests(unittest.TestCase):
     def test_https_and_ssh(self) -> None:
         self.assertEqual(
             parse_github_origin("https://github.com/Acme/App.git"),
