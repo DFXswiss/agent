@@ -430,3 +430,38 @@ def test_threads() -> None:
         "User-Entscheid: leave the name.\nUser-Entscheid aufgehoben: reopen."
     )
     assert unresolved_thread_reasons([revoked]) == ["unresolved review threads"]
+
+
+def test_v2_original_holds_the_lane_record() -> None:
+    prompt = "Confirm the added file is valid JSON and is not imported."
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": prompt,
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    body = _body(payload, passes=1)
+    assert validate_declaration(payload, head=HEAD, markdown_only=False) == []
+    assert validate_review_record(body, payload) == []
+    drifted = dict(payload)
+    drifted["lanes"] = [
+        dict(lane, prompt="A different prompt that is still long enough."),
+        dict(lane, id="logic-a"),
+    ]
+    assert "review record does not match the original" in validate_review_record(body, drifted)
+    short = dict(payload)
+    short["lanes"] = [{"id": "conformity-a", "result": "pass", "status": "complete"}]
+    assert "review pass lane is malformed" in validate_declaration(
+        short, head=HEAD, markdown_only=False
+    )

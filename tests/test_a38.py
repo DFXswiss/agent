@@ -25,6 +25,7 @@ except ImportError:
 from agent_cli.a38 import (
     A38Error,
     TERMINATION_GRACE_S,
+    _build_report_dict,
     _write_report,
     load_policy,
     main,
@@ -967,6 +968,55 @@ class ReportPresentationTests(unittest.TestCase):
                 wrong_count, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
             ),
         )
+
+    def test_v2_original_must_match_the_inventory(self) -> None:
+        recorded = "2026-10-01T10:51:24Z"
+        run = _run_payload(ident="lint", name="Lint", duration_s=43.391, timeout_s=600)
+        payload = _build_report_dict(
+            repo="DFXswiss/app",
+            head=HEAD_A,
+            private=False,
+            recorded_at=recorded,
+            required=["lint"],
+            runs=[run],
+            base=HEAD_B,
+            changed_paths=["docs/a38-fact-record.json"],
+            omit_reason=None,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                payload,
+                base_sha=HEAD_B,
+                changed_paths=["docs/a38-fact-record.json"],
+            )
+            comment = output.read_text()
+        report = parse_comment(comment)
+        self.assertEqual(report.schema, "dfx-local-ci/v2")
+        self.assertEqual(report.changed_count, 1)
+        self.assertFalse(report.all_markdown)
+        self.assertIsNone(report.omitted)
+        self.assertEqual(
+            report_fact_reasons(
+                comment,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/a38-fact-record.json"],
+            ),
+            [],
+        )
+        lied = parse_comment(comment.replace('"count": 1', '"count": 2', 1))
+        self.assertIn(
+            "report outcome does not match the pull request",
+            report_fact_reasons(
+                comment,
+                lied,
+                base_sha=HEAD_B,
+                changed_paths=["docs/a38-fact-record.json"],
+            ),
+        )
+
     def test_https_and_ssh(self) -> None:
         self.assertEqual(
             parse_github_origin("https://github.com/Acme/App.git"),

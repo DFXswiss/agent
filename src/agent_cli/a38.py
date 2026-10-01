@@ -48,6 +48,7 @@ from .local_ci import (
     LocalCiError,
     LocalCiReport,
     REPO_RE,
+    SCHEMA_V2,
     parse_comment,
     render_block,
 )
@@ -807,15 +808,31 @@ def _build_report_dict(
     recorded_at: str,
     required: Sequence[str],
     runs: Sequence[Mapping[str, Any]],
+    base: str,
+    changed_paths: Sequence[str] | None,
+    omit_reason: str | None,
     readme_only: bool = False,
     markdown_only: bool = False,
 ) -> dict[str, Any]:
-    payload = {
-        "schema": "dfx-local-ci/v1",
+    """Complete original. v1 measured keys plus the outcome the human lines state."""
+    if changed_paths is None:
+        changed: dict[str, Any] | None = None
+    else:
+        count = len(changed_paths)
+        changed = {
+            "count": count,
+            "all_markdown": count > 0 and all(path.endswith(".md") for path in changed_paths),
+        }
+    payload: dict[str, Any] = {
+        "schema": SCHEMA_V2,
         "repo": repo,
         "head": head,
         "private": private,
         "recorded_at": recorded_at,
+        "base": base,
+        "policy": {"path": ".github/a38.json", "sha": base},
+        "changed_paths": changed,
+        "omitted": omit_reason if omit_reason else None,
         "required": list(required),
         "runs": [dict(run) for run in runs],
     }
@@ -1263,7 +1280,54 @@ def report_fact_reasons(
             for line in omitted
         ):
             _add_reason(reasons, "report omission does not match the change set")
+    if report.schema == SCHEMA_V2:
+        _add_v2_outcome_reasons(
+            reasons,
+            report,
+            base_sha=base_sha,
+            changed_paths=changed_paths,
+            not_applicable=not_applicable,
+        )
     return reasons
+
+
+def _add_v2_outcome_reasons(
+    reasons: list[str],
+    report: LocalCiReport,
+    *,
+    base_sha: str | None,
+    changed_paths: Sequence[str] | None,
+    not_applicable: bool,
+) -> None:
+    """The original must carry the same outcome the inventory has."""
+    if (
+        isinstance(base_sha, str)
+        and HEAD_RE.fullmatch(base_sha) is not None
+        and (
+            report.base != base_sha
+            or report.policy_sha != base_sha
+            or report.policy_path != ".github/a38.json"
+        )
+    ):
+        _add_reason(reasons, "report outcome does not match the pull request")
+    if changed_paths is not None and all(isinstance(path, str) for path in changed_paths):
+        count = len(changed_paths)
+        all_md = count > 0 and all(path.endswith(".md") for path in changed_paths)
+        if report.changed_count != count or report.all_markdown is not all_md:
+            _add_reason(reasons, "report outcome does not match the pull request")
+    elif report.changed_count is not None or report.all_markdown is not None:
+        _add_reason(reasons, "report outcome does not match the pull request")
+    if not not_applicable:
+        if report.omitted is not None:
+            _add_reason(reasons, "report states an omission without not_applicable")
+        return
+    accepted = (
+        _accepted_omit_reasons(changed_paths)
+        if changed_paths is not None and all(isinstance(path, str) for path in changed_paths)
+        else frozenset()
+    )
+    if not isinstance(report.omitted, str) or report.omitted not in accepted:
+        _add_reason(reasons, "report omission does not match the change set")
 
 
 def _write_report(
@@ -1511,7 +1575,7 @@ def run_policy(
     github_session: str | None = None,
     config_home: Path | None = None,
 ) -> dict:
-    """Execute policy jobs and write a complete ``dfx-local-ci/v1`` report."""
+    """Execute policy jobs and write a complete ``dfx-local-ci/v2`` report."""
     runner = run or _default_run
     output = Path(output)
     logs_dir = Path(logs_dir)
@@ -1805,6 +1869,9 @@ def run_policy(
         recorded_at=recorded_at,
         required=required,
         runs=runs,
+        base=base,
+        changed_paths=paths if isinstance(paths, list) else None,
+        omit_reason=omit_reason,
         readme_only=readme_only,
         markdown_only=markdown_only,
     )

@@ -29,8 +29,11 @@ _NA_EVIDENCE = re.compile(
 )
 _FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
 _PASS_KEYS = frozenset({"id", "result", "status"})
+_PASS_KEYS_V2 = _PASS_KEYS | {"provider", "model", "model_number", "prompt"}
 _NA_KEYS = frozenset({"id", "result", "evidence"})
 _OBJECT_KEYS = frozenset({"schema", "head", "passes", "defects", "lanes"})
+_OBJECT_KEYS_V2 = _OBJECT_KEYS | {"set_aside"}
+_SCHEMA_V2 = "a38-review/v2"
 
 
 class ReviewError(ValueError):
@@ -131,8 +134,20 @@ def validate_visible(body: str, passes: int) -> list[str]:
     return []
 
 
+def _pass_lane_complete(lane: Mapping[str, Any]) -> bool:
+    provider = lane.get("provider")
+    model = lane.get("model")
+    number = lane.get("model_number")
+    prompt = lane.get("prompt")
+    if not all(isinstance(value, str) for value in (provider, model, number, prompt)):
+        return False
+    if not _named_value(provider) or not _named_value(model) or not _named_value(number):
+        return False
+    return _prompt_ok(prompt)
+
+
 def _validate_lanes(
-    lanes: list[Any], *, head: str, markdown_only: bool
+    lanes: list[Any], *, head: str, markdown_only: bool, complete: bool
 ) -> list[str]:
     reasons: list[str] = []
     seen: list[str] = []
@@ -152,7 +167,12 @@ def _validate_lanes(
         result = lane.get("result")
         if result == "pass":
             kinds.add("pass")
-            if set(lane) != _PASS_KEYS or lane.get("status") != "complete":
+            pass_keys = _PASS_KEYS_V2 if complete else _PASS_KEYS
+            if (
+                set(lane) != pass_keys
+                or lane.get("status") != "complete"
+                or (complete and not _pass_lane_complete(lane))
+            ):
                 _add(reasons, "review pass lane is malformed")
         elif result == "n_a":
             kinds.add("n_a")
@@ -195,10 +215,20 @@ def validate_declaration(
     if not isinstance(payload, Mapping):
         return ["review declaration is not an object"]
     reasons: list[str] = []
-    if set(payload) - _OBJECT_KEYS:
+    complete = payload.get("schema") == _SCHEMA_V2
+    allowed = _OBJECT_KEYS_V2 if complete else _OBJECT_KEYS
+    if set(payload) - allowed:
         _add(reasons, "review declaration has unknown keys")
-    if payload.get("schema") != "a38-review/v1":
-        _add(reasons, "review schema is not a38-review/v1")
+    if payload.get("schema") not in {"a38-review/v1", _SCHEMA_V2}:
+        _add(reasons, "review schema is not a38-review/v1 or a38-review/v2")
+    if complete:
+        aside = payload.get("set_aside")
+        if (
+            not isinstance(aside, str)
+            or not aside.strip()
+            or _is_placeholder(aside, allow_none=True)
+        ):
+            _add(reasons, "review set aside missing")
     declared = payload.get("head")
     if not isinstance(declared, str) or _SHA.fullmatch(declared) is None:
         _add(reasons, "review head is not a 40-hex SHA")
@@ -213,7 +243,9 @@ def validate_declaration(
     if not isinstance(lanes, list):
         _add(reasons, "review lanes missing")
     else:
-        reasons.extend(_validate_lanes(lanes, head=head, markdown_only=markdown_only))
+        reasons.extend(
+            _validate_lanes(lanes, head=head, markdown_only=markdown_only, complete=complete)
+        )
     return reasons
 
 
@@ -289,19 +321,23 @@ def render_review_record(payload: Mapping[str, Any]) -> str:
         if lane.get("result") == "n_a":
             lines.append("Result: n_a")
         else:
+            prompt = lane.get("prompt") if isinstance(lane.get("prompt"), str) else _RECORD_PROMPT
             lines.extend([
-                "Provider: Example",
-                "Model: Example model",
-                "Model number: example-1",
+                f"Provider: {lane.get('provider') or 'Example'}",
+                f"Model: {lane.get('model') or 'Example model'}",
+                f"Model number: {lane.get('model_number') or 'example-1'}",
                 "Result: pass",
                 "Prompt:",
                 "```text",
-                _RECORD_PROMPT,
+                prompt,
                 "```",
             ])
         lines.append("")
     lines.append(f"Final result: `passes` {payload.get('passes')}, `defects` 0.")
-    lines.append("Set aside: none.")
+    aside = payload.get("set_aside")
+    lines.append(
+        f"Set aside: {aside}" if isinstance(aside, str) and aside.strip() else "Set aside: none."
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -630,6 +666,96 @@ def validate_review_record(body: str, payload: Mapping[str, Any]) -> list[str]:
                     _add(reasons, reason)
     for reason in _set_aside_reasons(lines):
         _add(reasons, reason)
+    if payload.get("schema") == _SCHEMA_V2:
+        for reason in _original_match_reasons(lines, items, headers, payload):
+            _add(reasons, reason)
+    return reasons
+
+
+def _norm_fact(value: str) -> str:
+    return _plain(value).casefold().rstrip(".")
+
+
+def _set_aside_text(lines: Sequence[str]) -> str | None:
+    indexes = [
+        index for index, line in enumerate(lines) if _starts_with_label(line, "Set aside")
+    ]
+    if not indexes:
+        return None
+    parts: list[str] = []
+    for index in indexes:
+        value = _plain(lines[index].split(":", 1)[1]).rstrip(".")
+        if value == "":
+            bullets: list[str] = []
+            for line in lines[index + 1 :]:
+                if _starts_with_label(line, "Set aside"):
+                    break
+                if line.startswith("- "):
+                    bullets.append(_plain(line[2:]).rstrip("."))
+            value = "\n".join(bullets)
+        parts.append(value.casefold())
+    return "\n".join(parts)
+
+
+def _original_match_reasons(
+    lines: list[str],
+    items: Sequence[tuple[str, str]],
+    headers: Sequence[tuple[int, str]],
+    payload: Mapping[str, Any],
+) -> list[str]:
+    """Human lines must carry the same record the original already holds."""
+    reasons: list[str] = []
+    aside = payload.get("set_aside")
+    stated = _set_aside_text(lines)
+    if not isinstance(aside, str) or stated is None or stated != _norm_fact(aside):
+        _add(reasons, "review record does not match the original")
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        return ["review record does not match the original"]
+    final_at = next(
+        (index for index, line in enumerate(lines) if _starts_with_label(line, "Final result")),
+        None,
+    )
+    for position, lane in enumerate(lanes):
+        if not isinstance(lane, Mapping) or lane.get("result") != "pass":
+            continue
+        if position >= len(headers):
+            _add(reasons, "review record does not match the original")
+            continue
+        start = headers[position][0]
+        end = headers[position + 1][0] if position + 1 < len(headers) else len(lines)
+        if final_at is not None:
+            end = min(end, final_at)
+        section = lines[start + 1 : end]
+        found: dict[str, str] = {}
+        for line in section:
+            labeled = _lane_label(line)
+            if labeled is not None and labeled[0] in {"Provider", "Model", "Model number"}:
+                found[labeled[0]] = labeled[1]
+        expected = {
+            "Provider": lane.get("provider"),
+            "Model": lane.get("model"),
+            "Model number": lane.get("model_number"),
+        }
+        if any(
+            not isinstance(value, str) or _norm_fact(found.get(label, "")) != _norm_fact(value)
+            for label, value in expected.items()
+        ):
+            _add(reasons, "review record does not match the original")
+        prompt = lane.get("prompt")
+        fences = [text.strip() for text in _fences_between(items, start, end) if text.strip()]
+        inline = [
+            labeled[1].strip()
+            for line in section
+            if (labeled := _lane_label(line)) is not None
+            and labeled[0] == "Prompt"
+            and labeled[1].strip()
+        ]
+        stated_prompt = fences or inline
+        if not isinstance(prompt, str) or not stated_prompt or any(
+            text != prompt.strip() for text in stated_prompt
+        ):
+            _add(reasons, "review record does not match the original")
     return reasons
 
 
