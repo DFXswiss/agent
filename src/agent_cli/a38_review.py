@@ -15,7 +15,12 @@ from typing import Any, Mapping, Sequence
 REVIEW_BEGIN = "<!-- A38-REVIEW:v1 -->"
 REVIEW_END = "<!-- /A38-REVIEW:v1 -->"
 LIFECYCLE_REASON = "Review completion missing"
-LANE_IDS = ("conformity-a", "logic-a", "conformity-b", "logic-b")
+# One full run is conformity plus logic of the same suffix. The other run is optional.
+RUNS = (
+    ("conformity-a", "logic-a"),
+    ("conformity-b", "logic-b"),
+)
+LANE_IDS = tuple(lane_id for run in RUNS for lane_id in run)
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _NA_EVIDENCE = re.compile(
     r"^markdown-only rebase, previously approved at ([0-9a-f]{40})$"
@@ -128,20 +133,20 @@ def _validate_lanes(
     lanes: list[Any], *, head: str, markdown_only: bool
 ) -> list[str]:
     reasons: list[str] = []
-    if len(lanes) != 4:
-        return ["review lanes must be the four required ids"]
     seen: list[str] = []
     kinds: set[str] = set()
     na_shas: list[str] = []
+    present: set[str] = set()
     for lane in lanes:
         if not isinstance(lane, Mapping):
             _add(reasons, "review lane is not an object")
             continue
         lane_id = lane.get("id")
         if not isinstance(lane_id, str) or lane_id not in LANE_IDS or lane_id in seen:
-            _add(reasons, "review lanes must be the four required ids")
-        elif isinstance(lane_id, str):
-            seen.append(lane_id)
+            _add(reasons, "review lane id is invalid")
+            continue
+        seen.append(lane_id)
+        present.add(lane_id)
         result = lane.get("result")
         if result == "pass":
             kinds.add("pass")
@@ -163,8 +168,15 @@ def _validate_lanes(
                     na_shas.append(sha)
         else:
             _add(reasons, "review lane result is invalid")
-    if len(seen) != 4:
-        _add(reasons, "review lanes must be the four required ids")
+    complete = 0
+    for pair in RUNS:
+        count = sum(1 for lane_id in pair if lane_id in present)
+        if count == 2:
+            complete += 1
+        elif count == 1:
+            _add(reasons, "review run is incomplete")
+    if complete < 1:
+        _add(reasons, "review lanes must include one full run")
     if "pass" in kinds and "n_a" in kinds:
         _add(reasons, "review lanes mix pass and n_a")
     if "n_a" in kinds:

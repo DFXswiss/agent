@@ -145,6 +145,53 @@ def test_wrong_head_and_defects() -> None:
     )
 
 
+def _run(suffix: str, *, result: str = "pass", evidence: str | None = None) -> list[dict]:
+    lanes = []
+    for kind in ("conformity", "logic"):
+        lane: dict = {"id": f"{kind}-{suffix}", "result": result}
+        if result == "pass":
+            lane["status"] = "complete"
+        else:
+            lane["evidence"] = evidence
+        lanes.append(lane)
+    return lanes
+
+
+def test_one_full_run_is_enough() -> None:
+    for suffix in ("a", "b"):
+        payload = _pass_payload()
+        payload["lanes"] = _run(suffix)
+        assert validate_declaration(payload, head=HEAD, markdown_only=False) == []
+    both = _pass_payload()
+    assert validate_declaration(both, head=HEAD, markdown_only=False) == []
+
+
+def test_half_run_is_rejected() -> None:
+    payload = _pass_payload()
+    payload["lanes"] = [{"id": "conformity-a", "result": "pass", "status": "complete"}]
+    reasons = validate_declaration(payload, head=HEAD, markdown_only=False)
+    assert "review run is incomplete" in reasons
+    assert "review lanes must include one full run" in reasons
+    payload["lanes"] = _run("a") + [
+        {"id": "conformity-b", "result": "pass", "status": "complete"}
+    ]
+    reasons = validate_declaration(payload, head=HEAD, markdown_only=False)
+    assert reasons == ["review run is incomplete"]
+    payload["lanes"] = [{"id": "conformity-c", "result": "pass", "status": "complete"}]
+    reasons = validate_declaration(payload, head=HEAD, markdown_only=False)
+    assert "review lane id is invalid" in reasons
+
+
+def test_one_run_na_is_enough_when_markdown_only() -> None:
+    evidence = f"markdown-only rebase, previously approved at {OTHER}"
+    payload = _pass_payload()
+    payload["lanes"] = _run("a", result="n_a", evidence=evidence)
+    assert validate_declaration(payload, head=HEAD, markdown_only=True) == []
+    assert "review n_a requires a markdown-only change set" in validate_declaration(
+        payload, head=HEAD, markdown_only=False
+    )
+
+
 def test_mixed_lanes_rejected() -> None:
     payload = _pass_payload()
     payload["lanes"][0] = {

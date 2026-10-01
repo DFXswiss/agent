@@ -362,7 +362,7 @@ until the trusted installation is deployed.
 
 ## Review completion
 
-The author must have an `a38-review/v1` declaration for the current head that was created or last edited after that head commit. Other issue comments, before or after it, do not remove it. Guard comments are ignored. Another author cannot satisfy it. When several of the author's declarations qualify, the guard uses the latest one that is valid for this head. An older valid declaration still counts when a newer one is malformed.
+The author must have an `a38-review/v1` declaration for the current head that was created or last edited after that head commit. One full run is enough: both `conformity-a` and `logic-a`, or both `conformity-b` and `logic-b`. The other run may be omitted. A run that includes only one of its two lanes is invalid. Other issue comments, before or after it, do not remove it. Guard comments are ignored. Another author cannot satisfy it. When several of the author's declarations qualify, the guard uses the latest one that is valid for this head. An older valid declaration still counts when a newer one is malformed.
 
 The guard also reads review threads. An open bot thread fails the gate. An open human thread fails unless the latest marker line in that thread is `User-Entscheid:` and no later line is `User-Entscheid aufgehoben:`. A thread whose author cannot be classified is treated as human. Thread-query failures fail closed.
 
