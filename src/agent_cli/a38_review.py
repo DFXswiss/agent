@@ -272,8 +272,10 @@ _PLACEHOLDERS = frozenset({
     "n.a.",
     "tbd",
     "todo",
+    "example",
+    "example model",
+    "example-1",
 })
-_RECORD_PROMPT = "Review the diff and report each defect with its file and line."
 _LANE_HEADER = re.compile(r"^\**\s*Lane `([a-z0-9-]+)`:")
 
 
@@ -300,10 +302,14 @@ def _runs_line(lane_ids: Sequence[str]) -> str | None:
 
 
 def render_review_record(payload: Mapping[str, Any]) -> str:
-    """Record lines the guard requires before the review machine block."""
+    """Record lines the guard requires before the review machine block.
+
+    A pass lane must already name its provider, model, model number, and
+    prompt. A missing fact is an error. This does not fill in a sample.
+    """
     lanes = payload.get("lanes")
     if not isinstance(lanes, list):
-        lanes = []
+        raise ReviewError("review lanes missing")
     lane_ids = [
         lane.get("id")
         for lane in lanes
@@ -316,22 +322,36 @@ def render_review_record(payload: Mapping[str, Any]) -> str:
     ]
     for lane in lanes:
         if not isinstance(lane, Mapping):
-            continue
+            raise ReviewError("review lane is not an object")
         lines.append(f"Lane `{lane.get('id')}`:")
         if lane.get("result") == "n_a":
             lines.append("Result: n_a")
-        else:
-            prompt = lane.get("prompt") if isinstance(lane.get("prompt"), str) else _RECORD_PROMPT
+        elif lane.get("result") == "pass":
+            provider = lane.get("provider")
+            model = lane.get("model")
+            number = lane.get("model_number")
+            prompt = lane.get("prompt")
+            if (
+                not all(isinstance(value, str) for value in (provider, model, number, prompt))
+                or not _named_value(provider)
+                or not _named_value(model)
+                or not _named_value(number)
+                or not _prompt_ok(prompt)
+            ):
+                raise ReviewError("review pass lane is malformed")
+            assert isinstance(prompt, str)
             lines.extend([
-                f"Provider: {lane.get('provider') or 'Example'}",
-                f"Model: {lane.get('model') or 'Example model'}",
-                f"Model number: {lane.get('model_number') or 'example-1'}",
+                f"Provider: {provider}",
+                f"Model: {model}",
+                f"Model number: {number}",
                 "Result: pass",
                 "Prompt:",
                 "```text",
-                prompt,
+                prompt.strip(),
                 "```",
             ])
+        else:
+            raise ReviewError("review pass lane is malformed")
         lines.append("")
     lines.append(f"Final result: `passes` {payload.get('passes')}, `defects` 0.")
     aside = payload.get("set_aside")

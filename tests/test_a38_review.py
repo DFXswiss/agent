@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from agent_cli.a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
+    ReviewError,
     parse_review_block,
     render_review_record,
     select_review_comment,
@@ -39,6 +41,30 @@ def _pass_payload(**overrides: object) -> dict:
     return payload
 
 
+_RECORD_PROVIDER = "Acme"
+_RECORD_MODEL = "Acme model"
+_RECORD_NUMBER = "acme-1"
+_RECORD_PROMPT = "Read the diff and name each defect with its file and line."
+
+
+def _renderable(payload: dict) -> dict:
+    """Facts the human record needs. A v1 payload must not carry them."""
+    if payload.get("schema") == "a38-review/v2":
+        return payload
+    rendered = copy.deepcopy(payload)
+    lanes = rendered.get("lanes")
+    if not isinstance(lanes, list):
+        return rendered
+    for lane in lanes:
+        if not isinstance(lane, dict) or lane.get("result") != "pass":
+            continue
+        lane.setdefault("provider", _RECORD_PROVIDER)
+        lane.setdefault("model", _RECORD_MODEL)
+        lane.setdefault("model_number", _RECORD_NUMBER)
+        lane.setdefault("prompt", _RECORD_PROMPT)
+    return rendered
+
+
 def _body(payload: dict, *, passes: int = 2) -> str:
     return (
         "EN:\n"
@@ -50,7 +76,7 @@ def _body(payload: dict, *, passes: int = 2) -> str:
         "Die Änderung ist abgedeckt.\n"
         "\n"
         "<details>\n<summary>Details</summary>\n\n"
-        + render_review_record(payload)
+        + render_review_record(_renderable(payload))
         + f"{REVIEW_BEGIN}\n"
         "```json\n"
         + json.dumps(payload)
@@ -347,12 +373,11 @@ def test_review_record_requires_prompt_model_and_set_aside() -> None:
     assert validate_review_record(_body(payload), payload) == []
     bare_fence = _body(payload).replace("```text\n", "```\n", 1)
     assert validate_review_record(bare_fence, payload) == []
-    placeholder_prompt = _body(payload).replace(
-        "Review the diff and report each defect with its file and line.",
-        "not recorded",
-    )
+    placeholder_prompt = _body(payload).replace(_RECORD_PROMPT, "not recorded")
     assert "review prompt missing" in validate_review_record(placeholder_prompt, payload)
-    placeholder = _body(payload).replace("Provider: Example\n", "Provider: not recorded\n", 1)
+    placeholder = _body(payload).replace(
+        f"Provider: {_RECORD_PROVIDER}\n", "Provider: not recorded\n", 1
+    )
     assert validate_review_record(placeholder, payload) == ["review provider missing"]
     wrong_runs = _body(payload).replace(
         "Runs: `conformity-a` with `logic-a`, and `conformity-b` with `logic-b`.",
@@ -383,7 +408,7 @@ def test_one_run_record_and_na_lane_shape() -> None:
     assert validate_review_record(na_body, na) == []
     named = na_body.replace(
         "Lane `conformity-a`:\nResult: n_a\n",
-        "Lane `conformity-a`:\nProvider: Example\nResult: n_a\n",
+        "Lane `conformity-a`:\nProvider: Acme\nResult: n_a\n",
         1,
     )
     assert "review n_a lane must not name a model" in validate_review_record(named, na)
@@ -419,8 +444,10 @@ def test_review_record_ignores_field_order_and_extra_lines() -> None:
     payload["lanes"] = _run("a")
     body = _body(payload, passes=1)
     reordered = body.replace(
-        "Provider: Example\nModel: Example model\nModel number: example-1\nResult: pass\nPrompt:",
-        "Prompt:\nResult: pass, complete.\nModel number: example-1\nModel: Example model\nProvider: Example",
+        f"Provider: {_RECORD_PROVIDER}\nModel: {_RECORD_MODEL}\n"
+        f"Model number: {_RECORD_NUMBER}\nResult: pass\nPrompt:",
+        f"Prompt:\nResult: pass, complete.\nModel number: {_RECORD_NUMBER}\n"
+        f"Model: {_RECORD_MODEL}\nProvider: {_RECORD_PROVIDER}",
     )
     worded = reordered.replace(
         "Runs: `conformity-a` with `logic-a`. The second run may be omitted.",
@@ -432,8 +459,8 @@ def test_review_record_ignores_field_order_and_extra_lines() -> None:
     )
     assert validate_review_record(extra, payload) == []
     contradicted = body.replace(
-        "Provider: Example\n",
-        "Provider: Example\nProvider: Someone else\n",
+        f"Provider: {_RECORD_PROVIDER}\n",
+        f"Provider: {_RECORD_PROVIDER}\nProvider: Someone else\n",
         1,
     )
     assert validate_review_record(contradicted, payload) == ["review provider missing"]
@@ -493,3 +520,18 @@ def test_v2_original_holds_the_lane_record() -> None:
     assert "review pass lane is malformed" in validate_declaration(
         short, head=HEAD, markdown_only=False
     )
+
+
+def test_render_requires_pass_lane_facts() -> None:
+    with pytest.raises(ReviewError, match="review lanes missing"):
+        render_review_record({"head": HEAD})
+    bare = _pass_payload()
+    with pytest.raises(ReviewError, match="review pass lane is malformed"):
+        render_review_record(bare)
+    broken = _pass_payload()
+    broken["lanes"] = ["nope"]
+    with pytest.raises(ReviewError, match="review lane is not an object"):
+        render_review_record(broken)
+    invented = _body(bare).replace(f"Provider: {_RECORD_PROVIDER}\n", "Provider: Example\n", 1)
+    assert validate_review_record(invented, bare) == ["review provider missing"]
+    assert json.loads(_body(bare).split("```json\n", 1)[1].split("\n```", 1)[0]) == bare

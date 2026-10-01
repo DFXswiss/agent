@@ -442,6 +442,23 @@ class FakeAPI:
                     "defects": 0,
                     "lanes": lanes,
                 }
+                # The posted block stays v1. The human record still needs
+                # the lane facts; they are not part of the v1 object.
+                record = {
+                    **declaration,
+                    "lanes": [
+                        {
+                            **lane,
+                            "provider": "Acme",
+                            "model": "Acme model",
+                            "model_number": "acme-1",
+                            "prompt": (
+                                "Read the diff and name each defect with its file and line."
+                            ),
+                        }
+                        for lane in lanes
+                    ],
+                }
                 chunk = list(chunk)
                 chunk.append({
                     "id": 9_000_000_000,
@@ -457,7 +474,7 @@ class FakeAPI:
                         "Bereit nach 1 Review-Durchläufen.\n"
                         "Die Änderung ist abgedeckt.\n"
                         "\n"
-                        + render_review_record(declaration)
+                        + render_review_record(record)
                         + "<!-- A38-REVIEW:v1 -->\n"
                         "```json\n"
                         + json.dumps(declaration)
