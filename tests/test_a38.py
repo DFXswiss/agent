@@ -875,6 +875,252 @@ class ReportPresentationTests(unittest.TestCase):
             ),
         )
 
+    def test_negated_outcome_lines_do_not_count(self) -> None:
+        recorded = "2026-10-01T09:04:19Z"
+        original = _report_comment(
+            recorded_at=recorded,
+            runs=[_run_payload(result="pass")],
+        )
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                payload,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            )
+            comment = output.read_text()
+        report = parse_comment(comment)
+        self.assertEqual(
+            report_fact_reasons(
+                comment,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        negated_head = comment.replace(f"Head: `{HEAD_A}`", f"Head: not `{HEAD_A}`", 1)
+        self.assertNotEqual(
+            report_fact_reasons(
+                negated_head,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        negated_paths = comment.replace(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.",
+            "Changed paths: 1. It is not true that every path ends in .md.",
+            1,
+        )
+        self.assertNotEqual(
+            report_fact_reasons(
+                negated_paths,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                comment,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        markdown = _report_comment(
+            recorded_at=recorded,
+            markdown_only=True,
+            runs=[_run_payload(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        markdown_payload = json.loads(markdown.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                markdown_payload,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+                omit_reason="markdown-only change set",
+            )
+            markdown_comment = output.read_text()
+        markdown_report = parse_comment(markdown_comment)
+        self.assertEqual(
+            report_fact_reasons(
+                markdown_comment,
+                markdown_report,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+            ),
+            [],
+        )
+        not_used = markdown_comment.replace(
+            "Omitted: markdown-only change set.",
+            "Omitted: markdown-only change set was not used.",
+            1,
+        )
+        self.assertNotEqual(
+            report_fact_reasons(
+                not_used,
+                markdown_report,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+            ),
+            [],
+        )
+        isnt = markdown_comment.replace(
+            "Omitted: markdown-only change set.",
+            "Omitted: markdown-only change set isn't the reason.",
+            1,
+        )
+        self.assertNotEqual(
+            report_fact_reasons(
+                isnt,
+                markdown_report,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+            ),
+            [],
+        )
+        both = markdown_comment.replace(
+            "Omitted: markdown-only change set.",
+            "Omitted: markdown-only change set, not the README-only change set.",
+            1,
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                both,
+                markdown_report,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+            ),
+            [],
+        )
+        not_pass = comment.replace(" | pass | ", " | not pass | ", 1)
+        self.assertNotEqual(
+            report_fact_reasons(
+                not_pass,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        pass_not_fail = comment.replace(" | pass | ", " | pass, not fail | ", 1)
+        self.assertEqual(
+            report_fact_reasons(
+                pass_not_fail,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        for denied_head in (
+            f"Head: isn't `{HEAD_A}`",
+            f"Head: cannot be `{HEAD_A}`",
+            f"Head: `{HEAD_A}` is not this commit.",
+            f"Head: nicht `{HEAD_A}`",
+        ):
+            denied = comment.replace(f"Head: `{HEAD_A}`", denied_head, 1)
+            self.assertNotEqual(
+                report_fact_reasons(
+                    denied,
+                    report,
+                    base_sha=HEAD_B,
+                    changed_paths=["docs/sample.json"],
+                ),
+                [],
+                denied_head,
+            )
+        affirmed_head = comment.replace(
+            f"Head: `{HEAD_A}`",
+            f"Head: `{HEAD_A}`, not a different repository.",
+            1,
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                affirmed_head,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        recorded_not = comment.replace(
+            f"Recorded: `{recorded}`",
+            f"Recorded: not `{recorded}`",
+            1,
+        )
+        self.assertNotEqual(
+            report_fact_reasons(
+                recorded_not,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        for denied_paths in (
+            "Changed paths: 1. It isn't true that every path ends in .md.",
+            "Changed paths: 1. Every path doesn't end in .md.",
+        ):
+            denied = comment.replace(
+                "Changed paths: 1. Not every path ends in `.md`, so the local run is required.",
+                denied_paths,
+                1,
+            )
+            self.assertNotEqual(
+                report_fact_reasons(
+                    denied,
+                    report,
+                    base_sha=HEAD_B,
+                    changed_paths=["docs/sample.json"],
+                ),
+                [],
+                denied_paths,
+            )
+        distant = markdown_comment.replace(
+            "Omitted: markdown-only change set.",
+            "Omitted: not something that a reviewer would ever treat as the stated "
+            "markdown-only change set.",
+            1,
+        )
+        self.assertNotEqual(
+            report_fact_reasons(
+                distant,
+                markdown_report,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+            ),
+            [],
+        )
+        pass_is_not = comment.replace(" | pass | ", " | pass is not | ", 1)
+        self.assertNotEqual(
+            report_fact_reasons(
+                pass_is_not,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                markdown_comment,
+                markdown_report,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+            ),
+            [],
+        )
+
     def test_omission_line_accepts_only_a_reason_the_inventory_makes_true(self) -> None:
         recorded = "2026-10-01T09:04:19Z"
         original = _report_comment(

@@ -276,7 +276,7 @@ _PLACEHOLDERS = frozenset({
     "example model",
     "example-1",
 })
-_LANE_HEADER = re.compile(r"^\**\s*Lane `([a-z0-9-]+)`:")
+_LANE_HEADER = re.compile(r"^[*_\s]*Lane `([a-z0-9-]+)`:")
 
 
 def _is_placeholder(value: str, *, allow_none: bool = False) -> bool:
@@ -530,11 +530,9 @@ def _pass_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
             _add(reasons, reason)
     if not found["Result"] or any(not _result_is_pass(value) for value in found["Result"]):
         _add(reasons, "review result missing")
-    candidates = [text for text in fences if text.strip()]
-    inline = " ".join(value for value in found["Prompt"] if value.strip())
-    if inline:
-        candidates.append(inline)
-    if not any(_prompt_ok(text) for text in candidates):
+    if not found["Prompt"] or not any(
+        _prompt_ok(text) for text in fences if text.strip()
+    ):
         _add(reasons, "review prompt missing")
     return reasons
 
@@ -579,11 +577,25 @@ def _set_aside_reasons(lines: list[str]) -> list[str]:
     return []
 
 
+_NEGATION_WORD = re.compile(r"\b(?:not|no|never|nicht|kein|keine)\b")
+
+
 def _one_sha(line: str, expected: object) -> bool:
     if not isinstance(expected, str):
         return False
-    found = re.findall(r"[0-9a-f]{40}", line.casefold())
-    return found == [expected.casefold()]
+    folded = _expand_negations(line.casefold())
+    expected_sha = expected.casefold()
+    found = re.findall(r"[0-9a-f]{40}", folded)
+    if found != [expected_sha]:
+        return False
+    start = folded.find(expected_sha)
+    end = start + len(expected_sha)
+    prefix = re.split(r"[,.!;]", folded[:start])[-1]
+    suffix = re.split(r"[,.!;]", folded[end:], maxsplit=1)[0]
+    return (
+        _NEGATION_WORD.search(prefix) is None
+        and _NEGATION_WORD.search(suffix) is None
+    )
 
 
 def _expected_pairs(lane_ids: Sequence[str]) -> set[tuple[str, str]] | None:
@@ -804,17 +816,16 @@ def _original_match_reasons(
         ):
             _add(reasons, "review record does not match the original")
         prompt = lane.get("prompt")
-        fences = [text.strip() for text in _fences_between(items, start, end) if text.strip()]
-        inline = [
-            labeled[1].strip()
+        has_prompt_label = any(
+            (labeled := _lane_label(line)) is not None and labeled[0] == "Prompt"
             for line in section
-            if (labeled := _lane_label(line)) is not None
-            and labeled[0] == "Prompt"
-            and labeled[1].strip()
-        ]
-        stated_prompt = fences or inline
-        if not isinstance(prompt, str) or not stated_prompt or any(
-            text != prompt.strip() for text in stated_prompt
+        )
+        fences = [text.strip() for text in _fences_between(items, start, end) if text.strip()]
+        if (
+            not isinstance(prompt, str)
+            or not has_prompt_label
+            or not fences
+            or any(text != prompt.strip() for text in fences)
         ):
             _add(reasons, "review record does not match the original")
     return reasons

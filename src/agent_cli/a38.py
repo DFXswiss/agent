@@ -983,29 +983,80 @@ def _prose_outside_fences(body: str) -> list[str]:
     return prose
 
 
+_NEGATION_WORD = re.compile(r"\b(?:not|no|never|nicht|kein|keine)\b")
+_JOB_RESULTS = ("not_applicable", "timeout", "error", "fail", "pass")
+
+
+def _expand_negation_words(folded: str) -> str:
+    """Turn contractions into a separate not. The general n't form keeps its apostrophe."""
+    folded = folded.replace("not_applicable", "\x00jobna\x00")
+    folded = re.sub(r"\bcannot\b", "can not", folded)
+    folded = re.sub(r"\bcan['\u2019]t\b", "can not", folded)
+    folded = re.sub(r"\bwon['\u2019]t\b", "will not", folded)
+    folded = re.sub(
+        r"\b(is|are|was|were|does|did|do)n['\u2019]?t\b",
+        r"\1 not",
+        folded,
+    )
+    folded = re.sub(r"\b([a-z]+)n['\u2019]t\b", r"\1 not", folded)
+    return folded.replace("\x00jobna\x00", "not_applicable")
+
+
+def _span_negated(folded: str, start: int, end: int) -> bool:
+    """True when this claim's own clause contains a negation.
+
+    The clause runs from the previous comma or sentence break to the next one.
+    A later clause can negate a different claim without undoing this one.
+    """
+    prefix = re.split(r"[,.!;]", folded[:start])[-1]
+    suffix = re.split(r"[,.!;]", folded[end:], maxsplit=1)[0]
+    return any(
+        _NEGATION_WORD.search(part) is not None
+        for part in (prefix, folded[start:end], suffix)
+    )
+
+
 def _sha_line_ok(line: str, sha: str) -> bool:
-    found = re.findall(r"[0-9a-f]{40}", line.casefold())
-    return found == [sha.casefold()]
+    folded = _expand_negation_words(line.casefold())
+    expected = sha.casefold()
+    found = re.findall(r"[0-9a-f]{40}", folded)
+    if found != [expected]:
+        return False
+    at = folded.find(expected)
+    return not _span_negated(folded, at, at + len(expected))
 
 
 def _recorded_line_ok(line: str, recorded_at: str) -> bool:
     if recorded_at not in line:
         return False
     stamps = re.findall(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", line)
-    return stamps == [recorded_at]
+    if stamps != [recorded_at]:
+        return False
+    folded = _expand_negation_words(line.casefold())
+    expected = recorded_at.casefold()
+    at = folded.find(expected)
+    if at < 0:
+        return False
+    return not _span_negated(folded, at, at + len(expected))
 
 
 def _md_claim(text: str) -> bool | None:
     """True when every path is markdown, False when not, None when unstated."""
-    folded = text.casefold().replace("`", "")
+    folded = _expand_negation_words(text.casefold().replace("`", ""))
     negative = bool(
         re.search(r"\bnot every\b.{0,80}\.md\b", folded)
         or re.search(r"\bnot all\b.{0,80}markdown\b", folded)
     )
-    positive = bool(
-        re.search(r"(?<!not )\bevery\b.{0,80}\.md\b", folded)
-        or re.search(r"(?<!not )\ball\b.{0,40}markdown\b", folded)
-    )
+    positive = False
+    for pattern in (
+        r"(?<!not )\bevery\b.{0,80}\.md\b",
+        r"(?<!not )\ball\b.{0,40}markdown\b",
+    ):
+        for match in re.finditer(pattern, folded):
+            if _span_negated(folded, match.start(), match.end()):
+                continue
+            positive = True
+            break
     if negative and positive:
         return None
     if negative:
@@ -1063,7 +1114,7 @@ def _accepted_omit_reasons(paths: Sequence[str]) -> frozenset[str]:
 
 
 def _omit_claims(line: str) -> set[str]:
-    folded = line.casefold()
+    folded = _expand_negation_words(line.casefold())
     claimed: set[str] = set()
     for reason in _OMIT_REASONS:
         token = reason.casefold()
@@ -1072,9 +1123,7 @@ def _omit_claims(line: str) -> set[str]:
             index = folded.find(token, start)
             if index < 0:
                 break
-            prefix = folded[max(0, index - 48) : index]
-            tail = re.split(r"[.!;]", prefix)[-1]
-            if not re.search(r"\b(not|no|kein|keine|nicht)\b", tail):
+            if not _span_negated(folded, index, index + len(token)):
                 claimed.add(reason)
             start = index + len(token)
     return claimed
@@ -1155,12 +1204,27 @@ def _first_whole(cell: str) -> int | None:
     return int(number)
 
 
+def _unnegated_job_results(cell: str) -> set[str]:
+    folded = _expand_negation_words(cell.casefold())
+    found: set[str] = set()
+    occupied: list[tuple[int, int]] = []
+    for name in _JOB_RESULTS:
+        for match in re.finditer(
+            rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])",
+            folded,
+        ):
+            span = match.span()
+            if any(span[0] < hi and span[1] > lo for lo, hi in occupied):
+                continue
+            occupied.append(span)
+            if _span_negated(folded, span[0], span[1]):
+                continue
+            found.add(name)
+    return found
+
+
 def _result_token(cell: str, result: str) -> bool:
-    return re.search(
-        rf"(?<![A-Za-z0-9_]){re.escape(result)}(?![A-Za-z0-9_])",
-        cell,
-        re.IGNORECASE,
-    ) is not None
+    return _unnegated_job_results(cell) == {result}
 
 
 def _cell(cells: Sequence[str], mapping: Mapping[str, int], key: str) -> str:

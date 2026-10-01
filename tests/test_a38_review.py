@@ -178,6 +178,24 @@ def test_duplicate_key_rejected() -> None:
     )
     with pytest.raises(Exception, match="duplicate key"):
         parse_review_block(raw)
+    nan_body = _body(_pass_payload()).replace('"passes": 2', '"passes": NaN', 1)
+    with pytest.raises(Exception, match="non-finite"):
+        parse_review_block(nan_body)
+    duplicated = _body(_pass_payload()).replace(REVIEW_BEGIN, REVIEW_BEGIN + REVIEW_BEGIN, 1)
+    with pytest.raises(Exception, match="review markers missing or duplicated"):
+        parse_review_block(duplicated)
+    two_fences = _body(_pass_payload()).replace(
+        "```json\n",
+        "```json\n{}\n```\n```json\n",
+        1,
+    )
+    with pytest.raises(Exception, match="review block must contain one json fence"):
+        parse_review_block(two_fences)
+    payload = _pass_payload()
+    payload["extra"] = 1
+    assert "review declaration has unknown keys" in validate_declaration(
+        payload, head=HEAD, markdown_only=False
+    )
 
 
 def test_wrong_head_and_defects() -> None:
@@ -392,6 +410,32 @@ def test_review_record_requires_prompt_model_and_set_aside() -> None:
     )
     assert validate_review_record(bare, payload) == ["review record missing"]
     assert validate_visible(bare, 2) == []
+    without_prompt_label = "\n".join(
+        line for line in _body(payload).splitlines() if not line.startswith("Prompt:")
+    ) + "\n"
+    assert "review prompt missing" in validate_review_record(without_prompt_label, payload)
+    inline_only = _body(payload).replace(
+        "```text\n" + _RECORD_PROMPT + "\n```\n",
+        "Prompt: " + _RECORD_PROMPT + "\n",
+    )
+    assert "review prompt missing" in validate_review_record(inline_only, payload)
+    underscored = _body(payload).replace("Lane `", "_Lane `")
+    assert validate_review_record(underscored, payload) == []
+    emphasized = _body(payload).replace("Lane `", "__Lane `")
+    assert validate_review_record(emphasized, payload) == []
+    for denied_head in (
+        f"Head: isn't `{HEAD}`",
+        f"Head: cannot be `{HEAD}`",
+        f"Head: `{HEAD}` is not this commit.",
+    ):
+        denied = _body(payload).replace(f"Head: `{HEAD}`", denied_head, 1)
+        assert "review head line does not match" in validate_review_record(denied, payload)
+    other_clause = _body(payload).replace(
+        f"Head: `{HEAD}`",
+        f"Head: `{HEAD}`, not a different repository.",
+        1,
+    )
+    assert validate_review_record(other_clause, payload) == []
 
 
 def test_one_run_record_and_na_lane_shape() -> None:
@@ -606,6 +650,13 @@ def test_v2_original_holds_the_lane_record() -> None:
         dict(lane, id="logic-a"),
     ]
     assert "review record does not match the original" in validate_review_record(body, drifted)
+    inline_only = body.replace(
+        "```text\n" + prompt + "\n```\n",
+        "Prompt: " + prompt + "\n",
+    )
+    inline_reasons = validate_review_record(inline_only, payload)
+    assert "review prompt missing" in inline_reasons
+    assert "review record does not match the original" in inline_reasons
     short = dict(payload)
     short["lanes"] = [{"id": "conformity-a", "result": "pass", "status": "complete"}]
     assert "review pass lane is malformed" in validate_declaration(
