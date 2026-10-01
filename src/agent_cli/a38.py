@@ -842,25 +842,82 @@ def _report_table_cell(value: str) -> str:
     return "".join(f"&#{ord(char)};" if char in "\\|`*_[]{}" else char for char in escaped)
 
 
+_OMIT_REASONS = frozenset({
+    "markdown-only change set",
+    "README-only change set",
+    "guard-docs change set",
+})
+
+
 def _report_table(report: LocalCiReport) -> str:
     rows = [
-        "| Check / Prüfung | Duration / Laufzeit | Result / Ergebnis | Exit code |",
-        "| --- | ---: | --- | ---: |",
+        "| Check / Prüfung | Duration / Laufzeit | Timeout / Zeitlimit | Result / Ergebnis | Exit code |",
+        "| --- | ---: | ---: | --- | ---: |",
     ]
     for run in report.runs:
         label = _report_table_cell(f"{run.id}: {run.name}")
-        rows.append(f"| {label} | {math.ceil(run.duration_s)} s | {run.result} | {run.exit_code} |")
+        rows.append(
+            f"| {label} | {math.ceil(run.duration_s)} s | {math.ceil(run.timeout_s)} s "
+            f"| {run.result} | {run.exit_code} |"
+        )
     return "\n".join(rows) + "\n"
 
 
-def _write_report(output: Path, payload: Mapping[str, Any]) -> None:
+def _report_facts(
+    report: LocalCiReport,
+    *,
+    base_sha: str | None,
+    changed_paths: Sequence[str] | None,
+    omit_reason: str | None,
+) -> str:
+    """Outcome lines for the details. Job steps stay in the machine block."""
+    lines = [
+        f"Head: `{report.head}`",
+        f"Recorded: `{report.recorded_at}`",
+    ]
+    if isinstance(base_sha, str) and HEAD_RE.match(base_sha) is not None:
+        lines.append(f"Base: `{base_sha}`")
+        lines.append(f"Policy: `.github/a38.json` at `{base_sha}`")
+    if changed_paths is None or any(not isinstance(path, str) for path in changed_paths):
+        lines.append("Changed paths: unknown. The local run is required.")
+    else:
+        count = len(changed_paths)
+        all_md = count > 0 and all(path.endswith(".md") for path in changed_paths)
+        if all_md:
+            lines.append(
+                f"Changed paths: {count}. Every path ends in `.md`, so the local run is not required."
+            )
+        else:
+            lines.append(
+                f"Changed paths: {count}. Not every path ends in `.md`, so the local run is required."
+            )
+    if omit_reason in _OMIT_REASONS and any(run.result == "not_applicable" for run in report.runs):
+        lines.append(f"Omitted: {omit_reason}.")
+    return "\n".join(lines) + "\n\n"
+
+
+def _write_report(
+    output: Path,
+    payload: Mapping[str, Any],
+    *,
+    base_sha: str | None = None,
+    changed_paths: Sequence[str] | None = None,
+    omit_reason: str | None = None,
+) -> None:
     report = _report_from_dict(payload)
     text = (
         "EN:\nThe A38 report below records the checks, results and durations.\n\n"
         "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
         "<details>\n<summary>Details</summary>\n\n"
-        f"{_report_table(report)}\n"
-        "Durations rounded up to whole seconds / Laufzeiten auf ganze Sekunden aufgerundet.\n\n"
+        + _report_facts(
+            report,
+            base_sha=base_sha,
+            changed_paths=changed_paths,
+            omit_reason=omit_reason,
+        )
+        + f"{_report_table(report)}\n"
+        "Durations and timeouts rounded up to whole seconds / "
+        "Laufzeiten und Zeitlimits auf ganze Sekunden aufgerundet.\n\n"
         "<details>\n<summary>Original report / Originalbericht</summary>\n\n"
         f"{render_block(report)}\n"
         "</details>\n\n"
@@ -1146,10 +1203,13 @@ def run_policy(
     drift = False
     if markdown_only:
         omit_log = "omitted: markdown-only change set\n"
+        omit_reason = "markdown-only change set"
     elif guard_docs_only:
         omit_log = "omitted: guard-docs change set\n"
+        omit_reason = "guard-docs change set"
     else:
         omit_log = "omitted: README-only change set\n"
+        omit_reason = "README-only change set" if readme_only else None
     run_by_id: dict[str, dict[str, Any]] = {}
     stop_starting = False
 
@@ -1379,7 +1439,13 @@ def run_policy(
         markdown_only=markdown_only,
     )
     try:
-        _write_report(output, payload)
+        _write_report(
+            output,
+            payload,
+            base_sha=base,
+            changed_paths=paths,
+            omit_reason=omit_reason,
+        )
     except LocalCiError as exc:
         raise A38Error(f"failed to write report: {exc}") from exc
 

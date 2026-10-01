@@ -663,7 +663,7 @@ class ReportPresentationTests(unittest.TestCase):
                 ))
                 # Only the presentation changes; the entire original evidence remains intact.
                 table, original_details = details.split("<details>\n<summary>Original report / Originalbericht</summary>\n\n")
-                self.assertIn(f"| unit: Unit | 1 s | {result} | {code} |", table)
+                self.assertIn(f"| unit: Unit | 1 s | 30 s | {result} | {code} |", table)
                 self.assertEqual(original_details, render_block(parse_comment(original)) + "\n</details>\n\n</details>\n")
                 self.assertNotIn("<details open", comment)
                 self.assertEqual(parse_comment(comment), parse_comment(original))
@@ -676,7 +676,10 @@ class ReportPresentationTests(unittest.TestCase):
         runs = [
             _run_payload(ident="zero", name="Zero", duration_s=0),
             _run_payload(ident="whole", name="Whole", duration_s=84, result="fail", exit_code=1),
-            _run_payload(ident="fraction", name="Fraction", duration_s=84.467, result="error", exit_code=127),
+            _run_payload(
+                ident="fraction", name="Fraction", duration_s=84.467,
+                result="error", exit_code=127, timeout_s=30.2,
+            ),
             _run_payload(ident="tiny", name="Tiny", duration_s=0.001, result="timeout", exit_code=124),
         ]
         original = _report_comment(required=[r["id"] for r in runs], runs=runs)
@@ -687,10 +690,10 @@ class ReportPresentationTests(unittest.TestCase):
             comment = output.read_text()
         rows = [line for line in comment.splitlines() if line.startswith("| ")][2:]
         self.assertEqual(rows, [
-            "| zero: Zero | 0 s | pass | 0 |",
-            "| whole: Whole | 84 s | fail | 1 |",
-            "| fraction: Fraction | 85 s | error | 127 |",
-            "| tiny: Tiny | 1 s | timeout | 124 |",
+            "| zero: Zero | 0 s | 30 s | pass | 0 |",
+            "| whole: Whole | 84 s | 30 s | fail | 1 |",
+            "| fraction: Fraction | 85 s | 31 s | error | 127 |",
+            "| tiny: Tiny | 1 s | 30 s | timeout | 124 |",
         ])
         self.assertEqual(parse_comment(comment), parse_comment(original))
         self.assertIn(render_block(parse_comment(original)), comment)
@@ -703,15 +706,84 @@ class ReportPresentationTests(unittest.TestCase):
             output = Path(tmp) / "report.md"
             _write_report(output, payload)
             comment = output.read_text()
-        table = comment.split("<summary>Details</summary>\n\n", 1)[1].split("<details>", 1)[0]
-        rows = [line for line in table.splitlines() if line.startswith("| ")]
+        body = comment.split("<summary>Details</summary>\n\n", 1)[1].split("<details>", 1)[0]
+        rows = [line for line in body.splitlines() if line.startswith("| ")]
         self.assertEqual(len(rows), 3)
-        self.assertEqual(rows[2].count("|"), 5)
+        self.assertEqual(rows[2].count("|"), 6)
+        table = "\n".join(rows)
         for fragment in ("</details>", "<script>", "`", "[link]", "*bold*", "\\"):
             self.assertNotIn(fragment, table)
         self.assertIn("&#124;", table)
         self.assertIn("&lt;/details&gt;", table)
         self.assertEqual(parse_comment(comment).runs[0].name, name)
+
+    def test_details_state_the_outcome(self) -> None:
+        recorded = "2026-10-01T07:28:08Z"
+        original = _report_comment(
+            recorded_at=recorded,
+            markdown_only=True,
+            runs=[_run_payload(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                payload,
+                base_sha=HEAD_B,
+                changed_paths=["docs/guide.md", "README.md"],
+                omit_reason="markdown-only change set",
+            )
+            comment = output.read_text()
+        facts = comment.split("<summary>Details</summary>\n\n", 1)[1].split("\n\n| ", 1)[0]
+        self.assertEqual(
+            facts,
+            "\n".join([
+                f"Head: `{HEAD_A}`",
+                f"Recorded: `{recorded}`",
+                f"Base: `{HEAD_B}`",
+                f"Policy: `.github/a38.json` at `{HEAD_B}`",
+                "Changed paths: 2. Every path ends in `.md`, so the local run is not required.",
+                "Omitted: markdown-only change set.",
+            ]),
+        )
+        self.assertNotIn("true", facts)
+        required = _report_comment(recorded_at=recorded)
+        required_payload = json.loads(required.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                required_payload,
+                base_sha=HEAD_B,
+                changed_paths=["docs/a38-local-run.json"],
+                omit_reason=None,
+            )
+            facts = output.read_text().split("<summary>Details</summary>\n\n", 1)[1].split("\n\n| ", 1)[0]
+        self.assertIn(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.",
+            facts,
+        )
+        self.assertNotIn("Omitted:", facts)
+        self.assertEqual(parse_comment(comment), parse_comment(original))
+
+        unknown = _report_comment(recorded_at=recorded, runs=[_run_payload(result="pass")])
+        unknown_payload = json.loads(unknown.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                unknown_payload,
+                base_sha="not-a-sha",
+                changed_paths=None,
+                omit_reason="markdown-only change set",
+            )
+            unknown_text = output.read_text()
+        unknown_facts = unknown_text.split("<summary>Details</summary>\n\n", 1)[1].split("\n\n| ", 1)[0]
+        self.assertIn("Changed paths: unknown. The local run is required.", unknown_facts)
+        self.assertNotIn("Base:", unknown_facts)
+        self.assertNotIn("Omitted:", unknown_facts)
+        self.assertEqual(parse_comment(unknown_text), parse_comment(unknown))
 
 
 class OriginTests(unittest.TestCase):
