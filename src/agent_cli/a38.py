@@ -896,6 +896,105 @@ def _report_facts(
     return "\n".join(lines) + "\n\n"
 
 
+def inventory_omit_reason(paths: Sequence[str]) -> str:
+    """Omission reason for a not_applicable run, or '' when none applies.
+
+    Markdown-only wins over guard-docs, which wins over README-only.
+    A README.md path is markdown, so that inventory is markdown-only.
+    """
+    if len(paths) > MAX_FILES:
+        return ""
+    markdown_only, guard_docs_only = markdown_and_guard_docs_only(paths)
+    if markdown_only:
+        return "markdown-only change set"
+    if guard_docs_only:
+        return "guard-docs change set"
+    if paths_are_readme_only(paths):
+        return "README-only change set"
+    return ""
+
+
+def report_outcome_lines(
+    report: LocalCiReport,
+    *,
+    base_sha: str | None,
+    changed_paths: Sequence[str] | None,
+    omit_reason: str | None,
+) -> list[str]:
+    text = _report_facts(
+        report,
+        base_sha=base_sha,
+        changed_paths=changed_paths,
+        omit_reason=omit_reason,
+    )
+    return [line for line in text.splitlines() if line.strip()]
+
+
+def report_table_lines(report: LocalCiReport) -> list[str]:
+    return [line for line in _report_table(report).splitlines() if line.startswith("|")]
+
+
+def _add_reason(reasons: list[str], text: str) -> None:
+    if text not in reasons:
+        reasons.append(text)
+
+
+def report_fact_reasons(
+    body: str,
+    report: LocalCiReport,
+    *,
+    base_sha: str | None,
+    changed_paths: Sequence[str] | None,
+) -> list[str]:
+    """Require the generated outcome lines to match this pull request.
+
+    The path count comes from the guard's inventory, not from the comment.
+    ``Changed paths: unknown`` does not satisfy a known inventory.
+    """
+    reasons: list[str] = []
+    if (
+        changed_paths is None
+        or any(not isinstance(path, str) for path in changed_paths)
+    ):
+        reasons.append("report changed paths unavailable")
+    if not isinstance(base_sha, str) or HEAD_RE.fullmatch(base_sha) is None:
+        reasons.append("report base is unavailable")
+    if reasons or not isinstance(body, str):
+        if not isinstance(body, str):
+            _add_reason(reasons, "report outcome does not match the pull request")
+        return reasons
+
+    not_applicable = any(run.result == "not_applicable" for run in report.runs)
+    derived = inventory_omit_reason(changed_paths)
+    omit_reason = derived if not_applicable and derived else None
+    expected = [
+        line
+        for line in report_outcome_lines(
+            report,
+            base_sha=base_sha,
+            changed_paths=changed_paths,
+            omit_reason=omit_reason,
+        )
+        if not line.startswith("Omitted:")
+    ]
+    present = [line.strip() for line in body.splitlines() if line.strip()]
+    for line in expected:
+        prefix = line.split(":", 1)[0] + ":"
+        found = [item for item in present if item.startswith(prefix)]
+        if found != [line]:
+            _add_reason(reasons, "report outcome does not match the pull request")
+    table = report_table_lines(report)
+    if [item for item in present if item.startswith("|")] != table:
+        _add_reason(reasons, "report outcome does not match the pull request")
+    omitted = [item for item in present if item.startswith("Omitted:")]
+    if not not_applicable:
+        if omitted:
+            _add_reason(reasons, "report states an omission without not_applicable")
+    elif not derived or omitted != [f"Omitted: {derived}."]:
+        _add_reason(reasons, "report omission does not match the change set")
+    return reasons
+
+
 def _write_report(
     output: Path,
     payload: Mapping[str, Any],

@@ -10,9 +10,11 @@ from agent_cli.a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
     parse_review_block,
+    render_review_record,
     select_review_comment,
     unresolved_thread_reasons,
     validate_declaration,
+    validate_review_record,
     validate_visible,
 )
 
@@ -47,7 +49,9 @@ def _body(payload: dict, *, passes: int = 2) -> str:
         f"Bereit nach {passes} Review-Durchläufen.\n"
         "Die Änderung ist abgedeckt.\n"
         "\n"
-        f"{REVIEW_BEGIN}\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        + render_review_record(payload)
+        + f"{REVIEW_BEGIN}\n"
         "```json\n"
         + json.dumps(payload)
         + "\n```\n"
@@ -308,6 +312,67 @@ def test_another_author_cannot_satisfy_the_gate() -> None:
     chosen, reasons = _select([own, foreign])
     assert reasons == []
     assert chosen is own
+
+
+def test_review_record_requires_prompt_model_and_set_aside() -> None:
+    payload = _pass_payload()
+    assert validate_review_record(_body(payload), payload) == []
+    missing_prompt = _body(payload).replace("```text\n", "```\n", 1)
+    assert "review prompt missing" in validate_review_record(missing_prompt, payload)
+    placeholder = _body(payload).replace("Provider: Example\n", "Provider: not recorded\n", 1)
+    assert validate_review_record(placeholder, payload) == ["review provider missing"]
+    wrong_runs = _body(payload).replace(
+        "Runs: `conformity-a` with `logic-a`, and `conformity-b` with `logic-b`.",
+        "Runs: `conformity-a` with `logic-a`. The second run may be omitted.",
+        1,
+    )
+    assert "review runs line does not match" in validate_review_record(wrong_runs, payload)
+    bare = (
+        "EN:\nReady after 2 review passes.\nThe change is covered.\n\n"
+        "DE:\nBereit nach 2 Review-Durchläufen.\nDie Änderung ist abgedeckt.\n\n"
+        f"{REVIEW_BEGIN}\n```json\n{json.dumps(payload)}\n```\n{REVIEW_END}\n"
+    )
+    assert validate_review_record(bare, payload) == ["review record missing"]
+    assert validate_visible(bare, 2) == []
+
+
+def test_one_run_record_and_na_lane_shape() -> None:
+    payload = _pass_payload()
+    payload["lanes"] = _run("a")
+    payload["passes"] = 1
+    body = _body(payload, passes=1)
+    assert validate_review_record(body, payload) == []
+    assert "The second run may be omitted." in body
+    evidence = f"markdown-only rebase, previously approved at {OTHER}"
+    na = _pass_payload()
+    na["lanes"] = _run("a", result="n_a", evidence=evidence)
+    na_body = _body(na)
+    assert validate_review_record(na_body, na) == []
+    named = na_body.replace(
+        "Lane `conformity-a`:\nResult: n_a\n",
+        "Lane `conformity-a`:\nProvider: Example\nResult: n_a\n",
+        1,
+    )
+    assert "review n_a lane must not name a model" in validate_review_record(named, na)
+
+
+def test_set_aside_rejects_placeholder_and_accepts_none() -> None:
+    payload = _pass_payload(passes=1)
+    payload["lanes"] = _run("a")
+    body = _body(payload, passes=1)
+    assert validate_review_record(body, payload) == []
+    dropped = body.replace("Set aside: none.", "Set aside: not recorded")
+    assert validate_review_record(dropped, payload) == ["review set aside missing"]
+    filed = body.replace(
+        "Set aside: none.",
+        "Set aside: none were filed and then dropped. The note did not cover this diff.",
+    )
+    assert validate_review_record(filed, payload) == []
+    bullets = body.replace(
+        "Set aside: none.",
+        "Set aside:\n- A style note, not counted because it does not cover this diff.",
+    )
+    assert validate_review_record(bullets, payload) == []
 
 
 def test_unreadable_commit_time_fails_closed() -> None:

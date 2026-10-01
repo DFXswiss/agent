@@ -22,6 +22,13 @@ except ImportError:
 
 
 from agent_cli import a38_guard  # noqa: E402
+from agent_cli.a38 import (  # noqa: E402
+    inventory_omit_reason,
+    report_outcome_lines,
+    report_table_lines,
+)
+from agent_cli.a38_review import render_review_record  # noqa: E402
+from agent_cli.local_ci import parse_comment  # noqa: E402
 from agent_cli.readme_only import GUARD_WORKFLOW_PATH  # noqa: E402
 from agent_cli.a38_guard import (  # noqa: E402
     GUARD_MARKER,
@@ -151,6 +158,9 @@ def _report_comment(
     markdown_only: bool = False,
     duration_s: float = 1.0,
     extra_runs: list[dict[str, Any]] | None = None,
+    changed_paths: list[str] | None = None,
+    include_outcome: bool = True,
+    base_sha: str = BASE,
 ) -> str:
     payload: dict[str, Any] = {
         "schema": "dfx-local-ci/v1",
@@ -177,10 +187,25 @@ def _report_comment(
         payload["readme_only"] = True
     if markdown_only:
         payload["markdown_only"] = True
-    return (
-        "EN: ready\n"
-        f"{LOCAL_CI_BEGIN}\n```json\n{json.dumps(payload)}\n```\n{LOCAL_CI_END}\n"
+    block = f"{LOCAL_CI_BEGIN}\n```json\n{json.dumps(payload)}\n```\n{LOCAL_CI_END}\n"
+    if not include_outcome:
+        return "EN: ready\n" + block
+    paths = [] if changed_paths is None else changed_paths
+    report = parse_comment(block)
+    omit = None
+    if any(run.result == "not_applicable" for run in report.runs):
+        derived = inventory_omit_reason(paths)
+        omit = derived or None
+    facts = "\n".join(
+        report_outcome_lines(
+            report,
+            base_sha=base_sha,
+            changed_paths=paths,
+            omit_reason=omit,
+        )
     )
+    table = "\n".join(report_table_lines(report))
+    return f"EN: ready\n{facts}\n{table}\n{block}"
 
 
 def _b64(data: bytes) -> dict:
@@ -431,7 +456,8 @@ class FakeAPI:
                         "Bereit nach 1 Review-Durchläufen.\n"
                         "Die Änderung ist abgedeckt.\n"
                         "\n"
-                        "<!-- A38-REVIEW:v1 -->\n"
+                        + render_review_record(declaration)
+                        + "<!-- A38-REVIEW:v1 -->\n"
                         "```json\n"
                         + json.dumps(declaration)
                         + "\n```\n"
@@ -1573,10 +1599,10 @@ class A38GuardE2ETests(unittest.TestCase):
             (BASE, ".github/workflows/test.yml")
         ]
         fake.add_author_report(
-            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=90
+            _report_comment(base_sha=BASE2), updated_at="2026-09-05T12:00:00Z", cid=90
         )
         result = reconcile_pull(fake.api(), REPO, 1, publish=True)
-        self.assertTrue(result.ok)
+        self.assertTrue(result.ok, msg=result.reasons)
         self.assertEqual(result.status, "pass")
         self.assertEqual(result.scope_decision, "enforce")
         self.assertEqual(result.context, status_context_enforce("main"))
@@ -1586,6 +1612,9 @@ class A38GuardE2ETests(unittest.TestCase):
         fake.pull["base"]["ref"] = "develop"
         fake.pull["base"]["repo"]["default_branch"] = "develop"
         fake.pull["base"]["sha"] = BASE
+        for comment in fake.comments:
+            if comment.get("id") == 90:
+                comment["body"] = _report_comment()
         enforced = reconcile_pull(fake.api(), REPO, 1, publish=True)
         self.assertTrue(enforced.ok)
         self.assertEqual(enforced.status, "pass")
@@ -2220,6 +2249,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
                 exit_code=0,
                 readme_only=True,
                 duration_s=0.0,
+                changed_paths=["README.md"],
             ),
             updated_at="2026-09-05T12:00:00Z",
             cid=302,
@@ -2340,7 +2370,9 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         fake.satisfy_review = False
         fake.pull_files = [{"filename": "app.py", "status": "modified"}]
         fake.add_author_report(
-            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=401
+            _report_comment(changed_paths=["app.py"]),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=401,
         )
         result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertFalse(result.draft)
@@ -2359,7 +2391,9 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         fake.satisfy_review = False
         fake.pull_files = [{"filename": "app.py", "status": "modified"}]
         fake.add_author_report(
-            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=402
+            _report_comment(changed_paths=["app.py"]),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=402,
         )
         first = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
         self.assertFalse(first.draft)
@@ -2552,6 +2586,22 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             msg=result.reasons,
         )
 
+    def test_pass_report_without_outcome_lines_fails(self) -> None:
+        fake = FakeAPI()
+        fake.pull_files = [{"filename": "app.py", "status": "modified"}]
+        fake.add_author_report(
+            _report_comment(include_outcome=False),
+            updated_at="2026-09-05T12:00:00Z",
+            cid=305,
+        )
+        result = assess_pull(fake.api(), REPO, 1, dry_run=True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "fail")
+        self.assertIn(
+            "report outcome does not match the pull request",
+            result.reasons,
+        )
+
     def test_markdown_only_omit_accepted_when_files_confirm(self) -> None:
         fake = FakeAPI()
         fake.add_author_report(
@@ -2560,6 +2610,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
                 exit_code=0,
                 markdown_only=True,
                 duration_s=0.0,
+                changed_paths=["docs/guide.md"],
             ),
             updated_at="2026-09-05T12:00:00Z",
             cid=304,

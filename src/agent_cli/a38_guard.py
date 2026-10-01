@@ -28,7 +28,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Mapping, MutableMapping, Sequence
 
-from .a38 import load_policy, verify_report
+from .a38 import load_policy, report_fact_reasons, verify_report
 from .local_ci import LocalCiError, parse_comment
 from .pr_guard_config import (
     CONFIG_PATH as PR_GUARD_CONFIG_PATH,
@@ -1574,6 +1574,7 @@ def assess_from_parts(
     api: GitHubApi | None = None,
     write_ready: bool = False,
     write_ready_reason: str = "",
+    changed_paths: Sequence[str] | None = None,
 ) -> Assessment:
     active_policy_repo = policy_repo or pull.repo
     active_policy_sha = policy_sha or pull.base_sha
@@ -1742,6 +1743,17 @@ def assess_from_parts(
                         reasons = [
                             "README-only omission is not independently confirmed"
                         ]
+            if ok:
+                fact_reasons = report_fact_reasons(
+                    body,
+                    report,
+                    base_sha=pull.base_sha,
+                    changed_paths=changed_paths,
+                )
+                if fact_reasons:
+                    ok = False
+                    status = "fail"
+                    reasons = fact_reasons
 
     assessment.report_status = status
     if ok:
@@ -2182,6 +2194,7 @@ def assess_pull(
         api=api,
         write_ready=write_ready,
         write_ready_reason=write_ready_reason,
+        changed_paths=paths,
     )
     assessment.approval_fingerprint = approval
     assessment.event_actor = event_actor

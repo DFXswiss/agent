@@ -3,6 +3,8 @@
 The guard does not run the review lanes and does not execute pull-request
 code. A passing declaration is a consistent author statement plus the
 guard's own thread check, not cryptographic proof that a review ran.
+The statement must include the review record. The guard rejects a missing,
+placeholder, or contradictory record. It does not prove which model ran.
 """
 
 from __future__ import annotations
@@ -228,6 +230,258 @@ def _utc(value: str) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+_PLACEHOLDERS = frozenset({
+    "not recorded",
+    "unknown",
+    "n/a",
+    "na",
+    "none",
+    "-",
+    "n.a.",
+    "tbd",
+    "todo",
+})
+_RECORD_PROMPT = "Review the diff and report each defect with its file and line."
+_LANE_HEADER = re.compile(r"^Lane `([a-z0-9-]+)`:$")
+
+
+def _is_placeholder(value: str, *, allow_none: bool = False) -> bool:
+    banned = _PLACEHOLDERS - {"none"} if allow_none else _PLACEHOLDERS
+    text = value.strip().casefold()
+    return text in banned or text.rstrip(".") in banned
+
+
+def _named_value(value: str) -> bool:
+    text = value.strip()
+    return 1 <= len(text) <= 200 and not _is_placeholder(text)
+
+
+def _runs_line(lane_ids: Sequence[str]) -> str | None:
+    present = set(lane_ids)
+    complete = [pair for pair in RUNS if all(lane_id in present for lane_id in pair)]
+    if len(complete) == 1:
+        left, right = complete[0]
+        return f"Runs: `{left}` with `{right}`. The second run may be omitted."
+    if len(complete) == 2:
+        return "Runs: `conformity-a` with `logic-a`, and `conformity-b` with `logic-b`."
+    return None
+
+
+def render_review_record(payload: Mapping[str, Any]) -> str:
+    """Record lines the guard requires before the review machine block."""
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        lanes = []
+    lane_ids = [
+        lane.get("id")
+        for lane in lanes
+        if isinstance(lane, Mapping) and isinstance(lane.get("id"), str)
+    ]
+    lines = [
+        f"Head: `{payload.get('head')}`",
+        _runs_line([lane_id for lane_id in lane_ids if isinstance(lane_id, str)]) or "",
+        "",
+    ]
+    for lane in lanes:
+        if not isinstance(lane, Mapping):
+            continue
+        lines.append(f"Lane `{lane.get('id')}`:")
+        if lane.get("result") == "n_a":
+            lines.append("Result: n_a")
+        else:
+            lines.extend([
+                "Provider: Example",
+                "Model: Example model",
+                "Model number: example-1",
+                "Result: pass",
+                "Prompt:",
+                "```text",
+                _RECORD_PROMPT,
+                "```",
+            ])
+        lines.append("")
+    lines.append(f"Final result: `passes` {payload.get('passes')}, `defects` 0.")
+    lines.append("Set aside: none.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _extract_text_fences(text: str) -> tuple[list[str], list[str], bool]:
+    """Prose lines and ```text bodies. Any other fence is an error."""
+    prose: list[str] = []
+    prompts: list[str] = []
+    error = False
+    index = 0
+    lines = text.splitlines()
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped == "```text":
+            index += 1
+            body: list[str] = []
+            closed = False
+            while index < len(lines):
+                if lines[index].strip() == "```":
+                    closed = True
+                    index += 1
+                    break
+                if REVIEW_BEGIN in lines[index] or REVIEW_END in lines[index]:
+                    error = True
+                body.append(lines[index])
+                index += 1
+            if not closed:
+                error = True
+            prompts.append("\n".join(body))
+            continue
+        if stripped.startswith("```"):
+            error = True
+            index += 1
+            while index < len(lines) and lines[index].strip() != "```":
+                index += 1
+            if index < len(lines):
+                index += 1
+            continue
+        prose.append(lines[index])
+        index += 1
+    return prose, prompts, error
+
+
+def _prompt_ok(text: str) -> bool:
+    if REVIEW_BEGIN in text or REVIEW_END in text:
+        return False
+    stripped = text.strip()
+    return len(stripped) >= 40 and not _is_placeholder(stripped)
+
+
+def _pass_lane_reasons(section: list[str], prompt: str | None) -> list[str]:
+    reasons: list[str] = []
+    expected = (
+        ("Provider: ", "review provider missing", False),
+        ("Model: ", "review model missing", False),
+        ("Model number: ", "review model number missing", False),
+        ("Result: ", "review result missing", True),
+    )
+    if len(section) != 5:
+        _add(reasons, "review lane record missing")
+    for index, (prefix, reason, is_result) in enumerate(expected):
+        if index >= len(section) or not section[index].startswith(prefix):
+            _add(reasons, reason)
+            continue
+        value = section[index][len(prefix):].strip()
+        if is_result:
+            if "pass" not in value.casefold():
+                _add(reasons, reason)
+        elif not _named_value(value):
+            _add(reasons, reason)
+    if len(section) < 5 or section[4] != "Prompt:":
+        _add(reasons, "review prompt missing")
+    elif prompt is None or not _prompt_ok(prompt):
+        _add(reasons, "review prompt missing")
+    return reasons
+
+
+def _na_lane_reasons(section: list[str]) -> list[str]:
+    if section == ["Result: n_a"]:
+        return []
+    named = ("Provider:", "Model:", "Model number:", "Prompt:")
+    if any(line.startswith(named) for line in section):
+        return ["review n_a lane must not name a model"]
+    return ["review result missing"]
+
+
+def _set_aside_reasons(lines_after: list[str]) -> list[str]:
+    if not lines_after:
+        return ["review set aside missing"]
+    first = lines_after[0]
+    if first == "Set aside:":
+        bullets = lines_after[1:]
+        if bullets and all(item.startswith("- ") and item[2:].strip() for item in bullets):
+            return []
+        return ["review set aside missing"]
+    if first.startswith("Set aside: "):
+        value = first[len("Set aside: "):].strip()
+        if value and not _is_placeholder(value, allow_none=True) and len(lines_after) == 1:
+            return []
+    return ["review set aside missing"]
+
+
+def validate_review_record(body: str, payload: Mapping[str, Any]) -> list[str]:
+    """Require the human record to agree with the declaration.
+
+    Lines inside a ```text fence are the prompt, not record fields.
+    """
+    if not isinstance(body, str) or not isinstance(payload, Mapping):
+        return ["review record missing"]
+    begin = body.find(REVIEW_BEGIN)
+    record = body[:begin] if begin >= 0 else body
+    prose, prompts, fence_error = _extract_text_fences(record)
+    lines = [line.strip() for line in prose if line.strip()]
+    if not any(
+        line.startswith(("Head:", "Runs:", "Lane `", "Final result:", "Set aside:"))
+        for line in lines
+    ):
+        return ["review record missing"]
+    reasons: list[str] = []
+    if fence_error:
+        _add(reasons, "review prompt missing")
+    head = payload.get("head")
+    heads = [line for line in lines if line.startswith("Head:")]
+    if heads != [f"Head: `{head}`"]:
+        _add(reasons, "review head line does not match")
+    lanes = payload.get("lanes")
+    lane_ids: list[str] = []
+    lane_results: list[str] = []
+    if isinstance(lanes, list):
+        for lane in lanes:
+            if isinstance(lane, Mapping) and isinstance(lane.get("id"), str):
+                lane_ids.append(lane["id"])
+                result = lane.get("result")
+                lane_results.append(result if isinstance(result, str) else "")
+            else:
+                lane_ids.append("")
+                lane_results.append("")
+    runs = [line for line in lines if line.startswith("Runs:")]
+    expected_runs = _runs_line(lane_ids)
+    if expected_runs is None or runs != [expected_runs]:
+        _add(reasons, "review runs line does not match")
+    headers = [
+        (index, match.group(1))
+        for index, line in enumerate(lines)
+        if (match := _LANE_HEADER.fullmatch(line)) is not None
+    ]
+    if [lane_id for _, lane_id in headers] != lane_ids:
+        _add(reasons, "review lane record missing")
+    passes = payload.get("passes")
+    prefix = f"Final result: `passes` {passes}, `defects` 0."
+    finals = [index for index, line in enumerate(lines) if line.startswith("Final result:")]
+    final_at = finals[0] if len(finals) == 1 else None
+    if final_at is None or not lines[final_at].startswith(prefix):
+        _add(reasons, "review final result does not match")
+    prompt_at = 0
+    if len(headers) == len(lane_ids):
+        for position, (start, _lane_id) in enumerate(headers):
+            end = headers[position + 1][0] if position + 1 < len(headers) else len(lines)
+            if final_at is not None:
+                end = min(end, final_at)
+            section = lines[start + 1 : end]
+            if lane_results[position] == "n_a":
+                for reason in _na_lane_reasons(section):
+                    _add(reasons, reason)
+            else:
+                prompt = prompts[prompt_at] if prompt_at < len(prompts) else None
+                prompt_at += 1
+                for reason in _pass_lane_reasons(section, prompt):
+                    _add(reasons, reason)
+    expected_prompts = sum(1 for result in lane_results if result != "n_a")
+    if prompt_at != expected_prompts or len(prompts) != expected_prompts:
+        _add(reasons, "review prompt missing")
+    if final_at is None:
+        _add(reasons, "review set aside missing")
+    else:
+        for reason in _set_aside_reasons(lines[final_at + 1 :]):
+            _add(reasons, reason)
+    return reasons
+
+
 def _comment_stamp(comment: Mapping[str, Any]) -> datetime | None:
     """When the author last set this comment: the later of created and updated."""
     created_raw = comment.get("created_at")
@@ -248,12 +502,16 @@ def _declaration_reasons(body: str, *, head: str, markdown_only: bool) -> list[s
     except ReviewError as exc:
         _add(reasons, str(exc))
         return reasons
-    reasons.extend(validate_declaration(payload, head=head, markdown_only=markdown_only))
+    declaration = validate_declaration(payload, head=head, markdown_only=markdown_only)
+    reasons.extend(declaration)
     passes = payload.get("passes")
     if _is_int(passes) and passes >= 1:
         reasons.extend(validate_visible(body, passes))
     else:
         _add(reasons, "review visible text missing")
+    # A half run fails on the lane rules. Do not also demand a finished record.
+    if not declaration:
+        reasons.extend(validate_review_record(body, payload))
     return reasons
 
 

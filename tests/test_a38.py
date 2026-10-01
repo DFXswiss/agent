@@ -29,6 +29,7 @@ from agent_cli.a38 import (
     load_policy,
     main,
     parse_github_origin,
+    report_fact_reasons,
     run_policy,
     verify_report,
 )
@@ -784,6 +785,124 @@ class ReportPresentationTests(unittest.TestCase):
         self.assertNotIn("Base:", unknown_facts)
         self.assertNotIn("Omitted:", unknown_facts)
         self.assertEqual(parse_comment(unknown_text), parse_comment(unknown))
+
+    def test_guard_requires_outcome_lines_to_match_the_inventory(self) -> None:
+        recorded = "2026-10-01T09:04:19Z"
+        original = _report_comment(
+            recorded_at=recorded,
+            runs=[_run_payload(duration_s=28.371, timeout_s=600)],
+        )
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                payload,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            )
+            comment = output.read_text()
+        report = parse_comment(comment)
+        self.assertEqual(
+            report_fact_reasons(
+                comment,
+                report,
+                base_sha=HEAD_B,
+                changed_paths=["docs/sample.json"],
+            ),
+            [],
+        )
+        missing = comment.replace(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.\n",
+            "",
+            1,
+        )
+        self.assertIn(
+            "report outcome does not match the pull request",
+            report_fact_reasons(
+                missing, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
+            ),
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                comment, report, base_sha=HEAD_B, changed_paths=None
+            ),
+            ["report changed paths unavailable"],
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                comment, report, base_sha="not-a-sha", changed_paths=["docs/sample.json"]
+            ),
+            ["report base is unavailable"],
+        )
+        invented = comment.replace(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.",
+            "Changed paths: unknown. The local run is required.",
+            1,
+        )
+        self.assertIn(
+            "report outcome does not match the pull request",
+            report_fact_reasons(
+                invented, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
+            ),
+        )
+        with_omit = comment.replace(
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.\n",
+            "Changed paths: 1. Not every path ends in `.md`, so the local run is required.\n"
+            "Omitted: markdown-only change set.\n",
+            1,
+        )
+        self.assertIn(
+            "report states an omission without not_applicable",
+            report_fact_reasons(
+                with_omit, report, base_sha=HEAD_B, changed_paths=["docs/sample.json"]
+            ),
+        )
+
+    def test_omission_line_must_match_markdown_before_readme(self) -> None:
+        recorded = "2026-10-01T09:04:19Z"
+        original = _report_comment(
+            recorded_at=recorded,
+            markdown_only=True,
+            runs=[_run_payload(result="not_applicable", exit_code=0, duration_s=0)],
+        )
+        payload = json.loads(original.split("```json\n", 1)[1].split("```", 1)[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "report.md"
+            _write_report(
+                output,
+                payload,
+                base_sha=HEAD_B,
+                changed_paths=["README.md"],
+                omit_reason="markdown-only change set",
+            )
+            comment = output.read_text()
+        report = parse_comment(comment)
+        self.assertEqual(
+            report_fact_reasons(
+                comment, report, base_sha=HEAD_B, changed_paths=["README.md"]
+            ),
+            [],
+        )
+        readme_line = comment.replace(
+            "Omitted: markdown-only change set.",
+            "Omitted: README-only change set.",
+            1,
+        )
+        self.assertEqual(
+            report_fact_reasons(
+                readme_line, report, base_sha=HEAD_B, changed_paths=["README.md"]
+            ),
+            ["report omission does not match the change set"],
+        )
+        code_only = comment.replace("Changed paths: 1. Every path ends in `.md`, so the local run is not required.", "Changed paths: 1. Not every path ends in `.md`, so the local run is required.", 1)
+        code_only = code_only.replace("Omitted: markdown-only change set.\n", "", 1)
+        self.assertIn(
+            "report omission does not match the change set",
+            report_fact_reasons(
+                code_only, report, base_sha=HEAD_B, changed_paths=["app.py"]
+            ),
+        )
 
 
 class OriginTests(unittest.TestCase):
