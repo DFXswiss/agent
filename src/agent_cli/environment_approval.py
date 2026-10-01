@@ -59,7 +59,7 @@ def approve_environment_deployments(
         collect_comments,
         fetch_pull,
         migration_approval,
-        pick_latest_author_report,
+        reload_gate_report,
         resolve_trusted_guard_config,
         resolve_write_ready,
     )
@@ -169,7 +169,7 @@ def approve_environment_deployments(
             or config_now.config_revision != trusted.config_revision
             or config_now.fingerprint != trusted.fingerprint
             or _report_fingerprint(
-                pick_latest_author_report(comments, final.author_id)
+                reload_gate_report(api, final, comments)
             )
             != assessment.report_fingerprint
             or migration_approval(api, final) != assessment.approval_fingerprint

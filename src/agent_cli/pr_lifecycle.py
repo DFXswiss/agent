@@ -39,13 +39,11 @@ def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> fro
     """
     if not assessment.ok or assessment.status != "pass" or assessment.report_status != "pass":
         return frozenset()
-    from .a38_guard import collect_comments, pick_latest_author_report
+    from .a38_guard import collect_comments, fetch_pull, reload_gate_report
     from .local_ci import LocalCiError, parse_comment
-    author_id = _field(pull or {}, "user", "id")
-    if not isinstance(author_id, int):
-        return frozenset()
-    comment = pick_latest_author_report(
-        collect_comments(api, assessment.repo, assessment.pr), author_id
+    snap = fetch_pull(api, assessment.repo, assessment.pr)
+    comment = reload_gate_report(
+        api, snap, collect_comments(api, assessment.repo, assessment.pr)
     )
     if comment is None:
         return frozenset()

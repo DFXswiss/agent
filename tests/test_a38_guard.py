@@ -45,6 +45,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     looks_like_report,
     main,
     pick_latest_author_report,
+    _report_fingerprint,
     publish_assessment,
     reconcile_event,
     reconcile_pull,
@@ -594,21 +595,31 @@ class A38GuardUnitTests(unittest.TestCase):
         comments = [
             {
                 "id": 1,
+                "created_at": "2026-09-05T10:00:00Z",
                 "updated_at": "2026-09-05T10:00:00Z",
                 "user": {"id": OUTSIDER_ID},
                 "body": _report_comment(),
             },
             {
                 "id": 2,
+                "created_at": "2026-09-05T11:00:00Z",
                 "updated_at": "2026-09-05T11:00:00Z",
                 "user": {"id": AUTHOR_ID},
                 "body": _report_comment(),
             },
             {
                 "id": 3,
+                "created_at": "2026-09-05T12:00:00Z",
                 "updated_at": "2026-09-05T12:00:00Z",
                 "user": {"id": AUTHOR_ID},
                 "body": "not a report",
+            },
+            {
+                "id": 4,
+                "created_at": "2026-09-05T09:00:00Z",
+                "updated_at": "2026-09-05T16:00:00Z",
+                "user": {"id": AUTHOR_ID},
+                "body": _report_comment(),
             },
         ]
         picked = pick_latest_author_report(comments, AUTHOR_ID)
@@ -1391,7 +1402,7 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any("head" in r for r in result.reasons))
 
-    def test_malformed_newer_report_fails_despite_older_pass(self) -> None:
+    def test_newer_malformed_report_keeps_older_pass(self) -> None:
         fake = FakeAPI()
         fake.add_author_report(
             _report_comment(), updated_at="2026-09-05T10:00:00Z", cid=30
@@ -1402,7 +1413,38 @@ class A38GuardE2ETests(unittest.TestCase):
             cid=31,
         )
         result = assess_pull(fake.api(), REPO, 1)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.report_fingerprint, _report_fingerprint(fake.comments[0]))
+
+    def test_report_created_before_commit_does_not_count(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2019-01-01T00:00:00Z", cid=32
+        )
+        result = assess_pull(fake.api(), REPO, 1)
         self.assertFalse(result.ok)
+        self.assertIn(
+            "author report comment is not newer than the head commit",
+            result.reasons,
+        )
+
+    def test_report_edit_does_not_make_it_newer_than_the_commit(self) -> None:
+        fake = FakeAPI()
+        fake.add_author_report(
+            _report_comment(), updated_at="2019-01-01T00:00:00Z", cid=33
+        )
+        fake.comments[0]["updated_at"] = "2026-09-05T13:00:00Z"
+        result = assess_pull(fake.api(), REPO, 1)
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "author report comment is not newer than the head commit",
+            result.reasons,
+        )
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T13:00:00Z", cid=34
+        )
+        again = assess_pull(fake.api(), REPO, 1)
+        self.assertTrue(again.ok)
 
     def test_comment_deletion_clears_pass(self) -> None:
         fake = FakeAPI()

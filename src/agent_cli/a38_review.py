@@ -760,16 +760,11 @@ def _original_match_reasons(
 
 
 def _comment_stamp(comment: Mapping[str, Any]) -> datetime | None:
-    """When the author last set this comment: the later of created and updated."""
+    """When the comment was created. An edit does not make it newer."""
     created_raw = comment.get("created_at")
-    updated_raw = comment.get("updated_at")
-    created = _utc(created_raw) if isinstance(created_raw, str) else None
-    updated = _utc(updated_raw) if isinstance(updated_raw, str) else None
-    if created is None:
-        return updated
-    if updated is None:
-        return created
-    return updated if updated >= created else created
+    if not isinstance(created_raw, str):
+        return None
+    return _utc(created_raw)
 
 
 def _declaration_reasons(body: str, *, head: str, markdown_only: bool) -> list[str]:
@@ -801,9 +796,10 @@ def select_review_comment(
     head: str,
     markdown_only: bool,
 ) -> tuple[Mapping[str, Any] | None, list[str]]:
-    """Latest valid author declaration created or edited after the head commit.
+    """Newest valid author declaration created after the head commit.
 
-    Other comments, including later ones, do not remove an earlier valid
+    Age is ``created_at`` only. An edit does not make a comment newer; post a
+    new comment instead. Other comments do not remove an earlier valid
     declaration. A newer malformed declaration falls back to an older valid one.
     """
     committed = _utc(committed_at)

@@ -456,7 +456,12 @@ def find_tool_attribution(text: str | None, *, source: str) -> list[str]:
 def pick_latest_author_report(
     comments: Sequence[Mapping[str, Any]], author_id: int
 ) -> Mapping[str, Any] | None:
-    """Latest report-like comment by the PR author, ordered by (updated_at, id)."""
+    """Newest report-like comment by the PR author, ordered by (created_at, id).
+
+    ``updated_at`` is ignored. An edit does not make a comment newer.
+    """
+    from .a38_review import _utc
+
     candidates: list[tuple[str, int, Mapping[str, Any]]] = []
     for comment in comments:
         user = comment.get("user") or {}
@@ -468,17 +473,68 @@ def pick_latest_author_report(
         body = comment.get("body")
         if not looks_like_report(body if isinstance(body, str) else None):
             continue
-        updated = comment.get("updated_at") or comment.get("created_at") or ""
+        created_raw = comment.get("created_at")
+        if not isinstance(created_raw, str) or _utc(created_raw) is None:
+            continue
         cid = comment.get("id")
         if not isinstance(cid, int):
             continue
-        if not isinstance(updated, str):
-            updated = ""
-        candidates.append((updated, cid, comment))
+        candidates.append((created_raw, cid, comment))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: (item[0], item[1]))
+    candidates.sort(key=lambda item: (_utc(item[0]), item[1]))
     return candidates[-1][2]
+
+
+def choose_author_report(
+    comments: Sequence[Mapping[str, Any]],
+    author_id: int,
+    *,
+    committed_at: str | None,
+    meets: Callable[[str], bool],
+) -> tuple[Mapping[str, Any] | None, str | None]:
+    """Newest author report that meets the requirements and is younger than the head.
+
+    Age is ``created_at`` only, strictly after the head commit. An edit does not
+    count. A newer comment that fails leaves an older qualifying comment in
+    place. When none qualify, the newest post-commit report is returned so its
+    failure can be shown. The second value is an absence reason when no comment
+    is returned.
+    """
+    from .a38_review import _utc
+
+    committed = _utc(committed_at) if isinstance(committed_at, str) else None
+    if committed is None:
+        return None, "report commit time unavailable"
+    report_like = False
+    eligible: list[tuple[Any, int, Mapping[str, Any]]] = []
+    for comment in comments:
+        user = comment.get("user") or {}
+        if not isinstance(user, Mapping) or user.get("id") != author_id:
+            continue
+        body = comment.get("body")
+        if not looks_like_report(body if isinstance(body, str) else None):
+            continue
+        report_like = True
+        created_raw = comment.get("created_at")
+        created = _utc(created_raw) if isinstance(created_raw, str) else None
+        cid = comment.get("id")
+        if created is None or not isinstance(cid, int) or created <= committed:
+            continue
+        eligible.append((created, cid, comment))
+    if not report_like:
+        return None, None
+    if not eligible:
+        return None, "author report comment is not newer than the head commit"
+    eligible.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    newest_failure: Mapping[str, Any] | None = None
+    for _created, _cid, comment in eligible:
+        body = comment.get("body")
+        if isinstance(body, str) and meets(body):
+            return comment, None
+        if newest_failure is None:
+            newest_failure = comment
+    return newest_failure, None
 
 
 def _parse_link_rel(link_header: str | None, rel: str) -> str | None:
@@ -1559,6 +1615,67 @@ def _apply_write_ready_pass(assessment: Assessment) -> None:
     assessment.comment_body = build_comment_body(assessment)
 
 
+def _report_body_outcome(
+    body: str,
+    *,
+    pull: PullSnapshot,
+    policy: Mapping[str, Any],
+    api: GitHubApi | None,
+    changed_paths: Sequence[str] | None,
+) -> tuple[bool, str, list[str]]:
+    """Whether one author-report body meets the report gate. Waivers are not applied."""
+    try:
+        verdict = verify_report(
+            body,
+            dict(policy),
+            repo=pull.repo,
+            head=pull.head_sha,
+            private=pull.private,
+        )
+    except Exception as exc:  # noqa: BLE001 — treat validator crashes as fail
+        return False, "fail", [f"report verification error: {exc}"]
+    if not isinstance(verdict, Mapping):
+        return False, "fail", ["verify_report returned a non-object"]
+    ok = bool(verdict.get("ok"))
+    status = verdict.get("status")
+    if not isinstance(status, str) or not status:
+        status = "pass" if ok else "fail"
+    raw_reasons = verdict.get("reasons") or []
+    if not isinstance(raw_reasons, list):
+        return False, "fail", ["verify_report reasons missing"]
+    reasons = [str(item) for item in raw_reasons]
+    if not ok:
+        return False, status, reasons
+    try:
+        report = parse_comment(body)
+    except LocalCiError as exc:
+        return False, "fail", [f"report parse error: {exc}"]
+    claims_omit = (
+        report.readme_only
+        or report.markdown_only
+        or any(run.result == "not_applicable" for run in report.runs)
+    )
+    if claims_omit:
+        confirmed = api is not None and pull_is_markdown_only(api, pull.repo, pull.number)
+        if not confirmed:
+            if report.markdown_only:
+                return False, "fail", [
+                    "markdown-only omission is not independently confirmed"
+                ]
+            return False, "fail", [
+                "README-only omission is not independently confirmed"
+            ]
+    fact_reasons = report_fact_reasons(
+        body,
+        report,
+        base_sha=pull.base_sha,
+        changed_paths=changed_paths,
+    )
+    if fact_reasons:
+        return False, "fail", fact_reasons
+    return True, status, reasons
+
+
 def assess_from_parts(
     *,
     pull: PullSnapshot,
@@ -1575,6 +1692,7 @@ def assess_from_parts(
     write_ready: bool = False,
     write_ready_reason: str = "",
     changed_paths: Sequence[str] | None = None,
+    missing_report_reason: str | None = None,
 ) -> Assessment:
     active_policy_repo = policy_repo or pull.repo
     active_policy_sha = policy_sha or pull.base_sha
@@ -1656,7 +1774,10 @@ def assess_from_parts(
             _apply_write_ready_pass(assessment)
             return assessment
         assessment.status = "fail"
-        assessment.reasons = ["no author local-CI report comment on this pull request"]
+        assessment.reasons = [
+            missing_report_reason
+            or "no author local-CI report comment on this pull request"
+        ]
         assessment.ok = False
         _status_bits(assessment)
         assessment.comment_body = build_comment_body(assessment)
@@ -1673,88 +1794,13 @@ def assess_from_parts(
         assessment.comment_body = build_comment_body(assessment)
         return assessment
 
-    try:
-        verdict = verify_report(
-            body,
-            dict(policy),
-            repo=pull.repo,
-            head=pull.head_sha,
-            private=pull.private,
-        )
-    except Exception as exc:  # noqa: BLE001 — treat validator crashes as fail
-        if assessment.write_ready:
-            _apply_write_ready_pass(assessment)
-            return assessment
-        assessment.status = "fail"
-        assessment.reasons = [f"report verification error: {exc}"]
-        _status_bits(assessment)
-        assessment.comment_body = build_comment_body(assessment)
-        return assessment
-
-    if not isinstance(verdict, Mapping):
-        if assessment.write_ready:
-            _apply_write_ready_pass(assessment)
-            return assessment
-        assessment.status = "fail"
-        assessment.reasons = ["verify_report returned a non-object"]
-        _status_bits(assessment)
-        assessment.comment_body = build_comment_body(assessment)
-        return assessment
-
-    ok = bool(verdict.get("ok"))
-    status = verdict.get("status")
-    if not isinstance(status, str) or not status:
-        status = "pass" if ok else "fail"
-    raw_reasons = verdict.get("reasons") or []
-    if isinstance(raw_reasons, list):
-        reasons = [str(r) for r in raw_reasons]
-    else:
-        reasons = ["verify_report reasons missing"]
-        ok = False
-        status = "fail"
-
-    # Do not trust a report's omit flags / not_applicable without an
-    # independent PR file inventory from GitHub.
-    if ok:
-        try:
-            report = parse_comment(body)
-        except LocalCiError as exc:
-            ok = False
-            status = "fail"
-            reasons = [f"report parse error: {exc}"]
-        else:
-            claims_omit = (
-                report.readme_only
-                or report.markdown_only
-                or any(run.result == "not_applicable" for run in report.runs)
-            )
-            if claims_omit:
-                confirmed = False
-                if api is not None:
-                    confirmed = pull_is_markdown_only(api, pull.repo, pull.number)
-                if not confirmed:
-                    ok = False
-                    status = "fail"
-                    if report.markdown_only:
-                        reasons = [
-                            "markdown-only omission is not independently confirmed"
-                        ]
-                    else:
-                        reasons = [
-                            "README-only omission is not independently confirmed"
-                        ]
-            if ok:
-                fact_reasons = report_fact_reasons(
-                    body,
-                    report,
-                    base_sha=pull.base_sha,
-                    changed_paths=changed_paths,
-                )
-                if fact_reasons:
-                    ok = False
-                    status = "fail"
-                    reasons = fact_reasons
-
+    ok, status, reasons = _report_body_outcome(
+        body,
+        pull=pull,
+        policy=policy,
+        api=api,
+        changed_paths=changed_paths,
+    )
     assessment.report_status = status
     if ok:
         assessment.ok = True
@@ -2101,6 +2147,71 @@ def _trusted_config_matches(
     )
 
 
+def _active_policy(
+    api: GitHubApi, snap: PullSnapshot
+) -> tuple[dict[str, Any] | None, str | None, str, str, str]:
+    """Policy the report gate verifies, including an approved head migration."""
+    policy, policy_error = load_base_policy(api, snap.repo, snap.base_sha)
+    base_mode = policy.get("mode") if policy else "enforce"
+    approval = migration_approval(api, snap)
+    # Displayed policy_repo keeps head provenance for approved migrations.
+    # Source access for head objects always uses the base/target repository.
+    policy_repo, policy_sha = snap.repo, snap.base_sha
+    if approval:
+        head_policy, head_error = load_base_policy(api, snap.repo, snap.head_sha)
+        policy, policy_error = head_policy, head_error
+        if policy is not None:
+            policy = dict(policy, mode=base_mode)
+        policy_repo, policy_sha = snap.head_repo or snap.repo, snap.head_sha
+    return policy, policy_error, approval, policy_repo, policy_sha
+
+
+def select_gate_report(
+    api: GitHubApi,
+    snap: PullSnapshot,
+    comments: Sequence[Mapping[str, Any]],
+    *,
+    policy: Mapping[str, Any] | None,
+    changed_paths: Sequence[str] | None,
+) -> tuple[Mapping[str, Any] | None, str | None]:
+    """Newest qualifying author report created after the head commit."""
+    from .a38_review import _head_committed_at
+
+    def meets(body: str) -> bool:
+        if not isinstance(policy, Mapping):
+            return False
+        ok, _status, _reasons = _report_body_outcome(
+            body,
+            pull=snap,
+            policy=policy,
+            api=api,
+            changed_paths=changed_paths,
+        )
+        return ok
+
+    return choose_author_report(
+        comments,
+        snap.author_id,
+        committed_at=_head_committed_at(api, snap.repo, snap.head_sha),
+        meets=meets,
+    )
+
+
+def reload_gate_report(
+    api: GitHubApi,
+    snap: PullSnapshot,
+    comments: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    """Re-read the report the gate would select. Used to detect a comment change."""
+    policy, _error, _approval, _repo, _sha = _active_policy(api, snap)
+    entries = list_pull_files(api, snap.repo, snap.number)
+    paths = None if entries is None else github_file_paths(entries)
+    comment, _absence = select_gate_report(
+        api, snap, comments, policy=policy, changed_paths=paths
+    )
+    return comment
+
+
 def assess_pull(
     api: GitHubApi,
     repo: str,
@@ -2132,18 +2243,7 @@ def assess_pull(
     trusted = resolve_trusted_guard_config(api, snap)
     if trusted.decision == "exclude":
         return _out_of_scope_assessment(snap, trusted, dry_run=dry_run)
-    policy, policy_error = load_base_policy(api, snap.repo, snap.base_sha)
-    base_mode = policy.get("mode") if policy else "enforce"
-    approval = migration_approval(api, snap)
-    # Displayed policy_repo keeps head provenance for approved migrations.
-    # Source access for head objects always uses the base/target repository.
-    policy_repo, policy_sha = snap.repo, snap.base_sha
-    if approval:
-        head_policy, head_error = load_base_policy(api, snap.repo, snap.head_sha)
-        policy, policy_error = head_policy, head_error
-        if policy is not None:
-            policy = dict(policy, mode=base_mode)
-        policy_repo, policy_sha = snap.head_repo or snap.repo, snap.head_sha
+    policy, policy_error, approval, policy_repo, policy_sha = _active_policy(api, snap)
     # One GitHub inventory for skip_bytes and the docs write-ready waivers.
     entries = list_pull_files(api, snap.repo, snap.number)
     paths = None if entries is None else github_file_paths(entries)
@@ -2170,7 +2270,9 @@ def assess_pull(
         )
     )
     comments = collect_comments(api, snap.repo, snap.number)
-    author_comment = pick_latest_author_report(comments, snap.author_id)
+    author_comment, absence = select_gate_report(
+        api, snap, comments, policy=policy, changed_paths=paths
+    )
     write_ready, write_ready_reason = resolve_write_ready(
         api, snap, event_actor=event_actor
     )
@@ -2195,6 +2297,7 @@ def assess_pull(
         write_ready=write_ready,
         write_ready_reason=write_ready_reason,
         changed_paths=paths,
+        missing_report_reason=absence,
     )
     assessment.approval_fingerprint = approval
     assessment.event_actor = event_actor
@@ -2350,9 +2453,7 @@ def publish_assessment(
                     )
             elif require_report:
                 current_comments = collect_comments(api, assessment.repo, assessment.pr)
-                current_report = pick_latest_author_report(
-                    current_comments, fresh.author_id
-                )
+                current_report = reload_gate_report(api, fresh, current_comments)
                 if _report_fingerprint(current_report) != assessment.report_fingerprint:
                     raise GuardError(
                         "author report changed before publish; retry assessment"
@@ -2421,7 +2522,7 @@ def publish_assessment(
 
     own_id, _own_login = api.resolve_own_user()
     comments = collect_comments(api, assessment.repo, assessment.pr)
-    latest = pick_latest_author_report(comments, fresh.author_id)
+    latest = reload_gate_report(api, fresh, comments)
     if _report_fingerprint(latest) != assessment.report_fingerprint:
         raise GuardError("author report changed before publish; retry assessment")
     if migration_approval(api, fresh) != assessment.approval_fingerprint:

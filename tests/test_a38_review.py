@@ -297,8 +297,14 @@ def test_declaration_must_be_after_the_head_commit() -> None:
     )
     edited["updated_at"] = "2026-09-03T00:00:00Z"
     chosen, reasons = _select([edited], committed_at="2026-09-02T00:00:00Z")
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+    posted = _comment(
+        _body(_pass_payload()), cid=4, user=10, created="2026-09-03T00:00:00Z"
+    )
+    chosen, reasons = _select([edited, posted], committed_at="2026-09-02T00:00:00Z")
     assert reasons == []
-    assert chosen is edited
+    assert chosen is posted
 
 
 def test_another_author_cannot_satisfy_the_gate() -> None:
