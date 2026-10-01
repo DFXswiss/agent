@@ -454,10 +454,19 @@ def _same_named(values: Sequence[str]) -> bool:
 
 
 def _result_is_pass(value: str) -> bool:
-    folded = _plain(value).casefold()
-    if re.search(r"\b(not|no|fail|n_a)\b", folded):
+    folded = _plain(value).casefold().strip()
+    if not re.search(r"\bpass(?:ed)?\b", folded):
         return False
-    return re.search(r"\bpass(?:ed)?\b", folded) is not None
+    if re.match(r"(?:not|no|fail|n_a)\b", folded):
+        return False
+    if re.search(r"\bn_a\b", folded):
+        return False
+    if re.search(r"\b(?:not|no)\s+(?:a\s+)?pass(?:ed)?\b", folded):
+        return False
+    scrubbed = re.sub(r"\b(?:not|no)\s+fail\b", " ", folded)
+    if re.search(r"\bfail\b", scrubbed):
+        return False
+    return True
 
 
 def _is_na_result(value: str) -> bool:

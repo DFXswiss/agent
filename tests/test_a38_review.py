@@ -466,6 +466,37 @@ def test_review_record_ignores_field_order_and_extra_lines() -> None:
     assert validate_review_record(contradicted, payload) == ["review provider missing"]
 
 
+def test_pass_result_wording_does_not_reject_an_explanation() -> None:
+    payload = _pass_payload(passes=1)
+    payload["lanes"] = _run("a")
+    body = _body(payload, passes=1)
+    assert validate_review_record(body, payload) == []
+    accepted = (
+        "Result: pass, no findings left.",
+        "Result: pass. The second run was not required.",
+        "Result: pass. It did not fail.",
+        "Result: passed, no findings left.",
+        "Result: **pass**, no findings left.",
+    )
+    for line in accepted:
+        worded = body.replace("Result: pass\n", f"{line}\n")
+        assert validate_review_record(worded, payload) == []
+    rejected = (
+        "Result: not pass",
+        "Result: not a pass",
+        "Result: no",
+        "Result: no pass",
+        "Result: fail",
+        "Result: n_a",
+        "Result: this is not a pass",
+        "Result: pass but fail",
+        "Result: no, it passed",
+    )
+    for line in rejected:
+        worded = body.replace("Result: pass\n", f"{line}\n")
+        assert validate_review_record(worded, payload) == ["review result missing"]
+
+
 def test_unreadable_commit_time_fails_closed() -> None:
     declaration = _comment(_body(_pass_payload()), cid=1, user=10)
     chosen, reasons = _select([declaration], committed_at="yesterday")
