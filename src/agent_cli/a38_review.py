@@ -453,6 +453,11 @@ def _same_named(values: Sequence[str]) -> bool:
     return len({value.casefold() for value in cleaned}) == 1
 
 
+def _expand_negations(folded: str) -> str:
+    """Punctuation stays so a later negated clause does not cross the sentence."""
+    return re.sub(r"\b(is|are|was|were|did)n['\u2019]?t\b", r"\1 not", folded)
+
+
 def _scrub_negated(folded: str, word: str) -> str:
     scrubbed = re.sub(rf"\b(?:not|no)\s+(?:an?\s+)?{word}\b", " ", folded)
     scrubbed = re.sub(
@@ -465,7 +470,8 @@ def _scrub_negated(folded: str, word: str) -> str:
 
 def _result_is_pass(value: str) -> bool:
     folded = _plain(value).casefold().strip()
-    if not re.search(r"\bpass(?:ed)?\b", folded):
+    folded = _expand_negations(folded)
+    if not re.search(r"\bpass(?:ed)?\b", _scrub_negated(folded, r"pass(?:ed)?")):
         return False
     if re.match(r"(?:not|no|fail|n_a)\b", folded):
         return False
@@ -480,7 +486,8 @@ def _result_is_pass(value: str) -> bool:
 
 def _is_na_result(value: str) -> bool:
     folded = _plain(value).casefold().strip()
-    if not re.search(r"\bn_a\b", folded):
+    folded = _expand_negations(folded)
+    if not re.search(r"\bn_a\b", _scrub_negated(folded, "n_a")):
         return False
     if re.match(r"(?:not|no|pass|fail)\b", folded):
         return False
