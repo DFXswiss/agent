@@ -660,25 +660,42 @@ def _claimed_pairs(line: str) -> set[tuple[str, str]] | None:
     return claimed
 
 
+# A count stays inside its own clause. A comma is the field boundary.
+_COUNT_GAP = r"[^\w,.;!]{0,8}"
+
+
+def _same_count(left: re.Match[str], right: re.Match[str]) -> bool:
+    return left.start(1) == right.start(1) and left.end(1) == right.end(1)
+
+
 def _final_result_ok(line: str, passes: object) -> bool:
     if not _is_int(passes):
         return False
     if not _starts_with_label(line, "Final result"):
         return False
     folded = _expand_negations(line.casefold())
-    pass_matches = list(re.finditer(r"\bpasses\W{0,8}(\d+)\b", folded))
-    pass_matches.extend(re.finditer(r"\b(\d+)\W{0,8}passes\b", folded))
-    defect_matches: list[re.Match[str]] = []
-    for match in (
-        *re.finditer(r"\bdefects?\W{0,8}(\d+)\b", folded),
-        *re.finditer(r"\b(\d+)\W{0,8}defects?\b", folded),
-    ):
-        if any(
+    word_passes = list(re.finditer(rf"\bpasses{_COUNT_GAP}(\d+)\b", folded))
+    word_defects = list(re.finditer(rf"\bdefects?{_COUNT_GAP}(\d+)\b", folded))
+    # "defects 0, passes 1" must not read the 0 as a pass count.
+    number_passes = [
+        match
+        for match in re.finditer(rf"\b(\d+){_COUNT_GAP}passes\b", folded)
+        if not any(_same_count(match, owner) for owner in word_defects)
+    ]
+    number_defects = [
+        match
+        for match in re.finditer(rf"\b(\d+){_COUNT_GAP}defects?\b", folded)
+        if not any(_same_count(match, owner) for owner in word_passes)
+    ]
+    pass_matches = [*word_passes, *number_passes]
+    defect_matches = [
+        match
+        for match in (*word_defects, *number_defects)
+        if not any(
             match.start() < other.end() and other.start() < match.end()
             for other in pass_matches
-        ):
-            continue
-        defect_matches.append(match)
+        )
+    ]
     good_passes: list[int] = []
     negated_passes: list[int] = []
     for match in pass_matches:

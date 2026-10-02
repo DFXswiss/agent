@@ -639,6 +639,11 @@ def test_runs_and_final_result_follow_the_clause_rule() -> None:
     accepted_final = (
         "Final result: `passes` 1, `defects` 0. It is not passes 2.",
         "Final result: `passes` 1, `defects` 0, not defects 1.",
+        "Final result: `defects` 0, `passes` 1.",
+        "Final result: defects 0, passes 1.",
+        "Final result: defects 0 passes 1.",
+        "Final result: 0 defects, 1 passes.",
+        "Final result: defects 0, passes 1. It is not passes 2.",
     )
     for line in accepted_final:
         worded = body.replace(rendered_final, line)
@@ -647,6 +652,10 @@ def test_runs_and_final_result_follow_the_clause_rule() -> None:
         "Final result: not passes 1, defects 0",
         "Final result: passes 1, not defects 0",
         "Final result: passes 1, not passes 1, defects 0",
+        "Final result: defects 0, not passes 1",
+        "Final result: not defects 0, passes 1",
+        "Final result: defects 1, passes 1",
+        "Final result: defects 0, passes 2",
     )
     for line in rejected_final:
         worded = body.replace(rendered_final, line)
