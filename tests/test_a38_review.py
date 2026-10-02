@@ -523,6 +523,7 @@ def test_na_result_wording_does_not_reject_an_explanation() -> None:
         "Result: n_a. It didn't fail.",
         "Result: n_a. It doesn't fail.",
         "Result: n_a. It can't fail.",
+        "Result: n_a. Ein Pass war nicht nötig.",
     )
     for line in accepted:
         worded = body.replace("Result: n_a\n", f"{line}\n")
@@ -538,6 +539,9 @@ def test_na_result_wording_does_not_reject_an_explanation() -> None:
         "Result: don't n_a.",
         "Result: this can't n_a.",
         "Result: never n_a.",
+        "Result: nicht n_a",
+        "Result: kein n_a",
+        "Result: keine n_a",
     )
     for line in rejected:
         worded = body.replace("Result: n_a\n", f"{line}\n")
@@ -565,6 +569,8 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
         "Result: pass. It couldn't fail.",
         "Result: pass. It can never fail.",
         "Result: pass. I want the change.",
+        "Result: pass, not fail",
+        "Result: pass, nicht fail",
     )
     for line in accepted:
         worded = body.replace("Result: pass\n", f"{line}\n")
@@ -595,10 +601,58 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
         "Result: this couldn't pass.",
         "Result: never pass.",
         "Result: this can\u2019t pass.",
+        "Result: nicht pass",
+        "Result: kein pass",
+        "Result: keine pass",
+        "Result: nicht ein pass",
+        "Result: das Pass ist nicht.",
     )
     for line in rejected:
         worded = body.replace("Result: pass\n", f"{line}\n")
         assert validate_review_record(worded, payload) == ["review result missing"]
+
+
+def test_runs_and_final_result_follow_the_clause_rule() -> None:
+    payload = _pass_payload(passes=1)
+    payload["lanes"] = _run("a")
+    body = _body(payload, passes=1)
+    rendered_runs = (
+        "Runs: `conformity-a` with `logic-a`. The second run may be omitted."
+    )
+    accepted_runs = (
+        "Runs: `conformity-a` with `logic-a`, not a different repository. "
+        "The second run may be omitted.",
+    )
+    for line in accepted_runs:
+        worded = body.replace(rendered_runs, line)
+        assert validate_review_record(worded, payload) == []
+    rejected_runs = (
+        "Runs: not conformity-a with logic-a. The second run may be omitted.",
+        "Runs: not conformity-a with logic-a, conformity-a with logic-a",
+    )
+    for line in rejected_runs:
+        worded = body.replace(rendered_runs, line)
+        assert validate_review_record(worded, payload) == [
+            "review runs line does not match"
+        ]
+    rendered_final = "Final result: `passes` 1, `defects` 0."
+    accepted_final = (
+        "Final result: `passes` 1, `defects` 0. It is not passes 2.",
+        "Final result: `passes` 1, `defects` 0, not defects 1.",
+    )
+    for line in accepted_final:
+        worded = body.replace(rendered_final, line)
+        assert validate_review_record(worded, payload) == []
+    rejected_final = (
+        "Final result: not passes 1, defects 0",
+        "Final result: passes 1, not defects 0",
+        "Final result: passes 1, not passes 1, defects 0",
+    )
+    for line in rejected_final:
+        worded = body.replace(rendered_final, line)
+        assert validate_review_record(worded, payload) == [
+            "review final result does not match"
+        ]
 
 
 def test_unreadable_commit_time_fails_closed() -> None:

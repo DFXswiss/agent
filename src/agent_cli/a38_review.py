@@ -466,28 +466,25 @@ def _expand_negations(folded: str) -> str:
     return re.sub(r"\b([a-z]+)n['\u2019]t\b", r"\1 not", folded)
 
 
-def _scrub_negated(folded: str, word: str) -> str:
-    scrubbed = re.sub(rf"\b(?:not|no|never)\s+(?:an?\s+)?{word}\b", " ", folded)
-    scrubbed = re.sub(
-        rf"\b{word}\b(?:\s+[A-Za-z]+){{0,3}}\s+(?:was|is|were)\s+not\b",
-        " ",
-        scrubbed,
-    )
-    return scrubbed
-
-
 def _result_is_pass(value: str) -> bool:
     folded = _plain(value).casefold().strip()
     folded = _expand_negations(folded)
-    if not re.search(r"\bpass(?:ed)?\b", _scrub_negated(folded, r"pass(?:ed)?")):
+    if re.match(r"(?:not|no|never|nicht|kein|keine|fail|n_a)\b", folded):
         return False
-    if re.match(r"(?:not|no|fail|n_a)\b", folded):
+    passes = list(re.finditer(r"\bpass(?:ed)?\b", folded))
+    if not passes:
         return False
-    if re.search(r"\b(?:not|no|never)\s+(?:a\s+)?pass(?:ed)?\b", folded):
+    if any(_span_negated(folded, match.start(), match.end()) for match in passes):
         return False
-    if re.search(r"\bn_a\b", _scrub_negated(folded, "n_a")):
+    if any(
+        not _span_negated(folded, match.start(), match.end())
+        for match in re.finditer(r"\bfail\b", folded)
+    ):
         return False
-    if re.search(r"\bfail\b", _scrub_negated(folded, "fail")):
+    if any(
+        not _span_negated(folded, match.start(), match.end())
+        for match in re.finditer(r"\bn_a\b", folded)
+    ):
         return False
     return True
 
@@ -495,15 +492,22 @@ def _result_is_pass(value: str) -> bool:
 def _is_na_result(value: str) -> bool:
     folded = _plain(value).casefold().strip()
     folded = _expand_negations(folded)
-    if not re.search(r"\bn_a\b", _scrub_negated(folded, "n_a")):
+    if re.match(r"(?:not|no|never|nicht|kein|keine|pass|fail)\b", folded):
         return False
-    if re.match(r"(?:not|no|pass|fail)\b", folded):
+    nas = list(re.finditer(r"\bn_a\b", folded))
+    if not nas:
         return False
-    if re.search(r"\b(?:not|no|never)\s+(?:an?\s+)?n_a\b", folded):
+    if any(_span_negated(folded, match.start(), match.end()) for match in nas):
         return False
-    if re.search(r"\bpass(?:ed)?\b", _scrub_negated(folded, r"pass(?:ed)?")):
+    if any(
+        not _span_negated(folded, match.start(), match.end())
+        for match in re.finditer(r"\bpass(?:ed)?\b", folded)
+    ):
         return False
-    if re.search(r"\bfail\b", _scrub_negated(folded, "fail")):
+    if any(
+        not _span_negated(folded, match.start(), match.end())
+        for match in re.finditer(r"\bfail\b", folded)
+    ):
         return False
     return True
 
@@ -580,6 +584,19 @@ def _set_aside_reasons(lines: list[str]) -> list[str]:
 _NEGATION_WORD = re.compile(r"\b(?:not|no|never|nicht|kein|keine)\b")
 
 
+def _span_negated(folded: str, start: int, end: int) -> bool:
+    """True when this claim's own clause contains a negation word.
+
+    The clause runs from the previous comma or sentence break to the next one.
+    """
+    prefix = re.split(r"[,.!;]", folded[:start])[-1]
+    suffix = re.split(r"[,.!;]", folded[end:], maxsplit=1)[0]
+    return any(
+        _NEGATION_WORD.search(part) is not None
+        for part in (prefix, folded[start:end], suffix)
+    )
+
+
 def _one_sha(line: str, expected: object) -> bool:
     if not isinstance(expected, str):
         return False
@@ -589,13 +606,7 @@ def _one_sha(line: str, expected: object) -> bool:
     if found != [expected_sha]:
         return False
     start = folded.find(expected_sha)
-    end = start + len(expected_sha)
-    prefix = re.split(r"[,.!;]", folded[:start])[-1]
-    suffix = re.split(r"[,.!;]", folded[end:], maxsplit=1)[0]
-    return (
-        _NEGATION_WORD.search(prefix) is None
-        and _NEGATION_WORD.search(suffix) is None
-    )
+    return not _span_negated(folded, start, start + len(expected_sha))
 
 
 def _expected_pairs(lane_ids: Sequence[str]) -> set[tuple[str, str]] | None:
@@ -610,26 +621,41 @@ def _expected_pairs(lane_ids: Sequence[str]) -> set[tuple[str, str]] | None:
 
 
 def _claimed_pairs(line: str) -> set[tuple[str, str]] | None:
-    body = line.split(":", 1)[1]
-    parts = re.split(r"\band\b|\bund\b|;|,", body, flags=re.IGNORECASE)
+    folded = _expand_negations(line.casefold())
+    body = folded.split(":", 1)[1]
+    pieces = re.split(r"(\band\b|\bund\b|;|,)", body, flags=re.IGNORECASE)
     claimed: set[tuple[str, str]] = set()
+    negated: set[tuple[str, str]] = set()
     allowed = set(RUNS)
-    for part in parts:
-        ids = re.findall(
-            r"\b(?:conformity-a|logic-a|conformity-b|logic-b)\b",
-            part,
+    offset = len(folded) - len(body)
+    for index, part in enumerate(pieces):
+        if index % 2 == 1:
+            offset += len(part)
+            continue
+        ids = list(
+            re.finditer(
+                r"\b(?:conformity-a|logic-a|conformity-b|logic-b)\b",
+                part,
+            )
         )
         if not ids:
+            offset += len(part)
             continue
-        if len(ids) != 2 or len(set(ids)) != 2:
+        if len(ids) != 2 or len({match.group() for match in ids}) != 2:
             return None
-        pair = (ids[0], ids[1])
+        pair = (ids[0].group(), ids[1].group())
         if pair not in allowed:
-            pair = (ids[1], ids[0])
+            pair = (ids[1].group(), ids[0].group())
         if pair not in allowed:
             return None
-        claimed.add(pair)
-    if not claimed:
+        start = offset + ids[0].start()
+        end = offset + ids[1].end()
+        if _span_negated(folded, start, end):
+            negated.add(pair)
+        else:
+            claimed.add(pair)
+        offset += len(part)
+    if not claimed or claimed & negated:
         return None
     return claimed
 
@@ -639,18 +665,45 @@ def _final_result_ok(line: str, passes: object) -> bool:
         return False
     if not _starts_with_label(line, "Final result"):
         return False
-    rest = line.split(":", 1)[1]
-    without_passes = re.sub(r"passes\W{0,8}\d+", " ", rest, flags=re.IGNORECASE)
-    without_passes = re.sub(r"\d+\W{0,8}passes\b", " ", without_passes, flags=re.IGNORECASE)
-    defects = re.findall(r"\bdefects?\W{0,8}(\d+)\b", without_passes, flags=re.IGNORECASE)
-    defects += re.findall(r"\b(\d+)\W{0,8}defects?\b", without_passes, flags=re.IGNORECASE)
-    if not defects or any(number != "0" for number in defects):
+    folded = _expand_negations(line.casefold())
+    pass_matches = list(re.finditer(r"\bpasses\W{0,8}(\d+)\b", folded))
+    pass_matches.extend(re.finditer(r"\b(\d+)\W{0,8}passes\b", folded))
+    defect_matches: list[re.Match[str]] = []
+    for match in (
+        *re.finditer(r"\bdefects?\W{0,8}(\d+)\b", folded),
+        *re.finditer(r"\b(\d+)\W{0,8}defects?\b", folded),
+    ):
+        if any(
+            match.start() < other.end() and other.start() < match.end()
+            for other in pass_matches
+        ):
+            continue
+        defect_matches.append(match)
+    good_passes: list[int] = []
+    negated_passes: list[int] = []
+    for match in pass_matches:
+        number = int(match.group(1))
+        if _span_negated(folded, match.start(), match.end()):
+            negated_passes.append(number)
+        else:
+            good_passes.append(number)
+    good_defects: list[int] = []
+    negated_defects: list[int] = []
+    for match in defect_matches:
+        number = int(match.group(1))
+        if _span_negated(folded, match.start(), match.end()):
+            negated_defects.append(number)
+        else:
+            good_defects.append(number)
+    if not good_passes or any(number != passes for number in good_passes):
         return False
-    without_defects = re.sub(r"\bdefects?\W{0,8}\d+\b", " ", rest, flags=re.IGNORECASE)
-    without_defects = re.sub(r"\b\d+\W{0,8}defects?\b", " ", without_defects, flags=re.IGNORECASE)
-    found = re.findall(r"\bpasses\W{0,8}(\d+)\b", without_defects, flags=re.IGNORECASE)
-    found += re.findall(r"\b(\d+)\W{0,8}passes\b", without_defects, flags=re.IGNORECASE)
-    return bool(found) and all(int(number) == passes for number in found)
+    if not good_defects or any(number != 0 for number in good_defects):
+        return False
+    if any(number == passes for number in negated_passes):
+        return False
+    if any(number == 0 for number in negated_defects):
+        return False
+    return True
 
 
 def _looks_like_record(lines: Sequence[str]) -> bool:
