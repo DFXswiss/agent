@@ -210,6 +210,44 @@ class TestEvaluateAllow(unittest.TestCase):
         self.assertFalse(r.allowed)
         self.assertTrue(any("grok_pr_quality=unavailable" in b for b in r.blocking))
 
+    def test_both_codex_n_a_skips_codex_ready_blockers(self) -> None:
+        task = _ready_task()
+        task["checklist"]["codex_pr_quality"] = "n_a"
+        task["checklist"]["codex_pr_logic"] = "n_a"
+        task["gates"] = [g for g in task["gates"] if g["stage"] == "grok-pr"]
+        blocking = ready_for_done_blocking(task)
+        joined = " ".join(blocking)
+        self.assertNotIn("codex_pr_quality", joined)
+        self.assertNotIn("codex_pr_logic", joined)
+        self.assertNotIn("codex-pr", joined)
+        self.assertEqual(blocking, [])
+
+    def test_only_codex_quality_n_a_still_blocks(self) -> None:
+        task = _ready_task()
+        task["checklist"]["codex_pr_quality"] = "n_a"
+        blocking = ready_for_done_blocking(task)
+        self.assertTrue(any("codex_pr_quality" in b for b in blocking))
+
+    def test_both_codex_n_a_still_blocks_grok_n_a(self) -> None:
+        task = _ready_task()
+        task["checklist"]["codex_pr_quality"] = "n_a"
+        task["checklist"]["codex_pr_logic"] = "n_a"
+        task["checklist"]["grok_pr_quality"] = "n_a"
+        blocking = ready_for_done_blocking(task)
+        self.assertTrue(any("grok_pr_quality" in b for b in blocking))
+
+    def test_both_codex_n_a_still_blocks_missing_grok_gate(self) -> None:
+        task = _ready_task()
+        task["checklist"]["codex_pr_quality"] = "n_a"
+        task["checklist"]["codex_pr_logic"] = "n_a"
+        task["gates"] = [
+            g
+            for g in task["gates"]
+            if not (g["stage"] == "grok-pr" and g["dimension"] == "quality")
+        ]
+        blocking = ready_for_done_blocking(task)
+        self.assertTrue(any("gate:grok-pr/quality" in b for b in blocking))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -117,9 +117,10 @@ publication gates.
 A draft plus local tests is not done. Quality and logic of one vendor stage
 run in parallel on **this** head. The session that authored the diff does not
 sit those reviews. Inner `review-loop` rounds are not these gates. Stay draft
-until four lane verdicts on this head are approved (grok quality and grok logic,
-then Codex quality and Codex logic) and the target repository's written CI rules
-hold on this head. The frozen `dfx-local-ci/v1` format and legacy verifier do not
+until the first review run on this head is approved and the target
+repository's written CI rules hold on this head. The second review run
+may be omitted; then those checklist keys are `n_a` with evidence exactly
+`second review not posted`, and `done` does not wait for those two gates. The frozen `dfx-local-ci/v1` format and legacy verifier do not
 themselves determine applicability. Private visibility alone is not A38 opt-in or
 permission to skip GitHub CI. Under the central [A38 standard](../../../../docs/a38.md)
 and [guard guide](../../../../docs/a38-guard.md), private local code-gate equivalence
@@ -132,15 +133,22 @@ existing written CI rules. For applicable GitHub CI checks, `skipped` and `cance
 required GitHub-only checks, technical merge restrictions, review gates, and
 human merge remain required.
 `agent allow --action pr-ready` only checks task state; do
-not mark ready if it denies. Then one comment whose review-pass count
-is those four `approved` verdicts on this head, then mark the GitHub
+not mark ready if it denies. Then one comment whose lanes are exactly
+`conformity-a` with `logic-a`. A later comment that records only
+`conformity-b` with `logic-b` is optional and does not delay Ready. It does
+not satisfy Ready, does not start CI, and is ignored when the guard chooses
+the review comment. A newer one does not hide an older valid first-run
+comment. Posted before the first run, it still does not satisfy Ready. If
+the only review comment is the second run, the result is `review completion
+comment missing`. A comment that contains both full runs is neither comment
+(reason `review runs must be separate comments`). Then mark the GitHub
 pull request Ready for review (`isDraft=false`). That leave-draft step is
 not merge and not pull-request completion.
 
 ## Approving
 
-Once all four lane verdicts on **this** head are `approved` and CI on this head is
-green, insert a `review.post` with `event: APPROVE` alongside the pass-count comment.
+Once the first review run on **this** head is `approved` and CI on this head is
+green, insert a `review.post` with `event: APPROVE` alongside the first-run comment.
 That is a review this account submits on the pull request, not a merge and not
 completion: the agent still does not merge, and a human still does. Claim
 completion only after that human merge is verified.

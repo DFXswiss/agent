@@ -210,6 +210,8 @@ def _validate_lanes(
             _add(reasons, "review run is incomplete")
     if complete < 1:
         _add(reasons, "review lanes must include one full run")
+    if complete > 1:
+        _add(reasons, "review runs must be separate comments")
     if "pass" in kinds and "n_a" in kinds:
         _add(reasons, "review lanes mix pass and n_a")
     if "n_a" in kinds:
@@ -920,6 +922,21 @@ def _comment_stamp(comment: Mapping[str, Any]) -> datetime | None:
     return _utc(created_raw)
 
 
+def _lane_ids_of(body: str) -> set[str]:
+    try:
+        payload = parse_review_block(body)
+    except ReviewError:
+        return set()
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list):
+        return set()
+    ids: set[str] = set()
+    for lane in lanes:
+        if isinstance(lane, Mapping) and isinstance(lane.get("id"), str):
+            ids.add(lane["id"])
+    return ids
+
+
 def _declaration_reasons(body: str, *, head: str, markdown_only: bool) -> list[str]:
     reasons: list[str] = []
     try:
@@ -949,12 +966,13 @@ def select_review_comment(
     head: str,
     markdown_only: bool,
 ) -> tuple[Mapping[str, Any] | None, list[str]]:
-    """Newest valid author declaration created after the head commit.
+    """Newest valid first-run author declaration created after the head commit.
 
     Age is ``created_at`` only. An edit does not make a comment newer; post a
     new comment instead. Other comments do not remove an earlier valid
     declaration. A newer malformed declaration falls back to an older valid one.
-    A comment that also carries local-CI markers is skipped.
+    A later second-run comment is ignored and does not hide an older valid
+    first-run comment. A comment that also carries local-CI markers is skipped.
     """
     committed = _utc(committed_at)
     if committed is None:
@@ -994,9 +1012,13 @@ def select_review_comment(
         text = body if isinstance(body, str) else ""
         reasons = _declaration_reasons(text, head=head, markdown_only=markdown_only)
         if not reasons:
+            if _lane_ids_of(text) == set(RUNS[1]):
+                continue
             return comment, []
         if not newest_reasons:
             newest_reasons = reasons
+    if not newest_reasons:
+        return None, ["review completion comment missing"]
     return None, newest_reasons
 
 

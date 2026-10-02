@@ -22,8 +22,8 @@ def test_contributing_states_ready_for_review_contract() -> None:
     assert NOT_DONE in text
     assert "Push the branch to this repository" in text
     assert "Do not open the pull request from a personal fork" in text
-    assert "Four lane verdicts" in text
-    assert "those four `approved` verdicts on this head" in text
+    assert "The first review run is required" in text
+    assert "the second review run does not block Ready" in text
     assert "do not substitute another vendor" in prose
     assert "Empty, partial, timeout, or unavailable" in text
     assert "is not zero findings" in text
@@ -61,8 +61,8 @@ def test_design_locks_ready_for_review() -> None:
     assert "`cancelled` and failed still block" in section_prose
     assert "do not substitute another vendor" in section_prose
     assert "Vendors are `grok`, then `codex`" in section_prose
-    assert "four lane verdicts" in section_prose
-    assert "those four `approved` verdicts on this head" in section_prose
+    assert "The first review run is required" in section_prose
+    assert "the second review run does not block Ready" in section_prose
     assert "Ready for review is still not merge and not completion" in section_prose
     assert "ledger `task-done` is not pull-request completion" in section_prose
 
@@ -78,8 +78,8 @@ def test_pr_review_and_spine_point_at_ready_for_review() -> None:
     assert "agent allow --action pr-ready" in pr_review
     assert "Do not substitute another vendor" in pr_review_prose
     assert "unavailable output is not zero findings" in pr_review_prose
-    assert "four lane verdicts on this head are approved" in pr_review_prose
-    assert "those four `approved` verdicts on this head" in pr_review_prose
+    assert "the first review run on this head is approved" in pr_review_prose
+    assert "The second review run may be omitted" in pr_review_prose
     assert "not merge and not pull-request completion" in pr_review_prose
     assert NOT_DONE in spine_prose
     assert "not Ready for review" in spine_prose

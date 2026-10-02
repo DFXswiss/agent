@@ -67,6 +67,9 @@ N_A_ALLOWED = frozenset(
     }
 )
 
+CODEX_SECOND_REVIEW_KEYS = frozenset({"codex_pr_quality", "codex_pr_logic"})
+SECOND_REVIEW_NOT_POSTED = "second review not posted"
+
 GATE_PAIRS = (
     ("grok-pr", "quality", "grok"),
     ("grok-pr", "logic", "grok"),
@@ -120,6 +123,10 @@ def requires_evidence(status: str, key: str) -> bool:
     return False
 
 
+def codex_second_review_na(key: str, evidence: str | None) -> bool:
+    return key in CODEX_SECOND_REVIEW_KEYS and evidence == SECOND_REVIEW_NOT_POSTED
+
+
 def _tid(task: dict[str, Any]) -> str:
     return str(task.get("id", "?"))
 
@@ -155,6 +162,10 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
         return [f"{tid}:workflow={workflow}"]
 
     checklist = task.get("checklist") or {}
+    skip_codex_gates = (
+        checklist.get("codex_pr_quality") == "n_a"
+        and checklist.get("codex_pr_logic") == "n_a"
+    )
     for key in required:
         st = checklist.get(key)
         if st is None:
@@ -163,6 +174,8 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
         if st == "ja":
             continue
         if st == "n_a" and key in N_A_ALLOWED:
+            continue
+        if st == "n_a" and skip_codex_gates and key in CODEX_SECOND_REVIEW_KEYS:
             continue
         blocking.append(f"{tid}:{key}={st}")
 
@@ -190,6 +203,8 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     heads: set[str] = set()
     all_gates_ok = True
     for stage, dim, vendor in GATE_PAIRS:
+        if skip_codex_gates and stage == "codex-pr":
+            continue
         got = latest.get((stage, dim))
         if got is None:
             blocking.append(f"{tid}:gate:{stage}/{dim}=missing")
