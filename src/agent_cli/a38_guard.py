@@ -209,6 +209,9 @@ class Assessment:
     hard_fail: bool = False
     title: str = ""
     body: str = ""
+    # True when the author-report gate passed before the review gate. Missing
+    # review must not block workflow approval. Not a deploy approval.
+    report_gate_ok: bool = False
 
     def to_json(self) -> dict[str, Any]:
         trusted = self.trusted_default_branch or self.default_branch
@@ -497,34 +500,42 @@ def choose_author_report(
 
     Age is ``created_at`` only, strictly after the head commit. An edit does not
     count. A newer comment that fails leaves an older qualifying comment in
-    place. When none qualify, the newest post-commit report is returned so its
-    failure can be shown. The second value is an absence reason when no comment
-    is returned.
+    place. Mixed report-and-review comments are not candidates. When none
+    qualify, the newest post-commit report is returned so its failure can be
+    shown. The second value is an absence reason when no comment is returned.
     """
-    from .a38_review import _utc
+    from .a38_review import _utc, mixes_report_and_review
 
     committed = _utc(committed_at) if isinstance(committed_at, str) else None
     if committed is None:
         return None, "report commit time unavailable"
     report_like = False
+    mixed_after_head = False
     eligible: list[tuple[Any, int, Mapping[str, Any]]] = []
     for comment in comments:
         user = comment.get("user") or {}
         if not isinstance(user, Mapping) or user.get("id") != author_id:
             continue
         body = comment.get("body")
-        if not looks_like_report(body if isinstance(body, str) else None):
-            continue
-        report_like = True
+        text = body if isinstance(body, str) else None
         created_raw = comment.get("created_at")
         created = _utc(created_raw) if isinstance(created_raw, str) else None
+        if mixes_report_and_review(text):
+            if created is not None and created > committed:
+                mixed_after_head = True
+            continue
+        if not looks_like_report(text):
+            continue
+        report_like = True
         cid = comment.get("id")
         if created is None or not isinstance(cid, int) or created <= committed:
             continue
         eligible.append((created, cid, comment))
-    if not report_like:
-        return None, None
     if not eligible:
+        if mixed_after_head:
+            return None, "local CI report and review record must be separate comments"
+        if not report_like:
+            return None, None
         return None, "author report comment is not newer than the head commit"
     eligible.sort(key=lambda item: (item[0], item[1]), reverse=True)
     newest_failure: Mapping[str, Any] | None = None
@@ -1372,10 +1383,10 @@ def build_comment_body(assessment: Assessment) -> str:
             f"{GUARD_MARKER}\n\n"
             "EN:\n"
             f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n"
-            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, and leave the pull request in draft so the guard can mark it ready when those comments and the required checks pass.\n\n"
+            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs, and the review record lets the guard mark it ready once that CI and the required checks are green.\n\n"
             "DE:\n"
             f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
-            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, und lass den Pull Request im Draft, damit der Guard Ready setzen kann, wenn diese Kommentare und die erforderlichen Checks stimmen.\n"
+            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe, und der Review-Nachweis lässt den Guard Ready setzen, sobald diese CI und die erforderlichen Checks grün sind.\n"
         )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
@@ -2327,6 +2338,9 @@ def assess_pull(
         assessment.comment_body = build_comment_body(assessment)
     from .a38_review import evaluate_review_gate
 
+    assessment.report_gate_ok = (
+        assessment.ok and assessment.status == "pass" and not assessment.hard_fail
+    )
     review_ok, review_reasons = evaluate_review_gate(
         api,
         repo=snap.repo,

@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from agent_cli.a38_guard import LOCAL_CI_BEGIN, LOCAL_CI_END, choose_author_report
 from agent_cli.a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
@@ -740,3 +741,83 @@ def test_render_requires_pass_lane_facts() -> None:
     invented = _body(bare).replace(f"Provider: {_RECORD_PROVIDER}\n", "Provider: Example\n", 1)
     assert validate_review_record(invented, bare) == ["review provider missing"]
     assert json.loads(_body(bare).split("```json\n", 1)[1].split("\n```", 1)[0]) == bare
+
+
+def test_mixed_comment_is_neither_review_nor_report() -> None:
+    mixed_body = (
+        f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
+        + _body(_pass_payload())
+    )
+    mixed = _comment(mixed_body, cid=1, user=10, created="2026-09-02T00:00:00Z")
+    comments = [mixed]
+    chosen, reasons = _select(comments)
+    assert chosen is None
+    assert reasons == ["local CI report and review record must be separate comments"]
+    report, report_reason = choose_author_report(
+        comments,
+        10,
+        committed_at="2026-08-01T00:00:00Z",
+        meets=lambda body: "LOCAL-OK" in body,
+    )
+    assert report is None
+    assert report_reason == "local CI report and review record must be separate comments"
+
+
+def test_older_separate_comments_win_over_newer_mixed() -> None:
+    report_body = f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
+    review = _comment(_body(_pass_payload()), cid=1, user=10, created="2026-09-01T00:00:00Z")
+    report = _comment(report_body, cid=2, user=10, created="2026-09-01T00:00:00Z")
+    mixed = _comment(
+        report_body + _body(_pass_payload()),
+        cid=3,
+        user=10,
+        created="2026-09-03T00:00:00Z",
+    )
+    comments = [review, report, mixed]
+    chosen, reasons = _select(comments)
+    assert chosen is review
+    assert reasons == []
+    picked, report_reason = choose_author_report(
+        comments,
+        10,
+        committed_at="2026-08-01T00:00:00Z",
+        meets=lambda body: "LOCAL-OK" in body,
+    )
+    assert picked is report
+    assert report_reason is None
+
+
+def test_separate_review_then_report_both_accepted() -> None:
+    report_body = f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
+    review = _comment(_body(_pass_payload()), cid=1, user=10, created="2026-09-01T00:00:00Z")
+    report = _comment(report_body, cid=2, user=10, created="2026-09-02T00:00:00Z")
+    comments = [review, report]
+    chosen, reasons = _select(comments)
+    assert chosen is review
+    assert reasons == []
+    picked, report_reason = choose_author_report(
+        comments,
+        10,
+        committed_at="2026-08-01T00:00:00Z",
+        meets=lambda body: "LOCAL-OK" in body,
+    )
+    assert picked is report
+    assert report_reason is None
+
+
+def test_separate_report_then_review_both_accepted() -> None:
+    report_body = f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
+    report = _comment(report_body, cid=1, user=10, created="2026-09-01T00:00:00Z")
+    review = _comment(_body(_pass_payload()), cid=2, user=10, created="2026-09-02T00:00:00Z")
+    comments = [report, review]
+    chosen, reasons = _select(comments)
+    assert chosen is review
+    assert reasons == []
+    picked, report_reason = choose_author_report(
+        comments,
+        10,
+        committed_at="2026-08-01T00:00:00Z",
+        meets=lambda body: "LOCAL-OK" in body,
+    )
+    assert picked is report
+    assert report_reason is None

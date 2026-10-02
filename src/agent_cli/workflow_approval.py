@@ -1,7 +1,6 @@
-"""Opt-in approval of initial fork CI runs after a live A38 pass.
+"""Opt-in approval of initial fork CI runs after the local report gate.
 
-This module authorizes execution, never retries a test or approves a review.
-Configuration and workflow allowlists come only from the trusted default ref.
+A missing review record does not block this approval. This module authorizes execution, never retries a test or approves a review. Configuration and workflow allowlists come only from the trusted default ref.
 """
 from __future__ import annotations
 
@@ -172,8 +171,12 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         _report_fingerprint, collect_comments, reload_gate_report,
         migration_approval, resolve_write_ready,
     )
-    if (not assessment.workflow_approval_enabled or assessment.closed or not assessment.ok
-            or assessment.status != "pass" or assessment.mode != "enforce"):
+    if (
+        not assessment.workflow_approval_enabled
+        or assessment.closed
+        or assessment.mode != "enforce"
+        or not assessment.report_gate_ok
+    ):
         return []
     snap = fetch_pull(api, assessment.repo, assessment.pr)
     trusted = resolve_trusted_guard_config(api, snap)
@@ -192,7 +195,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         )
         fields = ("head_sha", "base_sha", "base_ref", "head_repo", "config_revision", "config_fingerprint",
                   "report_fingerprint", "approval_fingerprint", "policy_sha")
-        if (not fresh.ok or fresh.closed or fresh.status != "pass" or fresh.mode != "enforce"
+        if (not fresh.report_gate_ok or fresh.closed or fresh.mode != "enforce"
                 or any(getattr(fresh, f) != getattr(assessment, f) for f in fields)):
             raise GuardError("A38 evidence or trusted configuration changed before workflow approval")
         pull = api.get_json(f"/repos/{assessment.repo}/pulls/{assessment.pr}")

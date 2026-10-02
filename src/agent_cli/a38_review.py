@@ -44,6 +44,17 @@ def looks_like_review(body: str | None) -> bool:
     return isinstance(body, str) and "A38-REVIEW:v1" in body
 
 
+def mixes_report_and_review(body: str | None) -> bool:
+    """True when one comment carries both report marker pairs."""
+    if not isinstance(body, str):
+        return False
+    has_report = (
+        "<!-- DFX-LOCAL-CI:v1 -->" in body or "<!-- /DFX-LOCAL-CI:v1 -->" in body
+    )
+    has_review = REVIEW_BEGIN in body or REVIEW_END in body
+    return has_report and has_review
+
+
 def _reject_nonfinite(name: str) -> None:
     raise ReviewError(f"JSON contains non-finite number: {name}")
 
@@ -943,11 +954,13 @@ def select_review_comment(
     Age is ``created_at`` only. An edit does not make a comment newer; post a
     new comment instead. Other comments do not remove an earlier valid
     declaration. A newer malformed declaration falls back to an older valid one.
+    A comment that also carries local-CI markers is skipped.
     """
     committed = _utc(committed_at)
     if committed is None:
         return None, ["review commit time unavailable"]
     candidates: list[tuple[datetime, int, Mapping[str, Any]]] = []
+    mixed_after_head = False
     for comment in comments:
         user = comment.get("user") if isinstance(comment, Mapping) else None
         if not isinstance(user, Mapping):
@@ -959,13 +972,20 @@ def select_review_comment(
         if user.get("id") != author_id:
             continue
         body = comment.get("body")
-        if not looks_like_review(body if isinstance(body, str) else None):
-            continue
+        text = body if isinstance(body, str) else None
         stamp = _comment_stamp(comment)
+        if mixes_report_and_review(text):
+            if stamp is not None and stamp > committed:
+                mixed_after_head = True
+            continue
+        if not looks_like_review(text):
+            continue
         if stamp is None or stamp <= committed:
             continue
         candidates.append((stamp, int(comment["id"]), comment))
     if not candidates:
+        if mixed_after_head:
+            return None, ["local CI report and review record must be separate comments"]
         return None, ["review completion comment missing"]
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     newest_reasons: list[str] = []
