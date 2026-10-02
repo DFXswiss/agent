@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import pytest
 
 from agent_cli import pr_lifecycle
-from agent_cli.a38_guard import GuardError, reconcile_pull
+from agent_cli.a38_guard import GuardError, reconcile_pull, status_context_enforce
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from agent_cli.pr_lifecycle import AUTH_MARKER, MANUAL_MARKER, STATE_MARKER, visible_transition_sentences
 from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO, _report_comment
@@ -175,12 +175,12 @@ def test_visible_transition_sentences_restore_author_write_action_required():
 def test_visible_transition_sentences_green_ready_unchanged():
     en, de = visible_transition_sentences({"state": "ready", "reasons": []})
     assert en == (
-        "Required CI is green and no merge conflicts exist; "
-        "this pull request is ready for review."
+        "Required CI is green, the review completion is present, "
+        "and no merge conflicts exist; this pull request is ready for review."
     )
     assert de == (
-        "Die Required CI ist grün und es gibt keine Merge-Konflikte; "
-        "dieser Pull Request ist bereit zum Review."
+        "Die Required CI ist grün, der Review-Abschluss liegt vor "
+        "und es gibt keine Merge-Konflikte; dieser Pull Request ist bereit zum Review."
     )
 
 
@@ -239,6 +239,8 @@ class LifecycleAPI(ApprovalAPI):
             return 200, {"total_count": len(self.checks), "check_runs": copy.deepcopy(self.checks)}, {}
         if method == "POST" and path == "/graphql":
             payload = json.loads(body)
+            if "reviewThreads" in payload.get("query", ""):
+                return super().request_fn(method, url, body)
             assert payload["variables"] == {"id": "PR_example"}
             assert "mergePullRequest" not in payload["query"]
             query = payload["query"]
@@ -285,8 +287,12 @@ class LifecycleAPI(ApprovalAPI):
         record = {"repo": REPO, "pr": 1, "head": HEAD, "base": BASE,
                   "runs": [{"run_id": 101, "workflow": PATH}]}
         record.update(changes)
-        self.comments.append({"id": 500, "user": {"id": BOT_ID},
-                              "body": AUTH_MARKER + "\n```json\n" + json.dumps(record) + "\n```"})
+        self.comments.append({
+            "id": 500,
+            "user": {"id": BOT_ID},
+            "created_at": "2026-09-05T12:00:00Z",
+            "body": AUTH_MARKER + "\n```json\n" + json.dumps(record) + "\n```",
+        })
 
 
 @pytest.mark.parametrize("status,conclusion", [
@@ -1124,7 +1130,9 @@ def test_graphql_ready_with_non_bool_rest_draft_fails_closed():
     def request(method, url, body=None):
         status, data, headers = original(method, url, body)
         if method == "POST" and urlparse(url).path == "/graphql":
-            fake.pull["draft"] = "ready"
+            raw = body.decode() if isinstance(body, (bytes, bytearray)) else (body or "")
+            if "markPullRequestReadyForReview" in raw:
+                fake.pull["draft"] = "ready"
         return status, data, headers
 
     fake.request_fn = request
@@ -1221,6 +1229,43 @@ def test_write_author_ready_holds_against_red_or_pending_ci(status, conclusion):
     assert result.lifecycle["reasons"]
     assert fake.transitions == []
     assert not fake.pull["draft"]
+
+
+def test_write_author_ready_missing_review_returns_to_draft():
+    fake = LifecycleAPI()
+    fake.comments.clear()
+    fake.satisfy_review = False
+    fake.permissions["author"] = {
+        "permission": "write",
+        "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
+    }
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "draft"
+    assert "Review completion missing" in result.lifecycle["reasons"]
+    assert fake.pull["draft"]
+    body = "\n".join(comment.get("body", "") for comment in fake.comments)
+    assert "the review completion is missing or invalid" in body
+    assert "CI is not green" not in body
+
+
+def test_review_fail_clears_then_auto_ready_on_valid_review():
+    fake = LifecycleAPI()
+    fake.satisfy_review = False
+    first = reconcile_pull(fake.api(), REPO, 1)
+    assert first.lifecycle["action"] == "draft"
+    assert fake.pull["draft"]
+    enforce = status_context_enforce("develop")
+    matching = [s for s in fake.statuses if s.get("context") == enforce]
+    assert matching
+    assert matching[0]["state"] == "failure"
+    assert (matching[0].get("description") or "").startswith("review_fail:")
+    fake.satisfy_review = True
+    second = reconcile_pull(fake.api(), REPO, 1)
+    assert second.lifecycle["action"] == "ready"
+    assert fake.transitions[-1] is False
+    matching = [s for s in fake.statuses if s.get("context") == enforce]
+    assert matching
+    assert matching[0]["state"] == "success"
 
 
 def test_write_author_ready_conflicts_return_to_draft_and_do_not_restore():

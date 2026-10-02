@@ -1,8 +1,10 @@
 """Parse and verify the DFX local-CI report block in a pull-request comment.
 
-The on-the-wire format is frozen as ``dfx-local-ci/v1``. A comment may contain
-exactly one pair of markers. Between them sits one fenced JSON object. The
-script never trusts a ``verdict`` field in the payload; it computes pass/fail.
+A comment may contain exactly one pair of markers. Between them sits one
+fenced JSON object. ``dfx-local-ci/v1`` is the measured block and stays valid.
+``dfx-local-ci/v2`` is that block plus the outcome the human lines state:
+base, policy, path count, markdown claim, and omission. The script never
+trusts a ``verdict`` field in the payload; it computes pass/fail.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 SCHEMA_ID = "dfx-local-ci/v1"
+SCHEMA_V2 = "dfx-local-ci/v2"
+POLICY_PATH = ".github/a38.json"
 BEGIN_MARK = "<!-- DFX-LOCAL-CI:v1 -->"
 END_MARK = "<!-- /DFX-LOCAL-CI:v1 -->"
 FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
@@ -24,6 +28,14 @@ RECORDED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 RESULTS = frozenset({"pass", "fail", "error", "timeout", "not_applicable"})
 PAYLOAD_KEYS = frozenset({"schema", "repo", "head", "private", "recorded_at", "required", "runs"})
 PAYLOAD_OPTIONAL = frozenset({"readme_only", "markdown_only"})
+PAYLOAD_V2 = frozenset({"base", "policy", "changed_paths", "omitted"})
+POLICY_RECORD_KEYS = frozenset({"path", "sha"})
+CHANGED_RECORD_KEYS = frozenset({"count", "all_markdown"})
+OMITTED_REASONS = frozenset({
+    "markdown-only change set",
+    "README-only change set",
+    "guard-docs change set",
+})
 RUN_KEYS = frozenset({"id", "name", "command", "result", "exit_code", "duration_s", "timeout_s"})
 
 
@@ -80,6 +92,12 @@ class LocalCiReport:
     runs: tuple[LocalCiRun, ...]
     readme_only: bool = False
     markdown_only: bool = False
+    base: str | None = None
+    policy_path: str | None = None
+    policy_sha: str | None = None
+    changed_count: int | None = None
+    all_markdown: bool | None = None
+    omitted: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,16 +180,42 @@ def _as_number(value: Any, label: str) -> float:
 
 
 
+def _outcome_flags(omitted: str | None, *, readme_only: bool, markdown_only: bool) -> None:
+    """The omission sentence and the authorization flags must describe one fact."""
+    if omitted is None:
+        if readme_only or markdown_only:
+            raise LocalCiError("omitted does not match readme_only or markdown_only")
+        return
+    if omitted not in OMITTED_REASONS:
+        raise LocalCiError("omitted is not a known reason")
+    if omitted == "markdown-only change set":
+        if not markdown_only:
+            raise LocalCiError("omitted does not match markdown_only")
+        return
+    if omitted == "README-only change set":
+        if not readme_only or markdown_only:
+            raise LocalCiError("omitted does not match readme_only")
+        return
+    if readme_only or markdown_only:
+        raise LocalCiError("omitted does not match readme_only or markdown_only")
+
+
 def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
-    extra = set(raw) - PAYLOAD_KEYS - PAYLOAD_OPTIONAL
-    missing = PAYLOAD_KEYS - set(raw)
+    if "schema" not in raw:
+        raise LocalCiError("payload missing keys: schema")
+    schema = _as_str(raw["schema"], "schema")
+    if schema == SCHEMA_ID:
+        required = PAYLOAD_KEYS
+    elif schema == SCHEMA_V2:
+        required = PAYLOAD_KEYS | PAYLOAD_V2
+    else:
+        raise LocalCiError(f"schema must be {SCHEMA_ID} or {SCHEMA_V2}")
+    extra = set(raw) - required - PAYLOAD_OPTIONAL
+    missing = required - set(raw)
     if extra:
         raise LocalCiError(f"payload has unknown keys: {', '.join(sorted(extra))}")
     if missing:
         raise LocalCiError(f"payload missing keys: {', '.join(sorted(missing))}")
-    schema = _as_str(raw["schema"], "schema")
-    if schema != SCHEMA_ID:
-        raise LocalCiError(f"schema must be {SCHEMA_ID}")
     repo = _as_str(raw["repo"], "repo")
     if REPO_RE.match(repo) is None:
         raise LocalCiError("repo must be owner/name")
@@ -243,6 +287,40 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
     markdown_only = False
     if "markdown_only" in raw:
         markdown_only = _as_bool(raw["markdown_only"], "markdown_only")
+    base: str | None = None
+    policy_path: str | None = None
+    policy_sha: str | None = None
+    changed_count: int | None = None
+    all_markdown: bool | None = None
+    omitted: str | None = None
+    if schema == SCHEMA_V2:
+        base = _as_str(raw["base"], "base").lower()
+        if HEAD_RE.match(base) is None:
+            raise LocalCiError("base must be a 40-character lowercase hex SHA")
+        policy = raw["policy"]
+        if not isinstance(policy, dict):
+            raise LocalCiError("policy must be an object")
+        _require_keys(policy, POLICY_RECORD_KEYS, "policy")
+        policy_path = _as_str(policy["path"], "policy.path")
+        if policy_path != POLICY_PATH:
+            raise LocalCiError(f"policy.path must be {POLICY_PATH}")
+        policy_sha = _as_str(policy["sha"], "policy.sha").lower()
+        if policy_sha != base:
+            raise LocalCiError("policy.sha must equal base")
+        changed = raw["changed_paths"]
+        if changed is not None:
+            if not isinstance(changed, dict):
+                raise LocalCiError("changed_paths must be an object or null")
+            _require_keys(changed, CHANGED_RECORD_KEYS, "changed_paths")
+            changed_count = _as_int(changed["count"], "changed_paths.count")
+            if changed_count < 0:
+                raise LocalCiError("changed_paths.count must be >= 0")
+            all_markdown = _as_bool(changed["all_markdown"], "changed_paths.all_markdown")
+            if all_markdown and changed_count < 1:
+                raise LocalCiError("changed_paths.all_markdown requires a positive count")
+        if raw["omitted"] is not None:
+            omitted = _as_str(raw["omitted"], "omitted")
+        _outcome_flags(omitted, readme_only=readme_only, markdown_only=markdown_only)
     return LocalCiReport(
         schema=schema,
         repo=repo,
@@ -253,6 +331,12 @@ def parse_payload(raw: Mapping[str, Any]) -> LocalCiReport:
         runs=tuple(runs),
         readme_only=readme_only,
         markdown_only=markdown_only,
+        base=base,
+        policy_path=policy_path,
+        policy_sha=policy_sha,
+        changed_count=changed_count,
+        all_markdown=all_markdown,
+        omitted=omitted,
     )
 
 
@@ -359,5 +443,16 @@ def render_block(report: LocalCiReport) -> str:
         payload["readme_only"] = True
     if report.markdown_only:
         payload["markdown_only"] = True
+    if report.schema == SCHEMA_V2:
+        payload["base"] = report.base
+        payload["policy"] = {"path": report.policy_path, "sha": report.policy_sha}
+        if report.changed_count is None:
+            payload["changed_paths"] = None
+        else:
+            payload["changed_paths"] = {
+                "count": report.changed_count,
+                "all_markdown": report.all_markdown,
+            }
+        payload["omitted"] = report.omitted
     body = json.dumps(payload, indent=2, sort_keys=True)
     return f"{BEGIN_MARK}\n```json\n{body}\n```\n{END_MARK}\n"

@@ -36,6 +36,7 @@ from agent_cli.local_ci import (  # noqa: E402
     extract_json_text,
     parse_comment,
 )
+from agent_cli.readme_only import git_changed_paths  # noqa: E402
 
 BASE_REPOSITORY = "example/public-app"
 FORK_REPOSITORY = "contributor/public-app"
@@ -126,7 +127,7 @@ def _execute(root: Path, repo: Path, pull: PullSnapshot, policy: dict) -> tuple[
     return verdict, output.read_text(encoding="utf-8")
 
 
-def _assess(pull: PullSnapshot, policy: dict, body: str | None):
+def _assess(repo: Path, pull: PullSnapshot, policy: dict, body: str | None):
     comment = None if body is None else {
         "id": 123,
         "body": body,
@@ -140,6 +141,7 @@ def _assess(pull: PullSnapshot, policy: dict, body: str | None):
         policy_error=None,
         workflow_problems=[],
         author_comment=comment,
+        changed_paths=git_changed_paths(repo, pull.base_sha, pull.head_sha),
     )
 
 
@@ -214,7 +216,7 @@ class RunnerGuardEndToEndTests(unittest.TestCase):
                 self.assertGreater(run.duration_s, 0)
                 self.assertLessEqual(run.duration_s, run.timeout_s)
                 self.assertTrue((root / "logs" / f"{run.id}.log").is_file())
-            assessment = _assess(pull, policy, body)
+            assessment = _assess(repo, pull, policy, body)
             self.assertTrue(assessment.ok, assessment.reasons)
             self.assertEqual(assessment.state_for_status, "success")
             self.assertIn(GUARD_MARKER, assessment.comment_body)
@@ -232,7 +234,7 @@ class RunnerGuardEndToEndTests(unittest.TestCase):
             partial = f"{BEGIN_MARK}\n```json\n{json.dumps(payload)}\n```\n{END_MARK}\n"
             for comment in (None, partial):
                 with self.subTest(missing=comment is None):
-                    assessment = _assess(pull, policy, comment)
+                    assessment = _assess(repo, pull, policy, comment)
                     self.assertFalse(assessment.ok)
                     self.assertEqual(assessment.state_for_status, "failure")
                     self.assertTrue(assessment.reasons)
@@ -250,7 +252,7 @@ class RunnerGuardEndToEndTests(unittest.TestCase):
                 self.assertEqual(report.runs[0].result, "pass")
                 self.assertEqual(report.runs[1].result, expected)
                 self.assertGreater(report.runs[1].duration_s, 0)
-                assessment = _assess(pull, policy, body)
+                assessment = _assess(repo, pull, policy, body)
                 self.assertFalse(assessment.ok)
                 self.assertEqual(assessment.state_for_status, "failure")
                 self.assertTrue(assessment.reasons)
@@ -262,20 +264,20 @@ class RunnerGuardEndToEndTests(unittest.TestCase):
             repo, pull = _prepare(root, policy)
             verdict, old_body = _execute(root, repo, pull, policy)
             self.assertTrue(verdict["ok"])
-            self.assertTrue(_assess(pull, policy, old_body).ok)
+            self.assertTrue(_assess(repo, pull, policy, old_body).ok)
             (repo / "README").write_text("updated public fixture\n", encoding="utf-8")
             _git(repo, "add", "README")
             _git(repo, "commit", "-m", "Update fixture")
             updated = replace(pull, head_sha=_git(repo, "rev-parse", "HEAD"))
             self.assertNotEqual(updated.head_sha, pull.head_sha)
-            stale = _assess(updated, policy, old_body)
+            stale = _assess(repo, updated, policy, old_body)
             self.assertFalse(stale.ok)
             self.assertEqual(stale.state_for_status, "failure")
             self.assertTrue(any("head" in reason.lower() for reason in stale.reasons))
             verdict, new_body = _execute(root, repo, updated, policy)
             self.assertTrue(verdict["ok"])
             self.assertEqual(parse_comment(new_body).head, updated.head_sha)
-            self.assertTrue(_assess(updated, policy, new_body).ok)
+            self.assertTrue(_assess(repo, updated, policy, new_body).ok)
 
 
 if __name__ == "__main__":

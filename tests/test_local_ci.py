@@ -310,6 +310,43 @@ class LocalCiTests(unittest.TestCase):
         self.assertIn('"markdown_only": true', render_block(report))
         self.assertNotIn('"readme_only"', render_block(report))
 
+    def test_v2_round_trip_carries_the_outcome(self) -> None:
+        payload = _payload()
+        payload["schema"] = "dfx-local-ci/v2"
+        payload["base"] = HEAD
+        payload["policy"] = {"path": ".github/a38.json", "sha": HEAD}
+        payload["changed_paths"] = {"count": 1, "all_markdown": False}
+        payload["omitted"] = None
+        report = parse_comment(_comment(payload))
+        self.assertEqual(report.base, HEAD)
+        self.assertEqual(report.changed_count, 1)
+        self.assertFalse(report.all_markdown)
+        self.assertIsNone(report.omitted)
+        self.assertEqual(parse_comment(render_block(report)), report)
+
+    def test_v1_rejects_outcome_keys(self) -> None:
+        payload = _payload(base=HEAD)
+        with self.assertRaisesRegex(LocalCiError, "unknown keys"):
+            parse_comment(_comment(payload))
+
+    def test_v2_requires_the_outcome(self) -> None:
+        payload = _payload()
+        payload["schema"] = "dfx-local-ci/v2"
+        with self.assertRaisesRegex(LocalCiError, "missing keys"):
+            parse_comment(_comment(payload))
+
+    def test_v2_unknown_inventory_is_explicit(self) -> None:
+        payload = _payload()
+        payload["schema"] = "dfx-local-ci/v2"
+        payload["base"] = HEAD
+        payload["policy"] = {"path": ".github/a38.json", "sha": HEAD}
+        payload["changed_paths"] = None
+        payload["omitted"] = None
+        report = parse_comment(_comment(payload))
+        self.assertIsNone(report.changed_count)
+        self.assertIsNone(report.all_markdown)
+        self.assertEqual(parse_comment(render_block(report)), report)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -353,6 +353,29 @@ def test_reconcile_approves_and_exposes_writes_then_is_idempotent() -> None:
     assert fake.posts == [101]
 
 
+def test_local_report_approves_waiting_ci_without_review() -> None:
+    fake = FakeApproval()
+    fake.satisfy_review = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.report_gate_ok is True
+    assert result.review_ok is False
+    assert result.ok is False
+    assert result.workflow_approvals == [
+        {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
+    ]
+    assert fake.posts == [101]
+
+
+def test_review_without_local_report_does_not_approve_ci() -> None:
+    fake = FakeApproval()
+    fake.comments.clear()
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.review_ok is True
+    assert result.report_gate_ok is False
+    assert result.workflow_approvals == []
+    assert fake.posts == []
+
+
 def test_dry_run_plans_without_post() -> None:
     fake = FakeApproval()
     result = reconcile_pull(fake.api(), REPO, 1, dry_run=True)

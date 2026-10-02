@@ -145,6 +145,8 @@ def test_base_only_move_keeps_current_head_approval() -> None:
     for (sha, path), content in list(fake.files.items()):
         if sha == BASE:
             fake.files[(BASE2, path)] = content
+    # The head approval stays. The report has to name the base it was checked against.
+    fake.comments[0]["body"] = _report_comment(base_sha=BASE2)
     result = guard.assess_pull(fake.api(), REPO, 1)
     assert result.ok
     assert result.policy_sha == HEAD
