@@ -1383,10 +1383,10 @@ def build_comment_body(assessment: Assessment) -> str:
             f"{GUARD_MARKER}\n\n"
             "EN:\n"
             f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n"
-            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs, and the review record lets the guard mark it ready once that CI and the required checks are green.\n\n"
+            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs, and the review record lets the guard mark it ready once that CI and the required checks are green. A later comment that records only the second review run is optional and does not delay Ready.\n\n"
             "DE:\n"
             f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
-            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe, und der Review-Nachweis lässt den Guard Ready setzen, sobald diese CI und die erforderlichen Checks grün sind.\n"
+            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe, und der Review-Nachweis lässt den Guard Ready setzen, sobald diese CI und die erforderlichen Checks grün sind. Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.\n"
         )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"

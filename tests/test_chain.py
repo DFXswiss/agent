@@ -7,6 +7,7 @@ import unittest
 from agent_cli.allow import CHECKLIST_KEYS
 from agent_cli.chain import (
     CHAINS,
+    _satisfied,
     close_allowed,
     handoff_prompt,
     next_steps,
@@ -454,6 +455,71 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("grok_pr_logic", nxt)
         self.assertNotIn("codex_pr_quality", nxt)
         self.assertNotIn("codex_pr_logic", nxt)
+
+    def test_codex_n_a_second_review_not_posted(self) -> None:
+        cl = _pending("review")
+        cl["session_registered"] = "ja"
+        cl["contributing_read"] = "ja"
+        cl["grok_pr_quality"] = "ja"
+        cl["grok_pr_logic"] = "ja"
+        allowed = close_allowed(
+            "review",
+            "codex_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="second review not posted",
+            snapshot={},
+            status="n_a",
+        )
+        self.assertTrue(allowed.allowed)
+        denied = close_allowed(
+            "review",
+            "codex_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="something else",
+            snapshot={},
+            status="n_a",
+        )
+        self.assertFalse(denied.allowed)
+        self.assertIn("second review not posted", denied.reason)
+        grok = _pending("review")
+        grok["session_registered"] = "ja"
+        grok["contributing_read"] = "ja"
+        grok_denied = close_allowed(
+            "review",
+            "grok_pr_quality",
+            checklist=grok,
+            source="script",
+            evidence="second review not posted",
+            snapshot={},
+            status="n_a",
+        )
+        self.assertFalse(grok_denied.allowed)
+
+    def test_codex_n_a_satisfies_mergeable_need(self) -> None:
+        cl = _pending("resolve-conflicts")
+        for key in (
+            "session_registered",
+            "conflicts_resolved",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+            "grok_pr_quality",
+            "grok_pr_logic",
+        ):
+            cl[key] = "ja"
+        cl["codex_pr_quality"] = "n_a"
+        cl["codex_pr_logic"] = "n_a"
+        self.assertTrue(_satisfied("codex_pr_quality", cl))
+        self.assertTrue(_satisfied("codex_pr_logic", cl))
+        self.assertFalse(_satisfied("grok_pr_quality", {"grok_pr_quality": "n_a"}))
+        nxt = {s.key for s in next_steps("resolve-conflicts", cl)}
+        self.assertIn("mergeable", nxt)
+        cl["codex_pr_logic"] = "pending"
+        self.assertFalse(_satisfied("codex_pr_logic", cl))
+        nxt = {s.key for s in next_steps("resolve-conflicts", cl)}
+        self.assertNotIn("mergeable", nxt)
 
 
 if __name__ == "__main__":

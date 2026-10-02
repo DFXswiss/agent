@@ -24,8 +24,11 @@ from websockets.exceptions import WebSocketException
 
 from .allow import (
     ACTIONS,
+    CODEX_SECOND_REVIEW_KEYS,
     GATE_UNAVAILABLE_KEYS,
+    SECOND_REVIEW_NOT_POSTED,
     TERMINAL_STATES,
+    codex_second_review_na,
     evaluate_allow,
     ready_for_done_blocking,
     requires_evidence,
@@ -778,6 +781,12 @@ def cmd_checklist(args: list[str]) -> None:
         die(f"unavailable is not allowed for {key}")
     if requires_evidence(status, key) and not (evidence or "").strip():
         die(f"{status} requires --evidence")
+    if (
+        status == "n_a"
+        and key in CODEX_SECOND_REVIEW_KEYS
+        and not codex_second_review_na(key, evidence)
+    ):
+        die(f"n_a for {key} requires evidence {SECOND_REVIEW_NOT_POSTED}")
     deviation_declared = _bool_flag(rest, "--deviation-declared")
     deviation_granted = _bool_flag(rest, "--deviation-granted")
     granted_by = flag(rest, "--granted-by")
@@ -2397,11 +2406,18 @@ def _assert_ready(store: Store, task: dict) -> None:
         item = items.get(key)
         status = item["status"] if item else None
         if status == "n_a":
-            if key not in N_A_ALLOWED:
-                die(f"task is not done: checklist {key}=n_a is not allowed")
             evidence = item.get("evidence") if item else None
-            if not isinstance(evidence, str) or evidence == "":
-                die(f"task is not done: checklist {key}=n_a requires evidence")
+            stored = evidence if isinstance(evidence, str) else None
+            if key in N_A_ALLOWED:
+                if not isinstance(evidence, str) or evidence == "":
+                    die(f"task is not done: checklist {key}=n_a requires evidence")
+            elif not codex_second_review_na(key, stored):
+                if key in CODEX_SECOND_REVIEW_KEYS:
+                    die(
+                        "task is not done: checklist "
+                        f"{key}=n_a requires evidence {SECOND_REVIEW_NOT_POSTED}"
+                    )
+                die(f"task is not done: checklist {key}=n_a is not allowed")
         if key == "mergeable" and status == "ja":
             evidence = item.get("evidence") if item else None
             if not isinstance(evidence, str) or evidence == "":
@@ -2599,7 +2615,10 @@ def cmd_close_step(args: list[str]) -> None:
     if status not in CLOSE_STATUSES:
         die("close-step --status must be ja|n_a|unavailable")
     if status == "n_a" and key not in N_A_ALLOWED:
-        die(f"n_a is not allowed for {key}")
+        if not codex_second_review_na(key, evidence):
+            if key in CODEX_SECOND_REVIEW_KEYS:
+                die(f"n_a for {key} requires evidence {SECOND_REVIEW_NOT_POSTED}")
+            die(f"n_a is not allowed for {key}")
     if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
         die(f"unavailable is not allowed for {key}")
     if source not in ("script", "human", "runner"):

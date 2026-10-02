@@ -431,8 +431,6 @@ class FakeAPI:
                     for lane in (
                         "conformity-a",
                         "logic-a",
-                        "conformity-b",
-                        "logic-b",
                     )
                 ]
                 declaration = {
@@ -995,6 +993,14 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("unless it is waived", body)
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
+        self.assertIn(
+            "A later comment that records only the second review run is optional and does not delay Ready.",
+            body,
+        )
+        self.assertIn(
+            "Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.",
+            body,
+        )
         self.assertIn("lass den Pull Request im Draft", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
@@ -1038,6 +1044,14 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("unless it is waived", body)
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
+        self.assertIn(
+            "A later comment that records only the second review run is optional and does not delay Ready.",
+            body,
+        )
+        self.assertIn(
+            "Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.",
+            body,
+        )
         self.assertIn("lass den Pull Request im Draft", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
@@ -1085,6 +1099,14 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("unless it is waived", body)
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
+        self.assertIn(
+            "A later comment that records only the second review run is optional and does not delay Ready.",
+            body,
+        )
+        self.assertIn(
+            "Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.",
+            body,
+        )
         self.assertIn("lass den Pull Request im Draft", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)
@@ -1397,6 +1419,14 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("unless it is waived", body)
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
+        self.assertIn(
+            "A later comment that records only the second review run is optional and does not delay Ready.",
+            body,
+        )
+        self.assertIn(
+            "Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.",
+            body,
+        )
         self.assertIn("lass den Pull Request im Draft", body)
         self.assertNotIn(f"A38 quality rules: {result.standard_url}", body)
         self.assertNotIn(f"A38-Qualitätsregeln: {result.standard_url}", body)

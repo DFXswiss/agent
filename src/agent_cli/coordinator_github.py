@@ -921,6 +921,8 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         return [retry]
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
+        if stage == "codex-pr" and _both_codex_reviews_na(store, task["id"]):
+            continue
         g = latest.get((stage, dimension))
         if g is None or g.get("verdict") != "approved" or g.get("head_sha") != head or g.get("vendor") != vendor:
             raise CoordinatorError(f"missing approved gate {stage}/{dimension} on {head[:7]}")
@@ -1039,6 +1041,8 @@ def phase_formal_approve(
         return [retry]
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
+        if stage == "codex-pr" and _both_codex_reviews_na(store, task["id"]):
+            continue
         g = latest.get((stage, dimension))
         if g is None or g.get("verdict") != "approved" or g.get("head_sha") != head or g.get("vendor") != vendor:
             raise CoordinatorError(f"missing approved gate {stage}/{dimension} before formal approve")
@@ -1195,6 +1199,14 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
     }
 
 
+def _both_codex_reviews_na(store: Store, task_id: str) -> bool:
+    checklist = _task_snapshot(store, task_id).get("checklist") or {}
+    return (
+        checklist.get("codex_pr_quality") == "n_a"
+        and checklist.get("codex_pr_logic") == "n_a"
+    )
+
+
 def _invalidate_stale_formal_approval(task: dict[str, Any], *, reason: str) -> None:
     """Clear stale formal evidence and pin recovery to formal_approve.
 
@@ -1318,6 +1330,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         return [f"formal APPROVE not yet visible on {head[:7]}; retrying leave-draft"]
     latest = latest_gates(store, task["id"])
     for stage, dimension, vendor in GATE_PAIRS:
+        if stage == "codex-pr" and _both_codex_reviews_na(store, task["id"]):
+            continue
         g = latest.get((stage, dimension))
         if g is None or g.get("verdict") != "approved" or g.get("head_sha") != head or g.get("vendor") != vendor:
             raise CoordinatorError(f"missing approved gate {stage}/{dimension} before leave-draft")
@@ -1367,8 +1381,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     save_task(store, task)
 
     body = (
-        f"Ready for review: four lane verdicts approved on `{head[:7]}` "
-        f"(grok quality, grok logic, codex quality, codex logic) and CI green. "
+        f"Ready for review: the first review run is required and approved on `{head[:7]}` "
+        f"and CI green. The second review run does not block Ready. "
         f"Still not merge; a human merges."
     )
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-ready-comment:{task['id']}:{head}"))

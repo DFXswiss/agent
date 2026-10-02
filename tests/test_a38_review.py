@@ -8,6 +8,7 @@ import json
 import pytest
 
 from agent_cli.a38_guard import LOCAL_CI_BEGIN, LOCAL_CI_END, choose_author_report
+from agent_cli.allow import codex_second_review_na
 from agent_cli.a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
@@ -40,6 +41,18 @@ def _pass_payload(**overrides: object) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def _run(suffix: str, *, result: str = "pass", evidence: str | None = None) -> list[dict]:
+    lanes = []
+    for kind in ("conformity", "logic"):
+        lane: dict = {"id": f"{kind}-{suffix}", "result": result}
+        if result == "pass":
+            lane["status"] = "complete"
+        else:
+            lane["evidence"] = evidence
+        lanes.append(lane)
+    return lanes
 
 
 _RECORD_PROVIDER = "Acme"
@@ -165,10 +178,14 @@ def test_comment_page_without_false_has_next_page_fails_closed() -> None:
 
 
 def test_valid_pass_declaration() -> None:
-    payload = _pass_payload()
+    payload = _pass_payload(lanes=_run("a"))
     assert validate_declaration(payload, head=HEAD, markdown_only=False) == []
     assert validate_visible(_body(payload), 2) == []
     assert parse_review_block(_body(payload))["head"] == HEAD
+    both = _pass_payload()
+    both_reasons = validate_declaration(both, head=HEAD, markdown_only=False)
+    assert "review runs must be separate comments" in both_reasons
+    assert "review lanes must include one full run" not in both_reasons
 
 
 def test_duplicate_key_rejected() -> None:
@@ -200,26 +217,14 @@ def test_duplicate_key_rejected() -> None:
 
 
 def test_wrong_head_and_defects() -> None:
-    wrong = _pass_payload(head=OTHER)
+    wrong = _pass_payload(head=OTHER, lanes=_run("a"))
     assert "review head does not match the pull request" in validate_declaration(
         wrong, head=HEAD, markdown_only=False
     )
-    defects = _pass_payload(defects=1)
+    defects = _pass_payload(defects=1, lanes=_run("a"))
     assert "review defects must be 0" in validate_declaration(
         defects, head=HEAD, markdown_only=False
     )
-
-
-def _run(suffix: str, *, result: str = "pass", evidence: str | None = None) -> list[dict]:
-    lanes = []
-    for kind in ("conformity", "logic"):
-        lane: dict = {"id": f"{kind}-{suffix}", "result": result}
-        if result == "pass":
-            lane["status"] = "complete"
-        else:
-            lane["evidence"] = evidence
-        lanes.append(lane)
-    return lanes
 
 
 def test_one_full_run_is_enough() -> None:
@@ -228,7 +233,9 @@ def test_one_full_run_is_enough() -> None:
         payload["lanes"] = _run(suffix)
         assert validate_declaration(payload, head=HEAD, markdown_only=False) == []
     both = _pass_payload()
-    assert validate_declaration(both, head=HEAD, markdown_only=False) == []
+    reasons = validate_declaration(both, head=HEAD, markdown_only=False)
+    assert "review runs must be separate comments" in reasons
+    assert "review lanes must include one full run" not in reasons
 
 
 def test_half_run_is_rejected() -> None:
@@ -274,14 +281,15 @@ def test_na_only_when_markdown_only_and_sha_differs() -> None:
     payload["lanes"] = [
         {"id": lane, "result": "n_a", "evidence": evidence} for lane in LANES
     ]
+    both_na = validate_declaration(payload, head=HEAD, markdown_only=True)
+    assert "review runs must be separate comments" in both_na
+    payload["lanes"] = _run("a", result="n_a", evidence=evidence)
     assert validate_declaration(payload, head=HEAD, markdown_only=True) == []
     assert "review n_a requires a markdown-only change set" in validate_declaration(
         payload, head=HEAD, markdown_only=False
     )
     same = f"markdown-only rebase, previously approved at {HEAD}"
-    payload["lanes"] = [
-        {"id": lane, "result": "n_a", "evidence": same} for lane in LANES
-    ]
+    payload["lanes"] = _run("a", result="n_a", evidence=same)
     assert "review n_a SHA equals the current head" in validate_declaration(
         payload, head=HEAD, markdown_only=True
     )
@@ -300,7 +308,7 @@ def _select(comments: list[dict], **overrides: object) -> tuple:
 
 
 def test_later_comments_do_not_invalidate_a_declaration() -> None:
-    declaration = _comment(_body(_pass_payload()), cid=1, user=10)
+    declaration = _comment(_body(_pass_payload(lanes=_run("a"))), cid=1, user=10)
     guard = _comment("guard note", cid=2, user=99, created="2026-09-02T00:00:00Z")
     chosen, reasons = _select([declaration, guard])
     assert reasons == []
@@ -312,7 +320,7 @@ def test_later_comments_do_not_invalidate_a_declaration() -> None:
 
 
 def test_malformed_later_block_falls_back_to_older_valid() -> None:
-    good = _comment(_body(_pass_payload()), cid=1, user=10)
+    good = _comment(_body(_pass_payload(lanes=_run("a"))), cid=1, user=10)
     bad = _comment(
         "<!-- A38-REVIEW:v1 --> not json <!-- /A38-REVIEW:v1 -->",
         cid=2,
@@ -328,24 +336,26 @@ def test_malformed_later_block_falls_back_to_older_valid() -> None:
 
 
 def test_declaration_must_be_after_the_head_commit() -> None:
-    early = _comment(_body(_pass_payload()), cid=1, user=10, created="2026-09-01T00:00:00Z")
+    early = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
     chosen, reasons = _select([early], committed_at="2026-09-02T00:00:00Z")
     assert chosen is None
     assert reasons == ["review completion comment missing"]
     same_instant = _comment(
-        _body(_pass_payload()), cid=2, user=10, created="2026-09-02T00:00:00Z"
+        _body(_pass_payload(lanes=_run("a"))), cid=2, user=10, created="2026-09-02T00:00:00Z"
     )
     chosen, reasons = _select([same_instant], committed_at="2026-09-02T00:00:00Z")
     assert chosen is None
     edited = _comment(
-        _body(_pass_payload()), cid=3, user=10, created="2026-09-01T00:00:00Z"
+        _body(_pass_payload(lanes=_run("a"))), cid=3, user=10, created="2026-09-01T00:00:00Z"
     )
     edited["updated_at"] = "2026-09-03T00:00:00Z"
     chosen, reasons = _select([edited], committed_at="2026-09-02T00:00:00Z")
     assert chosen is None
     assert reasons == ["review completion comment missing"]
     posted = _comment(
-        _body(_pass_payload()), cid=4, user=10, created="2026-09-03T00:00:00Z"
+        _body(_pass_payload(lanes=_run("a"))), cid=4, user=10, created="2026-09-03T00:00:00Z"
     )
     chosen, reasons = _select([edited, posted], committed_at="2026-09-02T00:00:00Z")
     assert reasons == []
@@ -353,7 +363,7 @@ def test_declaration_must_be_after_the_head_commit() -> None:
 
 
 def test_unreadable_other_comment_keeps_an_older_declaration() -> None:
-    good = _comment(_body(_pass_payload()), cid=1, user=10)
+    good = _comment(_body(_pass_payload(lanes=_run("a"))), cid=1, user=10)
     deleted = {
         "id": 5,
         "created_at": "2026-09-05T00:00:00Z",
@@ -376,12 +386,12 @@ def test_unreadable_other_comment_keeps_an_older_declaration() -> None:
 
 def test_another_author_cannot_satisfy_the_gate() -> None:
     foreign = _comment(
-        _body(_pass_payload()), cid=4, user=11, created="2026-09-04T00:00:00Z"
+        _body(_pass_payload(lanes=_run("a"))), cid=4, user=11, created="2026-09-04T00:00:00Z"
     )
     chosen, reasons = _select([foreign])
     assert chosen is None
     assert reasons == ["review completion comment missing"]
-    own = _comment(_body(_pass_payload()), cid=1, user=10)
+    own = _comment(_body(_pass_payload(lanes=_run("a"))), cid=1, user=10)
     chosen, reasons = _select([own, foreign])
     assert reasons == []
     assert chosen is own
@@ -666,7 +676,7 @@ def test_runs_and_final_result_follow_the_clause_rule() -> None:
 
 
 def test_unreadable_commit_time_fails_closed() -> None:
-    declaration = _comment(_body(_pass_payload()), cid=1, user=10)
+    declaration = _comment(_body(_pass_payload(lanes=_run("a"))), cid=1, user=10)
     chosen, reasons = _select([declaration], committed_at="yesterday")
     assert chosen is None
     assert reasons == ["review commit time unavailable"]
@@ -765,7 +775,9 @@ def test_mixed_comment_is_neither_review_nor_report() -> None:
 
 def test_older_separate_comments_win_over_newer_mixed() -> None:
     report_body = f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
-    review = _comment(_body(_pass_payload()), cid=1, user=10, created="2026-09-01T00:00:00Z")
+    review = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
     report = _comment(report_body, cid=2, user=10, created="2026-09-01T00:00:00Z")
     mixed = _comment(
         report_body + _body(_pass_payload()),
@@ -789,7 +801,9 @@ def test_older_separate_comments_win_over_newer_mixed() -> None:
 
 def test_separate_review_then_report_both_accepted() -> None:
     report_body = f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
-    review = _comment(_body(_pass_payload()), cid=1, user=10, created="2026-09-01T00:00:00Z")
+    review = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
     report = _comment(report_body, cid=2, user=10, created="2026-09-02T00:00:00Z")
     comments = [review, report]
     chosen, reasons = _select(comments)
@@ -808,7 +822,9 @@ def test_separate_review_then_report_both_accepted() -> None:
 def test_separate_report_then_review_both_accepted() -> None:
     report_body = f"EN: measured\n{LOCAL_CI_BEGIN}\nLOCAL-OK\n{LOCAL_CI_END}\n"
     report = _comment(report_body, cid=1, user=10, created="2026-09-01T00:00:00Z")
-    review = _comment(_body(_pass_payload()), cid=2, user=10, created="2026-09-02T00:00:00Z")
+    review = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=2, user=10, created="2026-09-02T00:00:00Z"
+    )
     comments = [report, review]
     chosen, reasons = _select(comments)
     assert chosen is review
@@ -821,3 +837,95 @@ def test_separate_report_then_review_both_accepted() -> None:
     )
     assert picked is report
     assert report_reason is None
+
+
+def test_select_first_run_then_later_second_run() -> None:
+    first = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
+    second = _comment(
+        _body(_pass_payload(lanes=_run("b"))), cid=2, user=10, created="2026-09-02T00:00:00Z"
+    )
+    chosen, reasons = _select([first, second])
+    assert chosen is first
+    assert reasons == []
+
+
+def test_select_second_run_then_later_first_run() -> None:
+    second = _comment(
+        _body(_pass_payload(lanes=_run("b"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
+    first = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=2, user=10, created="2026-09-02T00:00:00Z"
+    )
+    chosen, reasons = _select([second, first])
+    assert chosen is first
+    assert reasons == []
+
+
+def test_select_only_second_run_is_missing() -> None:
+    second = _comment(_body(_pass_payload(lanes=_run("b"))), cid=1, user=10)
+    chosen, reasons = _select([second])
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+
+
+def test_select_newer_both_runs_does_not_displace_first_run() -> None:
+    first = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
+    both = _comment(
+        _body(_pass_payload()), cid=2, user=10, created="2026-09-02T00:00:00Z"
+    )
+    chosen, reasons = _select([first, both])
+    assert chosen is first
+    assert reasons == []
+
+
+def test_select_newer_malformed_second_run_does_not_displace_first_run() -> None:
+    first = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
+    defects = _comment(
+        _body(_pass_payload(defects=1, lanes=_run("b"))),
+        cid=2,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    chosen, reasons = _select([first, defects])
+    assert chosen is first
+    assert reasons == []
+    broken = _comment(
+        "<!-- A38-REVIEW:v1 --> not json <!-- /A38-REVIEW:v1 -->",
+        cid=3,
+        user=10,
+        created="2026-09-03T00:00:00Z",
+    )
+    chosen, reasons = _select([first, broken])
+    assert chosen is first
+    assert reasons == []
+
+
+def test_select_only_both_runs_must_be_separate_comments() -> None:
+    both = _comment(_body(_pass_payload()), cid=1, user=10)
+    chosen, reasons = _select([both])
+    assert chosen is None
+    assert "review runs must be separate comments" in reasons
+
+
+def test_validate_declaration_accepts_second_run_only() -> None:
+    payload = _pass_payload(lanes=_run("b"))
+    assert validate_declaration(payload, head=HEAD, markdown_only=False) == []
+
+
+def test_codex_second_review_na_only_exact_evidence() -> None:
+    markdown = f"markdown-only rebase, previously approved at {HEAD}"
+    assert not codex_second_review_na("codex_pr_quality", "")
+    assert not codex_second_review_na("codex_pr_logic", "")
+    assert not codex_second_review_na("codex_pr_quality", markdown)
+    assert not codex_second_review_na("codex_pr_logic", markdown)
+    assert not codex_second_review_na("codex_pr_quality", "something else")
+    assert not codex_second_review_na("grok_pr_quality", "second review not posted")
+    assert not codex_second_review_na("grok_pr_logic", "second review not posted")
+    assert codex_second_review_na("codex_pr_quality", "second review not posted")
+    assert codex_second_review_na("codex_pr_logic", "second review not posted")

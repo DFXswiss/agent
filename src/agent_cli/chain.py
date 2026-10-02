@@ -10,7 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .allow import CHECKLIST_KEYS, GATE_UNAVAILABLE_KEYS, N_A_ALLOWED
+from .allow import (
+    CHECKLIST_KEYS,
+    CODEX_SECOND_REVIEW_KEYS,
+    GATE_UNAVAILABLE_KEYS,
+    N_A_ALLOWED,
+    SECOND_REVIEW_NOT_POSTED,
+    codex_second_review_na,
+)
 
 KINDS = ("script", "agent", "human")
 # Who may set ja on these keys (source).
@@ -210,6 +217,8 @@ def _satisfied(key: str, checklist: dict[str, str]) -> bool:
         return True
     if st == "n_a" and key in N_A_ALLOWED:
         return True
+    if st == "n_a" and key in CODEX_SECOND_REVIEW_KEYS:
+        return True
     return False
 
 
@@ -283,7 +292,8 @@ def close_allowed(
         return CloseVerdict(False, "close-step --status must be ja|n_a|unavailable", step)
     if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
         return CloseVerdict(False, f"unavailable is not allowed for {key}", step)
-    if not evidence or not str(evidence).strip():
+    skip_empty = status == "n_a" and key in CODEX_SECOND_REVIEW_KEYS
+    if not skip_empty and (not evidence or not str(evidence).strip()):
         return CloseVerdict(False, f"{key} requires evidence", step)
     want = required_source(step)
     if source != want:
@@ -296,6 +306,14 @@ def close_allowed(
             f"{key} is not the next step (open: {pending})",
             step,
         )
+    if status == "n_a" and key in CODEX_SECOND_REVIEW_KEYS:
+        if not codex_second_review_na(key, evidence):
+            return CloseVerdict(
+                False,
+                f"{key} evidence must be {SECOND_REVIEW_NOT_POSTED}",
+                step,
+            )
+        return CloseVerdict(True, "allow", step)
     snap = snapshot or {}
     if status == "unavailable":
         extra = _unavailable_gate_ok(step, snap)

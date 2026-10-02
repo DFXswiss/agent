@@ -15,6 +15,11 @@ import pytest
 
 from agent_cli.coordinator import tick
 from agent_cli.coordinator_git import verify_signed_clean_head
+from agent_cli.coordinator_github import (
+    phase_formal_approve,
+    phase_leave_draft,
+    phase_readiness,
+)
 from agent_cli.coordinator_runtime import (
     REQUIRED_LANE_SLOTS,
     CoordinatorError,
@@ -1961,3 +1966,353 @@ def test_publish_blocker_auto_pins_from_resume_phase_without_boolean(
         }
     }
     assert reply_checkpoint_eligible(uncertain) is False
+
+
+def _ready_side_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    patch_github: bool = False,
+) -> tuple[Store, Any, FakeGh]:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_run_bounded(monkeypatch, fake)
+    if patch_github:
+        patch_execute_github(monkeypatch)
+    fake.pr["isDraft"] = True
+    fake.pr["state"] = "OPEN"
+    fake.pr["mergeable"] = "MERGEABLE"
+    fake.pr["author"] = {"login": "worker-bot"}
+    fake.pr["baseRefName"] = "develop"
+    fake.pr["headRefOid"] = fake.head
+    fake.pr["statusCheckRollup"] = [
+        {"name": "tests", "conclusion": "success", "status": "completed"}
+    ]
+    fake.workflow_runs = [
+        {
+            "id": 1,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    return store, worker, fake
+
+
+def _seed_ready_side_task(
+    store: Store,
+    worker: Any,
+    fake: FakeGh,
+    *,
+    tid: str,
+    phase: str,
+    checklist_codex: dict[str, str],
+    grok_gates: tuple[str, ...] = ("quality", "logic"),
+    codex_gates: tuple[str, ...] = (),
+    seed_formal_review: bool = False,
+    extra_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from agent_cli.allow import CHECKLIST_KEYS
+
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    evidence = {
+        "tests_pass": True,
+        "tests_head": fake.head,
+    }
+    if extra_evidence:
+        evidence.update(extra_evidence)
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "payload": {
+                "coordinator": {
+                    "phase": phase,
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "assigned-1",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "pr_number": 42,
+                    "publication_repo": "example/project",
+                    "worktree": str(wt),
+                    "branch": f"task-{tid[:8]}",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "evidence": evidence,
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": "Implemented example/project#7.",
+            "change_summary_de": "Umsetzung von example/project#7.",
+        },
+    )
+    for key in CHECKLIST_KEYS["implement"]:
+        if key in ("codex_pr_quality", "codex_pr_logic") and key not in checklist_codex:
+            continue
+        status = checklist_codex.get(
+            key,
+            "n_a" if key in ("deviation_declared", "deviation_granted") else "ja",
+        )
+        cid = f"{tid}-c-{key}"
+        store.write(
+            "checklist_item",
+            "insert",
+            cid,
+            {
+                "id": cid,
+                "task_id": tid,
+                "key": key,
+                "status": status,
+                "evidence": "seed",
+                "source": "human" if key in ("spec_written", "deviation_declared", "deviation_granted") else "script",
+                "deviation_declared": False,
+                "deviation_granted": False,
+                "granted_by": None,
+                "updated_at": "2026-01-01T00:00:00Z",
+            },
+        )
+    gates: list[tuple[str, str, str]] = []
+    for dim in grok_gates:
+        gates.append(("grok-pr", dim, "grok"))
+    for dim in codex_gates:
+        gates.append(("codex-pr", dim, "codex"))
+    for stage, dim, vendor in gates:
+        gid = f"{tid}-g-{stage}-{dim}"
+        store.write(
+            "review_gate",
+            "insert",
+            gid,
+            {
+                "id": gid,
+                "task_id": tid,
+                "stage": stage,
+                "dimension": dim,
+                "vendor": vendor,
+                "verdict": "approved",
+                "evidence": None,
+                "head_sha": fake.head,
+                "agent_id": "a",
+                "recorded_at": "2026-01-01T00:00:00Z",
+            },
+        )
+    store.write(
+        "local_check",
+        "insert",
+        f"{tid}-lc1",
+        {
+            "id": f"{tid}-lc1",
+            "task_id": tid,
+            "name": "coordinator-check",
+            "command": "/operator/checks",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": fake.head,
+        },
+    )
+    if seed_formal_review:
+        fake.reviews = [
+            {
+                "id": 1,
+                "body": f"Formal approval for head `{fake.head[:7]}`",
+                "html_url": "https://x/r",
+                "state": "APPROVED",
+                "commit_id": fake.head,
+                "user": {"login": "review-bot"},
+            }
+        ]
+    task = store.row("task", tid)
+    assert task is not None
+    return task
+
+
+def test_readiness_skips_codex_pr_when_both_checklist_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    tid = "aa000001-0000-4000-8000-000000000001"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="readiness",
+        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+    )
+    lines = phase_readiness(store, worker, task, fake)
+    assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
+    assert not any("missing approved gate codex-pr/" in line for line in lines)
+
+
+def test_readiness_still_requires_grok_pr_when_codex_checklist_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    tid = "aa000001-0000-4000-8000-000000000002"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="readiness",
+        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        grok_gates=("logic",),
+    )
+    with pytest.raises(CoordinatorError, match="missing approved gate grok-pr/"):
+        phase_readiness(store, worker, task, fake)
+
+
+def test_readiness_requires_codex_pr_when_only_one_key_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    cases = (
+        (
+            "aa000001-0000-4000-8000-000000000011",
+            {"codex_pr_quality": "n_a", "codex_pr_logic": "ja"},
+        ),
+        (
+            "aa000001-0000-4000-8000-000000000012",
+            {"codex_pr_quality": "ja", "codex_pr_logic": "n_a"},
+        ),
+        (
+            "aa000001-0000-4000-8000-000000000013",
+            {"codex_pr_quality": "n_a"},
+        ),
+        (
+            "aa000001-0000-4000-8000-000000000014",
+            {"codex_pr_logic": "n_a"},
+        ),
+    )
+    for tid, checklist_codex in cases:
+        task = _seed_ready_side_task(
+            store,
+            worker,
+            fake,
+            tid=tid,
+            phase="readiness",
+            checklist_codex=checklist_codex,
+        )
+        with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+            phase_readiness(store, worker, task, fake)
+
+
+def test_readiness_requires_codex_pr_when_both_keys_ja_and_gates_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    tid = "aa000001-0000-4000-8000-000000000021"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="readiness",
+        checklist_codex={"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+    )
+    with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+        phase_readiness(store, worker, task, fake)
+
+
+def test_readiness_requires_codex_pr_when_unavailable_with_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    tid = "aa000001-0000-4000-8000-000000000031"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="readiness",
+        checklist_codex={"codex_pr_quality": "unavailable", "codex_pr_logic": "n_a"},
+    )
+    with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+        phase_readiness(store, worker, task, fake)
+
+
+def test_formal_approve_skips_codex_pr_when_both_checklist_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    tid = "aa000001-0000-4000-8000-000000000041"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="formal_approve",
+        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        extra_evidence={"readiness_head": fake.head},
+    )
+    lines = phase_formal_approve(store, worker, task, fake)
+    assert not any("missing approved gate codex-pr/" in line for line in lines)
+    assert any(
+        "formal APPROVE" in line or "formal approval not yet verified" in line
+        for line in lines
+    )
+
+
+def test_leave_draft_skips_codex_pr_when_both_checklist_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
+    tid = "aa000001-0000-4000-8000-000000000051"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="leave_draft",
+        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        seed_formal_review=True,
+        extra_evidence={
+            "formal_head": fake.head,
+            "readiness_head": fake.head,
+        },
+    )
+    lines = phase_leave_draft(store, worker, task, fake)
+    assert not any("missing approved gate codex-pr/" in line for line in lines)
+    assert any("left draft" in line for line in lines)
+
+
+def test_readiness_accepts_approved_codex_pr_when_checklist_not_both_na(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    tid = "aa000001-0000-4000-8000-000000000061"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="readiness",
+        checklist_codex={"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+        codex_gates=("quality", "logic"),
+    )
+    lines = phase_readiness(store, worker, task, fake)
+    assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
