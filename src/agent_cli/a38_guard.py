@@ -3175,6 +3175,17 @@ def reconcile_event(
     runtime_revision: str | None = None,
     runtime_env: Mapping[str, str] | None = None,
 ) -> Assessment | dict[str, Any]:
+    if event_name == "workflow_run" and payload.get("action") == "completed":
+        run = payload.get("workflow_run")
+        if isinstance(run, dict) and run.get("path") == GUARD_WORKFLOW_PATH:
+            return {
+                "ok": True,
+                "status": "ignored",
+                "reasons": ["ignored guard workflow completion (loop prevention)"],
+                "writes": [],
+                "dry_run": dry_run,
+            }
+
     own_id: int | None
     try:
         own_id, _ = api.resolve_own_user()

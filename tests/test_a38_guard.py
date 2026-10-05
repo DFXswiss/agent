@@ -3261,6 +3261,16 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
 
     def test_guard_workflow_completion_is_ignored_without_api(self) -> None:
         fake = FakeAPI()
+        urls: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
         calls: list[tuple[str, int]] = []
         with mock.patch.object(
             a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
@@ -3272,6 +3282,7 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
                 dry_run=False,
                 publish=True,
             )
+        self.assertEqual(urls, [])
         self.assertEqual(calls, [])
         assert isinstance(out, dict)
         self.assertEqual(out["status"], "ignored")
