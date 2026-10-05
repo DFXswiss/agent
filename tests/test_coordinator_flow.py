@@ -132,10 +132,14 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
         assert f"CONTRIBUTING.md at base revision {base}" in text
         assert f"REVIEW.md does not exist at base revision {base}" in text
         assert "Linked issue body" in text
+        assert "Pull request body" in text
         assert "Please fix" not in text  # the body is the artifact, not the spec
     issue_files = list(ctrl.glob(f"review-base-{base[:12]}-issue.txt"))
     assert issue_files
     assert issue_files[0].read_text(encoding="utf-8") == "Please fix"
+    pr_body_files = list(ctrl.glob(f"review-base-{base[:12]}-pr-body.txt"))
+    assert pr_body_files
+    assert pr_body_files[0].read_text(encoding="utf-8") == "The pull request body is empty.\n"
     contributing = ctrl / f"review-base-{base[:12]}-CONTRIBUTING.md"
     assert "short English sentence" in contributing.read_text(encoding="utf-8")
     review_note = (ctrl / f"review-base-{base[:12]}-REVIEW.md").read_text(encoding="utf-8")

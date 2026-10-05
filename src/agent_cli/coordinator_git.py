@@ -422,7 +422,11 @@ def ensure_draft(
     title = str(task.get("title") or branch)
     body = (
         f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-        f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n"
+        f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        "Reused:\n"
+        "Added:\n\n"
+        "</details>\n"
     )
     head = pr_head_ref(branch, target, publication)
     queue_activity(
