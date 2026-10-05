@@ -1,6 +1,6 @@
 # Contributing
 
-[REVIEW.md](REVIEW.md) is binding. A new endpoint, function, user-interface control, error text, clock, or permission check is allowed only when nothing in this repository already does that job. The review reads this file and `REVIEW.md` and does not change files.
+[REVIEW.md](REVIEW.md) is binding for every change and for every review of a change. Read it and this file at the base revision of the pull request. A pull request that changes either file does not replace that base text for the rest of its diff. The review does not change files.
 
 - Branch from `develop`. Never push to `develop` or `main`.
 - Push the branch to this repository. Do not open the pull request from a personal fork.

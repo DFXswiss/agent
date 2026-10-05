@@ -5,9 +5,12 @@ code. A passing declaration is a consistent author statement plus the
 guard's own thread check, not cryptographic proof that a review ran.
 The statement must include the review record. The guard rejects a missing,
 placeholder, or contradictory record. It does not prove which model ran.
-Every pass lane's prompt must contain COMPLIANCE_PROMPT. That sentence
-assigns a read-only check of CONTRIBUTING.md and REVIEW.md. It is not
-proof that a model ran.
+When the base revision contains REVIEW.md, every pass lane's prompt must
+contain COMPLIANCE_PROMPT. That sentence reminds the lane to read
+CONTRIBUTING.md and REVIEW.md at the base revision and the linked issue,
+and not to change files. Further sentences may follow. The guard does not
+judge them and does not prove that a model ran. A repository without
+REVIEW.md at the base keeps the previous prompt check.
 """
 
 from __future__ import annotations
@@ -37,10 +40,11 @@ _NA_KEYS = frozenset({"id", "result", "evidence"})
 _OBJECT_KEYS = frozenset({"schema", "head", "passes", "defects", "lanes"})
 _OBJECT_KEYS_V2 = _OBJECT_KEYS | {"set_aside"}
 _SCHEMA_V2 = "a38-review/v2"
-# The task every pass lane must be given. Extra sentences may follow it.
+# Reminder given to every pass lane when the base revision has REVIEW.md.
+# Extra sentences may follow. This is not a proof that a model obeyed it.
 COMPLIANCE_PROMPT = (
-    "Read CONTRIBUTING.md and REVIEW.md. "
-    "Review this pull request against those files only. "
+    "Read CONTRIBUTING.md and REVIEW.md at the base revision. "
+    "Review this pull request against those files and against the linked issue. "
     "Do not change any files."
 )
 
@@ -177,7 +181,7 @@ def validate_visible(body: str, passes: int) -> list[str]:
     return []
 
 
-def _pass_lane_complete(lane: Mapping[str, Any]) -> bool:
+def _pass_lane_complete(lane: Mapping[str, Any], *, rules_bound: bool) -> bool:
     provider = lane.get("provider")
     model = lane.get("model")
     number = lane.get("model_number")
@@ -186,11 +190,18 @@ def _pass_lane_complete(lane: Mapping[str, Any]) -> bool:
         return False
     if not _named_value(provider) or not _named_value(model) or not _named_value(number):
         return False
-    return _prompt_ok(prompt)
+    if rules_bound:
+        return _prompt_ok(prompt)
+    return _prompt_shape_ok(prompt)
 
 
 def _validate_lanes(
-    lanes: list[Any], *, head: str, markdown_only: bool, complete: bool
+    lanes: list[Any],
+    *,
+    head: str,
+    markdown_only: bool,
+    complete: bool,
+    rules_bound: bool,
 ) -> list[str]:
     reasons: list[str] = []
     seen: list[str] = []
@@ -213,7 +224,8 @@ def _validate_lanes(
             pass_keys = _PASS_KEYS_V2 if complete else _PASS_KEYS
             prompt = lane.get("prompt")
             noncompliant = (
-                complete
+                rules_bound
+                and complete
                 and isinstance(prompt, str)
                 and _prompt_shape_ok(prompt)
                 and COMPLIANCE_PROMPT not in prompt
@@ -226,7 +238,7 @@ def _validate_lanes(
             elif (
                 set(lane) != pass_keys
                 or lane.get("status") != "complete"
-                or (complete and not _pass_lane_complete(lane))
+                or (complete and not _pass_lane_complete(lane, rules_bound=rules_bound))
             ):
                 _add(reasons, "review pass lane is malformed")
         elif result == "n_a":
@@ -267,7 +279,11 @@ def _validate_lanes(
 
 
 def validate_declaration(
-    payload: Mapping[str, Any], *, head: str, markdown_only: bool
+    payload: Mapping[str, Any],
+    *,
+    head: str,
+    markdown_only: bool,
+    rules_bound: bool = True,
 ) -> list[str]:
     if not isinstance(payload, Mapping):
         return ["review declaration is not an object"]
@@ -301,7 +317,13 @@ def validate_declaration(
         _add(reasons, "review lanes missing")
     else:
         reasons.extend(
-            _validate_lanes(lanes, head=head, markdown_only=markdown_only, complete=complete)
+            _validate_lanes(
+                lanes,
+                head=head,
+                markdown_only=markdown_only,
+                complete=complete,
+                rules_bound=rules_bound,
+            )
         )
     return reasons
 
@@ -581,7 +603,9 @@ def _is_na_result(value: str) -> bool:
     return True
 
 
-def _pass_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
+def _pass_lane_reasons(
+    section: list[str], fences: Sequence[str], *, rules_bound: bool
+) -> list[str]:
     reasons: list[str] = []
     found: dict[str, list[str]] = {
         "Provider": [],
@@ -604,15 +628,17 @@ def _pass_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
     if not found["Result"] or any(not _result_is_pass(value) for value in found["Result"]):
         _add(reasons, "review result missing")
     present = [text for text in fences if text.strip() and not _is_placeholder(text.strip())]
-    if not found["Prompt"] or not any(_prompt_ok(text) for text in present):
-        # A short or missing prompt is still "missing". The read-only
-        # reason is only for a prompt that already has a valid shape.
+    acceptable = _prompt_ok if rules_bound else _prompt_shape_ok
+    if not found["Prompt"] or not any(acceptable(text) for text in present):
+        # A short or missing prompt is still "missing". The reminder
+        # reason is only for a prompt that already has a valid shape,
+        # and only when the base revision has REVIEW.md.
         shaped_without_rules = [
             text
             for text in present
             if _prompt_shape_ok(text) and COMPLIANCE_PROMPT not in text
         ]
-        if shaped_without_rules:
+        if rules_bound and shaped_without_rules:
             _add(
                 reasons,
                 "review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
@@ -815,7 +841,9 @@ def _looks_like_record(lines: Sequence[str]) -> bool:
     return False
 
 
-def validate_review_record(body: str, payload: Mapping[str, Any]) -> list[str]:
+def validate_review_record(
+    body: str, payload: Mapping[str, Any], *, rules_bound: bool = True
+) -> list[str]:
     """Require the human record to agree with the declaration.
 
     Field order, the fence tag, and extra explanation do not matter.
@@ -886,7 +914,7 @@ def validate_review_record(body: str, payload: Mapping[str, Any]) -> list[str]:
                 for reason in _na_lane_reasons(section, fences):
                     _add(reasons, reason)
             else:
-                for reason in _pass_lane_reasons(section, fences):
+                for reason in _pass_lane_reasons(section, fences, rules_bound=rules_bound):
                     _add(reasons, reason)
     for reason in _set_aside_reasons(lines):
         _add(reasons, reason)
@@ -1005,14 +1033,18 @@ def _lane_ids_of(body: str) -> set[str]:
     return ids
 
 
-def _declaration_reasons(body: str, *, head: str, markdown_only: bool) -> list[str]:
+def _declaration_reasons(
+    body: str, *, head: str, markdown_only: bool, rules_bound: bool
+) -> list[str]:
     reasons: list[str] = []
     try:
         payload = parse_review_block(body)
     except ReviewError as exc:
         _add(reasons, str(exc))
         return reasons
-    declaration = validate_declaration(payload, head=head, markdown_only=markdown_only)
+    declaration = validate_declaration(
+        payload, head=head, markdown_only=markdown_only, rules_bound=rules_bound
+    )
     reasons.extend(declaration)
     passes = payload.get("passes")
     if _is_int(passes) and passes >= 1:
@@ -1021,7 +1053,7 @@ def _declaration_reasons(body: str, *, head: str, markdown_only: bool) -> list[s
         _add(reasons, "review visible text missing")
     # A half run fails on the lane rules. Do not also demand a finished record.
     if not declaration:
-        reasons.extend(validate_review_record(body, payload))
+        reasons.extend(validate_review_record(body, payload, rules_bound=rules_bound))
     return reasons
 
 
@@ -1033,6 +1065,7 @@ def select_review_comment(
     committed_at: str,
     head: str,
     markdown_only: bool,
+    rules_bound: bool = True,
 ) -> tuple[Mapping[str, Any] | None, list[str]]:
     """Newest valid first-run author declaration created after the head commit.
 
@@ -1078,7 +1111,9 @@ def select_review_comment(
     for _stamp, _cid, comment in candidates:
         body = comment.get("body")
         text = body if isinstance(body, str) else ""
-        reasons = _declaration_reasons(text, head=head, markdown_only=markdown_only)
+        reasons = _declaration_reasons(
+            text, head=head, markdown_only=markdown_only, rules_bound=rules_bound
+        )
         if not reasons:
             if _lane_ids_of(text) == set(RUNS[1]):
                 continue
@@ -1259,12 +1294,34 @@ def _head_committed_at(api: Any, repo: str, head: str) -> str | None:
     return date
 
 
+def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
+    """Whether the base revision has REVIEW.md.
+
+    True and false are answers. None means the lookup failed, and the gate
+    then fails closed instead of skipping the reminder.
+    """
+    if not isinstance(base_sha, str) or _SHA.fullmatch(base_sha) is None:
+        return None
+    try:
+        status, _data, _headers = api.request(
+            "GET", f"/repos/{repo}/contents/REVIEW.md?ref={base_sha}"
+        )
+    except Exception:
+        return None
+    if status == 200:
+        return True
+    if status == 404:
+        return False
+    return None
+
+
 def evaluate_review_gate(
     api: Any,
     *,
     repo: str,
     number: int,
     head: str,
+    base_sha: str,
     author_id: int,
     comments: Sequence[Mapping[str, Any]],
     markdown_only: bool,
@@ -1280,6 +1337,9 @@ def evaluate_review_gate(
     if not isinstance(guard_id, int):
         return False, ["guard identity unavailable"]
     reasons: list[str] = []
+    rules_bound = review_rules_bound(api, repo, base_sha)
+    if rules_bound is None:
+        return False, ["review rules unavailable"]
     committed_at = _head_committed_at(api, repo, head)
     if committed_at is None:
         _add(reasons, "review commit time unavailable")
@@ -1291,6 +1351,7 @@ def evaluate_review_gate(
             committed_at=committed_at,
             head=head,
             markdown_only=markdown_only,
+            rules_bound=rules_bound,
         )
         reasons.extend(selected)
     reasons.extend(_load_threads(api, repo, number))

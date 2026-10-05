@@ -714,12 +714,17 @@ def phase_pr_gates(
         for dimension, role in needed:
             scope = (
                 f"{COMPLIANCE_PROMPT} "
-                "Quality: judge this exact base→head diff against those two files."
+                "Quality: judge this exact base→head diff against CONTRIBUTING.md, "
+                "REVIEW.md, and the attached skills, read at the base revision. "
+                "Also judge it against the linked issue."
                 if dimension == "quality"
                 else f"{COMPLIANCE_PROMPT} "
-                "Logic: judge whether this exact base→head diff adds a second "
-                "mechanism for a job those files say to reuse. Do not re-derive "
-                "the diff via Git."
+                "Logic: judge whether this exact base→head diff is sound and "
+                "complete for the linked issue, and whether it adds a second "
+                "mechanism for a job those files say to reuse. Read the attached "
+                "skills. Read CONTRIBUTING.md, REVIEW.md, and the linked issue at "
+                "the base revision, not from the pull request head. Do not "
+                "re-derive the diff via Git."
             )
             prepared_list.append(
                 _prepare_pr_review_agent(

@@ -465,7 +465,7 @@ class FakeAPI:
                             "model": "Acme model",
                             "model_number": "acme-1",
                             "prompt": (
-                                "Read CONTRIBUTING.md and REVIEW.md. Review this pull request against those files only. Do not change any files."
+                                "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files."
                             ),
                         }
                         for lane in lanes

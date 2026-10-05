@@ -16,6 +16,7 @@ import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
 from .allow import CHECKLIST_KEYS
@@ -924,7 +925,8 @@ def phase_inner_review(
             excerpt = excerpt_path.read_text(encoding="utf-8")
             diff_note = (
                 f"Script-generated diff artifact: {diff_path}\n"
-                f"Read CONTRIBUTING.md and REVIEW.md first. Do not change files.\n"
+                f"{COMPLIANCE_PROMPT} Read the attached skills at the base "
+                "revision, not from the pull request head.\n"
                 f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
             )
         except (CoordinatorError, OSError) as exc:

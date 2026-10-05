@@ -48,20 +48,28 @@ Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
 
 Review lanes execute no software (no tests, builds, or servers).
 
-The first review run reads `CONTRIBUTING.md` and `REVIEW.md` of the target
-repository before it judges the diff. Both files are binding. Quality checks
-the change against them. Logic checks that the change does not add a second
-mechanism for a job those files say to reuse. The lane does not change files.
-Its prompt contains: `Read CONTRIBUTING.md and REVIEW.md. Review this pull
-request against those files only. Do not change any files.` A prompt that
-asks to edit the change is not this review.
+The first review run reads `CONTRIBUTING.md` and `REVIEW.md` at the base
+revision of the pull request, not at its head, and it reads the linked issue.
+A pull request that changes either file does not replace that base text for
+the rest of its diff. Both files are binding. Quality judges the change
+against those files and against the skills attached to the review. Logic
+judges whether the change is sound and complete for the linked issue, and
+whether it adds a second mechanism for a job those files say to reuse. The
+lane does not change files. Its prompt contains this reminder on one line:
+`Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.`
+Further sentences may follow. They do not remove the task. The sentence is a
+reminder, not proof that the lane obeyed it.
 
-A new endpoint, function, user-interface control, error text, clock, or
-permission check is a finding when an existing element in that repository
-does the same job and the pull request does not state why that element
-cannot. Calling the finding not relevant does not clear it. A deviation is
-only the reason written in the pull request. An existing element whose job
-is different is not a substitute, and the review says why.
+A new endpoint, user-interface control, visible error text, clock or time
+window, or permission check is a finding when an existing element in that
+repository does the same job and the pull request does not name that element
+and state the different job it has. The same job is the purpose the caller
+already has. Different behavior is not a different job. A helper the caller
+does not see is outside this rule. "Cannot" alone, a missing or empty reason,
+or calling the finding not relevant does not clear it. Setting the finding
+aside does not clear it. A hard requirement in those files cannot be waived
+by a sentence in the pull request. An existing element whose job is different
+is not a substitute, and the review names the element and its job.
 
 ## Verdicts
 
