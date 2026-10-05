@@ -112,14 +112,18 @@ def _add(reasons: list[str], text: str) -> None:
 def validate_visible(body: str, passes: int) -> list[str]:
     if not isinstance(body, str) or not _is_int(passes) or passes < 1:
         return ["review visible text missing"]
+    if _lane_ids_of(body) == set(RUNS[1]):
+        en_sentence = f"Second review after {passes} review passes."
+        de_sentence = f"Zweiter Review nach {passes} Review-Durchläufen."
+    else:
+        en_sentence = f"Ready after {passes} review passes."
+        de_sentence = f"Bereit nach {passes} Review-Durchläufen."
     begin = body.find(REVIEW_BEGIN)
     end = body.find(REVIEW_END)
     visible = body
     if 0 <= begin < end:
         visible = body[:begin] + body[end + len(REVIEW_END) :]
     lines = visible.splitlines()
-    en_sentence = f"Ready after {passes} review passes."
-    de_sentence = f"Bereit nach {passes} Review-Durchläufen."
 
     def next_content(start: int) -> int:
         """Next non-blank line. Blank lines may separate the required lines; other text may not."""

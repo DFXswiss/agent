@@ -80,13 +80,25 @@ def _renderable(payload: dict) -> dict:
 
 
 def _body(payload: dict, *, passes: int = 2) -> str:
+    lanes = payload.get("lanes")
+    ids: set[str] = set()
+    if isinstance(lanes, list):
+        for lane in lanes:
+            if isinstance(lane, dict) and isinstance(lane.get("id"), str):
+                ids.add(lane["id"])
+    if ids == {"conformity-b", "logic-b"}:
+        en_sentence = f"Second review after {passes} review passes."
+        de_sentence = f"Zweiter Review nach {passes} Review-Durchläufen."
+    else:
+        en_sentence = f"Ready after {passes} review passes."
+        de_sentence = f"Bereit nach {passes} Review-Durchläufen."
     return (
         "EN:\n"
-        f"Ready after {passes} review passes.\n"
+        f"{en_sentence}\n"
         "The change is covered.\n"
         "\n"
         "DE:\n"
-        f"Bereit nach {passes} Review-Durchläufen.\n"
+        f"{de_sentence}\n"
         "Die Änderung ist abgedeckt.\n"
         "\n"
         "<details>\n<summary>Details</summary>\n\n"
@@ -148,6 +160,49 @@ def test_visible_text_rejects_a_line_between_required_steps() -> None:
     recorded = _body(payload).replace(f"{REVIEW_BEGIN}\n", record + f"{REVIEW_BEGIN}\n", 1)
     assert validate_visible(recorded, 2) == []
     assert parse_review_block(recorded) == payload
+
+
+def test_second_run_ready_lines_are_visible_text_missing() -> None:
+    payload = _pass_payload(lanes=_run("b"))
+    passes = payload["passes"]
+    body = (
+        _body(payload)
+        .replace(
+            f"Second review after {passes} review passes.",
+            f"Ready after {passes} review passes.",
+            1,
+        )
+        .replace(
+            f"Zweiter Review nach {passes} Review-Durchläufen.",
+            f"Bereit nach {passes} Review-Durchläufen.",
+            1,
+        )
+    )
+    assert validate_visible(body, passes) == ["review visible text missing"]
+
+
+def test_second_run_second_review_lines_are_visible() -> None:
+    payload = _pass_payload(lanes=_run("b"))
+    assert validate_visible(_body(payload), payload["passes"]) == []
+
+
+def test_first_run_second_review_lines_are_visible_text_missing() -> None:
+    payload = _pass_payload(lanes=_run("a"))
+    passes = payload["passes"]
+    body = (
+        _body(payload)
+        .replace(
+            f"Ready after {passes} review passes.",
+            f"Second review after {passes} review passes.",
+            1,
+        )
+        .replace(
+            f"Bereit nach {passes} Review-Durchläufen.",
+            f"Zweiter Review nach {passes} Review-Durchläufen.",
+            1,
+        )
+    )
+    assert validate_visible(body, passes) == ["review visible text missing"]
 
 
 def test_comment_page_without_false_has_next_page_fails_closed() -> None:
@@ -868,6 +923,55 @@ def test_select_only_second_run_is_missing() -> None:
     chosen, reasons = _select([second])
     assert chosen is None
     assert reasons == ["review completion comment missing"]
+
+
+def test_select_only_second_run_ready_lines_is_visible_text_missing() -> None:
+    payload = _pass_payload(lanes=_run("b"))
+    passes = payload["passes"]
+    body = (
+        _body(payload)
+        .replace(
+            f"Second review after {passes} review passes.",
+            f"Ready after {passes} review passes.",
+            1,
+        )
+        .replace(
+            f"Zweiter Review nach {passes} Review-Durchläufen.",
+            f"Bereit nach {passes} Review-Durchläufen.",
+            1,
+        )
+    )
+    second = _comment(body, cid=1, user=10)
+    chosen, reasons = _select([second])
+    assert chosen is None
+    assert reasons == ["review visible text missing"]
+
+
+def test_select_first_run_when_newer_second_run_says_ready() -> None:
+    first = _comment(
+        _body(_pass_payload(lanes=_run("a"))), cid=1, user=10, created="2026-09-01T00:00:00Z"
+    )
+    payload = _pass_payload(lanes=_run("b"))
+    passes = payload["passes"]
+    ready_second = _comment(
+        _body(payload)
+        .replace(
+            f"Second review after {passes} review passes.",
+            f"Ready after {passes} review passes.",
+            1,
+        )
+        .replace(
+            f"Zweiter Review nach {passes} Review-Durchläufen.",
+            f"Bereit nach {passes} Review-Durchläufen.",
+            1,
+        ),
+        cid=2,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    chosen, reasons = _select([first, ready_second])
+    assert chosen is first
+    assert reasons == []
 
 
 def test_select_newer_both_runs_does_not_displace_first_run() -> None:
