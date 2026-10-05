@@ -1882,9 +1882,9 @@ def test_workflow_dispatch_posts_named_comment():
     assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
     body = _manual_comments(fake)[0]["body"]
     assert "The workflows were started manually by @TaprootFreak." in body
-    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert."
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
     assert "CI started manually" in body
-    assert "CI manuell gestartet" in body in body
+    assert "CI manuell gestartet" in body
 
 
 def test_repository_dispatch_posts_named_comment():
@@ -1899,9 +1899,9 @@ def test_repository_dispatch_posts_named_comment():
     assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
     body = _manual_comments(fake)[0]["body"]
     assert "The workflows were started manually by @TaprootFreak." in body
-    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert."
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
     assert "CI started manually" in body
-    assert "CI manuell gestartet" in body in body
+    assert "CI manuell gestartet" in body
 
 
 def test_different_user_ids_on_initial_pull_request_are_manual():
