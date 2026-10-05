@@ -6,8 +6,10 @@ Does not execute network I/O or pull-request code. Safe YAML only.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import unittest
 from typing import Any
@@ -33,6 +35,7 @@ from agent_cli.readme_only import GUARD_WORKFLOW_PATH  # noqa: E402
 from agent_cli.a38_guard import (  # noqa: E402
     GUARD_MARKER,
     GITHUB_ACTIONS_BOT_ID,
+    Assessment,
     GitHubApi,
     GuardError,
     LOCAL_CI_BEGIN,
@@ -246,6 +249,7 @@ class FakeAPI:
         self._status_seq = 50
         self.mutate_head_on_publish: str | None = None
         self.open_pulls: list[int] = [1]
+        self.commit_pulls: list = []
         self.reviews: list[dict[str, Any]] = []
         self.permissions: dict[str, dict[str, Any]] = {}
         self.pull_files: list[dict[str, Any]] = []
@@ -390,6 +394,13 @@ class FakeAPI:
             if rels:
                 headers["link"] = ", ".join(rels)
             return 200, chunk, headers
+
+        if (
+            method_u == "GET"
+            and path_only.startswith(f"/repos/{REPO}/commits/")
+            and path_only.endswith("/pulls")
+        ):
+            return 200, list(self.commit_pulls), {}
 
         if (
             method_u == "GET"
@@ -3175,6 +3186,260 @@ class A38WorkflowInventoryTests(unittest.TestCase):
         self.assertEqual(len(slept_rl), 1)
         self.assertIn(slept_rl[0], (1, 1.0))
         self.assertEqual(len(rl_calls), 2)
+
+
+def _workflow_run_payload(
+    *,
+    action: str = "completed",
+    path: str | None = ".github/workflows/ci.yml",
+    head_sha: str | None = HEAD,
+    pull_requests: list[Any] | None = None,
+    repo: str = REPO,
+    omit_path: bool = False,
+) -> dict[str, Any]:
+    run: dict[str, Any] = {
+        "pull_requests": pull_requests if pull_requests is not None else [{"number": 99}],
+    }
+    if not omit_path:
+        run["path"] = path
+    if head_sha is not None:
+        run["head_sha"] = head_sha
+    return {
+        "action": action,
+        "workflow_run": run,
+        "repository": {"full_name": repo},
+    }
+
+
+def _stub_reconcile(calls: list[tuple[str, int]]):
+    def fake_reconcile(api: Any, repo: str, number: int, **kwargs: Any) -> Assessment:
+        calls.append((repo, number))
+        return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+    return fake_reconcile
+
+
+class A38GuardWorkflowRunTests(unittest.TestCase):
+    def test_completed_uses_commit_pulls_not_event_pull_requests(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "open"}]
+        payload = _workflow_run_payload(pull_requests=[{"number": 99}])
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            result = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=payload,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [(REPO, 1)])
+        self.assertIsInstance(result, Assessment)
+        assert isinstance(result, Assessment)
+        self.assertEqual(result.pr, 1)
+
+    def test_closed_only_is_ignored(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "closed"}]
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            out = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(),
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [])
+        assert isinstance(out, dict)
+        self.assertEqual(out["status"], "ignored")
+        self.assertIn("ignored workflow_run with no open pull request", out["reasons"])
+
+    def test_guard_workflow_completion_is_ignored_without_api(self) -> None:
+        fake = FakeAPI()
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            out = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(path=GUARD_WORKFLOW_PATH),
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [])
+        assert isinstance(out, dict)
+        self.assertEqual(out["status"], "ignored")
+        self.assertIn(
+            "ignored guard workflow completion (loop prevention)", out["reasons"]
+        )
+
+    def test_requested_action_is_ignored(self) -> None:
+        fake = FakeAPI()
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            out = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(action="requested"),
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [])
+        assert isinstance(out, dict)
+        self.assertEqual(out["status"], "ignored")
+        self.assertIn("ignored workflow_run action 'requested'", out["reasons"])
+
+    def test_head_sha_not_lowercase_40_hex(self) -> None:
+        fake = FakeAPI()
+        with self.assertRaisesRegex(GuardError, "head_sha"):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(head_sha="abc"),
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_missing_path(self) -> None:
+        fake = FakeAPI()
+        with self.assertRaisesRegex(GuardError, "path"):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(omit_path=True),
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_pull_list_entry_not_object(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = ["not-an-object"]
+        with self.assertRaises(GuardError):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(),
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_open_entry_state_missing(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1}]
+        with self.assertRaises(GuardError):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(),
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_two_open_isolates_error_and_main_exits_one(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [
+            {"number": 2, "state": "open"},
+            {"number": 1, "state": "open"},
+        ]
+        payload = _workflow_run_payload()
+        calls: list[int] = []
+
+        def fake_reconcile(api: Any, repo: str, number: int, **kwargs: Any) -> Assessment:
+            calls.append(number)
+            if number == 1:
+                raise GuardError("boom")
+            return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+        with mock.patch.object(a38_guard, "reconcile_pull", side_effect=fake_reconcile):
+            out = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=payload,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [1, 2])
+        assert isinstance(out, dict)
+        self.assertEqual(out["status"], "error")
+        self.assertFalse(out["ok"])
+
+        buf = io.StringIO()
+        with mock.patch.object(
+            a38_guard, "_load_event", return_value=("workflow_run", payload)
+        ), mock.patch.object(
+            a38_guard, "reconcile_event", return_value=out
+        ), mock.patch("sys.stdout", buf):
+            code = main(
+                ["reconcile"],
+                env={"GH_TOKEN": "fake"},
+                api=fake.api(),
+            )
+        self.assertEqual(code, 1)
+
+    def test_repo_mismatch(self) -> None:
+        fake = FakeAPI()
+        with self.assertRaisesRegex(GuardError, "event repository does not match --repo"):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(repo="someone/else"),
+                repo=REPO,
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_pr_not_in_open_set(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "open"}]
+        with self.assertRaisesRegex(
+            GuardError, "event pull request does not match --pr"
+        ):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(),
+                pr=99,
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_pr_equal_to_only_open_number(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "open"}]
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            result = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(),
+                pr=1,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [(REPO, 1)])
+        self.assertIsInstance(result, Assessment)
+
+    def test_example_workflow_contains_workflow_run_trigger(self) -> None:
+        text = (
+            Path(__file__).resolve().parents[1] / "examples" / "a38-guard.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_run:", text)
+        self.assertIn("types: [completed]", text)
+        self.assertIn('workflows: ["REPLACE_WITH_CI_WORKFLOW_NAME"]', text)
+        self.assertIn("a38-pr-guard-sweep-", text)
+        self.assertIn("github.event.workflow_run.head_sha", text)
+        self.assertIn("cancel-in-progress: false", text)
+        self.assertNotIn("actions/checkout", text)
 
 
 if __name__ == "__main__":

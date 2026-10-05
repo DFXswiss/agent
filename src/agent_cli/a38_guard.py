@@ -3007,6 +3007,10 @@ def event_should_ignore(
         return None
     if event_name == "workflow_dispatch":
         return None
+    if event_name == "workflow_run":
+        if action != "completed":
+            return f"ignored workflow_run action {action!r}"
+        return None
     return f"ignored unsupported event {event_name!r}"
 
 
@@ -3034,6 +3038,129 @@ def extract_repo_pr_from_event(
             raise GuardError("issue_comment repo/pr invalid")
         return _validate_repo(full), number
     raise GuardError(f"cannot extract repo/pr from event {event_name}")
+
+
+def _open_pull_numbers_for_commit(api: GitHubApi, repo: str, sha: str) -> list[int]:
+    """Open PR numbers that contain ``sha``. Do not use event pull_requests."""
+    items = api.paginate(f"/repos/{repo}/commits/{sha}/pulls")
+    numbers: list[int] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise GuardError("workflow_run pull list entry is not an object")
+        state = item.get("state")
+        if not isinstance(state, str):
+            raise GuardError("workflow_run pull state is missing")
+        if state != "open":
+            continue
+        number = item.get("number")
+        if not isinstance(number, int):
+            raise GuardError("open pull request number is not an integer")
+        numbers.append(number)
+    return sorted(set(numbers))
+
+
+def _reconcile_workflow_run(
+    api: GitHubApi,
+    *,
+    payload: Mapping[str, Any],
+    repo: str | None,
+    pr: int | None,
+    dry_run: bool,
+    publish: bool,
+    runtime_revision: str | None,
+    runtime_env: Mapping[str, str] | None,
+) -> Assessment | dict[str, Any]:
+    run = payload.get("workflow_run")
+    if not isinstance(run, dict):
+        raise GuardError("workflow_run event missing workflow_run")
+    path = run.get("path")
+    if not isinstance(path, str) or not path:
+        raise GuardError("workflow_run path is missing")
+    if path == GUARD_WORKFLOW_PATH:
+        return {
+            "ok": True,
+            "status": "ignored",
+            "reasons": ["ignored guard workflow completion (loop prevention)"],
+            "writes": [],
+            "dry_run": dry_run,
+        }
+    head_sha = run.get("head_sha")
+    if not isinstance(head_sha, str) or HEAD_SHA_RE.fullmatch(head_sha) is None:
+        raise GuardError("workflow_run head_sha is not a lowercase 40-hex SHA")
+    repository = payload.get("repository")
+    if not isinstance(repository, dict):
+        raise GuardError("repo must be owner/name")
+    event_repo = _validate_repo(repository.get("full_name"))
+    if repo is not None and _validate_repo(repo) != event_repo:
+        raise GuardError("event repository does not match --repo")
+
+    numbers = _open_pull_numbers_for_commit(api, event_repo, head_sha)
+    if pr is not None:
+        if pr not in numbers:
+            raise GuardError("event pull request does not match --pr")
+        numbers = [pr]
+    if not numbers:
+        return {
+            "ok": True,
+            "status": "ignored",
+            "reasons": ["ignored workflow_run with no open pull request"],
+            "writes": [],
+            "dry_run": dry_run,
+        }
+    if len(numbers) == 1:
+        return reconcile_pull(
+            api,
+            event_repo,
+            numbers[0],
+            dry_run=dry_run,
+            publish=publish,
+            runtime_revision=runtime_revision,
+            runtime_env=runtime_env,
+        )
+
+    results: list[dict[str, Any]] = []
+    all_ok = True
+    n = len(numbers)
+    for i, number in enumerate(numbers, start=1):
+        print(
+            f"a38-guard: all-open {i}/{n} PR {number}",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            assessment = reconcile_pull(
+                api,
+                event_repo,
+                number,
+                dry_run=dry_run,
+                publish=publish,
+                runtime_revision=runtime_revision,
+                runtime_env=runtime_env,
+            )
+        except Exception as exc:  # noqa: BLE001 — per-PR isolation
+            results.append({
+                "ok": False, "status": "error", "repo": event_repo,
+                "pr": number, "reasons": [str(exc)],
+            })
+            all_ok = False
+            print(
+                f"a38-guard: PR {number}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            continue
+        results.append(assessment.to_json())
+        if _assessment_exit_code(assessment) != 0:
+            all_ok = False
+    return {
+        "ok": all_ok,
+        "status": "pass" if all_ok else "error",
+        "repo": event_repo,
+        "results": results,
+        "writes": [],
+        "dry_run": dry_run,
+        "reasons": [],
+    }
 
 
 def reconcile_event(
@@ -3071,6 +3198,18 @@ def reconcile_event(
             api,
             repo,
             pr,
+            dry_run=dry_run,
+            publish=publish,
+            runtime_revision=runtime_revision,
+            runtime_env=runtime_env,
+        )
+
+    if event_name == "workflow_run":
+        return _reconcile_workflow_run(
+            api,
+            payload=payload,
+            repo=repo,
+            pr=pr,
             dry_run=dry_run,
             publish=publish,
             runtime_revision=runtime_revision,
@@ -3265,6 +3404,8 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                 print(json.dumps(out, indent=2, sort_keys=True))
                 if isinstance(result, Assessment):
                     return _assessment_exit_code(result)
+                if isinstance(result, dict) and result.get("ok") is False:
+                    return 1
                 return 0
 
             if not args.repo or args.pr is None:
