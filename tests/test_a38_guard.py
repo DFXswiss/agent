@@ -38,9 +38,11 @@ from agent_cli.a38_guard import (  # noqa: E402
     LOCAL_CI_BEGIN,
     LOCAL_CI_END,
     assess_pull,
+    check_workflows_against_policy,
     event_should_ignore,
     fetch_pull,
     find_tool_attribution,
+    list_workflow_paths,
     load_ready_timeline,
     looks_like_report,
     main,
@@ -51,6 +53,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     reconcile_pull,
     status_context_enforce,
     status_context_observe,
+    workflow_blobs_at,
 )
 
 
@@ -2873,6 +2876,305 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             msg=result.reasons,
         )
         self.assertEqual(result.write_ready_reason, "markdown-only change set")
+
+
+def _api_path(url: str) -> str:
+    if url.startswith("https://api.github.com"):
+        url = url[len("https://api.github.com") :]
+    return url.split("?", 1)[0]
+
+
+class A38WorkflowInventoryTests(unittest.TestCase):
+    def test_three_level_tree_without_recursive(self) -> None:
+        commit = "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+        github = "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+        workflows = "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+        blob = "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+        urls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            path_only = _api_path(url)
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/trees/{commit}":
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {"path": "README.md", "type": "blob", "sha": "a" * 40},
+                        {"path": ".github", "type": "tree", "sha": github},
+                    ],
+                }, {}
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/trees/{github}":
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {"path": "workflows", "type": "tree", "sha": workflows},
+                    ],
+                }, {}
+            if (
+                method.upper() == "GET"
+                and path_only == f"/repos/{REPO}/git/trees/{workflows}"
+            ):
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {"path": "ci.yml", "type": "blob", "sha": blob},
+                    ],
+                }, {}
+            return 404, {"message": f"unhandled {url}"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        got = workflow_blobs_at(api, REPO, commit)
+        self.assertEqual(got, {".github/workflows/ci.yml": blob})
+        self.assertEqual(
+            list_workflow_paths(api, REPO, commit), [".github/workflows/ci.yml"]
+        )
+        self.assertFalse(any("recursive=1" in url for url in urls))
+
+    def test_truncated_on_each_tree_stage(self) -> None:
+        commit = "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+        github = "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"
+        workflows = "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2"
+        blob = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+        ci_blob = {"path": "ci.yml", "type": "blob", "sha": blob}
+
+        for stage in (1, 2, 3):
+            with self.subTest(stage=stage):
+
+                def request_fn(
+                    method: str,
+                    url: str,
+                    body: bytes | None = None,
+                    *,
+                    _stage: int = stage,
+                ) -> tuple[int, Any, dict[str, str]]:
+                    path_only = _api_path(url)
+                    if (
+                        method.upper() == "GET"
+                        and path_only == f"/repos/{REPO}/git/trees/{commit}"
+                    ):
+                        if _stage == 1:
+                            return 200, {
+                                "truncated": True,
+                                "tree": [
+                                    {
+                                        "path": ".github/workflows/ci.yml",
+                                        "type": "blob",
+                                        "sha": blob,
+                                    },
+                                    {
+                                        "path": ".github",
+                                        "type": "tree",
+                                        "sha": github,
+                                    },
+                                ],
+                            }, {}
+                        return 200, {
+                            "truncated": False,
+                            "tree": [
+                                {"path": ".github", "type": "tree", "sha": github},
+                            ],
+                        }, {}
+                    if (
+                        method.upper() == "GET"
+                        and path_only == f"/repos/{REPO}/git/trees/{github}"
+                    ):
+                        if _stage == 2:
+                            return 200, {
+                                "truncated": True,
+                                "tree": [
+                                    {
+                                        "path": "workflows",
+                                        "type": "tree",
+                                        "sha": workflows,
+                                    },
+                                    ci_blob,
+                                ],
+                            }, {}
+                        return 200, {
+                            "truncated": False,
+                            "tree": [
+                                {
+                                    "path": "workflows",
+                                    "type": "tree",
+                                    "sha": workflows,
+                                },
+                            ],
+                        }, {}
+                    if (
+                        method.upper() == "GET"
+                        and path_only == f"/repos/{REPO}/git/trees/{workflows}"
+                    ):
+                        return 200, {"truncated": True, "tree": [ci_blob]}, {}
+                    return 404, {"message": f"unhandled {url}"}, {}
+
+                api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+                with self.assertRaisesRegex(GuardError, "truncated"):
+                    workflow_blobs_at(api, REPO, commit)
+
+    def test_commit_tree_without_github_dir_is_empty(self) -> None:
+        commit = "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            path_only = _api_path(url)
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/trees/{commit}":
+                return 200, {
+                    "truncated": False,
+                    "tree": [{"path": "README.md", "type": "blob", "sha": "a" * 40}],
+                }, {}
+            return 404, {"message": f"unhandled {url}"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        self.assertEqual(workflow_blobs_at(api, REPO, commit), {})
+
+    def test_github_tree_followup_404_is_guard_error(self) -> None:
+        commit = "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        github = "e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            path_only = _api_path(url)
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/trees/{commit}":
+                return 200, {
+                    "truncated": False,
+                    "tree": [{"path": ".github", "type": "tree", "sha": github}],
+                }, {}
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/trees/{github}":
+                return 404, {"message": "Not Found"}, {}
+            return 404, {"message": f"unhandled {url}"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(GuardError):
+            workflow_blobs_at(api, REPO, commit)
+
+    def test_inventory_blob_404_fails_closed(self) -> None:
+        blob = "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5"
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            path_only = _api_path(url)
+            if method.upper() == "GET" and path_only in {
+                f"/repos/{REPO}/git/trees/{HEAD}",
+                f"/repos/{REPO}/git/trees/{BASE}",
+            }:
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {
+                            "path": ".github/workflows/ci.yml",
+                            "type": "blob",
+                            "sha": blob,
+                        }
+                    ],
+                }, {}
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/blobs/{blob}":
+                return 404, {"message": "Not Found"}, {}
+            return 404, {"message": f"unhandled {url}"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(GuardError):
+            check_workflows_against_policy(
+                api,
+                REPO,
+                head_sha=HEAD,
+                base_sha=BASE,
+                policy={"jobs": [], "exclusions": []},
+                allow_changes=False,
+            )
+
+    def test_same_blob_sha_downloads_once_without_bytes_changed(self) -> None:
+        blob = "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6"
+        content = b"jobs:\n  test: {}\n"
+        payload = {
+            "sha": blob,
+            "encoding": "base64",
+            "content": base64.b64encode(content).decode("ascii"),
+        }
+        urls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            path_only = _api_path(url)
+            if method.upper() == "GET" and path_only in {
+                f"/repos/{REPO}/git/trees/{HEAD}",
+                f"/repos/{REPO}/git/trees/{BASE}",
+            }:
+                return 200, {
+                    "truncated": False,
+                    "tree": [
+                        {
+                            "path": ".github/workflows/ci.yml",
+                            "type": "blob",
+                            "sha": blob,
+                        }
+                    ],
+                }, {}
+            if method.upper() == "GET" and path_only == f"/repos/{REPO}/git/blobs/{blob}":
+                return 200, payload, {}
+            return 404, {"message": f"unhandled {url}"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        problems = check_workflows_against_policy(
+            api,
+            REPO,
+            head_sha=HEAD,
+            base_sha=BASE,
+            policy={
+                "jobs": [{"workflow": ".github/workflows/ci.yml", "job": "test"}],
+                "exclusions": [],
+            },
+            allow_changes=False,
+        )
+        blob_calls = [url for url in urls if f"/git/blobs/{blob}" in _api_path(url)]
+        self.assertEqual(len(blob_calls), 1)
+        self.assertFalse(any("bytes changed" in item for item in problems))
+        self.assertFalse(any("/contents/" in url for url in urls))
+
+    def test_ordinary_403_does_not_sleep_rate_limit_403_retries_once(self) -> None:
+        slept: list[float] = []
+        denied_calls: list[str] = []
+
+        def denied_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            denied_calls.append(url)
+            return 403, {"message": "denied"}, {}
+
+        denied_api = GitHubApi(
+            "t", request_fn=denied_fn, sleep_fn=lambda seconds: slept.append(seconds)
+        )
+        with self.assertRaisesRegex(GuardError, "denied"):
+            denied_api.get_json(f"/repos/{REPO}/git/trees/{HEAD}")
+        self.assertEqual(slept, [])
+
+        slept_rl: list[float] = []
+        rl_calls: list[str] = []
+        ok_payload = {"ok": True}
+
+        def rate_limit_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            rl_calls.append(url)
+            if len(rl_calls) == 1:
+                return 403, {"message": "secondary rate limit"}, {"retry-after": "1"}
+            return 200, ok_payload, {}
+
+        rl_api = GitHubApi(
+            "t",
+            request_fn=rate_limit_fn,
+            sleep_fn=lambda seconds: slept_rl.append(seconds),
+        )
+        self.assertEqual(rl_api.get_json(f"/repos/{REPO}/git/trees/{HEAD}"), ok_payload)
+        self.assertEqual(len(slept_rl), 1)
+        self.assertIn(slept_rl[0], (1, 1.0))
+        self.assertEqual(len(rl_calls), 2)
 
 
 if __name__ == "__main__":
