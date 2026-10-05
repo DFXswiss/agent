@@ -611,6 +611,88 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def _header_ci(headers: Mapping[str, Any], name: str) -> tuple[bool, Any]:
+    want = name.lower()
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == want:
+            return True, value
+    return False, None
+
+
+def _is_rate_limit_response(status: int, data: Any, headers: Mapping[str, Any]) -> bool:
+    if status == 429:
+        return True
+    if status != 403:
+        return False
+    present, _retry_after = _header_ci(headers, "retry-after")
+    if present:
+        return True
+    present, remaining = _header_ci(headers, "x-ratelimit-remaining")
+    if present:
+        if type(remaining) is int and remaining == 0:
+            return True
+        if isinstance(remaining, str) and remaining.strip() == "0":
+            return True
+    if isinstance(data, dict):
+        message = data.get("message")
+        if isinstance(message, str) and "rate limit" in message.lower():
+            return True
+    return False
+
+
+def _whole_nonneg_seconds(value: Any) -> int | None:
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()) is not None:
+        return int(value.strip())
+    return None
+
+
+def _epoch_seconds(value: Any) -> float | None:
+    if type(value) is bool:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+    return None
+
+
+def _rate_limit_sleep_s(headers: Mapping[str, Any], attempt: int) -> float:
+    short = RETRY_BACKOFF_S * (attempt + 1)
+    present, retry_after = _header_ci(headers, "retry-after")
+    if present:
+        seconds = _whole_nonneg_seconds(retry_after)
+        if seconds is None:
+            return short
+        return min(60, seconds)
+    present, reset = _header_ci(headers, "x-ratelimit-reset")
+    if present:
+        epoch = _epoch_seconds(reset)
+        if epoch is None:
+            return short
+        delta = epoch - time.time()
+        if delta <= 0:
+            return short
+        return min(60, delta)
+    return short
+
+
+def _github_api_denied(status: int, path: str, data: Any) -> str:
+    text = f"GitHub API denied ({status}) for {path}"
+    if isinstance(data, dict):
+        message = data.get("message")
+        if isinstance(message, str) and message:
+            return f"{text}: {message}"
+    return text
+
+
 def default_request(
     method: str,
     url: str,
@@ -705,6 +787,7 @@ class GitHubApi:
         immutable = method_u == "GET" and (
             ("/contents/" in parsed.path and HEAD_SHA_RE.fullmatch(query.get("ref", [""])[0]) is not None)
             or re.search(r"/git/trees/[0-9a-f]{40}$", parsed.path) is not None
+            or re.search(r"/git/blobs/[0-9a-f]{40}$", parsed.path) is not None
         )
         if immutable and url in self._immutable_cache:
             return self._immutable_cache[url]
@@ -725,6 +808,13 @@ class GitHubApi:
             if status in {502, 503, 504} and do_retry and attempt + 1 < attempts:
                 self._sleep(RETRY_BACKOFF_S * (attempt + 1))
                 continue
+            if (
+                _is_rate_limit_response(status, data, headers)
+                and do_retry
+                and attempt + 1 < attempts
+            ):
+                self._sleep(_rate_limit_sleep_s(headers, attempt))
+                continue
             result = (status, data, headers)
             if immutable and status in {200, 404} and len(self._immutable_cache) < 128:
                 self._immutable_cache[url] = result
@@ -734,7 +824,7 @@ class GitHubApi:
     def get_json(self, path: str) -> Any:
         status, data, _ = self.request("GET", path)
         if status == 401 or status == 403:
-            raise GuardError(f"GitHub API denied ({status}) for {path}")
+            raise GuardError(_github_api_denied(status, path, data))
         if status == 404:
             raise GuardError(f"GitHub API not found (404) for {path}")
         if status < 200 or status >= 300:
@@ -744,7 +834,7 @@ class GitHubApi:
     def get_optional(self, path: str) -> tuple[int, Any]:
         status, data, _ = self.request("GET", path)
         if status in {401, 403}:
-            raise GuardError(f"GitHub API denied ({status}) for {path}")
+            raise GuardError(_github_api_denied(status, path, data))
         return status, data
 
     def paginate(self, path: str, *, hard_limit: int = MAX_COMMENT_PAGES_ITEMS) -> list[Any]:
@@ -1186,8 +1276,11 @@ def check_pr_guard_config_migration(
     ]
 
 
-def list_workflow_paths(api: GitHubApi, repo: str, sha: str) -> list[str]:
-    data = api.get_json(f"/repos/{repo}/git/trees/{sha}?recursive=1")
+_BLOB_CACHE_LIMIT = 256
+_blob_cache: dict[str, bytes] = {}
+
+
+def _git_tree_entries(data: Any) -> list[Any]:
     if not isinstance(data, dict):
         raise GuardError("git tree response is not an object")
     if data.get("truncated"):
@@ -1195,16 +1288,120 @@ def list_workflow_paths(api: GitHubApi, repo: str, sha: str) -> list[str]:
     tree = data.get("tree")
     if not isinstance(tree, list):
         raise GuardError("git tree missing tree array")
-    paths: list[str] = []
+    return tree
+
+
+def _file_blob_sha(entry: Mapping[str, Any], path: str) -> str | None:
+    sha = entry.get("sha")
+    if sha is None or sha == "":
+        return None
+    if isinstance(sha, str) and HEAD_SHA_RE.fullmatch(sha) is not None:
+        return sha
+    raise GuardError(f"git blob sha is invalid for {path}")
+
+
+def _required_tree_sha(entry: Mapping[str, Any], path: str) -> str:
+    sha = entry.get("sha")
+    if not isinstance(sha, str) or HEAD_SHA_RE.fullmatch(sha) is None:
+        raise GuardError(f"git tree entry {path!r} missing a valid 40-character sha")
+    return sha
+
+
+def _named_tree_entry(tree: list[Any], name: str) -> dict[str, Any] | None:
+    for entry in tree:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("path") == name and entry.get("type") == "tree":
+            return entry
+    return None
+
+
+def _fetch_git_blob(api: GitHubApi, repo: str, sha: str) -> bytes:
+    cached = _blob_cache.get(sha)
+    if cached is not None:
+        return cached
+    data = api.get_json(f"/repos/{repo}/git/blobs/{sha}")
+    if not isinstance(data, dict):
+        raise GuardError("git blob response is not an object")
+    returned = data.get("sha")
+    if not isinstance(returned, str) or returned.lower() != sha.lower():
+        raise GuardError(f"git blob sha mismatch for {sha}")
+    raw = _decode_contents_file(data)
+    if len(_blob_cache) < _BLOB_CACHE_LIMIT:
+        _blob_cache[sha] = raw
+    return raw
+
+
+def _workflow_file_bytes(
+    api: GitHubApi,
+    repo: str,
+    path: str,
+    commit_sha: str,
+    inventory: Mapping[str, str | None],
+) -> bytes | None:
+    if path not in inventory:
+        return None
+    blob_sha = inventory[path]
+    if blob_sha is None:
+        raw = fetch_file_at_ref(api, repo, path, commit_sha)
+        if raw is None:
+            raise GuardError(
+                f"{path} is listed in the git tree at {commit_sha} but is not readable"
+            )
+        return raw
+    return _fetch_git_blob(api, repo, blob_sha)
+
+
+def workflow_blobs_at(api: GitHubApi, repo: str, sha: str) -> dict[str, str | None]:
+    data = api.get_json(f"/repos/{repo}/git/trees/{sha}")
+    tree = _git_tree_entries(data)
+    found: dict[str, str | None] = {}
+    has_flat = False
     for entry in tree:
         if not isinstance(entry, dict):
             continue
         if entry.get("type") != "blob":
             continue
         path = entry.get("path")
-        if isinstance(path, str) and WORKFLOW_FILE_RE.match(path):
-            paths.append(path)
-    return sorted(set(paths))
+        if not isinstance(path, str) or WORKFLOW_FILE_RE.match(path) is None:
+            continue
+        has_flat = True
+        found[path] = _file_blob_sha(entry, path)
+    if has_flat:
+        return found
+
+    github_entry = _named_tree_entry(tree, ".github")
+    if github_entry is None:
+        return {}
+    github_sha = _required_tree_sha(github_entry, ".github")
+    github_tree = _git_tree_entries(
+        api.get_json(f"/repos/{repo}/git/trees/{github_sha}")
+    )
+    workflows_entry = _named_tree_entry(github_tree, "workflows")
+    if workflows_entry is None:
+        return {}
+    workflows_sha = _required_tree_sha(workflows_entry, "workflows")
+    workflows_tree = _git_tree_entries(
+        api.get_json(f"/repos/{repo}/git/trees/{workflows_sha}")
+    )
+    result: dict[str, str | None] = {}
+    for entry in workflows_tree:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") != "blob":
+            continue
+        name = entry.get("path")
+        if not isinstance(name, str):
+            continue
+        path = ".github/workflows/" + name
+        if WORKFLOW_FILE_RE.match(path) is None:
+            continue
+        result[path] = _file_blob_sha(entry, path)
+    return result
+
+
+def list_workflow_paths(api: GitHubApi, repo: str, sha: str) -> list[str]:
+    return sorted(workflow_blobs_at(api, repo, sha).keys())
 
 
 def _load_yaml(text: str) -> Any:
@@ -1299,17 +1496,27 @@ def check_workflows_against_policy(
     skip_bytes = frozenset(skip_bytes_paths)
     # Inventory failures are operational errors, including in observe mode.
     # Only an inventory successfully fetched and assessed can be advisory.
-    head_paths = list_workflow_paths(api, repo, head_sha)
-    base_paths = list_workflow_paths(api, repo, base_sha)
+    head_map = workflow_blobs_at(api, repo, head_sha)
+    base_map = workflow_blobs_at(api, repo, base_sha)
 
     allowed = classified_pairs(policy)
     actual: set[tuple[str, str]] = set()
-    all_paths = sorted(set(head_paths) | set(base_paths))
+    all_paths = sorted(set(head_map) | set(base_map))
     for path in all_paths:
-        head_bytes = fetch_file_at_ref(api, repo, path, head_sha)
-        base_bytes = fetch_file_at_ref(api, repo, path, base_sha)
-        if head_bytes is None and base_bytes is None:
-            continue
+        head_blob = head_map[path] if path in head_map else None
+        base_blob = base_map[path] if path in base_map else None
+        if (
+            path in head_map
+            and path in base_map
+            and isinstance(head_blob, str)
+            and head_blob == base_blob
+        ):
+            shared = _fetch_git_blob(api, repo, head_blob)
+            head_bytes = shared
+            base_bytes = shared
+        else:
+            head_bytes = _workflow_file_bytes(api, repo, path, head_sha, head_map)
+            base_bytes = _workflow_file_bytes(api, repo, path, base_sha, base_map)
         if head_bytes != base_bytes and not allow_changes and path not in skip_bytes:
             problems.append(
                 f"{path} bytes changed vs base; "
