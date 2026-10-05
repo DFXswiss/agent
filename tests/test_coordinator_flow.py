@@ -120,6 +120,26 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
     assert "pr-reviewer-logic" in launched
     assert fake.parallel_launch_seen
     assert _phase(store) == "pr_gates_codex", store.rows("task")[0]["payload"]["coordinator"].get("blocker")
+    from agent_cli.coordinator_git import control_dir
+
+    task = store.rows("task")[0]
+    ctrl = control_dir(worker, task["id"])
+    specs = list(ctrl.glob("pr-reviewer-*-*.md"))
+    assert len(specs) >= 2
+    base = fake.base
+    for spec in specs:
+        text = spec.read_text(encoding="utf-8")
+        assert f"CONTRIBUTING.md at base revision {base}" in text
+        assert f"REVIEW.md does not exist at base revision {base}" in text
+        assert "Linked issue body" in text
+        assert "Please fix" not in text  # the body is the artifact, not the spec
+    issue_files = list(ctrl.glob(f"review-base-{base[:12]}-issue.txt"))
+    assert issue_files
+    assert issue_files[0].read_text(encoding="utf-8") == "Please fix"
+    contributing = ctrl / f"review-base-{base[:12]}-CONTRIBUTING.md"
+    assert "short English sentence" in contributing.read_text(encoding="utf-8")
+    review_note = (ctrl / f"review-base-{base[:12]}-REVIEW.md").read_text(encoding="utf-8")
+    assert f"REVIEW.md does not exist at base revision {base}" in review_note
 
     before = list(fake.launched)
     tick(store, worker, runner=fake, lane_runner=lane)

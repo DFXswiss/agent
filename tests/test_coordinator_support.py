@@ -458,6 +458,22 @@ class FakeGh:
             if "--quiet" in args:
                 return Completed(1 if self.staged else 0, "", "")
             return Completed(0, "", "")
+        if cmd == "show":
+            spec = args[-1]
+            path = spec.split(":", 1)[-1]
+            if path == "CONTRIBUTING.md":
+                return Completed(
+                    0,
+                    "Commit messages: a short English sentence ending with a period.\n",
+                    "",
+                )
+            if path == "REVIEW.md":
+                return Completed(
+                    128,
+                    "",
+                    f"fatal: path 'REVIEW.md' does not exist in '{self.base}'\n",
+                )
+            return Completed(1, "", f"unhandled git show: {args}")
         if cmd == "commit":
             if not self.staged:
                 return Completed(1, "", "nothing to commit")

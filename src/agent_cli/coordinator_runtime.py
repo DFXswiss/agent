@@ -74,6 +74,7 @@ from .coordinator_lanes import (
     phase_pr_gates_codex,
     phase_pr_gates_grok,
     set_checklist,
+    write_review_context,
     write_review_diff,
 )
 from .github_accounts import AccountError, load_accounts
@@ -923,10 +924,12 @@ def phase_inner_review(
             diff_path = write_review_diff(store, worker, task, runner, head=head)
             excerpt_path = diff_path.with_suffix(".excerpt.txt")
             excerpt = excerpt_path.read_text(encoding="utf-8")
+            base_note = write_review_context(store, worker, task, runner)
             diff_note = (
                 f"Script-generated diff artifact: {diff_path}\n"
                 f"{COMPLIANCE_PROMPT} Read the attached skills at the base "
                 "revision, not from the pull request head.\n"
+                f"{base_note}"
                 f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
             )
         except (CoordinatorError, OSError) as exc:
