@@ -9,8 +9,12 @@ When the base revision contains REVIEW.md, every pass lane's prompt must
 contain COMPLIANCE_PROMPT. That sentence reminds the lane to read
 CONTRIBUTING.md and REVIEW.md at the base revision and the linked issue,
 and not to change files. Further sentences may follow. The guard does not
-judge them and does not prove that a model ran. A repository without
-REVIEW.md at the base keeps the previous prompt check.
+judge them and does not prove that a model ran. A short, missing, or
+placeholder prompt stays "review prompt missing". The reminder reason is
+only for a shaped prompt that lacks the sentence. A contents 404 means the
+file is absent only when the base commit itself can be read. Otherwise the
+lookup fails closed. A repository without REVIEW.md at a readable base
+keeps the previous prompt check.
 """
 
 from __future__ import annotations
@@ -223,6 +227,12 @@ def _validate_lanes(
             kinds.add("pass")
             pass_keys = _PASS_KEYS_V2 if complete else _PASS_KEYS
             prompt = lane.get("prompt")
+            # A short, blank, or placeholder prompt is missing. That must
+            # not be reported as a malformed lane, or the reminder reason
+            # would be the only special case and this one would never surface.
+            prompt_missing = complete and not (
+                isinstance(prompt, str) and _prompt_shape_ok(prompt)
+            )
             noncompliant = (
                 rules_bound
                 and complete
@@ -230,15 +240,19 @@ def _validate_lanes(
                 and _prompt_shape_ok(prompt)
                 and COMPLIANCE_PROMPT not in prompt
             )
-            if noncompliant:
+            if prompt_missing:
+                _add(reasons, "review prompt missing")
+            elif noncompliant:
                 _add(
                     reasons,
                     "review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
                 )
-            elif (
-                set(lane) != pass_keys
-                or lane.get("status") != "complete"
-                or (complete and not _pass_lane_complete(lane, rules_bound=rules_bound))
+            structurally_bad = set(lane) != pass_keys or lane.get("status") != "complete"
+            if structurally_bad or (
+                complete
+                and not prompt_missing
+                and not noncompliant
+                and not _pass_lane_complete(lane, rules_bound=rules_bound)
             ):
                 _add(reasons, "review pass lane is malformed")
         elif result == "n_a":
@@ -1298,7 +1312,9 @@ def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
     """Whether the base revision has REVIEW.md.
 
     True and false are answers. None means the lookup failed, and the gate
-    then fails closed instead of skipping the reminder.
+    then fails closed instead of skipping the reminder. A contents 404 is
+    false only when the base commit itself can be read. A missing commit
+    and a missing repository use that same 404, so they are not "unbound".
     """
     if not isinstance(base_sha, str) or _SHA.fullmatch(base_sha) is None:
         return None
@@ -1310,7 +1326,15 @@ def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
         return None
     if status == 200:
         return True
-    if status == 404:
+    if status != 404:
+        return None
+    try:
+        commit_status, commit_data, _headers = api.request(
+            "GET", f"/repos/{repo}/commits/{base_sha}"
+        )
+    except Exception:
+        return None
+    if commit_status == 200 and isinstance(commit_data, Mapping):
         return False
     return None
 
