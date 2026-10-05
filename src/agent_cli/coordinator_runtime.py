@@ -36,6 +36,7 @@ from .coordinator_common import (
     harden_grok_write_argv,
     owned_session,
     parse_model_result,
+    parse_surface_list,
     redact,
     review_is_approved,
     save_task,
@@ -49,6 +50,7 @@ from .coordinator_git import (
     ensure_draft,
     phase_checkout,
     phase_publish_draft,
+    refresh_draft_body,
     repo_cfg,
     stage_sign_commit_if_changes,
     verify_signed_clean_head,
@@ -73,6 +75,7 @@ from .coordinator_lanes import (
     launch_lane,
     phase_pr_gates_codex,
     phase_pr_gates_grok,
+    review_rules_bound,
     set_checklist,
     write_review_context,
     write_review_diff,
@@ -482,6 +485,26 @@ def _find_round(store: Store, task_id: str, round_num: int) -> dict[str, Any]:
     raise CoordinatorError(f"round {round_num} missing")
 
 
+def _implementer_instruction(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> str:
+    """Implementer task, plus the surface list when the base has REVIEW.md."""
+    text = "Implement the assigned issue. Edit files only."
+    if not review_rules_bound(store, worker, runner, task):
+        return text
+    return (
+        text
+        + "\nThe base revision has REVIEW.md. After the summary lines, include "
+        "one or more REUSED: lines and one or more ADDED: lines. Each line names "
+        "a file and a line, for example REUSED: `src/pay.ts:40` existing gift invoice. "
+        "When that section is empty, write REUSED: none — nothing existing does this job. "
+        "The script posts these lines into the pull request body. Do not call GitHub."
+    )
+
+
 def _spec_context(c: dict[str, Any], extra: str = "") -> str:
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     title = source.get("title") or ""
@@ -681,6 +704,29 @@ def _apply_implementer_outcome(
         summaries[language] = redact(values[0].strip(), limit=800)
     task["change_summary_en"] = summaries["en"]
     task["change_summary_de"] = summaries["de"]
+    if review_rules_bound(store, worker, runner, task):
+        listed = parse_surface_list(stdout)
+        if listed is None:
+            c.update(
+                phase="blocked",
+                resume_phase="implement",
+                blocker="completed patch lacks a reused and added list with file and line",
+            )
+            _mark_applied()
+            task["state"] = "open"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                c["blocker"],
+                kind="surface-list",
+                reply_checkpoint=True,
+            )
+        task["reused_lines"] = listed[0]
+        task["added_lines"] = listed[1]
+        refresh_draft_body(store, worker, task, runner)
     tr["implementer_verdict"] = "done"
     store.write("task_round", "update", tr["id"], strip_row(tr))
     task["state"] = "reviewing"
@@ -800,7 +846,7 @@ def phase_implement(
         role="implementer",
         vendor="grok",
         round_num=round_num,
-        spec_body=_spec_context(c, "Implement the assigned issue. Edit files only."),
+        spec_body=_spec_context(c, _implementer_instruction(store, worker, task, runner)),
         runner=runner,
         lane_runner=lane_runner,
     )

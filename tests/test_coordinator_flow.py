@@ -221,14 +221,18 @@ def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: py
                 "worktree": str(worktree),
                 "base_sha": base,
                 "pr_number": 42,
-                "source": {"body": "Please fix", "repo": "example/project"},
+                "source": {
+                    "body": "TRUNCATED",
+                    "repo": "example/project",
+                    "number": 7,
+                },
             }
         },
     }
 
     def ambient(argv: list[str]) -> Completed:
-        if argv[:3] == ["gh", "pr", "view"]:
-            raise AssertionError("pull request body must be read with the account runner")
+        if argv[:3] == ["gh", "pr", "view"] or argv[:3] == ["gh", "issue", "view"]:
+            raise AssertionError("GitHub bodies must be read with the account runner")
         if argv and argv[0] == "git" and "show" in argv:
             spec = argv[-1]
             if spec.endswith(":CONTRIBUTING.md"):
@@ -244,6 +248,12 @@ def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: py
                     json.dumps({"body": "Reused: src/a.py:1 existing pay sheet\n"}),
                     "",
                 )
+            if argv[:3] == ["gh", "issue", "view"]:
+                return Completed(
+                    0,
+                    json.dumps({"body": "Full acceptance criteria beyond the stored copy."}),
+                    "",
+                )
             return base_runner(argv)
 
         return scoped_run
@@ -253,6 +263,58 @@ def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: py
     assert "Pull request body" in note
     pr_body = control_dir(worker, tid) / f"review-base-{base[:12]}-pr-body.txt"
     assert pr_body.read_text(encoding="utf-8") == "Reused: src/a.py:1 existing pay sheet\n"
+    issue_body = control_dir(worker, tid) / f"review-base-{base[:12]}-issue.txt"
+    assert issue_body.read_text(encoding="utf-8") == (
+        "Full acceptance criteria beyond the stored copy."
+    )
+    assert "TRUNCATED" not in issue_body.read_text(encoding="utf-8")
+
+
+def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """REVIEW.md at the base makes the script post the implementer's list. It does not invent one."""
+    from agent_cli.coordinator_common import parse_surface_list
+    from agent_cli.coordinator_git import refresh_draft_body
+
+    assert parse_surface_list("STATUS: complete\n") is None
+    assert parse_surface_list("REUSED: none — nothing\nADDED: bare\n") is None
+    parsed = parse_surface_list(
+        "REUSED: `src/pay.ts:40` existing gift invoice\n"
+        "ADDED: `src/habit.ts:12` member habit route\n"
+    )
+    assert parsed == (
+        ["`src/pay.ts:40` existing gift invoice"],
+        ["`src/habit.ts:12` member habit route"],
+    )
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    tid = "99999999-9999-9999-9999-999999999999"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "repo": "example/project",
+        "ref": "42",
+        "title": "Fix",
+        "reused_lines": parsed[0],
+        "added_lines": parsed[1],
+        "payload": {
+            "coordinator": {
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7, "title": "Fix"},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    lines = refresh_draft_body(store, worker, task, fake)
+    assert lines == ["posted reused and added list on example/project#42"]
+    assert "REUSED" not in fake.pr["body"]
+    assert "`src/pay.ts:40` existing gift invoice" in fake.pr["body"]
+    assert "`src/habit.ts:12` member habit route" in fake.pr["body"]
+    assert fake.pr_edits and "gh" not in " ".join(fake.launched)
 
 
 def test_stale_head_invalidates_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

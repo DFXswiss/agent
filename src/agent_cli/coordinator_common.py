@@ -268,6 +268,35 @@ def is_sha(value: str) -> bool:
     return bool(_SHA_RE.fullmatch(value))
 
 
+_SURFACE_REF = re.compile(r"`[^`\n]+:\d+`")
+
+
+def parse_surface_list(stdout: str) -> tuple[list[str], list[str]] | None:
+    """REUSED and ADDED lines from an implementer, or None when absent or malformed.
+
+    Each line names a file and a line inside backticks, or starts with ``none``
+    and gives the reason that section is empty. The script posts the lines.
+    It does not invent them, and a model lane does not call GitHub.
+    """
+    reused = re.findall(r"(?m)^REUSED: ([^\r\n]+)$", stdout)
+    added = re.findall(r"(?m)^ADDED: ([^\r\n]+)$", stdout)
+    if not reused or not added:
+        return None
+
+    def acceptable(value: str) -> bool:
+        text = value.strip()
+        if text == "" or len(text) > 400:
+            return False
+        if _SURFACE_REF.search(text):
+            return True
+        folded = text.casefold()
+        return folded.startswith("none —") or folded.startswith("none -")
+
+    if any(not acceptable(value) for value in [*reused, *added]):
+        return None
+    return ([value.strip() for value in reused], [value.strip() for value in added])
+
+
 def control_dir(worker: WorkerConfig, task_id: str):
     from pathlib import Path
 

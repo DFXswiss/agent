@@ -188,6 +188,8 @@ class FakeGh:
         self._lane_barrier = threading.Barrier(2)
         self._lane_lock = threading.Lock()
         self.pr_created = False
+        self.review_md: str | None = None
+        self.pr_edits: list[str] = []
         self._inflight_roles: set[str] = set()
         self.check_rc = 0
         self.readiness_rc = 0
@@ -289,6 +291,19 @@ class FakeGh:
                 }
             )
             return Completed(0, f"https://github.com/example/project/issues/7#issuecomment-{self.comments[-1]['id']}", "")
+
+        if argv[:3] == ["gh", "issue", "view"]:
+            number = int(argv[3])
+            issue = next((item for item in self.issues if item.get("number") == number), None)
+            if issue is None:
+                return Completed(1, "", "issue not found")
+            return Completed(0, json.dumps({"body": issue.get("body") or ""}), "")
+
+        if argv[:3] == ["gh", "pr", "edit"]:
+            body = argv[argv.index("--body") + 1]
+            self.pr["body"] = body
+            self.pr_edits.append(body)
+            return Completed(0, self.pr["url"], "")
 
         if argv[:3] == ["gh", "pr", "view"]:
             if self.pr_view_rc != 0:
@@ -468,6 +483,8 @@ class FakeGh:
                     "",
                 )
             if path == "REVIEW.md":
+                if self.review_md is not None:
+                    return Completed(0, self.review_md, "")
                 return Completed(
                     128,
                     "",
