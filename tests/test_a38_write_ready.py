@@ -114,6 +114,8 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertEqual(result.write_ready_reason, "ready by write collaborator")
         body = result.comment_body
         self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
         self.assertIn("A38 quality rules", body)
         steps = result.standard_url + "#what-you-must-do"
         self.assertIn(f"[A38 quality rules]({steps})", body)
@@ -376,6 +378,8 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertEqual(a38_guard._assessment_exit_code(result), 0)
         body = result.comment_body
         self.assertIn("Thanks for your contribution!", body)
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
         self.assertIn("A38 quality rules", body)
         steps = result.standard_url + "#what-you-must-do"
         self.assertIn(f"[A38 quality rules]({steps})", body)

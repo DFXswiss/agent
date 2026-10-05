@@ -479,10 +479,12 @@ class FakeAPI:
                     "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
                     "body": (
                         "EN:\n"
+                        "First review\n"
                         "Ready after 1 review passes.\n"
                         "The change is covered.\n"
                         "\n"
                         "DE:\n"
+                        "Erster Review\n"
                         "Bereit nach 1 Review-Durchläufen.\n"
                         "Die Änderung ist abgedeckt.\n"
                         "\n"
@@ -995,6 +997,8 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
         self.assertIn("DE:", body)
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
         self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
@@ -1046,6 +1050,8 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
         self.assertIn("DE:", body)
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
         self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
@@ -1101,6 +1107,8 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
         self.assertIn("DE:", body)
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
         self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)
@@ -1421,6 +1429,8 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
         self.assertIn("EN:", body)
         self.assertIn("DE:", body)
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
         self.assertIn("Thanks for your contribution!", body)
         self.assertIn("A38", body)
         self.assertIn("Qualitätsregeln", body)

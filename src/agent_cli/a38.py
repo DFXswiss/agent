@@ -1404,8 +1404,8 @@ def _write_report(
 ) -> None:
     report = _report_from_dict(payload)
     text = (
-        "EN:\nThe A38 report below records the checks, results and durations.\n\n"
-        "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
+        "EN:\nLocal CI report\nThe A38 report below records the checks, results and durations.\n\n"
+        "DE:\nLokaler CI-Bericht\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
         "<details>\n<summary>Details</summary>\n\n"
         + _report_facts(
             report,

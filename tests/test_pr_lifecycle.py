@@ -8,7 +8,13 @@ import pytest
 from agent_cli import pr_lifecycle
 from agent_cli.a38_guard import GuardError, reconcile_pull, status_context_enforce
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
-from agent_cli.pr_lifecycle import AUTH_MARKER, MANUAL_MARKER, STATE_MARKER, visible_transition_sentences
+from agent_cli.pr_lifecycle import (
+    AUTH_MARKER,
+    MANUAL_MARKER,
+    STATE_MARKER,
+    visible_transition_sentences,
+    visible_transition_titles,
+)
 from test_a38_guard import AUTHOR_ID, HEAD, BASE, BASE2, BOT_ID, REPO, _report_comment
 from test_workflow_approval_core import ApprovalAPI, PATH
 
@@ -199,6 +205,32 @@ def test_visible_transition_sentences_queued_ci():
     assert " oder " not in de
 
 
+def test_visible_transition_titles_back_to_draft():
+    en, de = visible_transition_titles({
+        "state": "draft",
+        "reasons": ["Merge conflicts"],
+    })
+    assert en == "Back to draft"
+    assert de == "Zurück auf Entwurf"
+    assert "CI" not in en
+    assert " or " not in en
+
+
+def test_visible_transition_titles_ready_despite_blockers():
+    en, de = visible_transition_titles({
+        "state": "ready",
+        "reasons": [f"CI not green: {PATH} (action_required)"],
+    })
+    assert en == "Ready despite blockers"
+    assert de == "Bereit trotz Hindernissen"
+
+
+def test_visible_transition_titles_ready_for_review():
+    en, de = visible_transition_titles({"state": "ready", "reasons": []})
+    assert en == "Ready for review"
+    assert de == "Bereit zum Review"
+
+
 def test_visible_transition_sentences_missing_required_ci():
     en, de = visible_transition_sentences({
         "state": "draft",
@@ -340,6 +372,14 @@ def test_draft_comment_names_merge_conflicts_only():
     assert "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen." in body
     en = body.split("EN:\n", 1)[1].split("\n\nDE:\n", 1)[0]
     de = body.split("DE:\n", 1)[1].split("\n\n<details>", 1)[0]
+    assert en == (
+        "Back to draft\n"
+        "This pull request is back in Draft because merge conflicts exist."
+    )
+    assert de == (
+        "Zurück auf Entwurf\n"
+        "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen."
+    )
     assert "CI" not in en and " or " not in en
     assert "CI" not in de and " oder " not in de
 
@@ -363,6 +403,15 @@ def test_draft_comment_joins_conflicts_and_failed_ci_with_and():
     ) in body
     en = body.split("EN:\n", 1)[1].split("\n\nDE:\n", 1)[0]
     de = body.split("DE:\n", 1)[1].split("\n\n<details>", 1)[0]
+    assert en == (
+        "Back to draft\n"
+        "This pull request is back in Draft because merge conflicts exist and CI failed."
+    )
+    assert de == (
+        "Zurück auf Entwurf\n"
+        "Dieser Pull Request steht wieder auf Draft, weil Merge-Konflikte bestehen "
+        "und die CI fehlgeschlagen ist."
+    )
     assert " or " not in en
     assert " oder " not in de
 
@@ -1776,6 +1825,8 @@ def test_manual_rerun_posts_named_comment():
     body = comments[0]["body"]
     assert "The workflows were started manually by @TaprootFreak." in body
     assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
+    assert "CI started manually" in body
+    assert "CI manuell gestartet" in body
     record = _comment_record(comments[0])
     assert record["actor_login"] == "TaprootFreak"
     assert record["actor_id"] == 42
@@ -1801,6 +1852,8 @@ def test_human_rerun_without_github_login_uses_administrator_wording():
     body = _manual_comments(fake)[0]["body"]
     assert "The workflows were started manually by an administrator." in body
     assert "Die Workflows wurden von einem Administrator manuell aktiviert." in body
+    assert "CI started manually" in body
+    assert "CI manuell gestartet" in body
 
 
 def test_initial_pull_request_run_is_not_manual():
@@ -1829,7 +1882,9 @@ def test_workflow_dispatch_posts_named_comment():
     assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
     body = _manual_comments(fake)[0]["body"]
     assert "The workflows were started manually by @TaprootFreak." in body
-    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert."
+    assert "CI started manually" in body
+    assert "CI manuell gestartet" in body in body
 
 
 def test_repository_dispatch_posts_named_comment():
@@ -1844,7 +1899,9 @@ def test_repository_dispatch_posts_named_comment():
     assert result.manual_workflows[0]["actor_login"] == "TaprootFreak"
     body = _manual_comments(fake)[0]["body"]
     assert "The workflows were started manually by @TaprootFreak." in body
-    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert." in body
+    assert "Die Workflows wurden von @TaprootFreak manuell aktiviert."
+    assert "CI started manually" in body
+    assert "CI manuell gestartet" in body in body
 
 
 def test_different_user_ids_on_initial_pull_request_are_manual():

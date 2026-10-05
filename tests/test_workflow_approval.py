@@ -891,6 +891,8 @@ def test_private_fork_fallback_fails_closed_without_unique_stable_link(what: str
 
 AUTH_EN = "I have authorized the recorded CI runs; their results are still pending."
 AUTH_DE = "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus."
+AUTH_EN_TITLE = "CI authorization"
+AUTH_DE_TITLE = "CI-Freigabe"
 CANCEL_EN = (
     "I cancelled waiting workflow runs that were superseded or not on the allowlist, "
     "so they no longer await approval."
@@ -899,10 +901,16 @@ CANCEL_DE = (
     "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der "
     "Allowlist sind, damit sie nicht weiter auf Freigabe warten."
 )
+CANCEL_EN_TITLE = "CI runs cancelled"
+CANCEL_DE_TITLE = "CI-Läufe abgebrochen"
 RESULT_OK_EN = "The recorded CI runs finished successfully."
 RESULT_OK_DE = "Die dokumentierten CI-Läufe sind erfolgreich abgeschlossen."
+RESULT_OK_EN_TITLE = "CI succeeded"
+RESULT_OK_DE_TITLE = "CI erfolgreich"
 RESULT_BAD_EN = "The recorded CI runs finished; not every run succeeded."
 RESULT_BAD_DE = "Die dokumentierten CI-Läufe sind abgeschlossen; nicht jeder Lauf war erfolgreich."
+RESULT_BAD_EN_TITLE = "CI finished with failures"
+RESULT_BAD_DE_TITLE = "CI mit Fehlern abgeschlossen"
 
 
 def _marker_comments(fake: FakeApproval, marker: str) -> list[dict]:
@@ -924,6 +932,8 @@ def test_approve_201_posts_auth_comment_without_lifecycle() -> None:
     assert body.startswith(AUTH_MARKER)
     assert AUTH_EN in body
     assert AUTH_DE in body
+    assert AUTH_EN_TITLE in body
+    assert AUTH_DE_TITLE in body
     assert any(row.get("run_id") == 101 for row in _comment_record(auths[0])["runs"])
 
 
@@ -974,6 +984,8 @@ def test_cancel_202_posts_cancel_comment_and_approve_posts_auth() -> None:
     assert body.startswith(CANCEL_MARKER)
     assert CANCEL_EN in body
     assert CANCEL_DE in body
+    assert CANCEL_EN_TITLE in body
+    assert CANCEL_DE_TITLE in body
     assert any(row.get("run_id") == 202 for row in _comment_record(cancels[0])["runs"])
 
 
@@ -1057,6 +1069,8 @@ def test_finished_success_posts_result_comment_without_patching_auth() -> None:
     auth_body = auths[0]["body"]
     assert AUTH_EN in auth_body
     assert AUTH_DE in auth_body
+    assert AUTH_EN_TITLE in auth_body
+    assert AUTH_DE_TITLE in auth_body
     assert not _marker_comments(fake, RESULT_MARKER)
     assert first.ci_results == [{"status": "waiting"}]
     fake.runs[0].update(status="completed", conclusion="success")
@@ -1066,12 +1080,16 @@ def test_finished_success_posts_result_comment_without_patching_auth() -> None:
     assert auths[0]["body"] == auth_body
     assert AUTH_EN in auths[0]["body"]
     assert AUTH_DE in auths[0]["body"]
+    assert AUTH_EN_TITLE in auths[0]["body"]
+    assert AUTH_DE_TITLE in auths[0]["body"]
     results = _marker_comments(fake, RESULT_MARKER)
     assert len(results) == 1
     assert results[0]["id"] > auths[0]["id"]
     body = results[0]["body"]
     assert RESULT_OK_EN in body
     assert RESULT_OK_DE in body
+    assert RESULT_OK_EN_TITLE in body
+    assert RESULT_OK_DE_TITLE in body
     assert RESULT_BAD_EN not in body
     assert RESULT_BAD_DE not in body
     assert _comment_record(results[0])["runs"][0]["conclusion"] == "success"
@@ -1132,6 +1150,8 @@ def test_finished_failure_uses_not_every_run_succeeded_sentences() -> None:
     body = results[0]["body"]
     assert RESULT_BAD_EN in body
     assert RESULT_BAD_DE in body
+    assert RESULT_BAD_EN_TITLE in body
+    assert RESULT_BAD_DE_TITLE in body
     assert RESULT_OK_EN not in body
     assert RESULT_OK_DE not in body
     assert _comment_record(results[0])["runs"][0]["conclusion"] == "failure"
@@ -1148,6 +1168,8 @@ def test_finished_skipped_uses_not_every_run_succeeded_sentences() -> None:
     body = results[0]["body"]
     assert RESULT_BAD_EN in body
     assert RESULT_BAD_DE in body
+    assert RESULT_BAD_EN_TITLE in body
+    assert RESULT_BAD_DE_TITLE in body
     assert RESULT_OK_EN not in body
     assert RESULT_OK_DE not in body
     assert _comment_record(results[0])["runs"][0]["conclusion"] == "skipped"
@@ -1164,6 +1186,8 @@ def test_finished_neutral_uses_not_every_run_succeeded_sentences() -> None:
     body = results[0]["body"]
     assert RESULT_BAD_EN in body
     assert RESULT_BAD_DE in body
+    assert RESULT_BAD_EN_TITLE in body
+    assert RESULT_BAD_DE_TITLE in body
     assert RESULT_OK_EN not in body
     assert RESULT_OK_DE not in body
     assert _comment_record(results[0])["runs"][0]["conclusion"] == "neutral"

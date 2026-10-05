@@ -660,8 +660,8 @@ class ReportPresentationTests(unittest.TestCase):
                 comment = output.read_text()
                 visible, details = comment.split("<details>\n<summary>Details</summary>\n\n")
                 self.assertEqual(visible, (
-                    "EN:\nThe A38 report below records the checks, results and durations.\n\n"
-                    "DE:\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
+                    "EN:\nLocal CI report\nThe A38 report below records the checks, results and durations.\n\n"
+                    "DE:\nLokaler CI-Bericht\nDer A38-Bericht unten dokumentiert die Prüfungen, Ergebnisse und Laufzeiten.\n\n"
                 ))
                 # Only the presentation changes; the entire original evidence remains intact.
                 table, original_details = details.split("<details>\n<summary>Original report / Originalbericht</summary>\n\n")
