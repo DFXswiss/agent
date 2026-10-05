@@ -924,7 +924,7 @@ def phase_inner_review(
             excerpt = excerpt_path.read_text(encoding="utf-8")
             diff_note = (
                 f"Script-generated diff artifact: {diff_path}\n"
-                f"Read CONTRIBUTING.md and attached skills first.\n"
+                f"Read CONTRIBUTING.md and REVIEW.md first. Do not change files.\n"
                 f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
             )
         except (CoordinatorError, OSError) as exc:

@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
 from .chain import close_allowed
@@ -712,11 +713,13 @@ def phase_pr_gates(
     try:
         for dimension, role in needed:
             scope = (
-                "Quality/conformance: read CONTRIBUTING.md and attached skills first; "
-                "judge conformance of this exact base→head diff."
+                f"{COMPLIANCE_PROMPT} "
+                "Quality: judge this exact base→head diff against those two files."
                 if dimension == "quality"
-                else "Logic/correctness: judge whether this exact base→head diff is sound "
-                "and complete for the assigned issue; do not re-derive the diff via Git."
+                else f"{COMPLIANCE_PROMPT} "
+                "Logic: judge whether this exact base→head diff adds a second "
+                "mechanism for a job those files say to reuse. Do not re-derive "
+                "the diff via Git."
             )
             prepared_list.append(
                 _prepare_pr_review_agent(

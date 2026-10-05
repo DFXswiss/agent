@@ -5,6 +5,9 @@ code. A passing declaration is a consistent author statement plus the
 guard's own thread check, not cryptographic proof that a review ran.
 The statement must include the review record. The guard rejects a missing,
 placeholder, or contradictory record. It does not prove which model ran.
+Every pass lane's prompt must contain COMPLIANCE_PROMPT. That sentence
+assigns a read-only check of CONTRIBUTING.md and REVIEW.md. It is not
+proof that a model ran.
 """
 
 from __future__ import annotations
@@ -34,6 +37,12 @@ _NA_KEYS = frozenset({"id", "result", "evidence"})
 _OBJECT_KEYS = frozenset({"schema", "head", "passes", "defects", "lanes"})
 _OBJECT_KEYS_V2 = _OBJECT_KEYS | {"set_aside"}
 _SCHEMA_V2 = "a38-review/v2"
+# The task every pass lane must be given. Extra sentences may follow it.
+COMPLIANCE_PROMPT = (
+    "Read CONTRIBUTING.md and REVIEW.md. "
+    "Review this pull request against those files only. "
+    "Do not change any files."
+)
 
 
 class ReviewError(ValueError):
@@ -202,7 +211,19 @@ def _validate_lanes(
         if result == "pass":
             kinds.add("pass")
             pass_keys = _PASS_KEYS_V2 if complete else _PASS_KEYS
-            if (
+            prompt = lane.get("prompt")
+            noncompliant = (
+                complete
+                and isinstance(prompt, str)
+                and _prompt_shape_ok(prompt)
+                and COMPLIANCE_PROMPT not in prompt
+            )
+            if noncompliant:
+                _add(
+                    reasons,
+                    "review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
+                )
+            elif (
                 set(lane) != pass_keys
                 or lane.get("status") != "complete"
                 or (complete and not _pass_lane_complete(lane))
@@ -367,15 +388,23 @@ def render_review_record(payload: Mapping[str, Any]) -> str:
             model = lane.get("model")
             number = lane.get("model_number")
             prompt = lane.get("prompt")
+            if not all(isinstance(value, str) for value in (provider, model, number, prompt)):
+                raise ReviewError("review pass lane is malformed")
+            assert isinstance(provider, str)
+            assert isinstance(model, str)
+            assert isinstance(number, str)
+            assert isinstance(prompt, str)
             if (
-                not all(isinstance(value, str) for value in (provider, model, number, prompt))
-                or not _named_value(provider)
+                not _named_value(provider)
                 or not _named_value(model)
                 or not _named_value(number)
-                or not _prompt_ok(prompt)
+                or not _prompt_shape_ok(prompt)
             ):
                 raise ReviewError("review pass lane is malformed")
-            assert isinstance(prompt, str)
+            if COMPLIANCE_PROMPT not in prompt:
+                raise ReviewError(
+                    "review prompt must check CONTRIBUTING.md and REVIEW.md read-only"
+                )
             lines.extend([
                 f"Provider: {provider}",
                 f"Model: {model}",
@@ -462,7 +491,7 @@ def _fences_between(
     return fences
 
 
-def _prompt_ok(text: str) -> bool:
+def _prompt_shape_ok(text: str) -> bool:
     if REVIEW_BEGIN in text or REVIEW_END in text:
         return False
     stripped = text.strip()
@@ -470,6 +499,10 @@ def _prompt_ok(text: str) -> bool:
         return False
     words = [word for word in stripped.split() if word]
     return len(words) >= 3 and len(stripped) >= 12
+
+
+def _prompt_ok(text: str) -> bool:
+    return _prompt_shape_ok(text) and COMPLIANCE_PROMPT in text
 
 
 def _lane_label(line: str) -> tuple[str, str] | None:
@@ -570,10 +603,22 @@ def _pass_lane_reasons(section: list[str], fences: Sequence[str]) -> list[str]:
             _add(reasons, reason)
     if not found["Result"] or any(not _result_is_pass(value) for value in found["Result"]):
         _add(reasons, "review result missing")
-    if not found["Prompt"] or not any(
-        _prompt_ok(text) for text in fences if text.strip()
-    ):
-        _add(reasons, "review prompt missing")
+    present = [text for text in fences if text.strip() and not _is_placeholder(text.strip())]
+    if not found["Prompt"] or not any(_prompt_ok(text) for text in present):
+        # A short or missing prompt is still "missing". The read-only
+        # reason is only for a prompt that already has a valid shape.
+        shaped_without_rules = [
+            text
+            for text in present
+            if _prompt_shape_ok(text) and COMPLIANCE_PROMPT not in text
+        ]
+        if shaped_without_rules:
+            _add(
+                reasons,
+                "review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
+            )
+        else:
+            _add(reasons, "review prompt missing")
     return reasons
 
 

@@ -48,6 +48,21 @@ Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
 
 Review lanes execute no software (no tests, builds, or servers).
 
+The first review run reads `CONTRIBUTING.md` and `REVIEW.md` of the target
+repository before it judges the diff. Both files are binding. Quality checks
+the change against them. Logic checks that the change does not add a second
+mechanism for a job those files say to reuse. The lane does not change files.
+Its prompt contains: `Read CONTRIBUTING.md and REVIEW.md. Review this pull
+request against those files only. Do not change any files.` A prompt that
+asks to edit the change is not this review.
+
+A new endpoint, function, user-interface control, error text, clock, or
+permission check is a finding when an existing element in that repository
+does the same job and the pull request does not state why that element
+cannot. Calling the finding not relevant does not clear it. A deviation is
+only the reason written in the pull request. An existing element whose job
+is different is not a substitute, and the review says why.
+
 ## Verdicts
 
 - `approved` → close the matching checklist key with evidence.

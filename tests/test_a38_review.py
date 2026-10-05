@@ -10,6 +10,7 @@ import pytest
 from agent_cli.a38_guard import LOCAL_CI_BEGIN, LOCAL_CI_END, choose_author_report
 from agent_cli.allow import codex_second_review_na
 from agent_cli.a38_review import (
+    COMPLIANCE_PROMPT,
     REVIEW_BEGIN,
     REVIEW_END,
     ReviewError,
@@ -58,7 +59,7 @@ def _run(suffix: str, *, result: str = "pass", evidence: str | None = None) -> l
 _RECORD_PROVIDER = "Acme"
 _RECORD_MODEL = "Acme model"
 _RECORD_NUMBER = "acme-1"
-_RECORD_PROMPT = "Read the diff and name each defect with its file and line."
+_RECORD_PROMPT = COMPLIANCE_PROMPT
 
 
 def _renderable(payload: dict) -> dict:
@@ -860,7 +861,7 @@ def test_threads() -> None:
 
 
 def test_v2_original_holds_the_lane_record() -> None:
-    prompt = "Confirm the added file is valid JSON and is not imported."
+    prompt = COMPLIANCE_PROMPT + " Confirm the added file is valid JSON and is not imported."
     lane = {
         "id": "conformity-a",
         "result": "pass",
@@ -899,6 +900,71 @@ def test_v2_original_holds_the_lane_record() -> None:
     assert "review pass lane is malformed" in validate_declaration(
         short, head=HEAD, markdown_only=False
     )
+
+
+def test_render_rejects_a_prompt_that_skips_the_repo_rules() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    with pytest.raises(
+        ReviewError,
+        match="review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
+    ):
+        render_review_record(payload)
+
+
+def test_short_human_prompt_stays_missing() -> None:
+    payload = _pass_payload()
+    body = _body(payload).replace(COMPLIANCE_PROMPT, "too short")
+    reasons = validate_review_record(body, payload)
+    assert "review prompt missing" in reasons
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" not in reasons
+
+
+def test_shaped_human_prompt_without_the_sentence_names_the_reason() -> None:
+    payload = _pass_payload()
+    body = _body(payload).replace(
+        COMPLIANCE_PROMPT,
+        "Confirm the added file is valid JSON and is not imported.",
+    )
+    reasons = validate_review_record(body, payload)
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" in reasons
+
+
+def test_pass_prompt_must_check_the_repo_rules() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    reasons = validate_declaration(payload, head=HEAD, markdown_only=False)
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" in reasons
 
 
 def test_render_requires_pass_lane_facts() -> None:

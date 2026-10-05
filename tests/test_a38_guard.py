@@ -465,7 +465,7 @@ class FakeAPI:
                             "model": "Acme model",
                             "model_number": "acme-1",
                             "prompt": (
-                                "Read the diff and name each defect with its file and line."
+                                "Read CONTRIBUTING.md and REVIEW.md. Review this pull request against those files only. Do not change any files."
                             ),
                         }
                         for lane in lanes
