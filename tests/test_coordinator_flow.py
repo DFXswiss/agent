@@ -196,6 +196,65 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
                if item.get("task_id") == task["id"])
 
 
+def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pull request body is account data. The ambient runner has no GitHub login."""
+    from agent_cli import github_accounts
+    from agent_cli.coordinator_git import control_dir
+    from agent_cli.coordinator_lanes import write_review_context
+    from agent_cli.runtime import Completed
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    base = "b" * 40
+    tid = "88888888-8888-8888-8888-888888888888"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir(parents=True)
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "repo": "example/project",
+        "ref": "42",
+        "payload": {
+            "coordinator": {
+                "worktree": str(worktree),
+                "base_sha": base,
+                "pr_number": 42,
+                "source": {"body": "Please fix", "repo": "example/project"},
+            }
+        },
+    }
+
+    def ambient(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            raise AssertionError("pull request body must be read with the account runner")
+        if argv and argv[0] == "git" and "show" in argv:
+            spec = argv[-1]
+            if spec.endswith(":CONTRIBUTING.md"):
+                return Completed(0, "short English sentence\n", "")
+            return Completed(1, "", "fatal: path 'REVIEW.md' does not exist in the base commit")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    def account_runner(self, base_runner, *, require_git=False):  # noqa: ANN001
+        def scoped_run(argv: list[str]) -> Completed:
+            if argv[:3] == ["gh", "pr", "view"]:
+                return Completed(
+                    0,
+                    json.dumps({"body": "Reused: src/a.py:1 existing pay sheet\n"}),
+                    "",
+                )
+            return base_runner(argv)
+
+        return scoped_run
+
+    monkeypatch.setattr(github_accounts.Account, "runner", account_runner)
+    note = write_review_context(store, worker, task, ambient)
+    assert "Pull request body" in note
+    pr_body = control_dir(worker, tid) / f"review-base-{base[:12]}-pr-body.txt"
+    assert pr_body.read_text(encoding="utf-8") == "Reused: src/a.py:1 existing pay sheet\n"
+
+
 def test_stale_head_invalidates_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
