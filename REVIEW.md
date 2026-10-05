@@ -30,4 +30,4 @@ Each pass lane is read-only. Its prompt contains this reminder: `Read CONTRIBUTI
 
 Quality judges the diff against these files, read at the base revision, and against the linked issue. Logic judges whether the diff is sound and complete for the linked issue, and whether it adds a second mechanism for a job these files say to reuse.
 
-A defect is a violation that the pull request does not justify. Zero defects means no such violation remains.
+A missed reuse is a defect unless the pull request names the element and the different job, as the deviation section says. A hard requirement, or a contradiction of `CONTRIBUTING.md`, stays a defect even when the pull request discusses it. Zero defects means no such violation remains.
