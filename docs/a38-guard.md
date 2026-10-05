@@ -411,6 +411,7 @@ Supported events:
 - `issue_comment`: created, edited, deleted, for PRs only.
 - Scheduled all-open reconciliation on the trusted default branch; cadence is repository configuration.
 - `workflow_dispatch`: an explicit repository and PR number, or `all_open=true` reconciliation.
+- `workflow_run`: completed. The installed workflow lists each CI workflow `name` and never lists this guard workflow. The guard asks the API which open pull requests contain `head_sha`. `workflow_run.pull_requests` is not authoritative. The head is not checked out. No open pull request is a successful no-op. `check_run` and `check_suite` are not used because GitHub does not start a workflow from a check Actions itself created.
 
 Issue-only events and the bot's own comments are ignored. The installed workflow deliberately has no `pull_request_review` trigger because that event loads workflow code from PR context. After approving or dismissing a policy review, dispatch the default-branch workflow for immediate reassessment. Do not post a separate comment such as `A38 recheck`. Further comments do not invalidate a declaration that is already valid for the current head. Scheduled reconciliation catches other review and base changes. The CLI can consume submitted/edited/dismissed review events supplied by an external trusted event handler, but never grant elevated credentials to PR-context workflow code. Never check out the PR head in a privileged bot job.
 

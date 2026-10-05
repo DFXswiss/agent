@@ -22,9 +22,14 @@ on:
         required: false
         type: boolean
         default: false
+  workflow_run:
+    # Adopters replace this with the name of each CI workflow whose completion
+    # can change readiness. Never include this guard workflow or the job loops.
+    workflows: ["REPLACE_WITH_CI_WORKFLOW_NAME"]
+    types: [completed]
 
 concurrency:
-  group: a38-pr-guard-${{ github.repository }}-${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && 'sweep' || 'event' }}
+  group: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.all_open)) && format('a38-pr-guard-sweep-{0}', github.repository) || format('a38-pr-guard-event-{0}-{1}', github.repository, github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.event.issue.number || github.event.inputs.pr || github.run_id) }}
   cancel-in-progress: false
 
 permissions:
