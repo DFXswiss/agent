@@ -316,6 +316,93 @@ def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytes
     assert "`src/habit.ts:12` member habit route" in fake.pr["body"]
     assert fake.pr_edits and "gh" not in " ".join(fake.launched)
 
+    from agent_cli.coordinator_git import phase_publish_draft
+
+    task["payload"]["coordinator"]["phase"] = "publish_draft"
+    task["payload"]["coordinator"]["resume_phase"] = "implement"
+    published = phase_publish_draft(store, worker, task, fake)
+    assert any("posted reused and added list" in line for line in published)
+    assert task["payload"]["coordinator"]["phase"] == "implement"
+    assert task["payload"]["coordinator"].get("resume_phase") in (None, "")
+
+
+def test_surface_list_without_a_draft_is_not_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean tree still waits for the draft before the reused list can be posted."""
+    from agent_cli.coordinator_common import CoordinatorError, save_task
+    from agent_cli.coordinator_git import refresh_draft_body
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    tid = "88888888-8888-8888-8888-888888888888"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "repo": "example/project",
+        "ref": "",
+        "title": "Fix",
+        "state": "implementing",
+        "current_round": 1,
+        "reused_lines": ["`src/pay.ts:40` existing gift invoice"],
+        "added_lines": ["`src/habit.ts:12` member habit route"],
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "source": {"repo": "example/project", "number": 7, "title": "Fix"},
+                "lane_outcome": {
+                    "role": "implementer",
+                    "round": 1,
+                    "status": "complete",
+                    "result": "done",
+                    "stdout": "done",
+                    "applied": False,
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        "round-1",
+        {
+            "id": "round-1",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    with pytest.raises(CoordinatorError, match="no draft to update"):
+        refresh_draft_body(store, worker, task, fake)
+
+    def draft_not_open(store, worker, task, runner):
+        task["payload"]["coordinator"]["phase"] = "publish_draft"
+        save_task(store, task)
+        return ["draft pending after push"]
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.stage_sign_commit_if_changes",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr("agent_cli.coordinator_runtime.ensure_draft", draft_not_open)
+    lines = phase_implement(store, worker, task, fake, None)
+    saved = store.row("task", tid)
+    outcome = saved["payload"]["coordinator"]["lane_outcome"]
+    assert outcome.get("applied") is not True
+    assert saved["payload"]["coordinator"]["phase"] == "publish_draft"
+    assert saved["payload"]["coordinator"]["resume_phase"] == "implement"
+    assert any("draft pending" in line for line in lines)
+    assert saved["state"] != "reviewing"
+
 
 def test_stale_head_invalidates_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)

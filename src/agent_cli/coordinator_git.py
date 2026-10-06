@@ -413,7 +413,7 @@ def refresh_draft_body(
     number = as_int(c.get("pr_number") or task.get("ref"))
     target = target_repo(task)
     if number is None or target == "":
-        return []
+        raise CoordinatorError("reused and added list has no draft to update")
     body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
     queue_activity(
@@ -545,6 +545,7 @@ def phase_publish_draft(
     lines = ensure_draft(store, worker, task, runner)
     c = coord(task)
     if c.get("pr_number"):
+        lines = lines + refresh_draft_body(store, worker, task, runner)
         resume = c.get("resume_phase")
         if isinstance(resume, str) and resume:
             c["phase"] = resume

@@ -808,6 +808,12 @@ def phase_implement(
                 return ["implementer outcome recovery; draft pending"] + draft_lines
         else:
             draft_lines = ensure_draft(store, worker, task, runner)
+            if not coord(task).get("pr_number") and coord(task).get("phase") == "publish_draft":
+                c = coord(task)
+                c["resume_phase"] = "implement"
+                c["lane_outcome"] = pending_outcome
+                save_task(store, task)
+                return ["implementer outcome recovery; draft pending"] + draft_lines
         lines = _apply_implementer_outcome(
             store,
             worker,
@@ -890,6 +896,13 @@ def phase_implement(
             return ["implementer committed; draft pending"] + draft_lines
     else:
         draft_lines = ensure_draft(store, worker, task, runner)
+        if not coord(task).get("pr_number") and coord(task).get("phase") == "publish_draft":
+            c = coord(task)
+            c["resume_phase"] = "implement"
+            if status == "complete" and model_result == "ask":
+                c["pending_question"] = redact(result.stdout or "Question from implementer.")
+            save_task(store, task)
+            return ["implementer committed; draft pending"] + draft_lines
 
     return _apply_implementer_outcome(
         store,
