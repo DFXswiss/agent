@@ -404,6 +404,112 @@ def test_surface_list_without_a_draft_is_not_applied(
     assert saved["state"] != "reviewing"
 
 
+def test_truncated_outcome_keeps_the_surface_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A list past the redacted prefix is held until the draft number exists."""
+    from agent_cli.coordinator_common import save_task
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    tid = "66666666-6666-6666-6666-666666666666"
+    reused = "`src/pay.ts:40` existing gift invoice"
+    added = "`src/habit.ts:12` member habit route"
+    full = (
+        "STATUS: complete\nRESULT: done\n"
+        "SUMMARY_EN: Hold the reused list on the task.\n"
+        "SUMMARY_DE: Die Wiederverwendungsliste bleibt auf dem Task.\n"
+        + ("note " * 1200)
+        + f"\nREUSED: {reused}\nADDED: {added}\n"
+    )
+    calls = {"n": 0}
+
+    def fake_launch(*_args, **_kwargs):
+        calls["n"] += 1
+        return {"id": "agent-1"}, type("Result", (), {"stdout": full, "returncode": 0})()
+
+    opened = {"yes": False}
+
+    def ensure(_store, _worker, task, _runner):
+        c = task["payload"]["coordinator"]
+        if not opened["yes"]:
+            c["phase"] = "publish_draft"
+            save_task(store, task)
+            return ["draft pending after push"]
+        c["pr_number"] = 42
+        task["ref"] = "42"
+        save_task(store, task)
+        return ["draft opened example/project#42"]
+
+    monkeypatch.setattr("agent_cli.coordinator_runtime.launch_lane", fake_launch)
+    monkeypatch.setattr("agent_cli.coordinator_runtime.review_rules_bound", lambda *_a, **_k: True)
+    monkeypatch.setattr("agent_cli.coordinator_runtime.set_checklist", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.stage_sign_commit_if_changes",
+        lambda *_a, **_k: "a" * 40,
+    )
+    monkeypatch.setattr("agent_cli.coordinator_runtime.ensure_draft", ensure)
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "repo": "example/project",
+        "ref": "",
+        "title": "Fix",
+        "state": "implementing",
+        "current_round": 1,
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "worktree": "/tmp/unused-worktree",
+                "source": {"repo": "example/project", "number": 7, "title": "Fix"},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        "round-1",
+        {
+            "id": "round-1",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    lines = phase_implement(store, worker, task, fake, None)
+    saved = store.row("task", tid)
+    outcome = saved["payload"]["coordinator"]["lane_outcome"]
+    assert any("draft pending" in line for line in lines)
+    assert outcome.get("applied") is not True
+    assert "habit.ts" not in str(outcome.get("stdout") or "")
+    assert saved["reused_lines"] == [reused]
+    assert saved["added_lines"] == [added]
+    assert saved["payload"]["coordinator"].get("surface_list_held") is True
+    assert saved["state"] != "reviewing"
+    assert calls["n"] == 1
+
+    opened["yes"] = True
+    resumed = store.row("task", tid)
+    lines = phase_implement(store, worker, resumed, fake, None)
+    saved = store.row("task", tid)
+    assert calls["n"] == 1, lines
+    assert "lane_outcome" not in saved["payload"]["coordinator"]
+    assert saved["payload"]["coordinator"]["phase"] == "inner_review", lines
+    assert saved["payload"]["coordinator"].get("surface_list_held") in (None, False)
+    assert added in fake.pr["body"]
+    assert reused in fake.pr["body"]
+
+
 def test_stale_head_invalidates_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)

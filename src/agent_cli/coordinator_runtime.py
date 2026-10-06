@@ -526,6 +526,50 @@ def _spec_context(c: dict[str, Any], extra: str = "") -> str:
     )
 
 
+def _held_surface_list(task: dict[str, Any]) -> tuple[list[str], list[str]] | None:
+    """Lines captured from the full lane stdout, while that capture is current."""
+    c = coord(task)
+    if c.get("surface_list_held") is not True:
+        return None
+    reused = task.get("reused_lines")
+    added = task.get("added_lines")
+    if not (
+        isinstance(reused, list)
+        and reused
+        and isinstance(added, list)
+        and added
+        and all(isinstance(line, str) and line for line in [*reused, *added])
+    ):
+        return None
+    return (reused, added)
+
+
+def _hold_surface_list(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    stdout: str,
+) -> None:
+    """Remember a reused and added list from the full implementer stdout.
+
+    The persisted lane outcome keeps only a redacted prefix. Parsing that
+    prefix once a draft number exists can miss a list that was present, mark
+    the outcome applied, and start another implementer. Holding the lines
+    does not post them.
+    """
+    if not review_rules_bound(store, worker, runner, task):
+        return
+    listed = parse_surface_list(stdout)
+    c = coord(task)
+    if listed is None:
+        c.pop("surface_list_held", None)
+        return
+    task["reused_lines"] = listed[0]
+    task["added_lines"] = listed[1]
+    c["surface_list_held"] = True
+
+
 def _apply_implementer_outcome(
     store: Store,
     worker: WorkerConfig,
@@ -705,28 +749,31 @@ def _apply_implementer_outcome(
     task["change_summary_en"] = summaries["en"]
     task["change_summary_de"] = summaries["de"]
     if review_rules_bound(store, worker, runner, task):
-        listed = parse_surface_list(stdout)
-        if listed is None:
-            c.update(
-                phase="blocked",
-                resume_phase="implement",
-                blocker="completed patch lacks a reused and added list with file and line",
-            )
-            _mark_applied()
-            task["state"] = "open"
-            save_task(store, task)
-            return publish_blocker(
-                store,
-                worker,
-                task,
-                runner,
-                c["blocker"],
-                kind="surface-list",
-                reply_checkpoint=True,
-            )
-        task["reused_lines"] = listed[0]
-        task["added_lines"] = listed[1]
+        # A list held from the full stdout wins over the redacted prefix.
+        if _held_surface_list(task) is None:
+            listed = parse_surface_list(stdout)
+            if listed is None:
+                c.update(
+                    phase="blocked",
+                    resume_phase="implement",
+                    blocker="completed patch lacks a reused and added list with file and line",
+                )
+                _mark_applied()
+                task["state"] = "open"
+                save_task(store, task)
+                return publish_blocker(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    c["blocker"],
+                    kind="surface-list",
+                    reply_checkpoint=True,
+                )
+            task["reused_lines"] = listed[0]
+            task["added_lines"] = listed[1]
         refresh_draft_body(store, worker, task, runner)
+        coord(task).pop("surface_list_held", None)
     tr["implementer_verdict"] = "done"
     store.write("task_round", "update", tr["id"], strip_row(tr))
     task["state"] = "reviewing"
@@ -869,6 +916,8 @@ def phase_implement(
         "stdout": redact(result.stdout or ""),
         "applied": False,
     }
+    save_task(store, task)
+    _hold_surface_list(store, worker, task, runner, result.stdout or "")
     save_task(store, task)
 
     worktree = str(c["worktree"])
