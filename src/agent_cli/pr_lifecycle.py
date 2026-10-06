@@ -128,14 +128,15 @@ def _own_record(api: Any, assessment: Any, marker: str) -> tuple[Mapping | None,
 
 
 def _save_record(api: Any, assessment: Any, marker: str, record: dict,
-                 en: str, de: str, *, create: bool = False,
+                 en: str, de: str, *, en_title: str, de_title: str,
+                 create: bool = False,
                  existing: Mapping | None = None) -> dict:
     from .a38_guard import GuardError
     if create:
         existing = None
     elif not (isinstance(existing, Mapping) and type(existing.get("id")) is int):
         existing, _ = _own_record(api, assessment, marker)
-    body = (f"{marker}\nEN:\n{en}\n\nDE:\n{de}\n\n<details>\n<summary>Details</summary>\n\n"
+    body = (f"{marker}\nEN:\n{en_title}\n{en}\n\nDE:\n{de_title}\n{de}\n\n<details>\n<summary>Details</summary>\n\n"
             + "```json\n" + json.dumps(record, indent=2, sort_keys=True) + "\n```\n\n</details>")
     if existing and existing.get("body") == body:
         return existing
@@ -181,6 +182,16 @@ def _note_review(reasons: list[str], assessment: Any) -> None:
     if assessment.mode == "enforce" and not assessment.review_ok:
         if LIFECYCLE_REASON not in reasons:
             reasons.insert(0, LIFECYCLE_REASON)
+
+
+def visible_transition_titles(record: Mapping) -> tuple[str, str]:
+    """Return the EN and DE title lines for an applied lifecycle comment."""
+    if record["state"] == "draft":
+        return ("Back to draft", "Zurück auf Entwurf")
+    reasons = record["reasons"]
+    if isinstance(reasons, list) and reasons:
+        return ("Ready despite blockers", "Bereit trotz Hindernissen")
+    return ("Ready for review", "Bereit zum Review")
 
 
 def visible_transition_sentences(
@@ -292,7 +303,11 @@ def _complete_transition_comment(api: Any, assessment: Any, record: dict) -> Non
     en, de = visible_transition_sentences(
         record, write_ready_reason=getattr(assessment, "write_ready_reason", "") or ""
     )
-    _save_record(api, assessment, STATE_MARKER, {**record, "phase": "applied"}, en, de)
+    en_title, de_title = visible_transition_titles(record)
+    _save_record(
+        api, assessment, STATE_MARKER, {**record, "phase": "applied"}, en, de,
+        en_title=en_title, de_title=de_title,
+    )
 
 
 def record_workflow_approval(api: Any, assessment: Any, run: Mapping, *, create: bool = True,
@@ -314,6 +329,7 @@ def record_workflow_approval(api: Any, assessment: Any, run: Mapping, *, create:
     saved = _save_record(api, assessment, AUTH_MARKER, {**identity, "runs": runs},
                          "I have authorized the recorded CI runs; their results are still pending.",
                          "Ich habe die dokumentierten CI-Läufe freigegeben; ihre Ergebnisse stehen noch aus.",
+                         en_title="CI authorization", de_title="CI-Freigabe",
                          create=create, existing=existing)
     assessment._auth_comment = saved
     return saved
@@ -335,6 +351,7 @@ def record_workflow_cancel(api: Any, assessment: Any, run: Mapping, *, create: b
         api, assessment, CANCEL_MARKER, {**identity, "runs": runs},
         "I cancelled waiting workflow runs that were superseded or not on the allowlist, so they no longer await approval.",
         "Ich habe wartende Workflow-Läufe abgebrochen, die überholt oder nicht auf der Allowlist sind, damit sie nicht weiter auf Freigabe warten.",
+        en_title="CI runs cancelled", de_title="CI-Läufe abgebrochen",
         create=create, existing=existing,
     )
 
@@ -456,9 +473,13 @@ def note_authorized_run_results(api: Any, assessment: Any, *, dry_run: bool = Fa
     if all(row["conclusion"] == "success" for row in runs):
         en = "The recorded CI runs finished successfully."
         de = "Die dokumentierten CI-Läufe sind erfolgreich abgeschlossen."
+        en_title = "CI succeeded"
+        de_title = "CI erfolgreich"
     else:
         en = "The recorded CI runs finished; not every run succeeded."
         de = "Die dokumentierten CI-Läufe sind abgeschlossen; nicht jeder Lauf war erfolgreich."
+        en_title = "CI finished with failures"
+        de_title = "CI mit Fehlern abgeschlossen"
     record = {
         "repo": assessment.repo,
         "pr": assessment.pr,
@@ -466,7 +487,10 @@ def note_authorized_run_results(api: Any, assessment: Any, *, dry_run: bool = Fa
         "base": assessment.base_sha,
         "runs": runs,
     }
-    _save_record(api, assessment, RESULT_MARKER, record, en, de, create=True)
+    _save_record(
+        api, assessment, RESULT_MARKER, record, en, de,
+        en_title=en_title, de_title=de_title, create=True,
+    )
     return [{"status": "posted", "runs": runs}]
 
 
@@ -594,6 +618,8 @@ def note_manual_workflow_activation(
         record,
         f"The workflows were started manually by {en_name}.",
         f"Die Workflows wurden von {de_name} manuell aktiviert.",
+        en_title="CI started manually",
+        de_title="CI manuell gestartet",
         create=True,
     )
     assessment.writes.append("workflow:manual-comment")
@@ -951,6 +977,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 hold,
                 "A write collaborator holds Ready; this pull request stays ready for review.",
                 "Ein Write-Collaborator hält Ready; dieser Pull Request bleibt bereit zum Review.",
+                en_title="Ready held",
+                de_title="Ready bleibt",
             )
         return {"action": "unchanged", "reasons": reasons, "dry_run": dry_run}
     if not pull["draft"] and reasons:
@@ -1051,6 +1079,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
                 hold,
                 "A write collaborator holds Ready; this pull request stays ready for review.",
                 "Ein Write-Collaborator hält Ready; dieser Pull Request bleibt bereit zum Review.",
+                en_title="Ready held",
+                de_title="Ready bleibt",
             )
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     if target == "draft" and not final_reasons:
@@ -1059,7 +1089,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
               "base": snap.base_sha, "state": target, "reasons": final_reasons, "phase": "planned"}
     _save_record(api, assessment, STATE_MARKER, record,
                  "I am checking the final conditions for the documented readiness change.",
-                 "Ich prüfe die letzten Voraussetzungen für die dokumentierte Statusänderung.", create=True)
+                 "Ich prüfe die letzten Voraussetzungen für die dokumentierte Statusänderung.",
+                 en_title="Checking readiness", de_title="Status wird geprüft", create=True)
     if fetch_pull(api, assessment.repo, assessment.pr) != snap:
         raise GuardError("pull changed after lifecycle intent; no readiness change")
     if target == "ready":
@@ -1086,6 +1117,8 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
             record,
             "Readiness is unchanged; convert to Draft did not take effect.",
             "Der Status bleibt unverändert; die Umstellung auf Draft hat nicht gegriffen.",
+            en_title="Readiness unchanged",
+            de_title="Status unverändert",
         )
         return {"action": "unchanged", "reasons": final_reasons, "dry_run": False}
     assessment.writes.append(f"pull:{target}")

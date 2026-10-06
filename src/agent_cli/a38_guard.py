@@ -1589,9 +1589,11 @@ def build_comment_body(assessment: Assessment) -> str:
         return (
             f"{GUARD_MARKER}\n\n"
             "EN:\n"
+            "Draft instructions\n"
             f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n"
             "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs, and the review record lets the guard mark it ready once that CI and the required checks are green. A later comment that records only the second review run is optional and does not delay Ready.\n\n"
             "DE:\n"
+            "Entwurf-Hinweise\n"
             f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
             "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe, und der Review-Nachweis lässt den Guard Ready setzen, sobald diese CI und die erforderlichen Checks grün sind. Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.\n"
         )
@@ -1726,11 +1728,27 @@ def build_comment_body(assessment: Assessment) -> str:
             "using the PR author's account, preserving its report block.\n"
         )
     )
+    if assessment.mode == "observe":
+        en_title = "A38 observe"
+        de_title = "A38 Hinweis"
+    else:
+        titles = {
+            "pass": ("A38 pass", "A38 bestanden"),
+            "fail": ("A38 fail", "A38 nicht bestanden"),
+            "invalid_policy": ("A38 invalid policy", "A38 ungültige Policy"),
+            "not_configured": ("A38 not configured", "A38 nicht konfiguriert"),
+            "not_applicable": ("A38 not applicable", "A38 nicht anwendbar"),
+        }
+        if assessment.status in titles:
+            en_title, de_title = titles[assessment.status]
+        else:
+            en_title = f"A38 {assessment.status}"
+            de_title = f"A38 {assessment.status}"
     body = (
         f"{GUARD_MARKER}\n"
         "dfx pr guard\n\n"
-        f"EN: Thanks for your contribution! This repository follows A38. {en}\n\n"
-        f"DE: Danke für deinen Beitrag! In diesem Repository gilt A38. {de}\n\n"
+        f"EN:\n{en_title}\nThanks for your contribution! This repository follows A38. {en}\n\n"
+        f"DE:\n{de_title}\nDanke für deinen Beitrag! In diesem Repository gilt A38. {de}\n\n"
         f"<details>\n<summary>Details</summary>\n\n{details}\n</details>\n"
     )
     if len(body) > MAX_COMMENT_BODY:

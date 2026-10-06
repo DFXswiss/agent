@@ -112,14 +112,22 @@ def _add(reasons: list[str], text: str) -> None:
 def validate_visible(body: str, passes: int) -> list[str]:
     if not isinstance(body, str) or not _is_int(passes) or passes < 1:
         return ["review visible text missing"]
+    if _lane_ids_of(body) == set(RUNS[1]):
+        en_title = "Second review"
+        de_title = "Zweiter Review"
+        en_sentence = f"Second review after {passes} review passes."
+        de_sentence = f"Zweiter Review nach {passes} Review-Durchläufen."
+    else:
+        en_title = "First review"
+        de_title = "Erster Review"
+        en_sentence = f"Ready after {passes} review passes."
+        de_sentence = f"Bereit nach {passes} Review-Durchläufen."
     begin = body.find(REVIEW_BEGIN)
     end = body.find(REVIEW_END)
     visible = body
     if 0 <= begin < end:
         visible = body[:begin] + body[end + len(REVIEW_END) :]
     lines = visible.splitlines()
-    en_sentence = f"Ready after {passes} review passes."
-    de_sentence = f"Bereit nach {passes} Review-Durchläufen."
 
     def next_content(start: int) -> int:
         """Next non-blank line. Blank lines may separate the required lines; other text may not."""
@@ -129,18 +137,33 @@ def validate_visible(body: str, passes: int) -> list[str]:
         return -1
 
     en_at = next_content(0)
-    ready_at = next_content(en_at + 1) if en_at >= 0 and lines[en_at] == "EN:" else -1
+    title_at = next_content(en_at + 1) if en_at >= 0 and lines[en_at] == "EN:" else -1
+    ready_at = next_content(title_at + 1) if title_at >= 0 and lines[title_at] == en_title else -1
     summary_at = next_content(ready_at + 1) if ready_at >= 0 and lines[ready_at] == en_sentence else -1
     if summary_at >= 0 and lines[summary_at] == "DE:":
         summary_at = -1
     de_at = next_content(summary_at + 1) if summary_at >= 0 else -1
     if de_at >= 0 and lines[de_at] != "DE:":
         de_at = -1
-    de_sentence_at = next_content(de_at + 1) if de_at >= 0 else -1
+    de_title_at = next_content(de_at + 1) if de_at >= 0 else -1
+    if de_title_at >= 0 and lines[de_title_at] != de_title:
+        de_title_at = -1
+    de_sentence_at = next_content(de_title_at + 1) if de_title_at >= 0 else -1
     if de_sentence_at >= 0 and lines[de_sentence_at] != de_sentence:
         de_sentence_at = -1
     de_summary = next_content(de_sentence_at + 1) if de_sentence_at >= 0 else -1
-    if min(en_at, ready_at, summary_at, de_at, de_sentence_at, de_summary) < 0:
+    if min(en_at, title_at, ready_at, summary_at, de_at, de_title_at, de_sentence_at, de_summary) < 0:
+        return ["review visible text missing"]
+    # The ready sentences belong only to the first run. A second-run comment
+    # that still uses them, including as the summary, is not a declaration.
+    if en_title == "Second review" and any(
+        line
+        in (
+            f"Ready after {passes} review passes.",
+            f"Bereit nach {passes} Review-Durchläufen.",
+        )
+        for line in lines
+    ):
         return ["review visible text missing"]
     return []
 
