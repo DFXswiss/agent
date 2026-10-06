@@ -277,6 +277,14 @@ def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytes
 
     assert parse_surface_list("STATUS: complete\n") is None
     assert parse_surface_list("REUSED: none — nothing\nADDED: bare\n") is None
+    assert parse_surface_list("REUSED: none —\nADDED: none -\n") is None
+    assert parse_surface_list(
+        "REUSED: none — nothing existing does this job\n"
+        "ADDED: none - no new surface\n"
+    ) == (
+        ["none — nothing existing does this job"],
+        ["none - no new surface"],
+    )
     parsed = parse_surface_list(
         "REUSED: `src/pay.ts:40` existing gift invoice\n"
         "ADDED: `src/habit.ts:12` member habit route\n"

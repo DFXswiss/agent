@@ -274,8 +274,8 @@ _SURFACE_REF = re.compile(r"`[^`\n]+:\d+`")
 def parse_surface_list(stdout: str) -> tuple[list[str], list[str]] | None:
     """REUSED and ADDED lines from an implementer, or None when absent or malformed.
 
-    Each line names a file and a line inside backticks, or starts with ``none``
-    and gives the reason that section is empty. The script posts the lines.
+    Each line names a file and a line inside backticks, or is ``none`` with a
+    dash and a non-empty reason that the section is empty. The script posts the lines.
     It does not invent them, and a model lane does not call GitHub.
     """
     reused = re.findall(r"(?m)^REUSED: ([^\r\n]+)$", stdout)
@@ -290,7 +290,10 @@ def parse_surface_list(stdout: str) -> tuple[list[str], list[str]] | None:
         if _SURFACE_REF.search(text):
             return True
         folded = text.casefold()
-        return folded.startswith("none —") or folded.startswith("none -")
+        for prefix in ("none —", "none -"):
+            if folded.startswith(prefix):
+                return bool(folded[len(prefix):].strip())
+        return False
 
     if any(not acceptable(value) for value in [*reused, *added]):
         return None
