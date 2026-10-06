@@ -263,6 +263,23 @@ def test_second_run_second_review_lines_without_title_are_visible_text_missing()
     assert validate_visible(body, payload["passes"]) == ["review visible text missing"]
 
 
+def test_second_run_ready_lines_as_summary_are_visible_text_missing() -> None:
+    payload = _pass_payload(lanes=_run("b"))
+    passes = payload["passes"]
+    body = (
+        _body(payload, passes=passes)
+        .replace("The change is covered.", f"Ready after {passes} review passes.", 1)
+        .replace(
+            "Die Änderung ist abgedeckt.",
+            f"Bereit nach {passes} Review-Durchläufen.",
+            1,
+        )
+    )
+    assert "Second review after" in body
+    assert "Zweiter Review nach" in body
+    assert validate_visible(body, passes) == ["review visible text missing"]
+
+
 def test_second_run_ready_lines_with_second_review_title_are_visible_text_missing() -> None:
     payload = _pass_payload(lanes=_run("b"))
     passes = payload["passes"]

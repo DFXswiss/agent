@@ -154,6 +154,17 @@ def validate_visible(body: str, passes: int) -> list[str]:
     de_summary = next_content(de_sentence_at + 1) if de_sentence_at >= 0 else -1
     if min(en_at, title_at, ready_at, summary_at, de_at, de_title_at, de_sentence_at, de_summary) < 0:
         return ["review visible text missing"]
+    # The ready sentences belong only to the first run. A second-run comment
+    # that still uses them, including as the summary, is not a declaration.
+    if en_title == "Second review" and any(
+        line
+        in (
+            f"Ready after {passes} review passes.",
+            f"Bereit nach {passes} Review-Durchläufen.",
+        )
+        for line in lines
+    ):
+        return ["review visible text missing"]
     return []
 
 

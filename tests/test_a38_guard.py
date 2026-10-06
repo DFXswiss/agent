@@ -1213,6 +1213,34 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertNotIn("even while this pull request is a draft", body)
         self.assertNotIn("auch im Draft", body)
 
+    def test_assessment_comment_title_names_the_status(self) -> None:
+        cases = (
+            ("pass", "enforce", "A38 pass", "A38 bestanden"),
+            ("fail", "enforce", "A38 fail", "A38 nicht bestanden"),
+            ("invalid_policy", "enforce", "A38 invalid policy", "A38 ungültige Policy"),
+            ("not_configured", "enforce", "A38 not configured", "A38 nicht konfiguriert"),
+            ("not_applicable", "enforce", "A38 not applicable", "A38 nicht anwendbar"),
+            ("held", "enforce", "A38 held", "A38 held"),
+            ("pass", "observe", "A38 observe", "A38 Hinweis"),
+            ("fail", "observe", "A38 observe", "A38 Hinweis"),
+        )
+        for status, mode, en_title, de_title in cases:
+            body = a38_guard.build_comment_body(
+                Assessment(
+                    ok=status == "pass",
+                    status=status,
+                    mode=mode,
+                    repo="o/r",
+                    reasons=["example"],
+                )
+            )
+            lines = body.splitlines()
+            with self.subTest(status=status, mode=mode):
+                self.assertEqual(lines[lines.index("EN:") + 1], en_title)
+                self.assertEqual(lines[lines.index("DE:") + 1], de_title)
+                self.assertTrue(lines[lines.index("EN:") + 2].startswith("Thanks"))
+                self.assertTrue(lines[lines.index("DE:") + 2].startswith("Danke"))
+
     def test_draft_title_only_generated_with_hard_fails(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(
