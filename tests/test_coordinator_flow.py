@@ -9,6 +9,7 @@ Fake GitHub/model/check transports only. No real network/models/tests.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -285,6 +286,24 @@ def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytes
         ["none — nothing existing does this job"],
         ["none - no new surface"],
     )
+    assert parse_surface_list(
+        "REUSED: none — nothing existing does this job\n"
+        "REUSED: `src/pay.ts:40` existing gift invoice\n"
+        "ADDED: `src/habit.ts:12` member habit route\n"
+    ) is None
+    assert parse_surface_list(
+        "REUSED: none — first empty reason\n"
+        "REUSED: none - second empty reason\n"
+        "ADDED: none - no new surface\n"
+    ) is None
+    assert parse_surface_list(
+        "REUSED: `src/pay.ts:40` existing gift invoice\n"
+        "REUSED: `src/other.ts:2` also reused\n"
+        "ADDED: none - no new surface\n"
+    ) == (
+        ["`src/pay.ts:40` existing gift invoice", "`src/other.ts:2` also reused"],
+        ["none - no new surface"],
+    )
     parsed = parse_surface_list(
         "REUSED: `src/pay.ts:40` existing gift invoice\n"
         "ADDED: `src/habit.ts:12` member habit route\n"
@@ -436,6 +455,14 @@ def test_truncated_outcome_keeps_the_surface_list(
         + f"\nREUSED: {reused}\nADDED: {added}\n"
     )
     calls = {"n": 0}
+    outcome_saves: list[dict] = []
+
+    def recording_save(store, task):
+        snapshot = copy.deepcopy(task)
+        outcome = (snapshot.get("payload") or {}).get("coordinator", {}).get("lane_outcome")
+        if isinstance(outcome, dict):
+            outcome_saves.append(snapshot)
+        return save_task(store, task)
 
     def fake_launch(*_args, **_kwargs):
         calls["n"] += 1
@@ -454,6 +481,7 @@ def test_truncated_outcome_keeps_the_surface_list(
         save_task(store, task)
         return ["draft opened example/project#42"]
 
+    monkeypatch.setattr("agent_cli.coordinator_runtime.save_task", recording_save)
     monkeypatch.setattr("agent_cli.coordinator_runtime.launch_lane", fake_launch)
     monkeypatch.setattr("agent_cli.coordinator_runtime.review_rules_bound", lambda *_a, **_k: True)
     monkeypatch.setattr("agent_cli.coordinator_runtime.set_checklist", lambda *_a, **_k: None)
@@ -503,6 +531,11 @@ def test_truncated_outcome_keeps_the_surface_list(
     assert saved["reused_lines"] == [reused]
     assert saved["added_lines"] == [added]
     assert saved["payload"]["coordinator"].get("surface_list_held") is True
+    assert outcome_saves
+    first = outcome_saves[0]
+    assert first["reused_lines"] == [reused]
+    assert first["added_lines"] == [added]
+    assert first["payload"]["coordinator"].get("surface_list_held") is True
     assert saved["state"] != "reviewing"
     assert calls["n"] == 1
 

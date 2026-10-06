@@ -271,31 +271,55 @@ def is_sha(value: str) -> bool:
 _SURFACE_REF = re.compile(r"`[^`\n]+:\d+`")
 
 
+def _surface_line_kind(value: str) -> str | None:
+    """``file``, ``none``, or None when the line is not one exclusive kind.
+
+    A line that both names a file and claims the section is empty is neither.
+    """
+    text = value.strip()
+    if text == "" or len(text) > 400:
+        return None
+    has_ref = _SURFACE_REF.search(text) is not None
+    folded = text.casefold()
+    empty_reason = False
+    for prefix in ("none —", "none -"):
+        if folded.startswith(prefix):
+            empty_reason = bool(folded[len(prefix):].strip())
+            break
+    if has_ref and empty_reason:
+        return None
+    if has_ref:
+        return "file"
+    if empty_reason:
+        return "none"
+    return None
+
+
+def _surface_section_ok(lines: list[str]) -> bool:
+    """One reasoned ``none`` line, or only file references. Never both."""
+    kinds = [_surface_line_kind(value) for value in lines]
+    if any(kind is None for kind in kinds):
+        return False
+    none_count = sum(kind == "none" for kind in kinds)
+    file_count = sum(kind == "file" for kind in kinds)
+    if none_count == 1 and file_count == 0:
+        return True
+    return none_count == 0 and file_count >= 1
+
+
 def parse_surface_list(stdout: str) -> tuple[list[str], list[str]] | None:
     """REUSED and ADDED lines from an implementer, or None when absent or malformed.
 
-    Each line names a file and a line inside backticks, or is ``none`` with a
-    dash and a non-empty reason that the section is empty. The script posts the lines.
-    It does not invent them, and a model lane does not call GitHub.
+    Each section is either exactly one ``none`` line with a dash and a
+    non-empty reason, or one or more lines that name a file and a line inside
+    backticks. Mixing those in one section is not a list. The script posts the
+    lines. It does not invent them, and a model lane does not call GitHub.
     """
     reused = re.findall(r"(?m)^REUSED: ([^\r\n]+)$", stdout)
     added = re.findall(r"(?m)^ADDED: ([^\r\n]+)$", stdout)
     if not reused or not added:
         return None
-
-    def acceptable(value: str) -> bool:
-        text = value.strip()
-        if text == "" or len(text) > 400:
-            return False
-        if _SURFACE_REF.search(text):
-            return True
-        folded = text.casefold()
-        for prefix in ("none —", "none -"):
-            if folded.startswith(prefix):
-                return bool(folded[len(prefix):].strip())
-        return False
-
-    if any(not acceptable(value) for value in [*reused, *added]):
+    if not _surface_section_ok(reused) or not _surface_section_ok(added):
         return None
     return ([value.strip() for value in reused], [value.strip() for value in added])
 

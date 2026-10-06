@@ -394,11 +394,14 @@ def _runs_line(lane_ids: Sequence[str]) -> str | None:
     return None
 
 
-def render_review_record(payload: Mapping[str, Any]) -> str:
+def render_review_record(payload: Mapping[str, Any], *, rules_bound: bool = True) -> str:
     """Record lines the guard requires before the review machine block.
 
     A pass lane must already name its provider, model, model number, and
     prompt. A missing fact is an error. This does not fill in a sample.
+    The reminder sentence is required only when ``rules_bound`` is true,
+    the same rule the validator uses when the base revision has ``REVIEW.md``.
+    Extra sentences stay allowed either way.
     """
     lanes = payload.get("lanes")
     if not isinstance(lanes, list):
@@ -437,7 +440,7 @@ def render_review_record(payload: Mapping[str, Any]) -> str:
                 or not _prompt_shape_ok(prompt)
             ):
                 raise ReviewError("review pass lane is malformed")
-            if COMPLIANCE_PROMPT not in prompt:
+            if rules_bound and COMPLIANCE_PROMPT not in prompt:
                 raise ReviewError(
                     "review prompt must check CONTRIBUTING.md and REVIEW.md read-only"
                 )

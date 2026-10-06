@@ -904,8 +904,10 @@ def phase_implement(
         lane_runner=lane_runner,
     )
     status, model_result = parse_model_result(result.stdout, result.returncode)
-    # Persist completed lane outcome BEFORE signing/publishing so a crash resumes
-    # applying this outcome instead of launching another implementer.
+    # Hold the full-text list, then persist it with this outcome in one save.
+    # The stored stdout is only a redacted prefix, so a crash after an earlier
+    # save could not recover the list and could leave an older list active.
+    # A crash before this save resumes by launching the implementer again.
     c["lane_outcome"] = {
         "role": "implementer",
         "vendor": "grok",
@@ -916,7 +918,6 @@ def phase_implement(
         "stdout": redact(result.stdout or ""),
         "applied": False,
     }
-    save_task(store, task)
     _hold_surface_list(store, worker, task, runner, result.stdout or "")
     save_task(store, task)
 

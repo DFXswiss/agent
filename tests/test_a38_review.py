@@ -904,6 +904,34 @@ def test_v2_original_holds_the_lane_record() -> None:
     )
 
 
+def test_render_skips_the_reminder_when_rules_are_not_bound() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    rendered = render_review_record(payload, rules_bound=False)
+    assert lane["prompt"] in rendered
+    assert COMPLIANCE_PROMPT not in rendered
+    with pytest.raises(
+        ReviewError,
+        match="review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
+    ):
+        render_review_record(payload)
+
+
 def test_render_rejects_a_prompt_that_skips_the_repo_rules() -> None:
     lane = {
         "id": "conformity-a",
