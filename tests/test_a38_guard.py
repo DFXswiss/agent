@@ -1241,6 +1241,112 @@ class A38GuardE2ETests(unittest.TestCase):
                 self.assertTrue(lines[lines.index("EN:") + 2].startswith("Thanks"))
                 self.assertTrue(lines[lines.index("DE:") + 2].startswith("Danke"))
 
+    def test_draft_workflow_bytes_asks_for_approval(self) -> None:
+        body = a38_guard.build_comment_body(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=False,
+                reasons=[
+                    ".github/workflows/script-tests.yml bytes changed vs base; "
+                    "a maintainer must approve the current head"
+                ],
+            )
+        )
+        self.assertIn("<!-- PR-GUARD:A38:v1 -->", body)
+        lines = body.splitlines()
+        self.assertEqual(lines[lines.index("EN:") + 1], "Approval required")
+        self.assertEqual(
+            lines[lines.index("EN:") + 2],
+            "This pull request needs an approval on the current head from someone "
+            "with write, maintain, or admin who is not the author, so the guard "
+            "can continue.",
+        )
+        self.assertEqual(lines[lines.index("DE:") + 1], "Freigabe nötig")
+        self.assertEqual(
+            lines[lines.index("DE:") + 2],
+            "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
+            "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
+            "ist, damit der Guard die Arbeit fortsetzen kann.",
+        )
+        self.assertIn(".github/workflows/script-tests.yml", body)
+        self.assertIn(
+            "An ordinary approving review on the current head is enough.",
+            body,
+        )
+        self.assertNotIn("Draft instructions", body)
+
+    def test_draft_policy_bytes_asks_for_approval(self) -> None:
+        body = a38_guard.build_comment_body(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=False,
+                reasons=[
+                    ".github/pr-guard.json bytes changed vs base; "
+                    "a maintainer must approve the current head"
+                ],
+            )
+        )
+        lines = body.splitlines()
+        self.assertEqual(lines[lines.index("EN:") + 1], "Approval required")
+        self.assertEqual(
+            lines[lines.index("EN:") + 2],
+            "This pull request needs an approval on the current head from someone "
+            "with write, maintain, or admin who is not the author, so the guard "
+            "can continue.",
+        )
+        self.assertEqual(lines[lines.index("DE:") + 1], "Freigabe nötig")
+        self.assertEqual(
+            lines[lines.index("DE:") + 2],
+            "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
+            "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
+            "ist, damit der Guard die Arbeit fortsetzen kann.",
+        )
+        self.assertIn(".github/pr-guard.json", body)
+        self.assertNotIn("Draft instructions", body)
+
+    def test_draft_several_approval_paths_are_listed(self) -> None:
+        body = a38_guard.build_comment_body(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=False,
+                reasons=[
+                    ".github/workflows/script-tests.yml bytes changed vs base; "
+                    "a maintainer must approve the current head",
+                    ".github/pr-guard.json bytes changed vs base; "
+                    "a maintainer must approve the current head",
+                    "unclassified workflow job",
+                ],
+            )
+        )
+        self.assertIn(".github/workflows/script-tests.yml", body)
+        self.assertIn(".github/pr-guard.json", body)
+        self.assertIn("Other problems: unclassified workflow job", body)
+        self.assertNotIn("Draft instructions", body)
+
+    def test_draft_hard_fail_keeps_instructions_despite_workflow_bytes(self) -> None:
+        body = a38_guard.build_comment_body(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=True,
+                reasons=[
+                    ".github/workflows/script-tests.yml bytes changed vs base; "
+                    "a maintainer must approve the current head"
+                ],
+            )
+        )
+        self.assertIn("Draft instructions", body)
+        self.assertIn("Entwurf-Hinweise", body)
+        self.assertNotIn("Approval required", body)
+        self.assertNotIn("<details>", body)
+
     def test_draft_title_only_generated_with_hard_fails(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(
