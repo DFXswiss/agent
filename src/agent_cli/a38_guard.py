@@ -1585,6 +1585,56 @@ def _steps_url(url: str) -> str:
 
 def build_comment_body(assessment: Assessment) -> str:
     if assessment.draft and not _draft_docs_waiver_pass(assessment):
+        if not assessment.hard_fail:
+            suffix = (
+                " bytes changed vs base; a maintainer must approve the current head"
+            )
+            approval_paths: list[str] = []
+            other_reasons: list[str] = []
+            matched = False
+            for reason in assessment.reasons:
+                if reason.endswith(suffix):
+                    matched = True
+                    path = reason[: -len(suffix)].strip()
+                    if path and path not in approval_paths:
+                        approval_paths.append(path)
+                else:
+                    other_reasons.append(reason)
+            if matched:
+                details = ""
+                for path in approval_paths:
+                    details += f"- Changed paths: `{path}`\n"
+                details += (
+                    "- An ordinary approving review on the current head is enough. "
+                    "No special review text is required. The reviewer needs write, "
+                    "maintain, or admin and must not be the author.\n"
+                )
+                for path in approval_paths:
+                    details += f"- Geänderte Pfade: `{path}`\n"
+                details += (
+                    "- Eine gewöhnliche freigebende Review auf dem aktuellen Head reicht. "
+                    "Kein besonderer Review-Text. Die Person braucht Schreib-, Maintain- "
+                    "oder Admin-Recht und darf nicht der Autor sein.\n"
+                )
+                if other_reasons:
+                    details += "- Other problems: " + "; ".join(other_reasons) + "\n"
+                body = (
+                    f"{GUARD_MARKER}\n\n"
+                    "EN:\n"
+                    "Approval required\n"
+                    "This pull request needs an approval on the current head from someone "
+                    "with write, maintain, or admin who is not the author, so the guard "
+                    "can continue.\n\n"
+                    "DE:\n"
+                    "Freigabe nötig\n"
+                    "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
+                    "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
+                    "ist, damit der Guard die Arbeit fortsetzen kann.\n\n"
+                    f"<details>\n<summary>Details</summary>\n\n{details}\n</details>\n"
+                )
+                if len(body) > MAX_COMMENT_BODY:
+                    body = body[: MAX_COMMENT_BODY - 1] + "…\n"
+                return body
         url = _steps_url(assessment.standard_url)
         return (
             f"{GUARD_MARKER}\n\n"
