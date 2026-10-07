@@ -200,15 +200,13 @@ def test_change_before_write_rejects_stale_authorization(what):
     assert not fake.posts
 
 
-@pytest.mark.parametrize("what", ["ambiguous", "not_rebased", "retargeted", "reopened", "older", "foreign_link"])
+@pytest.mark.parametrize("what", ["ambiguous", "retargeted", "reopened", "older", "foreign_link"])
 def test_private_fork_association_must_be_proven(what):
     fake = ApprovalAPI()
     if what == "ambiguous":
         other = copy.deepcopy(fake.pull)
         other["number"] = 2
         fake.extra_pulls = [other]
-    elif what == "not_rebased":
-        fake.comparison = "diverged"
     elif what in {"retargeted", "reopened"}:
         fake.events = [{"event": "base_ref_changed" if what == "retargeted" else "reopened",
                         "created_at": "2026-09-05T11:30:00Z"}]
@@ -219,6 +217,14 @@ def test_private_fork_association_must_be_proven(what):
     with pytest.raises(GuardError):
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.posts
+
+
+def test_private_fork_diverged_base_still_approves():
+    fake = ApprovalAPI()
+    fake.comparison = "diverged"
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.workflow_approvals == [{"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}]
+    assert fake.posts == [101]
 
 
 @pytest.mark.parametrize("inventory", [{"total_count": 1000, "workflow_runs": []},

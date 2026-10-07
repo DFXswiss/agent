@@ -403,18 +403,25 @@ def test_linked_association_approves_without_open_pr_fallback() -> None:
     assert fake.event_reads == 0
 
 
-@pytest.mark.parametrize("status", ["ahead", "identical"])
-def test_private_fork_empty_associations_unique_open_pr_and_base_ancestor(status: str) -> None:
+def test_private_fork_empty_associations_unique_open_pr() -> None:
     fake = _private_fork()
-    fake.comparison = status
     fake.events = [{"event": "reopened", "created_at": "2026-09-04T00:00:00Z"}]
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.workflow_approvals == [
         {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
     ]
     assert fake.posts == [101]
-    assert any(f"{BASE}...{HEAD}" in url for url in fake.compare_urls)
     assert fake.event_reads >= 1
+
+
+@pytest.mark.parametrize("status", ["ahead", "identical", "diverged", "behind", "unknown"])
+def test_private_fork_does_not_require_base_ancestry(status: str) -> None:
+    fake = _private_fork()
+    fake.comparison = status
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.workflow_approvals[0]["status"] == "approved"
+    assert fake.posts == [101]
+    assert fake.compare_urls == []
 
 
 # --- latest-per-workflow / exact match / attempt ----------------------------
@@ -846,12 +853,9 @@ def test_missing_ambiguous_and_cross_pr_links_fail_closed(what: str) -> None:
         "ambiguous-open",
         "number-mismatch",
         "list-sha-changed",
-        "diverged",
-        "behind",
         "retargeted",
         "force-pushed",
         "reopened",
-        "compare-malformed",
         "event-malformed",
     ],
 )
@@ -867,18 +871,12 @@ def test_private_fork_fallback_fails_closed_without_unique_stable_link(what: str
         fake.listed_pulls = [listed]
     elif what == "list-sha-changed":
         fake.list_head_sha = BASE2
-    elif what == "diverged":
-        fake.comparison = "diverged"
-    elif what == "behind":
-        fake.comparison = "behind"
     elif what == "retargeted":
         fake.events = [{"event": "base_ref_changed", "created_at": "2026-09-05T11:30:00Z"}]
     elif what == "force-pushed":
         fake.events = [{"event": "base_ref_force_pushed", "created_at": "2026-09-05T11:30:00Z"}]
     elif what == "reopened":
         fake.events = [{"event": "reopened", "created_at": "2026-09-05T11:30:00Z"}]
-    elif what == "compare-malformed":
-        fake.comparison = "nope"
     else:
         fake.events = ["not-an-object"]
     with pytest.raises(GuardError):

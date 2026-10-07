@@ -142,8 +142,8 @@ def _belongs_to_pull(api: Any, run: Mapping[str, Any], pull: Mapping[str, Any]) 
             raise GuardError("workflow run targets another pull request head or base")
         return
     # GitHub returns an empty associations array for private forks. Prove the
-    # fork branch identifies exactly this open PR, and that its head contains
-    # the current base (an older-base merge cannot change the measured tree).
+    # fork branch identifies exactly this open PR. The approved run is bound to
+    # the head commit; a newer base does not change that commit.
     pulls = api.paginate(f"/repos/{repo}/pulls?state=open")
     matches = [p for p in pulls if isinstance(p, Mapping) and p.get("state") == "open"
                and _field(p, "head", "ref") == head["ref"]
@@ -153,9 +153,6 @@ def _belongs_to_pull(api: Any, run: Mapping[str, Any], pull: Mapping[str, Any]) 
     match = matches[0]
     if _field(match, "head", "sha") != head["sha"] or _field(match, "base", "sha") != pull["base"]["sha"]:
         raise GuardError("fork pull request changed during workflow approval")
-    comparison = api.get_json(f"/repos/{repo}/compare/{pull['base']['sha']}...{head['sha']}")
-    if not isinstance(comparison, Mapping) or comparison.get("status") not in {"ahead", "identical"}:
-        raise GuardError("fork workflow approval requires the current base to be included in the head")
     events = api.paginate(f"/repos/{repo}/issues/{pull['number']}/events")
     for event in events:
         if not isinstance(event, Mapping):
