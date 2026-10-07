@@ -374,6 +374,62 @@ def execute_github(store: Store, runner: Runner, *, activity_ids: tuple[str, ...
     return github_act.scan_github(Scoped(), runner)
 
 
+def draft_pr_body(
+    source: dict[str, Any],
+    reused: list[str] | None = None,
+    added: list[str] | None = None,
+) -> str:
+    """Draft text. Empty headings stay until the script has a real list to post."""
+    if reused or added:
+        reused_text = "\n".join(f"- {line}" for line in reused or [])
+        added_text = "\n".join(f"- {line}" for line in added or [])
+        details = f"Reused:\n{reused_text}\nAdded:\n{added_text}\n\n"
+    else:
+        details = "Reused:\nAdded:\n\n"
+    return (
+        f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
+        f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        f"{details}"
+        "</details>\n"
+    )
+
+
+def refresh_draft_body(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Post the implementer's reused and added list. The script calls GitHub, not the model."""
+    c = coord(task)
+    reused = task.get("reused_lines")
+    added = task.get("added_lines")
+    if not isinstance(reused, list) or not isinstance(added, list) or not reused or not added:
+        return []
+    source = c.get("source") if isinstance(c.get("source"), dict) else {}
+    if not isinstance(source.get("repo"), str) or source.get("number") is None:
+        return []
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    target = target_repo(task)
+    if number is None or target == "":
+        raise CoordinatorError("reused and added list has no draft to update")
+    body = draft_pr_body(source, [str(line) for line in reused], [str(line) for line in added])
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-body:{task['id']}:{body}"))
+    queue_activity(
+        store,
+        activity_id=activity_id,
+        session_id=worker.session_id,
+        typ="pr.body",
+        payload={"repo": target, "number": number, "body": body},
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
+    row = store.row("activity", activity_id)
+    if row is None or row.get("execution_status") != "done":
+        raise CoordinatorError("pr.body did not update the draft")
+    return [f"posted reused and added list on {target}#{number}"]
+
+
 def ensure_draft(
     store: Store,
     worker: WorkerConfig,
@@ -420,10 +476,7 @@ def ensure_draft(
 
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-pr-open:{task['id']}:{target}:{branch}"))
     title = str(task.get("title") or branch)
-    body = (
-        f"EN:\nDraft for {source['repo']}#{source['number']}.\n\n"
-        f"DE:\nEntwurf für {source['repo']}#{source['number']}.\n"
-    )
+    body = draft_pr_body(source)
     head = pr_head_ref(branch, target, publication)
     queue_activity(
         store,
@@ -492,6 +545,7 @@ def phase_publish_draft(
     lines = ensure_draft(store, worker, task, runner)
     c = coord(task)
     if c.get("pr_number"):
+        lines = lines + refresh_draft_body(store, worker, task, runner)
         resume = c.get("resume_phase")
         if isinstance(resume, str) and resume:
             c["phase"] = resume

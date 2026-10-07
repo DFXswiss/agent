@@ -1,4 +1,4 @@
-"""Execute pending pr.open, comment.post, review.post, and issue.write activities via gh."""
+"""Execute pending pr.open, pr.body, comment.post, review.post, and issue.write activities via gh."""
 
 from __future__ import annotations
 
@@ -283,6 +283,35 @@ def _run_pr_open(store: Store, runner: Runner, row: dict[str, Any], *, expected_
     except _GhError as exc:
         _mark(store, row, status="error", error=str(exc))
         return f"pr.open {rid} error"
+
+
+def _run_pr_body(store: Store, runner: Runner, row: dict[str, Any]) -> str:
+    """Replace a draft pull request body. The model does not call gh."""
+    rid = str(row["id"])
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        _mark(store, row, status="error", error="payload must be an object")
+        return f"pr.body {rid} error"
+    repo = _repo_ok(payload.get("repo"))
+    number = _as_int(payload.get("number"))
+    try:
+        body = _optional_str_field(payload, "body", nonempty=True)
+    except _GhError as exc:
+        _mark(store, row, status="error", error=str(exc))
+        return f"pr.body {rid} error"
+    if repo is None or number is None or body is None:
+        _mark(store, row, status="error", error="pr.body requires repo, number, body")
+        return f"pr.body {rid} error"
+    try:
+        _gh_text(
+            ["gh", "pr", "edit", str(number), "--repo", repo, "--body", body],
+            runner,
+        )
+        _mark(store, row, status="done", result={"repo": repo, "number": number})
+        return f"pr.body {rid} done number={number}"
+    except _GhError as exc:
+        _mark(store, row, status="error", error=str(exc))
+        return f"pr.body {rid} error"
 
 
 def _run_issue_write(store: Store, runner: Runner, row: dict[str, Any]) -> str:
@@ -598,7 +627,7 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
 
 
 def scan_github(store: Store, runner: Runner) -> list[str]:
-    """Execute pending pr.open, comment.post, review.post, issue.write owned by this device.
+    """Execute pending pr.open, pr.body, comment.post, review.post, issue.write owned by this device.
 
     Other pending types (subscription.set, query.request, …) are skipped.
     Returns human-readable status lines, one per handled row.
@@ -606,7 +635,7 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
     lines: list[str] = []
     for row in store.pending_work():
         typ = row.get("type")
-        if typ not in {"pr.open", "issue.write", "comment.post", "review.post"}:
+        if typ not in {"pr.open", "pr.body", "issue.write", "comment.post", "review.post"}:
             continue
         try:
             account = load_accounts(store.home).for_session(str(row.get("session_id") or ""))
@@ -618,6 +647,8 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
             scoped_runner = account.runner(runner)
             if typ == "pr.open":
                 lines.append(_run_pr_open(store, scoped_runner, row, expected_login=account.login))
+            elif typ == "pr.body":
+                lines.append(_run_pr_body(store, scoped_runner, row))
             elif typ == "issue.write":
                 lines.append(_run_issue_write(store, scoped_runner, row))
             elif typ == "comment.post":

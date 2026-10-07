@@ -1,5 +1,7 @@
 # Contributing
 
+[REVIEW.md](REVIEW.md) is binding for every change and for every review of a change. Read it and this file at the base revision of the pull request. A pull request that changes either file does not replace that base text for the rest of its diff. The review does not change files.
+
 - Branch from `develop`. Never push to `develop` or `main`.
 - Push the branch to this repository. Do not open the pull request from a personal fork.
 - As soon as the first signed task commit exists, push and open a **draft** pull request immediately ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). Stay draft until **Ready for review** (below). A human merges; only then is the pull request completed.
@@ -31,7 +33,7 @@ A draft plus local tests is not done. Do not claim the pull request is finished,
 Ready for review requires all of:
 
 1. Signed commits on a branch in this repository, based on `develop`.
-2. The first review run is required on **this** head. Quality/conformance reads this file first. The session that authored the diff does not sit those reviews. The second review run does not block Ready.
+2. The first review run is required on **this** head. Quality/conformance reads this file and `REVIEW.md` first. The session that authored the diff does not sit those reviews. The second review run does not block Ready.
 3. Codex runs only if both grok dimensions are approved. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor.
 4. Zero findings only after an explicit complete pass. Empty, partial, timeout, or unavailable output is not zero findings. Iterate until the first review run on this head is approved. The first review run is required and the second review run does not block Ready.
 5. Inner implement/review rounds (`review-loop`) are not the PR reviews (`pr-review`).

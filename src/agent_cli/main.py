@@ -139,6 +139,7 @@ ACTIVITY_TYPES = frozenset(
         "session.register",
         "issue.write",
         "pr.open",
+        "pr.body",
         "pr.merged",
         "issue.assigned",
         "issue.assigned.ack",

@@ -10,12 +10,15 @@ import pytest
 from agent_cli.a38_guard import LOCAL_CI_BEGIN, LOCAL_CI_END, choose_author_report
 from agent_cli.allow import codex_second_review_na
 from agent_cli.a38_review import (
+    COMPLIANCE_PROMPT,
     REVIEW_BEGIN,
     REVIEW_END,
     ReviewError,
     parse_review_block,
     render_review_record,
+    review_rules_bound,
     select_review_comment,
+    evaluate_review_gate,
     unresolved_thread_reasons,
     validate_declaration,
     validate_review_record,
@@ -58,7 +61,7 @@ def _run(suffix: str, *, result: str = "pass", evidence: str | None = None) -> l
 _RECORD_PROVIDER = "Acme"
 _RECORD_MODEL = "Acme model"
 _RECORD_NUMBER = "acme-1"
-_RECORD_PROMPT = "Read the diff and name each defect with its file and line."
+_RECORD_PROMPT = COMPLIANCE_PROMPT
 
 
 def _renderable(payload: dict) -> dict:
@@ -860,7 +863,7 @@ def test_threads() -> None:
 
 
 def test_v2_original_holds_the_lane_record() -> None:
-    prompt = "Confirm the added file is valid JSON and is not imported."
+    prompt = COMPLIANCE_PROMPT + " Confirm the added file is valid JSON and is not imported."
     lane = {
         "id": "conformity-a",
         "result": "pass",
@@ -899,6 +902,245 @@ def test_v2_original_holds_the_lane_record() -> None:
     assert "review pass lane is malformed" in validate_declaration(
         short, head=HEAD, markdown_only=False
     )
+
+
+def test_render_skips_the_reminder_when_rules_are_not_bound() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    rendered = render_review_record(payload, rules_bound=False)
+    assert lane["prompt"] in rendered
+    assert COMPLIANCE_PROMPT not in rendered
+    with pytest.raises(
+        ReviewError,
+        match="review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
+    ):
+        render_review_record(payload)
+
+
+def test_render_rejects_a_prompt_that_skips_the_repo_rules() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    with pytest.raises(
+        ReviewError,
+        match="review prompt must check CONTRIBUTING.md and REVIEW.md read-only",
+    ):
+        render_review_record(payload)
+
+
+def test_short_machine_prompt_is_missing_not_malformed() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "too short",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a", prompt="not recorded")],
+    }
+    reasons = validate_declaration(payload, head=HEAD, markdown_only=False)
+    assert "review prompt missing" in reasons
+    assert "review pass lane is malformed" not in reasons
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" not in reasons
+    unbound = validate_declaration(
+        payload, head=HEAD, markdown_only=False, rules_bound=False
+    )
+    assert "review prompt missing" in unbound
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" not in unbound
+
+
+def test_short_human_prompt_stays_missing() -> None:
+    payload = _pass_payload()
+    body = _body(payload).replace(COMPLIANCE_PROMPT, "too short")
+    reasons = validate_review_record(body, payload)
+    assert "review prompt missing" in reasons
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" not in reasons
+
+
+def test_shaped_human_prompt_without_the_sentence_names_the_reason() -> None:
+    payload = _pass_payload()
+    body = _body(payload).replace(
+        COMPLIANCE_PROMPT,
+        "Confirm the added file is valid JSON and is not imported.",
+    )
+    reasons = validate_review_record(body, payload)
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" in reasons
+
+
+def test_pass_prompt_must_check_the_repo_rules() -> None:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    payload = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+    reasons = validate_declaration(payload, head=HEAD, markdown_only=False)
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" in reasons
+
+
+def _shaped_prompt_payload() -> dict:
+    lane = {
+        "id": "conformity-a",
+        "result": "pass",
+        "status": "complete",
+        "provider": "xAI",
+        "model": "Grok",
+        "model_number": "grok-4.7",
+        "prompt": "Confirm the added file is valid JSON and is not imported.",
+    }
+    return {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [lane, dict(lane, id="logic-a")],
+    }
+
+
+def test_unbound_rules_accept_a_shaped_prompt_without_the_sentence() -> None:
+    payload = _shaped_prompt_payload()
+    assert validate_declaration(
+        payload, head=HEAD, markdown_only=False, rules_bound=False
+    ) == []
+    compliant = copy.deepcopy(payload)
+    for lane in compliant["lanes"]:
+        lane["prompt"] = COMPLIANCE_PROMPT
+    body = _body(compliant, passes=1).replace(
+        COMPLIANCE_PROMPT, payload["lanes"][0]["prompt"]
+    )
+    assert validate_review_record(body, payload, rules_bound=False) == []
+    bound = validate_review_record(body, payload, rules_bound=True)
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" in bound
+
+
+def test_a_short_prompt_stays_missing_when_rules_are_unbound() -> None:
+    payload = _pass_payload()
+    body = _body(payload).replace(COMPLIANCE_PROMPT, "too short")
+    reasons = validate_review_record(body, payload, rules_bound=False)
+    assert "review prompt missing" in reasons
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" not in reasons
+
+
+class _RulesLookup:
+    def __init__(
+        self,
+        status: int,
+        *,
+        explode: bool = False,
+        commit_status: int = 200,
+        commit_explode: bool = False,
+    ) -> None:
+        self.status = status
+        self.explode = explode
+        self.commit_status = commit_status
+        self.commit_explode = commit_explode
+        self.calls: list[str] = []
+
+    def resolve_own_user(self) -> tuple[int, str]:
+        return 99, "guard"
+
+    def request(self, method: str, path: str) -> tuple[int, dict, dict]:
+        self.calls.append(path)
+        if "/commits/" in path:
+            if self.commit_explode:
+                raise RuntimeError("commit lookup down")
+            body = {"sha": HEAD} if self.commit_status == 200 else {}
+            return self.commit_status, body, {}
+        if self.explode:
+            raise RuntimeError("lookup down")
+        return self.status, {}, {}
+
+
+def test_review_rules_bound_reads_the_base_file() -> None:
+    present = _RulesLookup(200)
+    assert review_rules_bound(present, "o/r", HEAD) is True
+    assert all("/commits/" not in path for path in present.calls)
+    assert review_rules_bound(_RulesLookup(404), "o/r", HEAD) is False
+    assert review_rules_bound(_RulesLookup(404, commit_status=404), "o/r", HEAD) is None
+    assert review_rules_bound(_RulesLookup(404, commit_status=500), "o/r", HEAD) is None
+    assert review_rules_bound(_RulesLookup(404, commit_explode=True), "o/r", HEAD) is None
+    assert review_rules_bound(_RulesLookup(500), "o/r", HEAD) is None
+    assert review_rules_bound(_RulesLookup(200, explode=True), "o/r", HEAD) is None
+    assert review_rules_bound(_RulesLookup(200), "o/r", "not-a-sha") is None
+
+
+def test_unreadable_base_commit_fails_the_review_gate_closed() -> None:
+    ok, reasons = evaluate_review_gate(
+        _RulesLookup(404, commit_status=404),
+        repo="o/r",
+        number=1,
+        head=HEAD,
+        base_sha=HEAD,
+        author_id=10,
+        comments=[],
+        markdown_only=False,
+    )
+    assert ok is False
+    assert reasons == ["review rules unavailable"]
+
+
+def test_review_gate_fails_closed_when_the_rules_lookup_fails() -> None:
+    ok, reasons = evaluate_review_gate(
+        _RulesLookup(500),
+        repo="o/r",
+        number=1,
+        head=HEAD,
+        base_sha=HEAD,
+        author_id=10,
+        comments=[],
+        markdown_only=False,
+    )
+    assert ok is False
+    assert reasons == ["review rules unavailable"]
 
 
 def test_render_requires_pass_lane_facts() -> None:

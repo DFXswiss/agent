@@ -16,6 +16,7 @@ import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
 from .allow import CHECKLIST_KEYS
@@ -35,6 +36,7 @@ from .coordinator_common import (
     harden_grok_write_argv,
     owned_session,
     parse_model_result,
+    parse_surface_list,
     redact,
     review_is_approved,
     save_task,
@@ -48,6 +50,7 @@ from .coordinator_git import (
     ensure_draft,
     phase_checkout,
     phase_publish_draft,
+    refresh_draft_body,
     repo_cfg,
     stage_sign_commit_if_changes,
     verify_signed_clean_head,
@@ -72,7 +75,9 @@ from .coordinator_lanes import (
     launch_lane,
     phase_pr_gates_codex,
     phase_pr_gates_grok,
+    review_rules_bound,
     set_checklist,
+    write_review_context,
     write_review_diff,
 )
 from .github_accounts import AccountError, load_accounts
@@ -480,6 +485,26 @@ def _find_round(store: Store, task_id: str, round_num: int) -> dict[str, Any]:
     raise CoordinatorError(f"round {round_num} missing")
 
 
+def _implementer_instruction(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> str:
+    """Implementer task, plus the surface list when the base has REVIEW.md."""
+    text = "Implement the assigned issue. Edit files only."
+    if not review_rules_bound(store, worker, runner, task):
+        return text
+    return (
+        text
+        + "\nThe base revision has REVIEW.md. After the summary lines, include "
+        "one or more REUSED: lines and one or more ADDED: lines. Each line names "
+        "a file and a line, for example REUSED: `src/pay.ts:40` existing gift invoice. "
+        "When that section is empty, write REUSED: none — nothing existing does this job. "
+        "The script posts these lines into the pull request body. Do not call GitHub."
+    )
+
+
 def _spec_context(c: dict[str, Any], extra: str = "") -> str:
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     title = source.get("title") or ""
@@ -499,6 +524,50 @@ def _spec_context(c: dict[str, Any], extra: str = "") -> str:
         f"{('Findings to address:\\n' + redact(str(findings))) if findings else ''}\n"
         f"{extra}\n"
     )
+
+
+def _held_surface_list(task: dict[str, Any]) -> tuple[list[str], list[str]] | None:
+    """Lines captured from the full lane stdout, while that capture is current."""
+    c = coord(task)
+    if c.get("surface_list_held") is not True:
+        return None
+    reused = task.get("reused_lines")
+    added = task.get("added_lines")
+    if not (
+        isinstance(reused, list)
+        and reused
+        and isinstance(added, list)
+        and added
+        and all(isinstance(line, str) and line for line in [*reused, *added])
+    ):
+        return None
+    return (reused, added)
+
+
+def _hold_surface_list(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    stdout: str,
+) -> None:
+    """Remember a reused and added list from the full implementer stdout.
+
+    The persisted lane outcome keeps only a redacted prefix. Parsing that
+    prefix once a draft number exists can miss a list that was present, mark
+    the outcome applied, and start another implementer. Holding the lines
+    does not post them.
+    """
+    if not review_rules_bound(store, worker, runner, task):
+        return
+    listed = parse_surface_list(stdout)
+    c = coord(task)
+    if listed is None:
+        c.pop("surface_list_held", None)
+        return
+    task["reused_lines"] = listed[0]
+    task["added_lines"] = listed[1]
+    c["surface_list_held"] = True
 
 
 def _apply_implementer_outcome(
@@ -679,6 +748,32 @@ def _apply_implementer_outcome(
         summaries[language] = redact(values[0].strip(), limit=800)
     task["change_summary_en"] = summaries["en"]
     task["change_summary_de"] = summaries["de"]
+    if review_rules_bound(store, worker, runner, task):
+        # A list held from the full stdout wins over the redacted prefix.
+        if _held_surface_list(task) is None:
+            listed = parse_surface_list(stdout)
+            if listed is None:
+                c.update(
+                    phase="blocked",
+                    resume_phase="implement",
+                    blocker="completed patch lacks a reused and added list with file and line",
+                )
+                _mark_applied()
+                task["state"] = "open"
+                save_task(store, task)
+                return publish_blocker(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    c["blocker"],
+                    kind="surface-list",
+                    reply_checkpoint=True,
+                )
+            task["reused_lines"] = listed[0]
+            task["added_lines"] = listed[1]
+        refresh_draft_body(store, worker, task, runner)
+        coord(task).pop("surface_list_held", None)
     tr["implementer_verdict"] = "done"
     store.write("task_round", "update", tr["id"], strip_row(tr))
     task["state"] = "reviewing"
@@ -760,6 +855,12 @@ def phase_implement(
                 return ["implementer outcome recovery; draft pending"] + draft_lines
         else:
             draft_lines = ensure_draft(store, worker, task, runner)
+            if not coord(task).get("pr_number") and coord(task).get("phase") == "publish_draft":
+                c = coord(task)
+                c["resume_phase"] = "implement"
+                c["lane_outcome"] = pending_outcome
+                save_task(store, task)
+                return ["implementer outcome recovery; draft pending"] + draft_lines
         lines = _apply_implementer_outcome(
             store,
             worker,
@@ -798,13 +899,15 @@ def phase_implement(
         role="implementer",
         vendor="grok",
         round_num=round_num,
-        spec_body=_spec_context(c, "Implement the assigned issue. Edit files only."),
+        spec_body=_spec_context(c, _implementer_instruction(store, worker, task, runner)),
         runner=runner,
         lane_runner=lane_runner,
     )
     status, model_result = parse_model_result(result.stdout, result.returncode)
-    # Persist completed lane outcome BEFORE signing/publishing so a crash resumes
-    # applying this outcome instead of launching another implementer.
+    # Hold the full-text list, then persist it with this outcome in one save.
+    # The stored stdout is only a redacted prefix, so a crash after an earlier
+    # save could not recover the list and could leave an older list active.
+    # A crash before this save resumes by launching the implementer again.
     c["lane_outcome"] = {
         "role": "implementer",
         "vendor": "grok",
@@ -815,6 +918,7 @@ def phase_implement(
         "stdout": redact(result.stdout or ""),
         "applied": False,
     }
+    _hold_surface_list(store, worker, task, runner, result.stdout or "")
     save_task(store, task)
 
     worktree = str(c["worktree"])
@@ -842,6 +946,13 @@ def phase_implement(
             return ["implementer committed; draft pending"] + draft_lines
     else:
         draft_lines = ensure_draft(store, worker, task, runner)
+        if not coord(task).get("pr_number") and coord(task).get("phase") == "publish_draft":
+            c = coord(task)
+            c["resume_phase"] = "implement"
+            if status == "complete" and model_result == "ask":
+                c["pending_question"] = redact(result.stdout or "Question from implementer.")
+            save_task(store, task)
+            return ["implementer committed; draft pending"] + draft_lines
 
     return _apply_implementer_outcome(
         store,
@@ -922,9 +1033,12 @@ def phase_inner_review(
             diff_path = write_review_diff(store, worker, task, runner, head=head)
             excerpt_path = diff_path.with_suffix(".excerpt.txt")
             excerpt = excerpt_path.read_text(encoding="utf-8")
+            base_note = write_review_context(store, worker, task, runner)
             diff_note = (
                 f"Script-generated diff artifact: {diff_path}\n"
-                f"Read CONTRIBUTING.md and attached skills first.\n"
+                f"{COMPLIANCE_PROMPT} Read the attached skills at the base "
+                "revision, not from the pull request head.\n"
+                f"{base_note}"
                 f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
             )
         except (CoordinatorError, OSError) as exc:
