@@ -1474,7 +1474,7 @@ def test_unrelated_review_head_is_still_rejected() -> None:
         covered_at={HEAD: "2026-09-01T00:00:00Z"},
     )
     assert chosen is None
-    assert reasons == ["review completion comment missing"]
+    assert reasons == ["review head does not match the pull request"]
 
 
 def test_newer_unrelated_review_does_not_hide_an_ancestor() -> None:
@@ -1724,6 +1724,20 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
     assert ok is False
     assert reasons == ["review head does not match the pull request"]
     assert on_base.compare_calls == [f"/repos/o/r/compare/{BASE}...{HEAD}"]
+
+    early_base = _comment(
+        _body(_pass_payload(head=BASE, lanes=_run("a"))),
+        cid=12,
+        user=10,
+        created="2026-08-02T00:00:00Z",
+    )
+    early = _GateApi(
+        known,
+        {f"/repos/o/r/compare/{BASE}...{HEAD}": _ahead()},
+    )
+    ok, reasons = _gate(early, [early_base])
+    assert ok is False
+    assert reasons == ["review head does not match the pull request"]
 
     ancient_path = f"/repos/o/r/compare/{ANCIENT}...{HEAD}"
     ancient_base = f"/repos/o/r/compare/{BASE}...{ANCIENT}"

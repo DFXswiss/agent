@@ -1130,8 +1130,10 @@ def select_review_comment(
     must be created after ``committed_at``. With ``covered_at``, each key is a
     SHA the caller has proved is ``head`` or an ancestor of it, and the value
     is that SHA's committer time. The comment must be created after the commit
-    it names, not after every later commit. ``ancestry_unavailable`` lists SHAs
-    whose ancestry could not be read; those declarations fail closed.
+    it names, not after every later commit. A declared SHA that is not one of
+    those keys is ``review head does not match the pull request``, including
+    when the comment is older than the current head. ``ancestry_unavailable``
+    lists SHAs whose ancestry could not be read; those declarations fail closed.
     """
     committed = _utc(committed_at)
     if committed is None:
@@ -1177,6 +1179,11 @@ def select_review_comment(
                     boundary = None
                 else:
                     boundary = named
+            elif declared is not None:
+                # Not the head and not an ancestor after the base. Say so
+                # even when the comment is older than the current head.
+                forced = "review head does not match the pull request"
+                boundary = None
         if boundary is not None and stamp <= boundary:
             continue
         candidates.append((stamp, int(comment["id"]), comment, forced))
