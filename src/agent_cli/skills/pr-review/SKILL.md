@@ -140,8 +140,11 @@ publication gates.
 A draft plus local tests is not done. Quality and logic of one vendor stage
 run in parallel on **this** head. The session that authored the diff does not
 sit those reviews. Inner `review-loop` rounds are not these gates. Stay draft
-until the first review run on this head is approved and the target
-repository's written CI rules hold on this head. The second review run
+until the first review run on this head is approved. That approval still
+covers a later commit when the current head contains the reviewed commit and
+that commit is after the pull request base. The target
+repository's written CI rules hold on this head.
+CI stays bound to the current head. The second review run
 may be omitted; then those checklist keys are `n_a` with evidence exactly
 `second review not posted`, and `done` does not wait for those two gates. The frozen `dfx-local-ci/v1` format and legacy verifier do not
 themselves determine applicability. Private visibility alone is not A38 opt-in or
