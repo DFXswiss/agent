@@ -11,7 +11,7 @@ Use these terms only. Do not call an earlier stage finished, done, or completed.
 | Term | Meaning |
 |---|---|
 | **Draft** | Open GitHub pull request with `isDraft=true`. Never finished, done, or completed — even when tests pass. |
-| **Ready for review** | Leave-draft transition (`gh pr ready` / `isDraft=false`) after all required checks and reviews on the exact clean signed final head. Still not merged and still not completed. |
+| **Ready for review** | Leave-draft transition (`gh pr ready` / `isDraft=false`) after the required checks on the exact clean signed final head and a review that is still valid for that head. Still not merged and still not completed. |
 | **Merged / completed** | Only after a **verified human merge**. Ledger `task-done`, checklist closes, spine states, and Ready for review are **not** proof of pull-request completion. |
 
 A draft plus local tests is still **not** Ready for review and **not** completed.
@@ -69,7 +69,7 @@ If the repository's guard integration is known to be defective, require a **veri
 
 ## Ready for review
 
-Stay draft until Ready for review is earned on the **exact clean signed final head**:
+Stay draft until Ready for review is earned for the current head. Checks and the local CI report stay bound to that exact clean signed final head. The review follows item 4:
 
 1. Full applicable tests for that head (repository rules and, when adopted, the complete A38 policy run and local verification).
 2. For A38 adopters: author report publication (unless waived because the author or the latest human Ready actor currently has write/maintain/admin on the target, **or** the change set is independently markdown-only **or** independently confirmed guard-docs), current-base (or exact approved head) policy checks, and the live join required by [a38.md](a38.md) and [a38-guard.md](a38-guard.md).
