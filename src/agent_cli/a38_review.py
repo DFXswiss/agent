@@ -15,12 +15,19 @@ only for a shaped prompt that lacks the sentence. A contents 404 means the
 file is absent only when the base commit itself can be read. Otherwise the
 lookup fails closed. A repository without REVIEW.md at a readable base
 keeps the previous prompt check.
+A review declaration stays valid when its head is the pull request head,
+or when a later commit still contains the named commit and that commit is
+after the pull request base. The comment must be created after the commit
+it names. The base commit, an older commit, and an unrelated or diverged
+SHA do not count. A failed ancestry lookup fails closed. The local CI
+report stays bound to the current head.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
@@ -298,6 +305,7 @@ def validate_declaration(
     head: str,
     markdown_only: bool,
     rules_bound: bool = True,
+    covered_heads: Collection[str] | None = None,
 ) -> list[str]:
     if not isinstance(payload, Mapping):
         return ["review declaration is not an object"]
@@ -319,7 +327,10 @@ def validate_declaration(
     declared = payload.get("head")
     if not isinstance(declared, str) or _SHA.fullmatch(declared) is None:
         _add(reasons, "review head is not a 40-hex SHA")
-    elif declared != head:
+    elif declared != head and (covered_heads is None or declared not in covered_heads):
+        # ``head`` stays the pull request head. ``covered_heads`` lists that
+        # head and ancestors the caller has already proved. A caller that
+        # passes nothing still requires an exact match.
         _add(reasons, "review head does not match the pull request")
     passes = payload.get("passes")
     if not _is_int(passes) or passes < 1:
@@ -1035,6 +1046,18 @@ def _comment_stamp(comment: Mapping[str, Any]) -> datetime | None:
     return _utc(created_raw)
 
 
+def _declared_sha(body: str) -> str | None:
+    """40-hex head inside a parseable review block, if it has one."""
+    try:
+        payload = parse_review_block(body)
+    except ReviewError:
+        return None
+    declared = payload.get("head")
+    if isinstance(declared, str) and _SHA.fullmatch(declared) is not None:
+        return declared
+    return None
+
+
 def _lane_ids_of(body: str) -> set[str]:
     try:
         payload = parse_review_block(body)
@@ -1051,7 +1074,12 @@ def _lane_ids_of(body: str) -> set[str]:
 
 
 def _declaration_reasons(
-    body: str, *, head: str, markdown_only: bool, rules_bound: bool
+    body: str,
+    *,
+    head: str,
+    markdown_only: bool,
+    rules_bound: bool,
+    covered_heads: Collection[str] | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     try:
@@ -1060,7 +1088,11 @@ def _declaration_reasons(
         _add(reasons, str(exc))
         return reasons
     declaration = validate_declaration(
-        payload, head=head, markdown_only=markdown_only, rules_bound=rules_bound
+        payload,
+        head=head,
+        markdown_only=markdown_only,
+        rules_bound=rules_bound,
+        covered_heads=covered_heads,
     )
     reasons.extend(declaration)
     passes = payload.get("passes")
@@ -1083,19 +1115,32 @@ def select_review_comment(
     head: str,
     markdown_only: bool,
     rules_bound: bool = True,
+    covered_at: Mapping[str, str] | None = None,
+    ancestry_unavailable: Collection[str] | None = None,
 ) -> tuple[Mapping[str, Any] | None, list[str]]:
-    """Newest valid first-run author declaration created after the head commit.
+    """Newest valid first-run author declaration that still covers this head.
 
     Age is ``created_at`` only. An edit does not make a comment newer; post a
     new comment instead. Other comments do not remove an earlier valid
     declaration. A newer malformed declaration falls back to an older valid one.
     A later second-run comment is ignored and does not hide an older valid
     first-run comment. A comment that also carries local-CI markers is skipped.
+
+    Without ``covered_at``, the declaration must name ``head`` and the comment
+    must be created after ``committed_at``. With ``covered_at``, each key is a
+    SHA the caller has proved is ``head`` or an ancestor of it, and the value
+    is that SHA's committer time. The comment must be created after the commit
+    it names, not after every later commit. ``ancestry_unavailable`` lists SHAs
+    whose ancestry could not be read; those declarations fail closed.
     """
     committed = _utc(committed_at)
     if committed is None:
         return None, ["review commit time unavailable"]
-    candidates: list[tuple[datetime, int, Mapping[str, Any]]] = []
+    if covered_at is not None and _utc(covered_at.get(head, "")) is None:
+        return None, ["review commit time unavailable"]
+    unavailable = frozenset(ancestry_unavailable or ())
+    covered_heads = frozenset(covered_at) if covered_at is not None else None
+    candidates: list[tuple[datetime, int, Mapping[str, Any], str | None]] = []
     mixed_after_head = False
     for comment in comments:
         user = comment.get("user") if isinstance(comment, Mapping) else None
@@ -1116,21 +1161,44 @@ def select_review_comment(
             continue
         if not looks_like_review(text):
             continue
-        if stamp is None or stamp <= committed:
+        if stamp is None:
             continue
-        candidates.append((stamp, int(comment["id"]), comment))
+        forced: str | None = None
+        boundary: datetime | None = committed
+        if covered_at is not None and isinstance(text, str):
+            declared = _declared_sha(text)
+            if declared in unavailable:
+                forced = "review ancestry unavailable"
+                boundary = None
+            elif declared is not None and declared in covered_at:
+                named = _utc(covered_at[declared])
+                if named is None:
+                    forced = "review ancestry unavailable"
+                    boundary = None
+                else:
+                    boundary = named
+        if boundary is not None and stamp <= boundary:
+            continue
+        candidates.append((stamp, int(comment["id"]), comment, forced))
     if not candidates:
         if mixed_after_head:
             return None, ["local CI report and review record must be separate comments"]
         return None, ["review completion comment missing"]
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     newest_reasons: list[str] = []
-    for _stamp, _cid, comment in candidates:
+    for _stamp, _cid, comment, forced in candidates:
         body = comment.get("body")
         text = body if isinstance(body, str) else ""
-        reasons = _declaration_reasons(
-            text, head=head, markdown_only=markdown_only, rules_bound=rules_bound
-        )
+        if forced:
+            reasons = [forced]
+        else:
+            reasons = _declaration_reasons(
+                text,
+                head=head,
+                markdown_only=markdown_only,
+                rules_bound=rules_bound,
+                covered_heads=covered_heads,
+            )
         if not reasons:
             if _lane_ids_of(text) == set(RUNS[1]):
                 continue
@@ -1342,6 +1410,100 @@ def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
     return None
 
 
+def _history_relation(api: Any, repo: str, earlier: str, later: str) -> str:
+    """How ``later`` stands relative to ``earlier``.
+
+    ``descendant`` means ``later`` is strictly ahead and ``behind_by`` is 0.
+    ``same`` means the two SHAs are the same commit. ``other`` means behind,
+    diverged, or the earlier object is missing. ``unavailable`` means the
+    comparison could not be read. The compare is ``earlier...later``.
+    """
+    if (
+        repo.count("/") != 1
+        or _SHA.fullmatch(earlier) is None
+        or _SHA.fullmatch(later) is None
+    ):
+        return "unavailable"
+    if earlier == later:
+        return "same"
+    try:
+        status, data, _headers = api.request(
+            "GET", f"/repos/{repo}/compare/{earlier}...{later}"
+        )
+    except Exception:
+        return "unavailable"
+    if status == 404:
+        return "other"
+    if status != 200 or not isinstance(data, Mapping):
+        return "unavailable"
+    relation = data.get("status")
+    if relation == "identical":
+        return "same"
+    if relation == "ahead":
+        behind = data.get("behind_by")
+        if isinstance(behind, int) and not isinstance(behind, bool) and behind == 0:
+            return "descendant"
+        return "unavailable"
+    if relation in {"behind", "diverged"}:
+        return "other"
+    return "unavailable"
+
+
+def _covering_review_heads(
+    api: Any,
+    repo: str,
+    head: str,
+    comments: Sequence[Mapping[str, Any]],
+    *,
+    base_sha: str,
+    author_id: int,
+    guard_user_id: int,
+) -> tuple[dict[str, str], frozenset[str]]:
+    """Commit times of declared heads that still cover this pull request.
+
+    ``head`` itself is not included. A declared head counts when the current
+    head contains it and it is after ``base_sha``. The base commit itself does
+    not count. Only the author's review comments are read. A commit whose
+    history or commit time cannot be read is unreadable.
+    """
+    declared_shas: list[str] = []
+    for comment in comments:
+        user = comment.get("user") if isinstance(comment, Mapping) else None
+        if not isinstance(user, Mapping) or user.get("id") in {guard_user_id, None}:
+            continue
+        if user.get("id") != author_id:
+            continue
+        body = comment.get("body")
+        text = body if isinstance(body, str) else None
+        if mixes_report_and_review(text) or not looks_like_review(text) or text is None:
+            continue
+        declared = _declared_sha(text)
+        if declared is None or declared == head or declared in declared_shas:
+            continue
+        declared_shas.append(declared)
+    covered: dict[str, str] = {}
+    unavailable: set[str] = set()
+    for declared in declared_shas:
+        to_head = _history_relation(api, repo, declared, head)
+        if to_head == "other":
+            continue
+        if to_head not in {"descendant", "same"}:
+            unavailable.add(declared)
+            continue
+        to_base = _history_relation(api, repo, base_sha, declared)
+        if to_base == "unavailable":
+            unavailable.add(declared)
+            continue
+        if to_base != "descendant":
+            continue
+        named_at = _head_committed_at(api, repo, declared)
+        if named_at is None:
+            unavailable.add(declared)
+            continue
+        covered[declared] = named_at
+    return covered, frozenset(unavailable)
+
+
 def evaluate_review_gate(
     api: Any,
     *,
@@ -1371,6 +1533,16 @@ def evaluate_review_gate(
     if committed_at is None:
         _add(reasons, "review commit time unavailable")
     else:
+        covered, unread = _covering_review_heads(
+            api,
+            repo,
+            head,
+            comments,
+            base_sha=base_sha,
+            author_id=author_id,
+            guard_user_id=guard_id,
+        )
+        covered[head] = committed_at
         _comment, selected = select_review_comment(
             comments,
             author_id=author_id,
@@ -1379,6 +1551,8 @@ def evaluate_review_gate(
             head=head,
             markdown_only=markdown_only,
             rules_bound=rules_bound,
+            covered_at=covered,
+            ancestry_unavailable=unread,
         )
         reasons.extend(selected)
     reasons.extend(_load_threads(api, repo, number))

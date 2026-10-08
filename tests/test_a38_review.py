@@ -29,6 +29,8 @@ pytestmark = pytest.mark.no_pg
 
 HEAD = "a" * 40
 OTHER = "b" * 40
+BASE = "e" * 40
+ANCIENT = "f" * 40
 LANES = ("conformity-a", "logic-a", "conformity-b", "logic-b")
 
 
@@ -1383,3 +1385,362 @@ def test_codex_second_review_na_only_exact_evidence() -> None:
     assert not codex_second_review_na("grok_pr_logic", "second review not posted")
     assert codex_second_review_na("codex_pr_quality", "second review not posted")
     assert codex_second_review_na("codex_pr_logic", "second review not posted")
+
+
+def _covered(ancestor: str = OTHER) -> dict[str, str]:
+    return {HEAD: "2026-09-01T00:00:00Z", ancestor: "2026-08-01T00:00:00Z"}
+
+
+def test_covered_ancestor_matches_and_a_stranger_does_not() -> None:
+    ancestor = _pass_payload(head=OTHER, lanes=_run("a"))
+    assert "review head does not match the pull request" in validate_declaration(
+        ancestor, head=HEAD, markdown_only=False
+    )
+    assert (
+        validate_declaration(
+            ancestor,
+            head=HEAD,
+            markdown_only=False,
+            covered_heads=frozenset({HEAD, OTHER}),
+        )
+        == []
+    )
+    stranger = _pass_payload(head="d" * 40, lanes=_run("a"))
+    assert "review head does not match the pull request" in validate_declaration(
+        stranger,
+        head=HEAD,
+        markdown_only=False,
+        covered_heads=frozenset({HEAD, OTHER}),
+    )
+
+
+def test_ancestor_review_stays_valid_for_a_later_commit() -> None:
+    payload = _pass_payload(head=OTHER, lanes=_run("a"))
+    comment = _comment(_body(payload), cid=1, user=10, created="2026-08-02T00:00:00Z")
+    chosen, reasons = _select(
+        [comment], committed_at="2026-09-01T00:00:00Z", covered_at=_covered()
+    )
+    assert reasons == []
+    assert chosen is comment
+    same_instant = _comment(
+        _body(payload), cid=2, user=10, created="2026-08-01T00:00:00Z"
+    )
+    chosen, reasons = _select(
+        [same_instant], committed_at="2026-09-01T00:00:00Z", covered_at=_covered()
+    )
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+
+
+def test_current_head_review_must_still_follow_that_commit() -> None:
+    early = _comment(
+        _body(_pass_payload(lanes=_run("a"))),
+        cid=1,
+        user=10,
+        created="2026-08-02T00:00:00Z",
+    )
+    chosen, reasons = _select(
+        [early],
+        committed_at="2026-09-01T00:00:00Z",
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+    )
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+    chosen, reasons = _select(
+        [early],
+        committed_at="2026-09-01T00:00:00Z",
+        covered_at={OTHER: "2026-08-01T00:00:00Z"},
+    )
+    assert chosen is None
+    assert reasons == ["review commit time unavailable"]
+
+
+def test_unrelated_review_head_is_still_rejected() -> None:
+    payload = _pass_payload(head="d" * 40, lanes=_run("a"))
+    comment = _comment(_body(payload), cid=1, user=10, created="2026-09-02T00:00:00Z")
+    chosen, reasons = _select(
+        [comment],
+        committed_at="2026-09-01T00:00:00Z",
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+    )
+    assert chosen is None
+    assert reasons == ["review head does not match the pull request"]
+    before_head = _comment(
+        _body(payload), cid=2, user=10, created="2026-08-02T00:00:00Z"
+    )
+    chosen, reasons = _select(
+        [before_head],
+        committed_at="2026-09-01T00:00:00Z",
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+    )
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+
+
+def test_newer_unrelated_review_does_not_hide_an_ancestor() -> None:
+    older = _comment(
+        _body(_pass_payload(head=OTHER, lanes=_run("a"))),
+        cid=1,
+        user=10,
+        created="2026-08-02T00:00:00Z",
+    )
+    newer = _comment(
+        _body(_pass_payload(head="d" * 40, lanes=_run("a"))),
+        cid=2,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    chosen, reasons = _select(
+        [older, newer], committed_at="2026-09-01T00:00:00Z", covered_at=_covered()
+    )
+    assert reasons == []
+    assert chosen is older
+
+
+def test_unreadable_ancestry_fails_closed() -> None:
+    broken = _comment(
+        _body(_pass_payload(head=OTHER, lanes=_run("a"))),
+        cid=2,
+        user=10,
+        created="2026-08-02T00:00:00Z",
+    )
+    chosen, reasons = _select(
+        [broken],
+        committed_at="2026-09-01T00:00:00Z",
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+        ancestry_unavailable=frozenset({OTHER}),
+    )
+    assert chosen is None
+    assert reasons == ["review ancestry unavailable"]
+    good = _comment(
+        _body(_pass_payload(lanes=_run("a"))),
+        cid=1,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    later = _comment(
+        _body(_pass_payload(head=OTHER, lanes=_run("a"))),
+        cid=3,
+        user=10,
+        created="2026-09-03T00:00:00Z",
+    )
+    chosen, reasons = _select(
+        [good, later],
+        committed_at="2026-09-01T00:00:00Z",
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+        ancestry_unavailable=frozenset({OTHER}),
+    )
+    assert reasons == []
+    assert chosen is good
+
+
+def test_ancestor_second_run_does_not_satisfy_the_gate() -> None:
+    payload = _pass_payload(head=OTHER, lanes=_run("b"))
+    comment = _comment(_body(payload), cid=1, user=10, created="2026-08-02T00:00:00Z")
+    chosen, reasons = _select(
+        [comment], committed_at="2026-09-01T00:00:00Z", covered_at=_covered()
+    )
+    assert chosen is None
+    assert reasons == ["review completion comment missing"]
+
+
+def test_na_evidence_still_cannot_name_the_pull_request_head() -> None:
+    payload = _pass_payload(head=OTHER)
+    payload["lanes"] = _run(
+        "a",
+        result="n_a",
+        evidence=f"markdown-only rebase, previously approved at {HEAD}",
+    )
+    reasons = validate_declaration(
+        payload,
+        head=HEAD,
+        markdown_only=True,
+        covered_heads=frozenset({HEAD, OTHER}),
+    )
+    assert reasons == ["review n_a SHA equals the current head"]
+
+
+class _GateApi:
+    def __init__(
+        self,
+        commits: dict[str, str],
+        compares: dict[str, object] | None = None,
+    ) -> None:
+        self.commits = commits
+        self.compares = compares or {}
+        self.compare_calls: list[str] = []
+
+    def resolve_own_user(self) -> tuple[int, str]:
+        return 99, "guard"
+
+    def request(self, method: str, path: str, **_kwargs: object) -> tuple[int, dict, dict]:
+        if path == "/graphql":
+            return 200, {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": False},
+                                "nodes": [],
+                            }
+                        }
+                    }
+                }
+            }, {}
+        if "/contents/REVIEW.md" in path:
+            return 404, {}, {}
+        if "/commits/" in path:
+            date = self.commits.get(path.rsplit("/", 1)[-1])
+            if date is None:
+                return 404, {}, {}
+            return 200, {"commit": {"committer": {"date": date}}}, {}
+        if "/compare/" in path:
+            self.compare_calls.append(path)
+            spec = self.compares.get(path)
+            if spec is None:
+                return 404, {}, {}
+            if isinstance(spec, Exception):
+                raise spec
+            status, body, headers = spec
+            return status, body, headers
+        return 404, {}, {}
+
+
+def _gate(api: _GateApi, comments: list[dict]) -> tuple[bool, list[str]]:
+    return evaluate_review_gate(
+        api,
+        repo="o/r",
+        number=1,
+        head=HEAD,
+        base_sha=BASE,
+        author_id=10,
+        comments=comments,
+        markdown_only=False,
+    )
+
+
+def _ahead() -> tuple[int, dict[str, int | str], dict]:
+    return 200, {"status": "ahead", "ahead_by": 1, "behind_by": 0}, {}
+
+
+def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
+    to_head = f"/repos/o/r/compare/{OTHER}...{HEAD}"
+    to_base = f"/repos/o/r/compare/{BASE}...{OTHER}"
+    comment = _comment(
+        _body(_pass_payload(head=OTHER, lanes=_run("a"))),
+        cid=7,
+        user=10,
+        created="2026-08-02T00:00:00Z",
+    )
+    commits = {
+        BASE: "2026-07-01T00:00:00Z",
+        OTHER: "2026-08-01T00:00:00Z",
+        HEAD: "2026-09-01T00:00:00Z",
+    }
+    ahead = _GateApi(commits, {to_head: _ahead(), to_base: _ahead()})
+    ok, reasons = _gate(ahead, [comment])
+    assert reasons == []
+    assert ok is True
+    assert ahead.compare_calls == [to_head, to_base]
+
+    same = _GateApi(
+        commits,
+        {
+            to_head: (200, {"status": "identical", "ahead_by": 0, "behind_by": 0}, {}),
+            to_base: _ahead(),
+        },
+    )
+    ok, reasons = _gate(same, [comment])
+    assert ok is True
+    assert reasons == []
+
+    current = _comment(
+        _body(_pass_payload(lanes=_run("a"))),
+        cid=8,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    exact = _GateApi({BASE: "2026-07-01T00:00:00Z", HEAD: "2026-09-01T00:00:00Z"})
+    ok, reasons = _gate(exact, [current])
+    assert ok is True
+    assert exact.compare_calls == []
+
+    later = _comment(
+        _body(_pass_payload(head=OTHER, lanes=_run("a"))),
+        cid=9,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    known = {BASE: "2026-07-01T00:00:00Z", HEAD: "2026-09-01T00:00:00Z"}
+    for relation in ("diverged", "behind"):
+        rejected = _GateApi(
+            known,
+            {to_head: (200, {"status": relation, "ahead_by": 1, "behind_by": 1}, {})},
+        )
+        ok, reasons = _gate(rejected, [later])
+        assert ok is False
+        assert reasons == ["review head does not match the pull request"]
+        assert rejected.compare_calls == [to_head]
+
+    missing = _GateApi(known)
+    ok, reasons = _gate(missing, [later])
+    assert ok is False
+    assert reasons == ["review head does not match the pull request"]
+
+    for broken in (
+        (500, {}, {}),
+        (200, {"status": "ahead", "ahead_by": 1}, {}),
+        (200, {"status": "ahead", "ahead_by": 1, "behind_by": 1}, {}),
+        RuntimeError("compare down"),
+    ):
+        failed = _GateApi(known, {to_head: broken})
+        ok, reasons = _gate(failed, [later])
+        assert ok is False
+        assert reasons == ["review ancestry unavailable"]
+        assert failed.compare_calls == [to_head]
+
+    base_down = _GateApi(known, {to_head: _ahead(), to_base: (500, {}, {})})
+    ok, reasons = _gate(base_down, [later])
+    assert ok is False
+    assert reasons == ["review ancestry unavailable"]
+    assert base_down.compare_calls == [to_head, to_base]
+
+    unreadable = _GateApi(known, {to_head: _ahead(), to_base: _ahead()})
+    ok, reasons = _gate(unreadable, [later])
+    assert ok is False
+    assert reasons == ["review ancestry unavailable"]
+
+    base_review = _comment(
+        _body(_pass_payload(head=BASE, lanes=_run("a"))),
+        cid=10,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    on_base = _GateApi(
+        known,
+        {f"/repos/o/r/compare/{BASE}...{HEAD}": _ahead()},
+    )
+    ok, reasons = _gate(on_base, [base_review])
+    assert ok is False
+    assert reasons == ["review head does not match the pull request"]
+    assert on_base.compare_calls == [f"/repos/o/r/compare/{BASE}...{HEAD}"]
+
+    ancient_path = f"/repos/o/r/compare/{ANCIENT}...{HEAD}"
+    ancient_base = f"/repos/o/r/compare/{BASE}...{ANCIENT}"
+    ancient = _comment(
+        _body(_pass_payload(head=ANCIENT, lanes=_run("a"))),
+        cid=11,
+        user=10,
+        created="2026-09-02T00:00:00Z",
+    )
+    before_base = _GateApi(
+        known,
+        {
+            ancient_path: _ahead(),
+            ancient_base: (200, {"status": "behind", "ahead_by": 0, "behind_by": 4}, {}),
+        },
+    )
+    ok, reasons = _gate(before_base, [ancient])
+    assert ok is False
+    assert reasons == ["review head does not match the pull request"]
+    assert before_base.compare_calls == [ancient_path, ancient_base]
