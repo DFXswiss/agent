@@ -16,6 +16,7 @@ except ImportError:
 
 from agent_cli.readme_only import (
     GUARD_WORKFLOW_PATH,
+    GITHUB_PR_FILES_CAP,
     MAX_FILES,
     github_file_paths,
     github_is_guard_docs_only,
@@ -28,6 +29,7 @@ from agent_cli.readme_only import (
     is_guard_docs_path,
     is_markdown_path,
     is_readme_path,
+    list_pull_files,
     markdown_and_guard_docs_only,
     parse_name_status_z,
     paths_are_guard_docs_only,
@@ -368,7 +370,7 @@ class _FakePullFilesAPI:
         self.entries = entries
         self.error = error
 
-    def paginate(self, path: str):  # noqa: ANN201
+    def paginate(self, path: str, **kwargs):  # noqa: ANN201
         if self.error:
             raise RuntimeError("api error")
         assert "/pulls/" in path and path.endswith("/files")
@@ -503,9 +505,9 @@ class GitHubHelperTests(unittest.TestCase):
                 )
                 self.calls = 0
 
-            def paginate(self, path: str):  # noqa: ANN201
+            def paginate(self, path: str, **kwargs):  # noqa: ANN201
                 self.calls += 1
-                return super().paginate(path)
+                return super().paginate(path, **kwargs)
 
         api = CountingAPI()
         markdown_only, guard_docs_only = pull_markdown_and_guard_docs(
@@ -514,6 +516,68 @@ class GitHubHelperTests(unittest.TestCase):
         self.assertFalse(markdown_only)
         self.assertTrue(guard_docs_only)
         self.assertEqual(api.calls, 1)
+
+    def test_list_pull_files_returns_complete_list_above_max_files(self) -> None:
+        entries = [
+            {"filename": f"docs/{i}.md", "status": "modified"}
+            for i in range(MAX_FILES + 1)
+        ]
+        api = _FakePullFilesAPI(entries)
+        listed = list_pull_files(api, "example/app", 1)
+        self.assertEqual(listed, entries)
+        self.assertEqual(
+            pull_markdown_and_guard_docs(api, "example/app", 1),
+            (False, False),
+        )
+        self.assertFalse(github_is_markdown_only(entries, truncated=False))
+
+    def test_list_pull_files_github_cap_is_none(self) -> None:
+        entries = [
+            {"filename": f"docs/{i}.md", "status": "modified"}
+            for i in range(GITHUB_PR_FILES_CAP)
+        ]
+        api = _FakePullFilesAPI(entries)
+        self.assertIsNone(list_pull_files(api, "example/app", 1))
+
+    def test_list_pull_files_just_under_github_cap(self) -> None:
+        entries = [
+            {"filename": f"docs/{i}.md", "status": "modified"}
+            for i in range(GITHUB_PR_FILES_CAP - 1)
+        ]
+        api = _FakePullFilesAPI(entries)
+        listed = list_pull_files(api, "example/app", 1)
+        self.assertEqual(listed, entries)
+        self.assertEqual(len(listed), GITHUB_PR_FILES_CAP - 1)
+
+    def test_list_pull_files_api_error_is_none(self) -> None:
+        api = _FakePullFilesAPI(None, error=True)
+        self.assertIsNone(list_pull_files(api, "example/app", 1))
+
+    def test_list_pull_files_non_mapping_is_none(self) -> None:
+        mixed: list = [
+            {"filename": "docs/a.md", "status": "modified"},
+            "not-a-mapping",
+        ]
+        api = _FakePullFilesAPI(mixed)
+        self.assertIsNone(list_pull_files(api, "example/app", 1))
+
+    def test_list_pull_files_passes_hard_limit(self) -> None:
+        class RecordingAPI(_FakePullFilesAPI):
+            def __init__(self) -> None:
+                super().__init__(
+                    [{"filename": "docs/a.md", "status": "modified"}]
+                )
+                self.kwargs: list = []
+
+            def paginate(self, path: str, **kwargs):  # noqa: ANN201
+                self.kwargs.append(kwargs)
+                return super().paginate(path, **kwargs)
+
+        api = RecordingAPI()
+        listed = list_pull_files(api, "example/app", 1)
+        self.assertEqual(listed, api.entries)
+        self.assertEqual(len(api.kwargs), 1)
+        self.assertEqual(api.kwargs[0], {"hard_limit": GITHUB_PR_FILES_CAP - 1})
 
 
 if __name__ == "__main__":

@@ -5,7 +5,8 @@ or ends with ``/README.md`` (case-sensitive). A change set is markdown-only
 only when every path ends with ``.md`` (case-sensitive). A change set is
 guard-docs only when every path is markdown or exactly
 ``.github/workflows/a38-guard.yml``. Unknown git statuses, truncated GitHub
-inventories, or command/API errors are none of these.
+inventories, or command/API errors are none of these. The 500-file waiver
+ceiling is not the same thing as a truncated GitHub inventory.
 """
 
 from __future__ import annotations
@@ -17,6 +18,9 @@ from typing import Any, Mapping, Sequence
 README = "README.md"
 GUARD_WORKFLOW_PATH = ".github/workflows/a38-guard.yml"
 MAX_FILES = 500
+# GitHub lists at most 3000 pull-request files and does not say the list was cut.
+# A result of that length is incomplete. MAX_FILES stays the waiver ceiling.
+GITHUB_PR_FILES_CAP = 3000
 _STATUS_OK = frozenset({"A", "M", "D", "T"})
 _STATUS_RENAME = frozenset({"R", "C"})
 
@@ -220,12 +224,21 @@ def github_is_guard_docs_only(entries: Sequence[Mapping[str, Any]], *, truncated
 
 
 def list_pull_files(api: Any, repo: str, number: int) -> list[Mapping[str, Any]] | None:
-    """Return PR file entries, or None when the inventory is incomplete."""
+    """Return PR file entries, or None on API error, a non-mapping entry, or a list at the GitHub file cap.
+
+    A complete list larger than ``MAX_FILES`` is returned. Waiver callers
+    still apply ``MAX_FILES`` themselves.
+    """
     try:
-        pages = list(api.paginate(f"/repos/{repo}/pulls/{number}/files"))
+        pages = list(
+            api.paginate(
+                f"/repos/{repo}/pulls/{number}/files",
+                hard_limit=GITHUB_PR_FILES_CAP - 1,
+            )
+        )
     except Exception:
         return None
-    if len(pages) > MAX_FILES:
+    if len(pages) >= GITHUB_PR_FILES_CAP:
         return None
     if not all(isinstance(item, Mapping) for item in pages):
         return None

@@ -49,13 +49,13 @@ Then the same two dimensions with `--vendor codex` and `--stage codex-pr`.
 Review lanes execute no software (no tests, builds, or servers).
 
 The first review run reads `CONTRIBUTING.md` and `REVIEW.md` at the base
-revision of the pull request, not at its head, and it reads the linked issue.
+revision of the pull request, not at its head.
 A pull request that changes either file does not replace that base text for
 the rest of its diff. Both files are binding. Quality judges the change
 against those files and against the skills attached to the review. Logic
-judges whether the change is sound and complete for the linked issue, and
-whether it adds a second mechanism for a job those files say to reuse. The
-lane does not change files. Its prompt contains this reminder on one line:
+judges whether the change is sound and complete, and
+whether it adds a second mechanism for a job those files say to reuse. A
+missing issue is not a defect. The lane does not change files. Its prompt contains this reminder on one line:
 `Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.`
 Further sentences may follow. They do not remove the task. The sentence is a
 reminder, not proof that the lane obeyed it.
