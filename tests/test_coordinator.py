@@ -2316,3 +2316,17 @@ def test_readiness_accepts_approved_codex_pr_when_checklist_not_both_na(
     )
     lines = phase_readiness(store, worker, task, fake)
     assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
+
+
+def test_pr_review_scope_keeps_the_compliance_reminder_and_states_a_missing_issue_is_not_a_defect() -> None:
+    from agent_cli.a38_review import COMPLIANCE_PROMPT
+    from agent_cli.coordinator_lanes import _pr_review_scope
+
+    quality = _pr_review_scope("quality")
+    logic = _pr_review_scope("logic")
+    for scope in (quality, logic):
+        assert scope.startswith(COMPLIANCE_PROMPT + " ")
+        assert "A missing issue is not a defect." in scope
+    assert "Quality:" in quality
+    assert "Logic:" in logic
+    assert "complete for the linked issue" not in logic

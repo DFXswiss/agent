@@ -758,6 +758,29 @@ def _run_prepared(
     )
 
 
+def _pr_review_scope(dimension: str) -> str:
+    """Scope text embedded in one pull-request review specification."""
+    if dimension == "quality":
+        return (
+            f"{COMPLIANCE_PROMPT} "
+            "Quality: judge this exact base→head diff against CONTRIBUTING.md, "
+            "REVIEW.md, and the attached skills, read at the base revision. "
+            "A missing issue is not a defect. Check the pull request "
+            "body's list of reused and added elements, each with file and line."
+        )
+    return (
+        f"{COMPLIANCE_PROMPT} "
+        "Logic: judge whether this exact base→head diff is sound and "
+        "complete, and whether it adds a second "
+        "mechanism for a job those files say to reuse. A missing issue "
+        "is not a defect. Read the attached "
+        "skills. Read CONTRIBUTING.md and REVIEW.md at "
+        "the base revision, not from the pull request head. Do not "
+        "re-derive the diff via Git. Check the pull request body's list "
+        "of reused and added elements, each with file and line."
+    )
+
+
 def phase_pr_gates(
     store: Store,
     worker: WorkerConfig,
@@ -854,23 +877,7 @@ def phase_pr_gates(
     prepared_list: list[dict[str, Any]] = []
     try:
         for dimension, role in needed:
-            scope = (
-                f"{COMPLIANCE_PROMPT} "
-                "Quality: judge this exact base→head diff against CONTRIBUTING.md, "
-                "REVIEW.md, and the attached skills, read at the base revision. "
-                "A missing issue is not a defect. Check the pull request "
-                "body's list of reused and added elements, each with file and line."
-                if dimension == "quality"
-                else f"{COMPLIANCE_PROMPT} "
-                "Logic: judge whether this exact base→head diff is sound and "
-                "complete, and whether it adds a second "
-                "mechanism for a job those files say to reuse. A missing issue "
-                "is not a defect. Read the attached "
-                "skills. Read CONTRIBUTING.md and REVIEW.md at "
-                "the base revision, not from the pull request head. Do not "
-                "re-derive the diff via Git. Check the pull request body's list "
-                "of reused and added elements, each with file and line."
-            )
+            scope = _pr_review_scope(dimension)
             prepared_list.append(
                 _prepare_pr_review_agent(
                     store,
