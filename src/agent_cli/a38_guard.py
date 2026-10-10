@@ -72,9 +72,13 @@ GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 # Public numeric id for github-actions[bot]; used only after /user is unavailable.
 GITHUB_ACTIONS_BOT_ID = 41898282
 MAX_COMMENT_PAGES_ITEMS = 2000
-# GitHub's "List commits on a pull request" endpoint returns at most 250
-# commits. Hitting the cap is treated as truncation (fail closed).
+# GitHub's REST "List commits on a pull request" endpoint returns at most 250
+# commits and does not say the list was cut. At that cap the guard reads the
+# full list through GraphQL. A GraphQL error or a length other than
+# totalCount stays fail-closed.
 PULL_COMMITS_API_CAP = 250
+PULL_COMMITS_GRAPHQL_PAGE = 100
+PULL_COMMITS_MAX_PAGES = 100
 MAX_STATUS_DESC = 140
 MAX_COMMENT_BODY = 12000
 MAX_FILE_BYTES = 1024 * 1024
@@ -1044,18 +1048,149 @@ def fetch_pull(api: GitHubApi, repo: str, number: int) -> PullSnapshot:
     )
 
 
+_PULL_COMMITS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      commits(first: 100, after: $cursor) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          commit {
+            oid
+            message
+            author { name email user { login } }
+            committer { name email user { login } }
+          }
+        }
+      }
+    }
+  }
+}
+""".strip()
+
+
+def _graphql_person(person: Any) -> dict[str, str]:
+    if not isinstance(person, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    name = person.get("name")
+    email = person.get("email")
+    if isinstance(name, str):
+        out["name"] = name
+    if isinstance(email, str):
+        out["email"] = email
+    return out
+
+
+def _graphql_login(person: Any) -> dict[str, str]:
+    if not isinstance(person, Mapping):
+        return {}
+    user = person.get("user")
+    if not isinstance(user, Mapping):
+        return {}
+    login = user.get("login")
+    if isinstance(login, str):
+        return {"login": login}
+    return {}
+
+
+def _commit_from_graphql(node: Any) -> dict[str, Any]:
+    if not isinstance(node, Mapping):
+        raise GuardError("pull commit list incomplete")
+    commit = node.get("commit")
+    if not isinstance(commit, Mapping):
+        raise GuardError("pull commit list incomplete")
+    oid = commit.get("oid")
+    message = commit.get("message")
+    if not isinstance(oid, str) or not oid:
+        raise GuardError("pull commit list incomplete")
+    if not isinstance(message, str):
+        raise GuardError("pull commit list incomplete")
+    return {
+        "sha": oid,
+        "commit": {
+            "message": message,
+            "author": _graphql_person(commit.get("author")),
+            "committer": _graphql_person(commit.get("committer")),
+        },
+        "author": _graphql_login(commit.get("author")),
+        "committer": _graphql_login(commit.get("committer")),
+    }
+
+
+def _fetch_pull_commits_graphql(api: GitHubApi, repo: str, number: int) -> list[dict[str, Any]]:
+    """Read every pull-request commit via GraphQL. Fail closed on a short list."""
+    if repo.count("/") != 1:
+        raise GuardError("pull commit list incomplete")
+    owner, name = repo.split("/", 1)
+    commits: list[dict[str, Any]] = []
+    cursor: str | None = None
+    total: int | None = None
+    for _page in range(PULL_COMMITS_MAX_PAGES):
+        status, data, _headers = api.request(
+            "POST",
+            "/graphql",
+            body={
+                "query": _PULL_COMMITS_QUERY,
+                "variables": {
+                    "owner": owner,
+                    "name": name,
+                    "number": number,
+                    "cursor": cursor,
+                },
+            },
+            retry=False,
+        )
+        if status != 200 or not isinstance(data, Mapping) or data.get("errors"):
+            raise GuardError("pull commit list incomplete")
+        repository = data.get("data")
+        repo_node = repository.get("repository") if isinstance(repository, Mapping) else None
+        pull = repo_node.get("pullRequest") if isinstance(repo_node, Mapping) else None
+        connection = pull.get("commits") if isinstance(pull, Mapping) else None
+        if not isinstance(connection, Mapping):
+            raise GuardError("pull commit list incomplete")
+        page_total = connection.get("totalCount")
+        if type(page_total) is not int or page_total < 0:
+            raise GuardError("pull commit list incomplete")
+        if total is None:
+            total = page_total
+        elif page_total != total:
+            raise GuardError("pull commit list incomplete")
+        nodes = connection.get("nodes")
+        info = connection.get("pageInfo")
+        if not isinstance(nodes, list) or not isinstance(info, Mapping):
+            raise GuardError("pull commit list incomplete")
+        has_next = info.get("hasNextPage")
+        if type(has_next) is not bool:
+            raise GuardError("pull commit list incomplete")
+        if not nodes and has_next:
+            raise GuardError("pull commit list incomplete")
+        for node in nodes:
+            commits.append(_commit_from_graphql(node))
+        if not has_next:
+            break
+        end = info.get("endCursor")
+        if not isinstance(end, str) or not end or end == cursor:
+            raise GuardError("pull commit list incomplete")
+        cursor = end
+    else:
+        raise GuardError("pull commit list incomplete")
+    if total != len(commits):
+        raise GuardError("pull commit list incomplete")
+    return commits
+
+
 def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str, Any]]:
     """Return every commit object on the pull request (data only; never execute).
 
-    GitHub lists at most 250 pull-request commits. Reaching that cap is
-    treated as a truncated list: fail closed instead of scanning a prefix.
+    The REST list caps at 250 and does not say it was cut. At that cap the
+    guard reads the full list through GraphQL instead of scanning a prefix.
     """
     repo = _validate_repo(repo)
     items = api.paginate(f"/repos/{repo}/pulls/{number}/commits")
     if len(items) >= PULL_COMMITS_API_CAP:
-        raise GuardError(
-            "pull commit list truncated at GitHub 250-commit cap; refusing partial scan"
-        )
+        items = _fetch_pull_commits_graphql(api, repo, number)
     commits: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):

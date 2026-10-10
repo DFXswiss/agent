@@ -265,6 +265,7 @@ class FakeAPI:
             "release": DEFAULT_TIP,
         }
         self.commits: list[dict[str, Any]] = [_clean_commit()]
+        self.graphql_commits_broken = False
         wf = _workflow_yaml(["pytest"])
         self.files[(BASE, ".github/a38.json")] = json.dumps(_policy()).encode()
         self.files[(BASE, ".github/workflows/test.yml")] = wf
@@ -325,7 +326,67 @@ class FakeAPI:
                 payload = json.loads(raw) if raw else {}
             except json.JSONDecodeError:
                 payload = {}
-            if "reviewThreads" in str(payload.get("query", "")):
+            query = str(payload.get("query", ""))
+            if "commits(first:" in query:
+                if self.graphql_commits_broken:
+                    return 200, {"errors": [{"message": "broken"}]}, {}
+                variables = payload.get("variables")
+                raw_cursor = variables.get("cursor") if isinstance(variables, dict) else None
+                start = int(raw_cursor) if isinstance(raw_cursor, str) and raw_cursor.isdigit() else 0
+                page_size = 100
+                chunk = self.commits[start : start + page_size]
+                end = start + len(chunk)
+                has_next = end < len(self.commits)
+                nodes = []
+                for item in chunk:
+                    inner = item.get("commit") if isinstance(item.get("commit"), dict) else {}
+                    author = inner.get("author") if isinstance(inner.get("author"), dict) else {}
+                    committer = inner.get("committer") if isinstance(inner.get("committer"), dict) else {}
+                    author_user = item.get("author") if isinstance(item.get("author"), dict) else {}
+                    committer_user = item.get("committer") if isinstance(item.get("committer"), dict) else {}
+                    nodes.append(
+                        {
+                            "commit": {
+                                "oid": item.get("sha"),
+                                "message": inner.get("message"),
+                                "author": {
+                                    "name": author.get("name"),
+                                    "email": author.get("email"),
+                                    "user": (
+                                        {"login": author_user.get("login")}
+                                        if isinstance(author_user.get("login"), str)
+                                        else None
+                                    ),
+                                },
+                                "committer": {
+                                    "name": committer.get("name"),
+                                    "email": committer.get("email"),
+                                    "user": (
+                                        {"login": committer_user.get("login")}
+                                        if isinstance(committer_user.get("login"), str)
+                                        else None
+                                    ),
+                                },
+                            }
+                        }
+                    )
+                return 200, {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "commits": {
+                                    "totalCount": len(self.commits),
+                                    "pageInfo": {
+                                        "hasNextPage": has_next,
+                                        "endCursor": str(end) if has_next else None,
+                                    },
+                                    "nodes": nodes,
+                                }
+                            }
+                        }
+                    }
+                }, {}
+            if "reviewThreads" in query:
                 return 200, {
                     "data": {
                         "repository": {
@@ -1443,15 +1504,36 @@ class A38GuardE2ETests(unittest.TestCase):
         with self.assertRaisesRegex(GuardError, "denied"):
             reconcile_pull(fake.api(), REPO, 1, publish=True)
 
-    def test_truncated_pull_commits_list_raises(self) -> None:
+    def test_cap_without_graphql_fails_closed(self) -> None:
         fake = FakeAPI()
+        fake.graphql_commits_broken = True
         fake.commits = [_clean_commit(sha=f"{i:040x}") for i in range(250)]
-        with self.assertRaisesRegex(GuardError, "250-commit cap"):
+        with self.assertRaisesRegex(GuardError, "pull commit list incomplete"):
             reconcile_pull(fake.api(), REPO, 1, publish=True)
+
+    def test_exactly_250_commits_are_scanned_when_graphql_is_complete(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.commits = [_clean_commit(sha=f"{i:040x}") for i in range(250)]
+        result = reconcile_pull(fake.api(), REPO, 1, publish=True)
+        self.assertFalse(result.hard_fail)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 0)
+
+    def test_commit_past_rest_cap_is_scanned(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        commits = [_clean_commit(sha=f"{i:040x}") for i in range(250)]
+        commits.append(_clean_commit(sha=f"{250:040x}", message=AI_COMMIT_MESSAGE))
+        fake.commits = commits
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.hard_fail)
+        self.assertEqual(a38_guard._assessment_exit_code(result), 1)
+        self.assertTrue(any("AI co-author trailer" in reason for reason in result.reasons))
 
     def test_just_under_pull_commits_cap_scans(self) -> None:
         fake = FakeAPI()
         fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.graphql_commits_broken = True
         fake.commits = [_clean_commit(sha=f"{i:040x}") for i in range(249)]
         result = reconcile_pull(fake.api(), REPO, 1, publish=True)
         self.assertFalse(result.hard_fail)
