@@ -2327,6 +2327,8 @@ def test_pr_review_scope_keeps_the_compliance_reminder_and_states_a_missing_issu
     for scope in (quality, logic):
         assert scope.startswith(COMPLIANCE_PROMPT + " ")
         assert "A missing issue is not a defect." in scope
+    assert "Also judge it against the linked issue." in quality
+    assert "complete for the linked issue" in logic
+    assert "and the linked issue" in logic
     assert "Quality:" in quality
     assert "Logic:" in logic
-    assert "complete for the linked issue" not in logic
