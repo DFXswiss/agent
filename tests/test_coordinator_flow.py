@@ -317,18 +317,21 @@ def test_implementer_searches_for_an_existing_element(
     # permission check and a time window are often invisible and still carry it.
     assert (
         "For a new endpoint, a user-interface control, a visible error text, a "
-        "clock or time window, or a permission check, reuse is required" in unbound
+        "clock or time window, or a permission check, reuse or extend what the "
+        "search finds rather than writing a second one" in unbound
     )
     # An unreused invisible helper is not a defect, so the search must not force one.
     assert (
         "For a helper the caller does not see, reuse is the better change and "
         "not a requirement" in unbound
     )
-    # Both tiers are stated before the general reuse sentence, so that sentence
-    # cannot read as an unscoped command that overrides the helper tier.
-    assert unbound.index("reuse is required") < unbound.index("Either way")
-    assert unbound.index("not a requirement") < unbound.index("Either way")
-    assert "Either way, reuse or extend what the search finds" in unbound
+    # The reuse command belongs to the required tier only. A sentence spanning both
+    # tiers would cancel the helper exemption no matter where it sits, so there is
+    # none, and the helper tier is the last word on that tier.
+    assert "Either way" not in unbound
+    assert unbound.index("rather than writing a second one") < unbound.index(
+        "For a helper the caller does not see"
+    )
     # Without REVIEW.md at the base the search still applies; only the list does not.
     assert "REUSED:" not in unbound and "ADDED:" not in unbound
 

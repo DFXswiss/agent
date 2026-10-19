@@ -501,10 +501,10 @@ def _implementer_instruction(
         "purpose the caller already has, and behavior that differs does not "
         "make a different job. For a new endpoint, a user-interface control, a "
         "visible error text, a clock or time window, or a permission check, "
-        "reuse is required: one goes in only when no existing element in this "
+        "reuse or extend what the search finds rather than writing a second "
+        "one: one of those goes in only when no existing element in this "
         "repository does that job. For a helper the caller does not see, reuse "
-        "is the better change and not a requirement. Either way, reuse or "
-        "extend what the search finds rather than writing a second one."
+        "is the better change and not a requirement."
     )
     if not review_rules_bound(store, worker, runner, task):
         return text

@@ -46,14 +46,14 @@ class, configuration key, fixture, or nearby feature that already does the job
 before writing a new one. The job is the purpose the caller already has;
 behavior that differs does not make a different job. For a new endpoint, a
 user-interface control, a visible error text, a clock or time window, or a
-permission check, reuse is required: one goes in only when no existing element
-in this repository does that job. For a helper the caller does not see, reuse is
-the better change and not a requirement. Either way, the implementer reuses or
-extends what the search finds rather than writing a second one. When the base
-revision has `REVIEW.md`, the `REUSED:` / `ADDED:` lines report that search, and
-an `ADDED:` line for one of those named kinds that passes over an existing
-element names that element and the different job it has; the script posts those
-lines into the pull request body.
+permission check, the implementer reuses or extends what the search finds rather
+than writing a second one: one of those goes in only when no existing element in
+this repository does that job. For a helper the caller does not see, reuse is
+the better change and not a requirement. When the base revision has `REVIEW.md`,
+the `REUSED:` / `ADDED:` lines report that search, and an `ADDED:` line for one
+of those named kinds that passes over an existing element names that element
+and the different job it has; the script posts those lines into the pull
+request body.
 
 The reviewer is read-only: no tests, builds, or servers.
 
