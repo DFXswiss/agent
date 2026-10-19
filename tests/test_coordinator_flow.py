@@ -316,13 +316,19 @@ def test_implementer_searches_for_an_existing_element(
     # The hard bar is REVIEW.md's own enumeration, not a visibility paraphrase: a
     # permission check and a time window are often invisible and still carry it.
     assert (
-        "A new endpoint, a user-interface control, a visible error text, a "
-        "clock or time window, or a permission check goes in only when" in unbound
+        "For a new endpoint, a user-interface control, a visible error text, a "
+        "clock or time window, or a permission check, reuse is required" in unbound
     )
     # An unreused invisible helper is not a defect, so the search must not force one.
-    # Wording follows the established sentence in the pr-review skill contract.
-    assert "A helper the caller does not see is outside that rule" in unbound
-    assert "reuse is still the better change" in unbound
+    assert (
+        "For a helper the caller does not see, reuse is the better change and "
+        "not a requirement" in unbound
+    )
+    # Both tiers are stated before the general reuse sentence, so that sentence
+    # cannot read as an unscoped command that overrides the helper tier.
+    assert unbound.index("reuse is required") < unbound.index("Either way")
+    assert unbound.index("not a requirement") < unbound.index("Either way")
+    assert "Either way, reuse or extend what the search finds" in unbound
     # Without REVIEW.md at the base the search still applies; only the list does not.
     assert "REUSED:" not in unbound and "ADDED:" not in unbound
 

@@ -497,13 +497,14 @@ def _implementer_instruction(
         "Before you write a new one, search this repository for an existing "
         "helper, utility, base class, configuration key, fixture, or nearby "
         "feature built the same way that already does the job. Read and search "
-        "the files with your file tools; Bash stays prohibited. Reuse or extend "
-        "the one that does that job. The job is the purpose the caller already "
-        "has, and behavior that differs does not make a different job. A new "
-        "endpoint, a user-interface control, a visible error text, a clock or "
-        "time window, or a permission check goes in only when no existing "
-        "element in this repository does that job. A helper the caller does not "
-        "see is outside that rule; reuse is still the better change."
+        "the files with your file tools; Bash stays prohibited. The job is the "
+        "purpose the caller already has, and behavior that differs does not "
+        "make a different job. For a new endpoint, a user-interface control, a "
+        "visible error text, a clock or time window, or a permission check, "
+        "reuse is required: one goes in only when no existing element in this "
+        "repository does that job. For a helper the caller does not see, reuse "
+        "is the better change and not a requirement. Either way, reuse or "
+        "extend what the search finds rather than writing a second one."
     )
     if not review_rules_bound(store, worker, runner, task):
         return text
