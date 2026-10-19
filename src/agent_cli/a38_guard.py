@@ -2912,6 +2912,11 @@ def publish_assessment(
             review_fail_left = prev_state == "failure" and str(prev_desc).startswith(
                 "review_fail:"
             )
+            stale_fail_left = (
+                prev_state == "failure"
+                and assessment.ok
+                and assessment.status == "pass"
+            )
             if not assessment.review_ok:
                 # Do not success-clear, and do not leave a prior waiver success.
                 # No status at all stays omitted. hard_fail and review_fail stay
@@ -2930,10 +2935,12 @@ def publish_assessment(
                     )
                 else:
                     assessment.writes.append("status:skipped:draft")
-            elif hard_fail_left or review_fail_left:
-                # GitHub statuses are append-only per context/SHA. Clear only a
+            elif hard_fail_left or review_fail_left or stale_fail_left:
+                # GitHub statuses are append-only per context/SHA. Clear a
                 # leftover draft hard_fail or review_fail so Checks is not stuck
-                # red after the violation is gone. Other enforce failures stay.
+                # red after the violation is gone. A leftover failing status is
+                # also cleared when the current verdict is a clean pass, because
+                # then no current enforce failure exists for it to represent.
                 assessment.state_for_status = "success"
                 _post_status(
                     context,
