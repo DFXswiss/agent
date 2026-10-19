@@ -494,17 +494,16 @@ def _implementer_instruction(
     """Implementer task, plus the surface list when the base has REVIEW.md."""
     text = (
         "Implement the assigned issue. Edit files only.\n"
-        "Search this repository for an existing mechanism that already does the "
-        "job before you write a new one: a helper, a utility, a base class, a "
-        "configuration key, a fixture, or a nearby feature built the same way. "
-        "Read and search the files with your file tools; Bash stays prohibited. "
-        "Reuse or extend the one that does that job. The job is the purpose the "
-        "caller already has, and behavior that differs does not make a different "
-        "job. A new endpoint, a user-interface control, a visible error text, a "
-        "clock or time window, or a permission check goes in only when no "
-        "existing mechanism in this repository does that job. A helper the "
-        "caller does not see is outside that rule; reuse is still the better "
-        "change."
+        "Before you write a new one, search this repository for an existing "
+        "helper, utility, base class, configuration key, fixture, or nearby "
+        "feature built the same way that already does the job. Read and search "
+        "the files with your file tools; Bash stays prohibited. Reuse or extend "
+        "the one that does that job. The job is the purpose the caller already "
+        "has, and behavior that differs does not make a different job. A new "
+        "endpoint, a user-interface control, a visible error text, a clock or "
+        "time window, or a permission check goes in only when no existing "
+        "element in this repository does that job. A helper the caller does not "
+        "see is outside that rule; reuse is still the better change."
     )
     if not review_rules_bound(store, worker, runner, task):
         return text
@@ -515,8 +514,8 @@ def _implementer_instruction(
         "a file and a line, for example REUSED: `src/pay.ts:40` existing gift invoice. "
         "These lines report that search; they are not a guess written afterwards. "
         "An ADDED: line for one of those named kinds that passes over an "
-        "existing mechanism names that mechanism and the different job it has, "
-        "on the line itself. Any other ADDED: line needs no different job. "
+        "existing element names that element and the different job it has, on "
+        "the line itself. Any other ADDED: line needs no different job. "
         "When that section is empty, write REUSED: none — nothing existing does this job. "
         "The script posts these lines into the pull request body. Do not call GitHub."
     )

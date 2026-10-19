@@ -271,10 +271,10 @@ def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: py
     assert "TRUNCATED" not in issue_body.read_text(encoding="utf-8")
 
 
-def test_implementer_searches_for_a_reusable_mechanism(
+def test_implementer_searches_for_an_existing_element(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The implementer spec orders the reuse search before the new mechanism, REVIEW.md or not."""
+    """The implementer spec orders the reuse search before the new code, REVIEW.md or not."""
     from agent_cli.coordinator_runtime import _implementer_instruction
 
     store = Store(tmp_path)
@@ -302,14 +302,17 @@ def test_implementer_searches_for_a_reusable_mechanism(
 
     assert fake.review_md is None
     unbound = _implementer_instruction(store, worker, task, fake)
-    assert "Search this repository for an existing mechanism" in unbound
-    assert "before you write a new one" in unbound
+    assert "search this repository for an existing" in unbound
+    assert "Before you write a new one" in unbound
     # REVIEW.md sets the standard: a different job, never an inability to proceed.
     assert "behavior that differs does not make a different job" in unbound
     assert "cannot" not in unbound
-    # Repository-wide, like REVIEW.md, not narrowed to the nearest mechanism found.
-    assert "no existing mechanism in this repository does that job" in unbound
+    # Repository-wide, like REVIEW.md, not narrowed to the nearest one found.
+    assert "no existing element in this repository does that job" in unbound
     assert "nearest" not in unbound
+    # REVIEW.md calls the existing thing an element and reserves "mechanism" for
+    # the second one added for a job an element already does. Keep that vocabulary.
+    assert "mechanism" not in unbound
     # The hard bar is REVIEW.md's own enumeration, not a visibility paraphrase: a
     # permission check and a time window are often invisible and still carry it.
     assert (
@@ -325,17 +328,17 @@ def test_implementer_searches_for_a_reusable_mechanism(
 
     fake.review_md = "# Review\n"
     bound = _implementer_instruction(store, worker, task, fake)
-    assert "Search this repository for an existing mechanism" in bound
+    assert "search this repository for an existing" in bound
     assert "REUSED:" in bound and "ADDED:" in bound
     assert "report that search" in bound
-    # The passed-over mechanism and its job ride the posted ADDED: line, never the
+    # The passed-over element and its job ride the posted ADDED: line, never the
     # implementer's stdout body, which the script does not post. The duty is scoped
     # to the enumerated kinds, so a permitted same-job helper owes no different job.
     # Pin the clause attachment: the qualifier covers the named kinds, not just
     # the last one in the list, so the duty cannot be read as a single-kind rule.
     assert (
         "An ADDED: line for one of those named kinds that passes over an "
-        "existing mechanism names that mechanism and the different job it has"
+        "existing element names that element and the different job it has"
         in bound
     )
     assert "Any other ADDED: line needs no different job." in bound
