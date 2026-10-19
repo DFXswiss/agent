@@ -41,6 +41,18 @@ agent agent finish --id <reviewer-uuid> --verdict approved|rejected
 - Reviewer `rejected` → new round (`agent round start`).
 - Reviewer `approved` → close `reviewer_approved` and continue the spine.
 
+The implementer searches the repository for an existing mechanism that already
+does the job before writing a new one, and reuses or extends the one that does.
+The job is the purpose the caller already has; behavior that differs does not
+make a different job. A new endpoint, a user-interface control, a visible error
+text, a clock or time window, or a permission check goes in only when no
+existing mechanism in this repository does that job. A helper the caller does
+not see is outside that rule; reuse is still the better change. When the base
+revision has `REVIEW.md`, the `REUSED:` / `ADDED:` lines report that search, and
+an `ADDED:` line for one of those named kinds that passes over an existing
+mechanism names that mechanism and the different job it has; the script posts
+those lines into the pull request body.
+
 The reviewer is read-only: no tests, builds, or servers.
 
 Empty, partial, timeout, or unavailable review output is not zero findings.

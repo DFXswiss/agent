@@ -10,6 +10,10 @@ This rule covers a new endpoint, a user-interface control, a visible error text,
 
 Add one of those only when no existing element in this repository does the same job. The same job is the purpose the caller already has. Behavior that differs does not make a different job.
 
+The change searches this repository for such an element before adding one. A search made after the element was written is not that search.
+
+The search is wider than this rule: it also covers a helper the caller does not see. Reusing such a helper is the better change, and not reusing one is still not a defect.
+
 An existing element with a different job is not a substitute. The review names that element and the job it has.
 
 ## Deviation

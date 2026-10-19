@@ -271,6 +271,76 @@ def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: py
     assert "TRUNCATED" not in issue_body.read_text(encoding="utf-8")
 
 
+def test_implementer_searches_for_a_reusable_mechanism(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The implementer spec orders the reuse search before the new mechanism, REVIEW.md or not."""
+    from agent_cli.coordinator_runtime import _implementer_instruction
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    tid = "77777777-7777-7777-7777-777777777777"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir(parents=True)
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "repo": "example/project",
+        "payload": {
+            "coordinator": {
+                "worktree": str(worktree),
+                "base_sha": fake.base,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+
+    assert fake.review_md is None
+    unbound = _implementer_instruction(store, worker, task, fake)
+    assert "Search this repository for an existing mechanism" in unbound
+    assert "before you write a new one" in unbound
+    # REVIEW.md sets the standard: a different job, never an inability to proceed.
+    assert "behavior that differs does not make a different job" in unbound
+    assert "cannot" not in unbound
+    # Repository-wide, like REVIEW.md, not narrowed to the nearest mechanism found.
+    assert "no existing mechanism in this repository does that job" in unbound
+    assert "nearest" not in unbound
+    # The hard bar is REVIEW.md's own enumeration, not a visibility paraphrase: a
+    # permission check and a time window are often invisible and still carry it.
+    assert (
+        "A new endpoint, a user-interface control, a visible error text, a "
+        "clock or time window, or a permission check goes in only when" in unbound
+    )
+    # An unreused invisible helper is not a defect, so the search must not force one.
+    # Wording follows the established sentence in the pr-review skill contract.
+    assert "A helper the caller does not see is outside that rule" in unbound
+    assert "reuse is still the better change" in unbound
+    # Without REVIEW.md at the base the search still applies; only the list does not.
+    assert "REUSED:" not in unbound and "ADDED:" not in unbound
+
+    fake.review_md = "# Review\n"
+    bound = _implementer_instruction(store, worker, task, fake)
+    assert "Search this repository for an existing mechanism" in bound
+    assert "REUSED:" in bound and "ADDED:" in bound
+    assert "report that search" in bound
+    # The passed-over mechanism and its job ride the posted ADDED: line, never the
+    # implementer's stdout body, which the script does not post. The duty is scoped
+    # to the enumerated kinds, so a permitted same-job helper owes no different job.
+    # Pin the clause attachment: the qualifier covers the named kinds, not just
+    # the last one in the list, so the duty cannot be read as a single-kind rule.
+    assert (
+        "An ADDED: line for one of those named kinds that passes over an "
+        "existing mechanism names that mechanism and the different job it has"
+        in bound
+    )
+    assert "Any other ADDED: line needs no different job." in bound
+
+
 def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """REVIEW.md at the base makes the script post the implementer's list. It does not invent one."""
     from agent_cli.coordinator_common import parse_surface_list
