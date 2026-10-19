@@ -2913,7 +2913,7 @@ def publish_assessment(
                 "review_fail:"
             )
             stale_fail_left = (
-                prev_state == "failure"
+                prev_state in {"failure", "error"}
                 and assessment.ok
                 and assessment.status == "pass"
             )
@@ -2938,9 +2938,10 @@ def publish_assessment(
             elif hard_fail_left or review_fail_left or stale_fail_left:
                 # GitHub statuses are append-only per context/SHA. Clear a
                 # leftover draft hard_fail or review_fail so Checks is not stuck
-                # red after the violation is gone. A leftover failing status is
-                # also cleared when the current verdict is a clean pass, because
-                # then no current enforce failure exists for it to represent.
+                # red after the violation is gone. A leftover failing or error
+                # status is also cleared when the current verdict is a clean
+                # pass, because then no current enforce failure exists for it
+                # to represent.
                 assessment.state_for_status = "success"
                 _post_status(
                     context,

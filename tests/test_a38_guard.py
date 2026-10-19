@@ -1442,6 +1442,30 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(result.state_for_status, "success")
         self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
 
+    def test_draft_clears_stale_enforce_error_when_verdict_passes(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.add_author_report(_report_comment(), updated_at="2026-09-05T12:00:00Z", cid=21)
+        enforce = status_context_enforce("develop")
+        fake.statuses.insert(
+            0,
+            {
+                "id": 1,
+                "sha": HEAD,
+                "state": "error",
+                "description": "A38 reconciliation failed; rerun the guard before merging.",
+                "context": enforce,
+            },
+        )
+        result = reconcile_pull(fake.api(), REPO, 1, dry_run=False, publish=True)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "pass")
+        self.assertTrue(result.draft)
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(matching[0]["state"], "success")
+        self.assertEqual(result.state_for_status, "success")
+        self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
+
     def test_ready_hard_fail_then_draft_clean_clears(self) -> None:
         fake = FakeAPI()
         fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]
