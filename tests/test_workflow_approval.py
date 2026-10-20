@@ -877,6 +877,25 @@ def test_approve_403_waiting_second_attempt_raises() -> None:
     assert "workflow:approve:101:already-released" not in assessment.writes
 
 
+def test_approve_403_mismatched_run_identity_raises() -> None:
+    fake = FakeApproval()
+    fake.post_status = 403
+
+    def mismatch_on_reread(f: FakeApproval) -> None:
+        def mismatch(inner: FakeApproval) -> None:
+            inner.run_override = inner.run(id=202)
+
+        f.before_run_read = mismatch
+
+    fake.before_run_read = mismatch_on_reread
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(GuardError, match="identity changed"):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == [101]
+    assert "workflow:approve:101:already-released" not in assessment.writes
+
+
 def _add_maintainer_approval(fake: FakeApproval) -> None:
     fake.files[(HEAD, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]
     fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}

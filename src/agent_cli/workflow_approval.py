@@ -253,6 +253,10 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
                 current = api.get_json(
                     f"/repos/{assessment.repo}/actions/runs/{run['id']}"
                 )
+                if not isinstance(current, Mapping) or current.get("id") != run["id"]:
+                    raise GuardError(
+                        "workflow run identity changed before approval"
+                    )
                 if (
                     current.get("status") == "completed"
                     and current.get("conclusion") == "action_required"
