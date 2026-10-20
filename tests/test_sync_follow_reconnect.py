@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
-from websockets.exceptions import WebSocketException
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from agent_cli import main as main_mod
 from agent_cli.main import cmd_sync, open_store
@@ -401,10 +401,11 @@ def test_subscription_row_store_connection_error_reaches_the_reconnect_loop(
             def send(self, data: str) -> None:
                 pass
 
-            def __iter__(self):
-                return iter(
-                    [json.dumps({"type": "subscription", "rows": [{"table": "session", "id": "s1"}]})]
-                )
+            def recv(self, timeout: float | None = None) -> str:
+                if getattr(self, "_delivered", False):
+                    raise ConnectionClosed(None, None)
+                self._delivered = True
+                return json.dumps({"type": "subscription", "rows": [{"table": "session", "id": "s1"}]})
 
             def close(self) -> None:
                 pass
@@ -515,8 +516,8 @@ def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
                     return  # control-ready
                 raise OSError("broken pipe")  # terminal publish
 
-            def __iter__(self):
-                return iter(())
+            def recv(self, timeout: float | None = None) -> str:
+                raise ConnectionClosed(None, None)
 
             def close(self) -> None:
                 pass
@@ -607,8 +608,8 @@ def test_established_is_set_once_the_handshake_actually_succeeds(
             def send(self, data: str) -> None:
                 pass
 
-            def __iter__(self):
-                return iter(())
+            def recv(self, timeout: float | None = None) -> str:
+                raise ConnectionClosed(None, None)
 
             def close(self) -> None:
                 pass
@@ -694,8 +695,8 @@ def test_reconnect_republishes_terminal_state_even_if_unchanged(tmp_path: Path) 
             def send(self, data: str) -> None:
                 self.sent.append(data)
 
-            def __iter__(self):
-                return iter(())
+            def recv(self, timeout: float | None = None) -> str:
+                raise ConnectionClosed(None, None)
 
             def close(self) -> None:
                 pass
