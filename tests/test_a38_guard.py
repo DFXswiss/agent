@@ -1466,6 +1466,47 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(result.state_for_status, "success")
         self.assertFalse(any(w == "status:skipped:draft" for w in result.writes))
 
+    def test_draft_clear_rechecks_author_report_before_success(self) -> None:
+        fake = FakeAPI()
+        fake.pull = fake._pull(HEAD, BASE, draft=True)
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=21
+        )
+        enforce = status_context_enforce("develop")
+        fake.statuses.insert(
+            0,
+            {
+                "id": 1,
+                "sha": HEAD,
+                "state": "failure",
+                "description": "fail: .github/workflows/x.yml bytes changed vs base",
+                "context": enforce,
+            },
+        )
+        original = fake.request_fn
+
+        def request_fn(method: str, url: str, body: bytes | None = None):
+            status, data, headers = original(method, url, body)
+            if method == "POST" and urlparse(url).path.endswith("/issues/1/comments"):
+                for comment in fake.comments:
+                    if comment.get("id") == 21:
+                        comment["updated_at"] = "2026-09-05T18:00:00Z"
+            return status, data, headers
+
+        fake.request_fn = request_fn
+        api = fake.api()
+        assessment = assess_pull(api, REPO, 1)
+        self.assertTrue(assessment.draft)
+        self.assertTrue(assessment.ok)
+        self.assertEqual(assessment.status, "pass")
+        with self.assertRaisesRegex(GuardError, "author report changed before publish"):
+            publish_assessment(api, assessment)
+        report = next(c for c in fake.comments if c.get("id") == 21)
+        self.assertEqual(report["updated_at"], "2026-09-05T18:00:00Z")
+        matching = [s for s in fake.statuses if s.get("context") == enforce]
+        self.assertEqual(matching[0]["state"], "failure")
+        self.assertFalse(any(s.get("state") == "success" for s in matching))
+
     def test_ready_hard_fail_then_draft_clean_clears(self) -> None:
         fake = FakeAPI()
         fake.commits = [_clean_commit(message=AI_COMMIT_MESSAGE)]

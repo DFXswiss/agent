@@ -2948,7 +2948,7 @@ def publish_assessment(
                     "success",
                     assessment.description
                     or truncate_desc("draft: A38 status omitted until Ready"),
-                    require_report=False,
+                    require_report=True,
                 )
             else:
                 assessment.writes.append("status:skipped:draft")
