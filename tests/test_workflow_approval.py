@@ -837,6 +837,24 @@ def test_approve_403_still_pending_raises() -> None:
     assert fake.runs[0]["conclusion"] == "action_required"
 
 
+def test_approve_500_raises_even_when_run_is_not_pending() -> None:
+    fake = FakeApproval()
+    fake.post_status = 500
+
+    def release_on_reread(f: FakeApproval) -> None:
+        def release(inner: FakeApproval) -> None:
+            inner.runs[0].update(status="completed", conclusion="success")
+
+        f.before_run_read = release
+
+    fake.before_run_read = release_on_reread
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(GuardError, match="HTTP 500"):
+        wa.approve_workflow_runs(api, assessment)
+    assert "workflow:approve:101:already-released" not in assessment.writes
+
+
 def _add_maintainer_approval(fake: FakeApproval) -> None:
     fake.files[(HEAD, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]
     fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}
