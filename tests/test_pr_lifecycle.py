@@ -652,6 +652,27 @@ def test_guard_itself_and_superseded_failures_do_not_block():
     assert fake.transitions == [False]
 
 
+def test_synthetic_build_failed_startup_failure_does_not_block():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.runs.append(fake.run(id=103, path="BuildFailed", check_suite_id=203, conclusion="startup_failure"))
+    fake.checks = [dict(id=12, name="startup", check_suite={"id": 203}, status="completed", conclusion="failure")]
+    reconcile_pull(fake.api(), REPO, 1)
+    assert fake.transitions == [False]
+
+
+def test_build_failed_other_conclusion_is_not_ignored():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.runs.append(fake.run(id=104, path="BuildFailed", check_suite_id=204, conclusion="failure"))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.transitions == []
+    assert "CI not green: BuildFailed (failure)" in result.lifecycle["reasons"]
+
+
 @pytest.mark.parametrize("status,conclusion", [("in_progress", None), ("completed", "failure")])
 def test_independent_check_blocks_ready(status, conclusion):
     fake = LifecycleAPI()

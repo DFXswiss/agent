@@ -773,6 +773,10 @@ def ci_state(
         path = run.get("path")
         if not isinstance(path, str):
             raise GuardError("CI workflow inventory lacks a workflow path")
+        # Synthetic start-failure run; not a real workflow path, so config cannot ignore it.
+        if path == "BuildFailed" and run.get("conclusion") == "startup_failure":
+            ignored_suites.add(run.get("check_suite_id"))
+            continue
         if path in config["ignored_workflows"]:
             ignored_suites.add(run.get("check_suite_id"))
             continue
