@@ -677,7 +677,7 @@ def test_startup_failure_on_real_path_is_not_ignored():
     fake = LifecycleAPI()
     fake.pull["draft"] = True
     fake.own_authorization()
-    fake.runs.append(fake.run(id=105, check_suite_id=205, conclusion="startup_failure"))
+    fake.runs.append(fake.run(id=105, check_suite_id=205, conclusion="startup_failure", created_at="2026-09-05T12:00:00Z"))
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.lifecycle["action"] == "unchanged"
     assert fake.transitions == []
