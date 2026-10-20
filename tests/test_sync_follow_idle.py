@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+from websockets.exceptions import ConnectionClosed
+
+from agent_cli import main as main_mod
+from agent_cli.hub import HubError
+from agent_cli.main import open_store
+
+
+class _StopTest(Exception):
+    pass
+
+
+def _init_paired_store(tmp_path: Path) -> None:
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    main_mod.main(["init"])
+    store = open_store()
+    try:
+        store.set_meta("hub_url", "https://hub.example")
+        store.set_meta("device_token", "fake-token")
+    finally:
+        store.close()
+
+
+class _Hub:
+    def __init__(self, ws: object) -> None:
+        self._ws = ws
+
+    def connect_sync_ws(self) -> object:
+        return self._ws
+
+
+def test_idle_connection_pushes_local_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the defect where `agent sync --follow` pushes local ledger events
+    only when the hub sends a frame. An idle socket must reach _sync_once on
+    the receive timeout. TimeoutError must not escape the session: it is an
+    OSError, and cmd_sync treats OSError as a lost connection, so a leaked
+    timeout would tear the socket down and reconnect on every idle interval."""
+    syncs: list[object] = []
+
+    class _IdleWs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def recv(self, timeout: float | None = None) -> str:
+            if timeout != main_mod.SYNC_IDLE_SECONDS:
+                raise AssertionError(f"recv timeout must be SYNC_IDLE_SECONDS, got {timeout!r}")
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError()
+            raise _StopTest()
+
+        def send(self, data: str) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_mod, "_sync_once", lambda store: syncs.append(store))
+    monkeypatch.setattr(main_mod, "_publish_terminals", lambda *args, **kwargs: None)
+
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        runtime = object()
+        with pytest.raises(_StopTest):
+            main_mod._run_sync_ws_session(store, _Hub(_IdleWs()), runtime, {}, {}, {})
+        assert len(syncs) >= 1, (
+            "an idle timeout must push via _sync_once and must not propagate TimeoutError"
+        )
+    finally:
+        store.close()
+
+
+def test_closed_connection_surfaces_as_hub_error(tmp_path: Path) -> None:
+    """Pins the contract that a closed sync websocket still surfaces as HubError
+    once the receive loop no longer ends by falling off the iterator. cmd_sync
+    already catches HubError and retries with backoff."""
+
+    class _ClosedWs:
+        def recv(self, timeout: float | None = None) -> str:
+            raise ConnectionClosed(None, None)
+
+        def send(self, data: str) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        runtime = object()
+        with pytest.raises(HubError):
+            main_mod._run_sync_ws_session(store, _Hub(_ClosedWs()), runtime, {}, {}, {})
+    finally:
+        store.close()
