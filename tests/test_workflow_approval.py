@@ -821,8 +821,9 @@ def test_approve_403_already_released_still_returns_the_run() -> None:
     api = fake.api()
     assessment = assess_pull(api, REPO, 1)
     approved = wa.approve_workflow_runs(api, assessment)
-    assert approved == [{"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}]
+    assert approved == [{"run_id": 101, "workflow": PATH, "head": HEAD, "status": "already-released"}]
     assert "workflow:approve:101:already-released" in assessment.writes
+    assert not _marker_comments(fake, AUTH_MARKER)
 
 
 def test_approve_403_still_pending_raises() -> None:
@@ -852,6 +853,27 @@ def test_approve_500_raises_even_when_run_is_not_pending() -> None:
     assessment = assess_pull(api, REPO, 1)
     with pytest.raises(GuardError, match="HTTP 500"):
         wa.approve_workflow_runs(api, assessment)
+    assert "workflow:approve:101:already-released" not in assessment.writes
+
+
+def test_approve_403_waiting_second_attempt_raises() -> None:
+    fake = FakeApproval()
+    fake.post_status = 403
+
+    def expose_second_attempt(f: FakeApproval) -> None:
+        def still_waiting(inner: FakeApproval) -> None:
+            inner.runs[0].update(
+                status="completed", conclusion="action_required", run_attempt=2
+            )
+
+        f.before_run_read = still_waiting
+
+    fake.before_run_read = expose_second_attempt
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(GuardError, match="HTTP 403"):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.runs[0]["run_attempt"] == 2
     assert "workflow:approve:101:already-released" not in assessment.writes
 
 
