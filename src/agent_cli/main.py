@@ -1588,8 +1588,8 @@ def _run_sync_ws_session(
     the caller in cmd_sync reconnects with backoff instead of exiting the process.
     Sets established["at"] once the handshake actually succeeds, so the caller can
     measure connection stability from there rather than from the connect attempt.
-    Local events are pushed at the latest every SYNC_IDLE_SECONDS, whether or not
-    frames arrive."""
+    The push is due every SYNC_IDLE_SECONDS whether or not frames arrive, and a frame
+    already being handled when the deadline passes delays it by that handling."""
     ws = hub.connect_sync_ws()
     try:
         ws.send(json.dumps({"type": "control-ready"}))
@@ -1601,15 +1601,15 @@ def _run_sync_ws_session(
             remaining = next_sync - time.monotonic()
             if remaining <= 0:
                 _sync_once(store)
-                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
                 next_sync = time.monotonic() + SYNC_IDLE_SECONDS
+                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
                 continue
             try:
                 raw = ws.recv(timeout=remaining)
             except TimeoutError:
                 _sync_once(store)
-                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
                 next_sync = time.monotonic() + SYNC_IDLE_SECONDS
+                _publish_terminals(store, runtime, ws, terminal_seq, last_capture)
                 continue
             except ConnectionClosed as exc:
                 raise HubError("websocket closed") from exc

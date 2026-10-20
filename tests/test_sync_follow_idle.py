@@ -150,3 +150,66 @@ def test_steady_non_sync_traffic_still_reaches_the_deadline(
         )
     finally:
         store.close()
+
+
+def test_deadline_is_rearmed_before_terminals_are_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pins the drift where the deadline was re-armed after `_publish_terminals`,
+    so the publication time was added to every interval."""
+    publication = 5.0
+    syncs: list[float] = []
+    timeouts: list[float | None] = []
+
+    class _Clock:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def advance(self, seconds: float) -> None:
+            self.now += seconds
+
+    class _TimeoutWs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def recv(self, timeout: float | None = None) -> str:
+            timeouts.append(timeout)
+            self.calls += 1
+            if self.calls <= 2:
+                raise TimeoutError()
+            raise _StopTest()
+
+        def send(self, data: str) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    clock = _Clock()
+    monkeypatch.setattr(main_mod.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(
+        main_mod, "_sync_once", lambda store: syncs.append(clock.monotonic())
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "_publish_terminals",
+        lambda *args, **kwargs: clock.advance(publication),
+    )
+
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        runtime = object()
+        with pytest.raises(_StopTest):
+            main_mod._run_sync_ws_session(store, _Hub(_TimeoutWs()), runtime, {}, {}, {})
+        assert len(syncs) >= 2, "the idle loop must reach _sync_once twice"
+        # Publication takes 5s. Re-arming before it folds that into the interval, so
+        # the next recv waits SYNC_IDLE_SECONDS minus 5. Re-arming after would hand
+        # recv the full SYNC_IDLE_SECONDS and add those 5s to every push gap.
+        assert timeouts[1] is not None
+        assert abs(timeouts[1] - (main_mod.SYNC_IDLE_SECONDS - publication)) < 1e-9
+    finally:
+        store.close()
