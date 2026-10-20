@@ -673,6 +673,17 @@ def test_build_failed_other_conclusion_is_not_ignored():
     assert "CI not green: BuildFailed (failure)" in result.lifecycle["reasons"]
 
 
+def test_startup_failure_on_real_path_is_not_ignored():
+    fake = LifecycleAPI()
+    fake.pull["draft"] = True
+    fake.own_authorization()
+    fake.runs.append(fake.run(id=105, check_suite_id=205, conclusion="startup_failure"))
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.lifecycle["action"] == "unchanged"
+    assert fake.transitions == []
+    assert f"CI not green: {PATH} (startup_failure)" in result.lifecycle["reasons"]
+
+
 @pytest.mark.parametrize("status,conclusion", [("in_progress", None), ("completed", "failure")])
 def test_independent_check_blocks_ready(status, conclusion):
     fake = LifecycleAPI()
