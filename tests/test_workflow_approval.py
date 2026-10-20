@@ -807,6 +807,36 @@ def test_approve_403_fails_loud_without_post_retry() -> None:
     assert fake.statuses[0]["state"] == "error"
 
 
+def test_approve_403_already_released_still_returns_the_run() -> None:
+    fake = FakeApproval()
+    fake.post_status = 403
+
+    def release_on_reread(f: FakeApproval) -> None:
+        def release(inner: FakeApproval) -> None:
+            inner.runs[0].update(status="completed", conclusion="success")
+
+        f.before_run_read = release
+
+    fake.before_run_read = release_on_reread
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    approved = wa.approve_workflow_runs(api, assessment)
+    assert approved == [{"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}]
+    assert "workflow:approve:101:already-released" in assessment.writes
+
+
+def test_approve_403_still_pending_raises() -> None:
+    fake = FakeApproval()
+    fake.post_status = 403
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    assert fake.runs[0]["conclusion"] == "action_required"
+    with pytest.raises(GuardError, match="HTTP 403"):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == [101]
+    assert fake.runs[0]["conclusion"] == "action_required"
+
+
 def _add_maintainer_approval(fake: FakeApproval) -> None:
     fake.files[(HEAD, ".github/a38.json")] = fake.files[(BASE, ".github/a38.json")]
     fake.permissions["maintainer"] = {"permission": "write", "user": {"id": MAINTAINER}}

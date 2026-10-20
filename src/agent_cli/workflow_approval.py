@@ -242,8 +242,19 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             recorded_id = _recorded_authorization_run_id(run, siblings, assessment.pr)
             status, _, _ = api.request("POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False)
             if status != 201:
-                raise GuardError(f"workflow approval HTTP {status}; Actions write permission is required")
-            assessment.writes.append(f"workflow:approve:{run['id']}")
+                # A concurrent guard run may have released this run already. GitHub
+                # answers 403 for an approve call on a run that no longer waits, which
+                # is the state this call wanted. Fail only when it is still waiting.
+                current = api.get_json(
+                    f"/repos/{assessment.repo}/actions/runs/{run['id']}"
+                )
+                if _pending(current):
+                    raise GuardError(
+                        f"workflow approval HTTP {status}; Actions write permission is required"
+                    )
+                assessment.writes.append(f"workflow:approve:{run['id']}:already-released")
+            else:
+                assessment.writes.append(f"workflow:approve:{run['id']}")
             auth_comment = record_workflow_approval(
                 api, assessment, run, create=auth_comment is None, existing=auth_comment,
                 recorded_run_id=recorded_id,
