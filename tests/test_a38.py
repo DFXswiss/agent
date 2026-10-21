@@ -1653,7 +1653,7 @@ class LocalCiCliPinTests(unittest.TestCase):
             moved = Path(tmp) / "gitdir"
             marker.rename(moved)
             marker.write_text(f"gitdir: {moved}\n", encoding="utf-8")
-            revision, root = local_ci_revision(module_file=module)
+            revision, root = local_ci_revision(env={}, module_file=module)
             self.assertEqual(revision, head)
             self.assertEqual(root, module.resolve().parents[2])
 
