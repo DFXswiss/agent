@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -27,7 +29,10 @@ from agent_cli.a38 import (
     TERMINATION_GRACE_S,
     _build_report_dict,
     _write_report,
+    ensure_local_ci_cli_satisfies_pin,
+    guard_action_pin,
     load_policy,
+    local_ci_revision,
     main,
     parse_github_origin,
     report_fact_reasons,
@@ -184,6 +189,79 @@ def _init_repo(path: Path, *, origin: str = "https://github.com/example/app.git"
         capture_output=True,
     )
     return _git(path, "rev-parse", "HEAD").lower()
+
+
+def _init_two_commit_checkout(path: Path) -> tuple[str, str]:
+    """Create a linear two-commit repository and return ``(ancestor, descendant)``."""
+    ancestor = _init_repo(path)
+    (path / "README").write_text("two\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            "second",
+        ],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    descendant = _git(path, "rev-parse", "HEAD").lower()
+    return ancestor, descendant
+
+
+def _installation_module(path: Path, *, git: bool) -> Path:
+    """``path/src/agent_cli/a38.py``, with a committed checkout when ``git`` is set."""
+    module = path / "src" / "agent_cli" / "a38.py"
+    module.parent.mkdir(parents=True, exist_ok=True)
+    module.write_text("# placeholder\n", encoding="utf-8")
+    if not git:
+        return module
+    _init_repo(path)
+    subprocess.run(
+        ["git", "add", "src/agent_cli/a38.py"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            "install",
+        ],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    return module
+
+
+def _write_guard_workflow(repo: Path, ref: str) -> None:
+    workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        f"uses: DFXswiss/agent/.github/actions/a38-guard@{ref}\n",
+        encoding="utf-8",
+    )
+
+
+def _forbid_run(
+    argv: list[str],
+    cwd: Path | None,
+    env: object,
+) -> subprocess.CompletedProcess[str]:
+    raise AssertionError(f"git must not run: {argv}")
 
 
 class PolicyTests(unittest.TestCase):
@@ -1297,6 +1375,279 @@ class OriginTests(unittest.TestCase):
     def test_rejects_non_github(self) -> None:
         with self.assertRaisesRegex(A38Error, "GitHub URL"):
             parse_github_origin("https://gitlab.com/Acme/App.git")
+
+
+class LocalCiCliPinTests(unittest.TestCase):
+    def test_absent_workflow_skips_version_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                side_effect=AssertionError("revision must not be resolved"),
+            ):
+                self.assertIsNone(guard_action_pin(repo))
+                self.assertIsNone(
+                    ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
+                )
+
+    def test_ancestor_pin_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ancestor, descendant = _init_two_commit_checkout(checkout)
+            repo = root / "repo"
+            _write_guard_workflow(repo, ancestor)
+            self.assertEqual(guard_action_pin(repo), ancestor)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                note = ensure_local_ci_cli_satisfies_pin(repo)
+            self.assertEqual(
+                note,
+                f"local CI CLI {descendant} satisfies the guard revision {ancestor} "
+                "installed by this repository",
+            )
+            _write_guard_workflow(repo, descendant)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                same = ensure_local_ci_cli_satisfies_pin(repo)
+            self.assertIn(descendant, same)
+
+    def test_stale_cli_predates_the_guard_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ancestor, descendant = _init_two_commit_checkout(checkout)
+            repo = root / "repo"
+            _write_guard_workflow(repo, descendant)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(ancestor, checkout),
+            ):
+                with self.assertRaises(A38Error) as raised:
+                    ensure_local_ci_cli_satisfies_pin(repo)
+            message = str(raised.exception)
+            self.assertIn("predates the guard revision", message)
+            self.assertEqual(
+                message,
+                f"this agent installation ({ancestor}) predates the guard revision "
+                f"{descendant} that this repository installs; a report written now would be "
+                "rejected with 'report outcome does not match the pull request'. Update the "
+                f"CLI to {descendant} or later.",
+            )
+
+    def test_unknown_cli_revision_is_refused(self) -> None:
+        pin = "0123456789abcdef0123456789abcdef01234567"
+        expected = (
+            "cannot determine the revision of this agent installation; it is not a Git "
+            "checkout, so the report would be written by an unknown CLI version. Install the "
+            f"CLI from a Git checkout at or after {pin}, or set A38_LOCAL_CI_REVISION to its "
+            "40-character commit SHA."
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            _write_guard_workflow(repo, pin)
+            module = _installation_module(root / "installation", git=False)
+            unknown = local_ci_revision(env={}, module_file=module)
+            self.assertEqual(unknown, (None, None))
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=unknown,
+            ):
+                with self.assertRaises(A38Error) as raised:
+                    ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
+            self.assertIn("not a Git checkout", str(raised.exception))
+            self.assertEqual(str(raised.exception), expected)
+
+    def test_snapshot_without_git_dir_is_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp) / "outer"
+            _init_repo(outer)
+            module = _installation_module(outer / "installation", git=False)
+            self.assertEqual(
+                local_ci_revision(env={}, module_file=module),
+                (None, None),
+            )
+
+    def test_unknown_pin_cannot_be_proved(self) -> None:
+        pin = "0000000000000000000000000000000000000000"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            _ancestor, descendant = _init_two_commit_checkout(checkout)
+            repo = root / "repo"
+            _write_guard_workflow(repo, pin)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                with self.assertRaises(A38Error) as raised:
+                    ensure_local_ci_cli_satisfies_pin(repo)
+            message = str(raised.exception)
+            self.assertIn("cannot prove", message)
+            self.assertEqual(
+                message,
+                f"cannot prove this agent installation ({descendant}) is at or after the "
+                f"guard revision {pin}; that commit is not present in this checkout. "
+                "Fetch it and run again.",
+            )
+
+    def test_malformed_revision_override_is_rejected(self) -> None:
+        for sample in ("", "abc", "A" * 40, "g" * 40, "a" * 39, "a" * 40 + "\n"):
+            with self.subTest(sample=sample):
+                with self.assertRaises(A38Error) as raised:
+                    local_ci_revision(env={"A38_LOCAL_CI_REVISION": sample})
+                self.assertIn("A38_LOCAL_CI_REVISION", str(raised.exception))
+                self.assertEqual(
+                    str(raised.exception),
+                    "A38_LOCAL_CI_REVISION must be a 40-character lowercase hexadecimal "
+                    "commit SHA",
+                )
+
+    def test_declared_revision_without_checkout_is_accepted(self) -> None:
+        declared = "0123456789abcdef0123456789abcdef01234567"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module = _installation_module(root / "installation", git=False)
+            self.assertEqual(
+                local_ci_revision(
+                    env={"A38_LOCAL_CI_REVISION": declared},
+                    module_file=module,
+                ),
+                (declared, None),
+            )
+            repo = root / "repo"
+            _write_guard_workflow(repo, HEAD_A)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(declared, None),
+            ):
+                note = ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
+            self.assertEqual(
+                note,
+                f"local CI CLI revision {declared} was declared via the "
+                "A38_LOCAL_CI_REVISION environment variable and was not verified "
+                "against a Git checkout",
+            )
+
+    def test_non_sha_pin_warns_without_comparing(self) -> None:
+        warning = (
+            "could not read a guard revision pin from "
+            ".github/workflows/a38-guard.yml; no version comparison was possible"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for ref in ("main", "A" * 40, "v1.2.3"):
+                with self.subTest(ref=ref):
+                    repo = root / ref.replace(".", "-")
+                    _write_guard_workflow(repo, ref)
+                    self.assertIsNone(guard_action_pin(repo))
+                    with mock.patch(
+                        "agent_cli.a38.local_ci_revision",
+                        side_effect=AssertionError("revision must not be resolved"),
+                    ):
+                        note = ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
+                    self.assertEqual(note, warning)
+
+    def test_run_refuses_stale_cli_before_touching_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            head = _init_repo(repo)
+            installation = root / "install"
+            ancestor, descendant = _init_two_commit_checkout(installation)
+            _git(installation, "checkout", "--detach", ancestor)
+            module = installation / "src" / "agent_cli" / "a38.py"
+            module.parent.mkdir(parents=True)
+            module.write_text("# synthetic installation\n", encoding="utf-8")
+            _write_guard_workflow(repo, descendant)
+            policy = root / "a38.json"
+            policy.write_text(_policy_text(), encoding="utf-8")
+            output = root / "report.md"
+            sentinel = "sentinel-must-survive"
+            output.write_text(sentinel, encoding="utf-8")
+            stderr = io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("A38_LOCAL_CI_REVISION", None)
+                with mock.patch(
+                    "agent_cli.a38.__file__",
+                    str(module),
+                ), contextlib.redirect_stderr(stderr):
+                    code = main([
+                        "run",
+                        "--repo", str(repo),
+                        "--policy", str(policy),
+                        "--output", str(output),
+                        "--logs-dir", str(root / "logs"),
+                        "--base-sha", head,
+                        "--public",
+                    ])
+            self.assertNotEqual(code, 0)
+            printed = stderr.getvalue()
+            self.assertTrue(printed.startswith("a38: "))
+            self.assertIn("predates the guard revision", printed)
+            self.assertEqual(output.read_text(encoding="utf-8"), sentinel)
+
+    def test_checkout_revision_is_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertEqual(revision, _git(path, "rev-parse", "HEAD").lower())
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_declared_revision_skips_git(self) -> None:
+        declared = "fedcba9876543210fedcba9876543210fedcba98"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            with mock.patch(
+                "agent_cli.a38.subprocess.run",
+                side_effect=AssertionError("git must not run"),
+            ):
+                revision, root = local_ci_revision(
+                    env={"A38_LOCAL_CI_REVISION": declared},
+                    module_file=module,
+                )
+            self.assertEqual(revision, declared)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_git_error_yields_no_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            with mock.patch(
+                "agent_cli.a38.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("git", 10),
+            ):
+                revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_guard_pin_is_the_first_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                "uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n"
+                "uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_B}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pin(repo), HEAD_A)
+
+    def test_shallow_module_path_is_unknown(self) -> None:
+        self.assertEqual(
+            local_ci_revision(env={}, module_file=Path("/a38.py")),
+            (None, None),
+        )
 
 
 class RunnerTests(unittest.TestCase):
