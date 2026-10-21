@@ -3138,6 +3138,35 @@ def _open_pull_numbers_for_commit(api: GitHubApi, repo: str, sha: str) -> list[i
     return sorted(set(numbers))
 
 
+def _open_pull_numbers_for_head(
+    api: GitHubApi, repo: str, head_repo: str, head_branch: str
+) -> list[int]:
+    """Open PR numbers whose head is ``head_repo``:``head_branch``."""
+    # Author-controlled. A rejected value is ignored and never interpolated.
+    try:
+        _validate_repo(head_repo)
+        _validate_base_for_context(head_branch)
+    except GuardError:
+        return []
+    owner = head_repo.split("/", 1)[0]
+    encoded_owner = urllib.parse.quote(owner, safe="")
+    encoded_branch = urllib.parse.quote(head_branch, safe="")
+    items = api.paginate(
+        f"/repos/{repo}/pulls?state=open&head={encoded_owner}:{encoded_branch}"
+    )
+    numbers: list[int] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise GuardError("workflow_run pull list entry is not an object")
+        if "state" in item and item["state"] != "open":
+            continue
+        number = item.get("number")
+        if not isinstance(number, int):
+            raise GuardError("open pull request number is not an integer")
+        numbers.append(number)
+    return sorted(set(numbers))
+
+
 def _reconcile_workflow_run(
     api: GitHubApi,
     *,
@@ -3173,7 +3202,28 @@ def _reconcile_workflow_run(
     if repo is not None and _validate_repo(repo) != event_repo:
         raise GuardError("event repository does not match --repo")
 
-    numbers = _open_pull_numbers_for_commit(api, event_repo, head_sha)
+    # The commits endpoint names the pull request that introduced the SHA.
+    # That is empty for a fork head and can be a closed pull request. The open
+    # pull request is the one whose head ref is this run. Do not require the
+    # pull request head to still equal head_sha: the branch may have moved,
+    # and reconcile_pull re-reads live state.
+    head_branch = run.get("head_branch")
+    head_repository = run.get("head_repository")
+    head_repo = (
+        head_repository.get("full_name") if isinstance(head_repository, dict) else None
+    )
+    head_numbers: list[int] = []
+    if (
+        isinstance(head_branch, str)
+        and head_branch
+        and isinstance(head_repo, str)
+        and head_repo
+    ):
+        head_numbers = _open_pull_numbers_for_head(
+            api, event_repo, head_repo, head_branch
+        )
+    commit_numbers = _open_pull_numbers_for_commit(api, event_repo, head_sha)
+    numbers = sorted(set(head_numbers + commit_numbers))
     if pr is not None:
         if pr not in numbers:
             raise GuardError("event pull request does not match --pr")
