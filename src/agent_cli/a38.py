@@ -2035,6 +2035,19 @@ def guard_action_pin(repo_path: Path) -> str | None:
     return match.group(1)
 
 
+def _is_git_checkout(marker: Path) -> bool:
+    """True for a .git directory and for a gitdir pointer file (worktree, submodule)."""
+    if marker.is_dir():
+        return True
+    try:
+        if not marker.is_file():
+            return False
+        head = marker.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return head.startswith("gitdir:")
+
+
 def local_ci_revision(
     env: Mapping[str, str] | None = None,
     *,
@@ -2058,16 +2071,17 @@ def local_ci_revision(
         root = None
     else:
         installed = (root_candidate / "src" / "agent_cli" / "a38.py").resolve()
-        if installed == loaded_file and (root_candidate / ".git").is_dir():
+        if installed == loaded_file and _is_git_checkout(root_candidate / ".git"):
             root = root_candidate
         else:
             root = None
 
-    if explicit is not None:
-        return (explicit, root)
     if root is None:
-        return (None, None)
+        # Nothing to measure: an explicit declaration is the recorded-revision path.
+        return (explicit, None) if explicit is not None else (None, None)
 
+    # A checkout is provable, so HEAD decides. A declaration must never stand in for it:
+    # otherwise exporting the pin would make the comparison pass against itself.
     try:
         completed = _git(root, "rev-parse", "HEAD", run=_default_run)
     except (subprocess.SubprocessError, OSError):
@@ -2077,6 +2091,11 @@ def local_ci_revision(
     revision = completed.stdout.strip()
     if HEAD_RE.fullmatch(revision) is None:
         return (None, root)
+    if explicit is not None and explicit != revision:
+        raise A38Error(
+            f"{LOCAL_CI_REVISION_ENV} ({explicit}) does not match the HEAD of this checkout "
+            f"({revision}); unset it, or check out the declared revision"
+        )
     return (revision, root)
 
 
@@ -2102,7 +2121,8 @@ def ensure_local_ci_cli_satisfies_pin(
     if revision is None:
         raise A38Error(
             "cannot determine the revision of this agent installation; it is not a Git "
-            "checkout, so the report would be written by an unknown CLI version. Install the "
+            "checkout, or Git could not report its HEAD, so the report would be written by an "
+            "unknown CLI version. Install the "
             "CLI from a Git checkout at or after "
             f"{pin}, or set {LOCAL_CI_REVISION_ENV} to its 40-character commit SHA."
         )
