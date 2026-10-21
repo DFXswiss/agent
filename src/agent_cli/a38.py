@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
 from .readme_only import (
+    GUARD_WORKFLOW_PATH,
     MAX_FILES,
     git_changed_paths,
     markdown_and_guard_docs_only,
@@ -93,7 +94,6 @@ GUARD_ACTION_PIN_RE = re.compile(
     r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})"
 )
 LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
-GUARD_WORKFLOW_RELPATH = ".github/workflows/a38-guard.yml"
 
 RunFn = Callable[[list[str], Path | None, Mapping[str, str] | None], subprocess.CompletedProcess[str]]
 ConfigParser = Callable[[str], tuple[Any, dict[str, Any]]]
@@ -2024,7 +2024,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
 def guard_action_pin(repo_path: Path) -> str | None:
     """The guard revision the target repository installs, or None when absent."""
-    path = Path(repo_path) / GUARD_WORKFLOW_RELPATH
+    path = Path(repo_path) / GUARD_WORKFLOW_PATH
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -2088,7 +2088,7 @@ def ensure_local_ci_cli_satisfies_pin(
 ) -> str | None:
     """Raise A38Error unless this CLI is provably at or after the repository's guard pin."""
     repo_path = Path(repo_path)
-    workflow = repo_path / GUARD_WORKFLOW_RELPATH
+    workflow = repo_path / GUARD_WORKFLOW_PATH
     if not workflow.exists():
         return None
     pin = guard_action_pin(repo_path)
@@ -2096,7 +2096,7 @@ def ensure_local_ci_cli_satisfies_pin(
         # A branch or tag ref is a legitimate pin, but it cannot be compared.
         return (
             "could not read a guard revision pin from "
-            f"{GUARD_WORKFLOW_RELPATH}; no version comparison was possible"
+            f"{GUARD_WORKFLOW_PATH}; no version comparison was possible"
         )
     revision, root = local_ci_revision(env)
     if revision is None:
