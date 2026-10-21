@@ -1444,7 +1444,8 @@ class LocalCiCliPinTests(unittest.TestCase):
         pin = "0123456789abcdef0123456789abcdef01234567"
         expected = (
             "cannot determine the revision of this agent installation; it is not a Git "
-            "checkout, so the report would be written by an unknown CLI version. Install the "
+            "checkout, or Git could not report its HEAD, so the report would be written by an "
+            "unknown CLI version. Install the "
             f"CLI from a Git checkout at or after {pin}, or set A38_LOCAL_CI_REVISION to its "
             "40-character commit SHA."
         )
@@ -1601,11 +1602,12 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertEqual(revision, _git(path, "rev-parse", "HEAD").lower())
             self.assertEqual(root, module.resolve().parents[2])
 
-    def test_declared_revision_skips_git(self) -> None:
+    def test_declared_revision_without_checkout_skips_git(self) -> None:
+        """No provable checkout: the declaration stands in, and Git is never asked."""
         declared = "fedcba9876543210fedcba9876543210fedcba98"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "installation"
-            module = _installation_module(path, git=True)
+            module = _installation_module(path, git=False)
             with mock.patch(
                 "agent_cli.a38.subprocess.run",
                 side_effect=AssertionError("git must not run"),
@@ -1615,6 +1617,44 @@ class LocalCiCliPinTests(unittest.TestCase):
                     module_file=module,
                 )
             self.assertEqual(revision, declared)
+            self.assertIsNone(root)
+
+    def test_declared_revision_cannot_override_head(self) -> None:
+        """With a checkout, HEAD decides: exporting the pin must not satisfy the check."""
+        declared = "fedcba9876543210fedcba9876543210fedcba98"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            with self.assertRaisesRegex(A38Error, "A38_LOCAL_CI_REVISION"):
+                local_ci_revision(
+                    env={"A38_LOCAL_CI_REVISION": declared},
+                    module_file=module,
+                )
+
+    def test_declared_revision_matching_head_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            head = _git(path, "rev-parse", "HEAD").lower()
+            revision, root = local_ci_revision(
+                env={"A38_LOCAL_CI_REVISION": head},
+                module_file=module,
+            )
+            self.assertEqual(revision, head)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_gitdir_pointer_file_counts_as_checkout(self) -> None:
+        """A worktree or submodule carries .git as a pointer file, not a directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            head = _git(path, "rev-parse", "HEAD").lower()
+            marker = path / ".git"
+            moved = Path(tmp) / "gitdir"
+            marker.rename(moved)
+            marker.write_text(f"gitdir: {moved}\n", encoding="utf-8")
+            revision, root = local_ci_revision(module_file=module)
+            self.assertEqual(revision, head)
             self.assertEqual(root, module.resolve().parents[2])
 
     def test_git_error_yields_no_revision(self) -> None:
