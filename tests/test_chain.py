@@ -299,6 +299,26 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("close-step", text)
         self.assertNotIn("grok_pr_quality", text)
 
+    def test_handoff_unpinned_implementer_names_either_vendor(self) -> None:
+        impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
+        self.assertIsNone(impl.vendor)
+        text = handoff_prompt(impl, task_id="31", session_id="sess")
+        self.assertIn("grok|codex", text)
+        self.assertIn("who=grok|codex implementer", text)
+        conflicts = next(
+            s for s in steps_for("resolve-conflicts") if s.key == "conflicts_resolved"
+        )
+        self.assertIsNone(conflicts.vendor)
+        conflicts_text = handoff_prompt(conflicts, task_id="31", session_id="sess")
+        self.assertIn("who=grok|codex implementer", conflicts_text)
+        reviewer = next(s for s in steps_for("implement") if s.key == "reviewer_approved")
+        self.assertEqual(reviewer.vendor, "grok")
+        reviewer_text = handoff_prompt(reviewer, task_id="31", session_id="sess")
+        self.assertIn("who=grok reviewer", reviewer_text)
+        script = next(s for s in steps_for("implement") if s.key == "session_registered")
+        script_text = handoff_prompt(script, task_id="31", session_id="sess")
+        self.assertIn("who=- script", script_text)
+
     def test_unavailable_gate_close_needs_unavailable_record(self) -> None:
         cl = _pending("implement")
         for k in (
