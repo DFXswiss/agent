@@ -89,6 +89,12 @@ ORIGIN_SSH_RE = re.compile(
 
 TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 
+GUARD_ACTION_PIN_RE = re.compile(
+    r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})"
+)
+LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
+GUARD_WORKFLOW_RELPATH = ".github/workflows/a38-guard.yml"
+
 RunFn = Callable[[list[str], Path | None, Mapping[str, str] | None], subprocess.CompletedProcess[str]]
 ConfigParser = Callable[[str], tuple[Any, dict[str, Any]]]
 
@@ -2016,6 +2022,123 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if verdict.get("ok") is True and verdict.get("status") == "pass" else 1
 
 
+def guard_action_pin(repo_path: Path) -> str | None:
+    """The guard revision the target repository installs, or None when absent."""
+    path = Path(repo_path) / GUARD_WORKFLOW_RELPATH
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = GUARD_ACTION_PIN_RE.search(text)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def local_ci_revision(
+    env: Mapping[str, str] | None = None,
+    *,
+    module_file: str | os.PathLike[str] | None = None,
+) -> tuple[str | None, Path | None]:
+    """This installation's own revision and its checkout root, when provable."""
+    source_env = env if env is not None else os.environ
+    explicit = source_env.get(LOCAL_CI_REVISION_ENV)
+    if explicit is not None and HEAD_RE.fullmatch(explicit) is None:
+        raise A38Error(
+            f"{LOCAL_CI_REVISION_ENV} must be a 40-character lowercase hexadecimal commit SHA"
+        )
+
+    # Only this exact layout qualifies. Do not walk parents or the working directory:
+    # a copied source snapshot must stay unprovable.
+    loaded_file = Path(module_file or __file__).resolve()
+    root: Path | None
+    try:
+        root_candidate = loaded_file.parents[2]
+    except IndexError:
+        root = None
+    else:
+        installed = (root_candidate / "src" / "agent_cli" / "a38.py").resolve()
+        if installed == loaded_file and (root_candidate / ".git").is_dir():
+            root = root_candidate
+        else:
+            root = None
+
+    if explicit is not None:
+        return (explicit, root)
+    if root is None:
+        return (None, None)
+
+    try:
+        completed = _git(root, "rev-parse", "HEAD", run=_default_run)
+    except (subprocess.SubprocessError, OSError):
+        return (None, root)
+    if completed.returncode != 0:
+        return (None, root)
+    revision = completed.stdout.strip()
+    if HEAD_RE.fullmatch(revision) is None:
+        return (None, root)
+    return (revision, root)
+
+
+def ensure_local_ci_cli_satisfies_pin(
+    repo_path: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    run: RunFn | None = None,
+) -> str | None:
+    """Raise A38Error unless this CLI is provably at or after the repository's guard pin."""
+    repo_path = Path(repo_path)
+    workflow = repo_path / GUARD_WORKFLOW_RELPATH
+    if not workflow.exists():
+        return None
+    pin = guard_action_pin(repo_path)
+    if pin is None:
+        # A branch or tag ref is a legitimate pin, but it cannot be compared.
+        return (
+            "could not read a guard revision pin from "
+            f"{GUARD_WORKFLOW_RELPATH}; no version comparison was possible"
+        )
+    revision, root = local_ci_revision(env)
+    if revision is None:
+        raise A38Error(
+            "cannot determine the revision of this agent installation; it is not a Git "
+            "checkout, so the report would be written by an unknown CLI version. Install the "
+            "CLI from a Git checkout at or after "
+            f"{pin}, or set {LOCAL_CI_REVISION_ENV} to its 40-character commit SHA."
+        )
+    if root is None:
+        return (
+            f"local CI CLI revision {revision} was declared via the "
+            f"{LOCAL_CI_REVISION_ENV} environment variable and was not verified "
+            "against a Git checkout"
+        )
+    runner = run or _default_run
+    completed = _git(
+        root,
+        "merge-base",
+        "--is-ancestor",
+        pin,
+        revision,
+        run=runner,
+    )
+    if completed.returncode == 0:
+        return (
+            f"local CI CLI {revision} satisfies the guard revision {pin} "
+            "installed by this repository"
+        )
+    if completed.returncode == 1:
+        raise A38Error(
+            f"this agent installation ({revision}) predates the guard revision {pin} that this "
+            "repository installs; a report written now would be rejected with 'report outcome "
+            "does not match the pull request'. Update the CLI to "
+            f"{pin} or later."
+        )
+    raise A38Error(
+        f"cannot prove this agent installation ({revision}) is at or after the guard revision "
+        f"{pin}; that commit is not present in this checkout. Fetch it and run again."
+    )
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     private: bool | None
     if args.private:
@@ -2025,6 +2148,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         private = None
     try:
+        note = ensure_local_ci_cli_satisfies_pin(Path(args.repo))
+        if note:
+            print(f"a38: {note}", file=sys.stderr)
         # Establish a safe output destination before any policy/value preflight.
         # Unsafe/ambiguous paths and parser usage errors never delete files.
         _prepare_run_output(
