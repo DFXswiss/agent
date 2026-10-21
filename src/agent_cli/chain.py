@@ -77,7 +77,6 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("spec_written",),
             "agent",
             role="implementer",
-            vendor="grok",
         ),
         _step(
             "reviewer_approved",
@@ -168,7 +167,6 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("session_registered",),
             "agent",
             role="implementer",
-            vendor="grok",
         ),
         _step(
             "reviewer_approved",
@@ -455,7 +453,7 @@ NO_AUTO_CLOSE = frozenset(
 
 def handoff_prompt(step: Step, *, task_id: str, session_id: str | None) -> str:
     """Single-step brief. The agent sees only THIS step."""
-    who = f"{step.vendor or '-'} {step.role or step.kind}"
+    who = f"{'grok|codex' if step.kind == 'agent' and step.vendor is None else (step.vendor or '-')} {step.role or step.kind}"
     return (
         f"Only this step. Nothing else. Do not claim done.\n"
         f"task={task_id} session={session_id or '-'} key={step.key} who={who}\n"

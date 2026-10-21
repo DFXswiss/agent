@@ -936,6 +936,168 @@ def test_reviewer_start_before_implementer_done_dies(
         )
 
 
+def test_implementer_start_accepts_codex(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "review-loop",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "codex",
+            "--round",
+            "1",
+        ],
+    )
+    aid = _last_agent_id(capsys.readouterr().out)
+    store = Store(tmp_path)
+    try:
+        rows = [a for a in store.rows("agent") if a.get("id") == aid]
+        assert len(rows) == 1
+        assert rows[0]["vendor"] == "codex"
+    finally:
+        store.close()
+
+
+def test_implementer_start_still_accepts_grok(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "review-loop",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    aid = _last_agent_id(capsys.readouterr().out)
+    store = Store(tmp_path)
+    try:
+        rows = [a for a in store.rows("agent") if a.get("id") == aid]
+        assert len(rows) == 1
+        assert rows[0]["vendor"] == "grok"
+    finally:
+        store.close()
+
+
+def test_reviewer_start_rejects_codex_vendor(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="reviewer requires --vendor grok"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "s",
+                "--task",
+                "t",
+                "--role",
+                "reviewer",
+                "--vendor",
+                "codex",
+                "--round",
+                "1",
+            ],
+        )
+
+
+def test_implementer_and_reviewer_require_round(tmp_path: Path) -> None:
+    run(tmp_path, ["init"])
+    with pytest.raises(SystemExit, match="implementer requires --round"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "s",
+                "--task",
+                "t",
+                "--role",
+                "implementer",
+                "--vendor",
+                "codex",
+            ],
+        )
+    with pytest.raises(SystemExit, match="reviewer requires --round"):
+        run(
+            tmp_path,
+            [
+                "agent",
+                "start",
+                "--session",
+                "s",
+                "--task",
+                "t",
+                "--role",
+                "reviewer",
+                "--vendor",
+                "grok",
+            ],
+        )
+
+
 def test_implementer_finish_blocked_sets_failed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2603,6 +2765,65 @@ def test_allow_next_close_step(tmp_path: Path, capsys: pytest.CaptureFixture[str
     assert "spec_written" in dry
 
 
+def test_next_unpinned_implementer_prints_either_vendor(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "review-loop",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "spec_written",
+            "--source",
+            "human",
+            "--evidence",
+            "five-part spec",
+        ],
+    )
+    capsys.readouterr()
+    run(tmp_path, ["next", "--task", tid])
+    out = capsys.readouterr().out
+    assert "implementer_done" in out
+    assert "vendor=grok|codex" in out
+    assert "vendor=None" not in out
+
+
 _GATE_HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
 
@@ -3678,5 +3899,186 @@ def test_late_inner_close_from_implementing_without_agent_dies(
                 "script",
                 "--evidence",
                 "no agent",
+            ],
+        )
+
+
+def test_codex_implementer_closes_implementer_done(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "spec_written",
+            "--source",
+            "human",
+            "--evidence",
+            "five-part spec",
+        ],
+    )
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "codex",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "implementer_done",
+            "--source",
+            "script",
+            "--evidence",
+            "codex implementer finished",
+        ],
+    )
+    assert "checklist implementer_done=ja" in capsys.readouterr().out
+
+
+def test_codex_implementer_closes_conflicts_resolved(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys, workflow="resolve-conflicts")
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "codex",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "conflicts_resolved",
+            "--source",
+            "script",
+            "--evidence",
+            "codex implementer finished",
+        ],
+    )
+    assert "checklist conflicts_resolved=ja" in capsys.readouterr().out
+
+
+def test_implementer_done_n_a_still_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "session_registered",
+            "--source",
+            "script",
+            "--evidence",
+            "session register",
+        ],
+    )
+    run(
+        tmp_path,
+        [
+            "close-step",
+            "--task",
+            tid,
+            "--key",
+            "spec_written",
+            "--source",
+            "human",
+            "--evidence",
+            "five-part spec",
+        ],
+    )
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="n_a is not allowed for implementer_done"):
+        run(
+            tmp_path,
+            [
+                "close-step",
+                "--task",
+                tid,
+                "--key",
+                "implementer_done",
+                "--status",
+                "n_a",
+                "--source",
+                "script",
+                "--evidence",
+                "no finished implementer",
             ],
         )

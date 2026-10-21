@@ -7,7 +7,7 @@ description: >-
 
 # Review loop
 
-Requires **spine**. Roles: `implementer`, `reviewer`. Inner-loop vendor: `grok`.
+Requires **spine**. Roles: `implementer`, `reviewer`. Reviewer vendor: `grok`. Implementer vendor: `grok|codex`.
 
 Without this skill, implementer and reviewer `agent agent` commands refuse.
 
@@ -28,7 +28,7 @@ No round cap. Repeat until the reviewer sets `approved` or the implementer is
 
 ```bash
 agent round start --task <uuid>
-agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok --round N
+agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok|codex --round N
 agent agent finish --id <implementer-uuid> --verdict done
 agent agent start --session <session-id> --task <uuid> --role reviewer --vendor grok --round N
 agent agent finish --id <reviewer-uuid> --verdict approved|rejected

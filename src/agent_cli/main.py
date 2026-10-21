@@ -924,8 +924,8 @@ def cmd_agent(args: list[str]) -> None:
             if role in ("implementer", "reviewer"):
                 if round_raw is None or round_raw == "":
                     die(f"{role} requires --round")
-                if vendor != "grok":
-                    die(f"{role} requires --vendor grok")
+                if role == "reviewer" and vendor != "grok":
+                    die("reviewer requires --vendor grok")
             if round_raw is not None and round_raw != "":
                 if not round_raw.isdigit():
                     die("--round must be an integer")
@@ -2652,7 +2652,7 @@ def cmd_next(args: list[str]) -> None:
                 f"next task={tid} {s.key} kind={s.kind} source={required_source(s)}"
             )
             if s.role:
-                line += f" role={s.role} vendor={s.vendor}"
+                line += f" role={s.role} vendor={'grok|codex' if s.vendor is None else s.vendor}"
             print(line)
         if len(ready) == 1 and ready[0].kind == "agent":
             sys.stdout.write(
@@ -3049,7 +3049,7 @@ def cmd_run(args: list[str]) -> None:
                 cwd = _resolve_run_cwd(args)
                 tmux = "--no-tmux" not in args
                 role = str(step.role or "")
-                vendor = str(step.vendor or "")
+                vendor = str(step.vendor or ("grok" if role == "implementer" else ""))
                 session_id = str(snap.get("session_id") or "")
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
