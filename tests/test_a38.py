@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import json
 import os
@@ -1596,7 +1597,7 @@ class LocalCiCliPinTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for ref in ("main", "A" * 40, "v1.2.3"):
+            for ref in ("main", "v1.2.3", "refs/heads/release"):
                 with self.subTest(ref=ref):
                     repo = root / ref.replace(".", "-")
                     _write_guard_workflow(repo, ref)
@@ -1740,6 +1741,34 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertIsNone(revision)
             self.assertEqual(root, module.resolve().parents[2])
 
+    def test_a_checkout_during_the_check_proves_nothing(self) -> None:
+        """A revision is only returned when it still is HEAD after the source was measured."""
+        module_under_test = importlib.import_module("agent_cli.a38")
+        real_run = module_under_test._default_run
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            head_reads: list[str] = []
+
+            def moving_head(
+                argv: list[str],
+                cwd: Path | None,
+                env: object,
+            ) -> subprocess.CompletedProcess[str]:
+                completed = real_run(argv, cwd, env)  # type: ignore[arg-type]
+                if argv[-2:] == ["rev-parse", "HEAD"]:
+                    head_reads.append(completed.stdout.strip())
+                    if len(head_reads) == 2:
+                        # As if another process checked out a descendant in between.
+                        return subprocess.CompletedProcess(argv, 0, HEAD_B + "\n", "")
+                return completed
+
+            with mock.patch.object(module_under_test, "_default_run", moving_head):
+                revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertEqual(len(head_reads), 2)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
     def test_an_edit_elsewhere_in_the_package_proves_nothing(self) -> None:
         """The blob check covers this module; the package check covers its siblings."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -1834,6 +1863,38 @@ class LocalCiCliPinTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(guard_action_pins(repo), [HEAD_B])
+
+    def test_an_uppercase_revision_is_the_same_pin(self) -> None:
+        # Git resolves a 40-hex SHA in either case to the same commit, so an upper-case pin
+        # installs the same guard; missing it would wave an older CLI through. It is
+        # normalised, so the comparison and dedup see one revision.
+        with tempfile.TemporaryDirectory() as tmp:
+            # Upper case alone, so that rejecting it cannot be masked by a lower-case pin
+            # sitting in the same workflow.
+            repo = Path(tmp) / "repo"
+            _write_guard_workflow(repo, HEAD_A.upper())
+            self.assertEqual(guard_action_pins(repo), [HEAD_A])
+            # The same revision written both ways is still one pin.
+            mixed = Path(tmp) / "mixed"
+            _write_guard_workflow(mixed, HEAD_A.upper(), HEAD_A)
+            self.assertEqual(guard_action_pins(mixed), [HEAD_A])
+
+    def test_the_action_path_inside_the_repository_stays_case_sensitive(self) -> None:
+        # Owner and repository are case-insensitive on GitHub, but the path to the action is
+        # a file path. A wrong-case path installs nothing, so counting it as a pin would
+        # refuse over a revision that is not installed.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                _guard_workflow_text(
+                    "      - uses: DFXswiss/agent/.github/actions/A38-GUARD@"
+                    f"{HEAD_A}\n"
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [])
 
     def test_the_repository_part_of_the_reference_is_case_insensitive(self) -> None:
         # GitHub resolves owner/repository case-insensitively, so a lower-case reference
