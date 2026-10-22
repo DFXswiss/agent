@@ -215,6 +215,12 @@ def _init_two_commit_checkout(path: Path) -> tuple[str, str]:
     return ancestor, descendant
 
 
+def _commit_beside(path: Path, base: str) -> str:
+    """A real commit on ``base`` that is no ancestor of HEAD, leaving HEAD alone."""
+    tree = _git(path, "rev-parse", f"{base}^{{tree}}")
+    return _git(path, "commit-tree", tree, "-p", base, "-m", "beside").lower()
+
+
 def _installation_module(path: Path, *, git: bool) -> Path:
     """``path/src/agent_cli/a38.py``, with a committed checkout when ``git`` is set."""
     module = path / "src" / "agent_cli" / "a38.py"
@@ -1691,16 +1697,20 @@ class LocalCiCliPinTests(unittest.TestCase):
             repo = Path(tmp) / "repo"
             workflow = repo / ".github" / "workflows" / "a38-guard.yml"
             workflow.parent.mkdir(parents=True)
-            workflow.write_text(
-                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_A}\n"
-                "      - uses: 'DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_B}'\n"
-                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_A}\n",
-                encoding="utf-8",
+            # HEAD_B is written first so that sorting the pins would disagree with file
+            # order. The forms cover a list item, a double-quoted scalar, a tab indent, a
+            # trailing comment, CRLF, and a repeat that has to collapse to one pin.
+            workflow.write_bytes(
+                (
+                    "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
+                    f"{HEAD_B}\r\n"
+                    '\tuses: "DFXswiss/agent/.github/actions/a38-guard@'
+                    f'{HEAD_A}"  # pinned\r\n'
+                    "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
+                    f"{HEAD_B}\r\n"
+                ).encode("utf-8")
             )
-            self.assertEqual(guard_action_pins(repo), [HEAD_A, HEAD_B])
+            self.assertEqual(guard_action_pins(repo), [HEAD_B, HEAD_A])
 
     def test_a_revision_outside_a_uses_value_is_not_a_pin(self) -> None:
         # A bumped pin leaves the old SHA behind in a comment or in prose. Taking the
@@ -1714,6 +1724,8 @@ class LocalCiCliPinTests(unittest.TestCase):
                 f"{HEAD_A}\n"
                 "  # uses: DFXswiss/agent/.github/actions/a38-guard@"
                 f"{HEAD_A}\n"
+                "    previous: uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n"
                 "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
                 f"{HEAD_B}\n",
                 encoding="utf-8",
@@ -1721,7 +1733,73 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertEqual(guard_action_pins(repo), [HEAD_B])
 
     def test_a_later_pin_the_cli_predates_is_refused(self) -> None:
-        # Passing the first pin says nothing about a second step on a newer revision.
+        # Passing the first pin says nothing about a second step on another revision. The
+        # second pin is a real commit, so this exercises the "predates" exit code 1 rather
+        # than the unknown-object branch, and the message is asserted in full to tell the
+        # two refusals apart.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ancestor, descendant = _init_two_commit_checkout(checkout)
+            beside = _commit_beside(checkout, ancestor)
+            repo = root / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n"
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{beside}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [ancestor, beside])
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                with self.assertRaises(A38Error) as caught:
+                    ensure_local_ci_cli_satisfies_pin(repo)
+            self.assertEqual(
+                str(caught.exception),
+                f"this agent installation ({descendant}) predates the guard revision {beside} "
+                "that this repository installs; a report written now would be rejected with "
+                "'report outcome does not match the pull request'. Update the CLI to "
+                f"{beside} or later.",
+            )
+
+    def test_a_predated_pin_is_refused_even_when_it_is_not_last(self) -> None:
+        # The predated pin comes first and a satisfied pin follows, so a loop that only
+        # trusts exit code 1 on the last pin would fall through to the wrong refusal. The
+        # message is asserted in full, because both refusals name the same pin.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ancestor, descendant = _init_two_commit_checkout(checkout)
+            beside = _commit_beside(checkout, ancestor)
+            repo = root / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{beside}\n"
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [beside, ancestor])
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                with self.assertRaises(A38Error) as caught:
+                    ensure_local_ci_cli_satisfies_pin(repo)
+            self.assertEqual(
+                str(caught.exception),
+                f"this agent installation ({descendant}) predates the guard revision {beside} "
+                "that this repository installs; a report written now would be rejected with "
+                "'report outcome does not match the pull request'. Update the CLI to "
+                f"{beside} or later.",
+            )
+
+    def test_a_failing_first_pin_is_not_rescued_by_a_later_one(self) -> None:
+        # The failing pin is first and a passing one follows, so a loop that only checks
+        # the last pin, or that lets a later success overwrite an earlier refusal, accepts.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             checkout = root / "checkout"
@@ -1730,18 +1808,23 @@ class LocalCiCliPinTests(unittest.TestCase):
             workflow = repo / ".github" / "workflows" / "a38-guard.yml"
             workflow.parent.mkdir(parents=True)
             workflow.write_text(
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n"
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{HEAD_B}\n",
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{HEAD_B}\n"
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n",
                 encoding="utf-8",
             )
-            self.assertEqual(guard_action_pins(repo), [ancestor, HEAD_B])
+            self.assertEqual(guard_action_pins(repo), [HEAD_B, ancestor])
             with mock.patch(
                 "agent_cli.a38.local_ci_revision",
                 return_value=(descendant, checkout),
             ):
                 with self.assertRaises(A38Error) as caught:
                     ensure_local_ci_cli_satisfies_pin(repo)
-            self.assertIn(HEAD_B, str(caught.exception))
+            self.assertEqual(
+                str(caught.exception),
+                f"cannot prove this agent installation ({descendant}) is at or after the guard "
+                f"revision {HEAD_B}; that commit is not present in this checkout. Fetch it and "
+                "run again.",
+            )
 
     def test_shallow_module_path_is_unknown(self) -> None:
         self.assertEqual(
