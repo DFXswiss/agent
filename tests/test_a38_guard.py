@@ -3801,7 +3801,18 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
         self.assertEqual(result.pr, 1)
 
     def test_malformed_head_branch_makes_no_head_request(self) -> None:
-        for branch in ("x&state=closed", "a" * 256, "feature/../escape", "trailing."):
+        # `&` is NOT here: it is valid in a Git ref and percent-encoding keeps it from
+        # adding a query parameter, so rejecting it would skip a real fork branch.
+        for branch in (
+            "a" * 256,
+            "feature/../escape",
+            "trailing.",
+            "has space",
+            "tilde~name",
+            ".leading",
+            "ends/",
+            "caret^name",
+        ):
             fake = FakeAPI()
             urls: list[str] = []
             inner = fake.request_fn
@@ -3824,6 +3835,43 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
                 publish=True,
             )
             self.assertFalse(any("head=" in url for url in urls))
+
+    def test_punctuation_in_a_head_branch_is_encoded_not_rejected(self) -> None:
+        # Valid Git ref names that an ASCII allow-list dropped: a leading underscore and
+        # an ampersand. Encoding with safe="" is what keeps them out of the query grammar.
+        for branch in ("_topic", "fix/a&b=c", "release+1"):
+            with self.subTest(branch=branch):
+                fake = FakeAPI()
+                urls: list[str] = []
+                inner = fake.request_fn
+
+                def request_fn(
+                    method: str, url: str, body: bytes | None = None
+                ) -> tuple[int, Any, dict[str, str]]:
+                    urls.append(url)
+                    return inner(method, url, body)
+
+                fake.request_fn = request_fn  # type: ignore[method-assign]
+                reconcile_event(
+                    fake.api(),
+                    event_name="workflow_run",
+                    payload=_workflow_run_payload(
+                        head_branch=branch,
+                        head_repo_full_name="contributor/public-app",
+                    ),
+                    dry_run=False,
+                    publish=True,
+                )
+                encoded = quote(branch, safe="")
+                self.assertTrue(
+                    any(f"head=contributor:{encoded}" in url for url in urls),
+                    f"no head lookup for {branch!r}",
+                )
+                # `_topic` encodes to itself, so only assert the difference where there is one.
+                if encoded != branch:
+                    self.assertFalse(
+                        any(f"head=contributor:{branch}" in url for url in urls)
+                    )
 
     def test_long_valid_head_branch_still_resolves(self) -> None:
         # A valid branch past the 75-character status-context bound must still be looked

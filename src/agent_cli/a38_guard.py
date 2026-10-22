@@ -378,20 +378,35 @@ def _validate_base_for_context(base_ref: str) -> str:
     return base_ref
 
 
+# What Git itself refuses inside a ref name, plus the control range and DEL.
+_REF_FORBIDDEN_CHARS = frozenset(
+    " ~^:?*[\\\x7f" + "".join(chr(code) for code in range(0x20))
+)
+
+
 def _validate_head_branch(head_branch: str) -> str:
     """A head branch bounded for a query, not for a status context.
 
     Deliberately separate from ``_validate_base_for_context``: that bound is 75 characters
     because the value ends up in a status context name. Reusing it here rejected valid long
     fork branches, which is the case this lookup exists to resolve.
+
+    Shaped after Git's own ref rules rather than an ASCII allow-list. The value is
+    percent-encoded with ``safe=""`` before it reaches the query, so encoding is what keeps
+    it from adding a parameter; an allow-list only has to reject what Git rejects, and a
+    narrow one dropped valid names such as ``_topic`` or a branch containing ``&``.
     """
-    if not isinstance(head_branch, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", head_branch
-    ):
+    if not isinstance(head_branch, str) or not 1 <= len(head_branch) <= 255:
         raise GuardError("head branch must be a bounded branch name (1–255 characters)")
+    if any(ch in _REF_FORBIDDEN_CHARS for ch in head_branch):
+        raise GuardError("invalid head branch name")
     if (
         ".." in head_branch
         or "//" in head_branch
+        or "@{" in head_branch
+        or "/." in head_branch
+        or head_branch == "@"
+        or head_branch.startswith((".", "/", "-"))
         or head_branch.endswith(("/", ".", ".lock"))
     ):
         raise GuardError("invalid head branch name")
