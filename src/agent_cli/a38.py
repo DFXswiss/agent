@@ -587,7 +587,15 @@ def _git(
     *parts: str,
     run: RunFn,
 ) -> subprocess.CompletedProcess[str]:
-    return run(["git", "-C", str(repo_path), *parts], None, None)
+    # GIT_DIR and its siblings replace repository discovery even against an explicit
+    # -C, so a statement about this checkout must not inherit them from the caller.
+    # The guard sanitises its own revision lookup the same way.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and key not in {"GH_TOKEN", "GITHUB_TOKEN"}
+    }
+    return run(["git", "-C", str(repo_path), *parts], None, env)
 
 
 def _require_clean_tree(repo_path: Path, *, run: RunFn) -> None:
