@@ -92,10 +92,12 @@ TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 
 # Matched against a whole ``uses`` scalar from the parsed workflow, never against the file
 # text: a revision in a comment or a block scalar is not what Actions installs, and a
-# quoted ``"uses"`` key is still a ``uses`` key. The repository part is case-insensitive
-# because GitHub resolves it that way, while the revision stays lowercase and exact.
+# quoted ``"uses"`` key is still a ``uses`` key. Only the owner and repository are
+# case-insensitive, because that is what GitHub resolves that way; the path to the action
+# inside the repository is a real file path and stays exact. A 40-hex revision in either
+# case names the same commit, so both are accepted and normalised to lower case.
 GUARD_ACTION_PIN_RE = re.compile(
-    r"(?i:DFXswiss/agent/\.github/actions/a38-guard@)([0-9a-f]{40})"
+    r"(?i:DFXswiss/agent)/\.github/actions/a38-guard@([0-9A-Fa-f]{40})"
 )
 LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
 
@@ -2086,7 +2088,7 @@ def guard_action_pins(repo_path: Path) -> list[str]:
     for value in _step_uses_values(document):
         match = GUARD_ACTION_PIN_RE.fullmatch(value.strip())
         if match is not None:
-            found.setdefault(match.group(1), None)
+            found.setdefault(match.group(1).lower(), None)
     return list(found)
 
 
@@ -2135,22 +2137,6 @@ def local_ci_revision(
         # Nothing to measure: an explicit declaration is the recorded-revision path.
         return (explicit, None) if explicit is not None else (None, None)
 
-    # The layout alone does not bind HEAD to this source. A gitdir pointer can lead into an
-    # unrelated repository — measured: `rev-parse --show-toplevel` still reports this tree
-    # while HEAD comes from the other one — and an edited package would run code that HEAD
-    # does not contain. So HEAD counts only when the loaded source is HEAD's source.
-    relative = loaded_file.relative_to(root).as_posix()
-    try:
-        recorded = _git(root, "rev-parse", f"HEAD:{relative}", run=_default_run)
-        loaded = _git(root, "hash-object", str(loaded_file), run=_default_run)
-        edited = _git(root, "status", "--porcelain", "--", "src/agent_cli", run=_default_run)
-    except (subprocess.SubprocessError, OSError):
-        return (None, root)
-    if recorded.returncode != 0 or loaded.returncode != 0 or edited.returncode != 0:
-        return (None, root)
-    if recorded.stdout.strip() != loaded.stdout.strip() or edited.stdout.strip():
-        return (None, root)
-
     # A checkout is provable, so HEAD decides. A declaration must never stand in for it:
     # otherwise exporting the pin would make the comparison pass against itself.
     try:
@@ -2162,6 +2148,33 @@ def local_ci_revision(
     revision = completed.stdout.strip()
     if HEAD_RE.fullmatch(revision) is None:
         return (None, root)
+
+    # The layout alone does not bind that revision to this source. A gitdir pointer can lead
+    # into an unrelated repository — measured: `rev-parse --show-toplevel` still reports this
+    # tree while HEAD comes from the other one — and an edited package would run code the
+    # revision does not contain. So the source is measured against this exact revision, and
+    # HEAD is read again afterwards: a checkout landing in between would otherwise hand back
+    # a revision whose source was never the loaded one.
+    relative = loaded_file.relative_to(root).as_posix()
+    try:
+        recorded = _git(root, "rev-parse", f"{revision}:{relative}", run=_default_run)
+        loaded = _git(root, "hash-object", str(loaded_file), run=_default_run)
+        edited = _git(root, "status", "--porcelain", "--", "src/agent_cli", run=_default_run)
+        settled = _git(root, "rev-parse", "HEAD", run=_default_run)
+    except (subprocess.SubprocessError, OSError):
+        return (None, root)
+    if (
+        recorded.returncode != 0
+        or loaded.returncode != 0
+        or edited.returncode != 0
+        or settled.returncode != 0
+    ):
+        return (None, root)
+    if recorded.stdout.strip() != loaded.stdout.strip() or edited.stdout.strip():
+        return (None, root)
+    if settled.stdout.strip() != revision:
+        return (None, root)
+
     if explicit is not None and explicit != revision:
         raise A38Error(
             f"{LOCAL_CI_REVISION_ENV} ({explicit}) does not match the HEAD of this checkout "
