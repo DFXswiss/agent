@@ -30,7 +30,7 @@ from agent_cli.a38 import (
     _build_report_dict,
     _write_report,
     ensure_local_ci_cli_satisfies_pin,
-    guard_action_pin,
+    guard_action_pins,
     load_policy,
     local_ci_revision,
     main,
@@ -1386,7 +1386,7 @@ class LocalCiCliPinTests(unittest.TestCase):
                 "agent_cli.a38.local_ci_revision",
                 side_effect=AssertionError("revision must not be resolved"),
             ):
-                self.assertIsNone(guard_action_pin(repo))
+                self.assertEqual(guard_action_pins(repo), [])
                 self.assertIsNone(
                     ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
                 )
@@ -1398,7 +1398,7 @@ class LocalCiCliPinTests(unittest.TestCase):
             ancestor, descendant = _init_two_commit_checkout(checkout)
             repo = root / "repo"
             _write_guard_workflow(repo, ancestor)
-            self.assertEqual(guard_action_pin(repo), ancestor)
+            self.assertEqual(guard_action_pins(repo), [ancestor])
             with mock.patch(
                 "agent_cli.a38.local_ci_revision",
                 return_value=(descendant, checkout),
@@ -1547,7 +1547,7 @@ class LocalCiCliPinTests(unittest.TestCase):
                 with self.subTest(ref=ref):
                     repo = root / ref.replace(".", "-")
                     _write_guard_workflow(repo, ref)
-                    self.assertIsNone(guard_action_pin(repo))
+                    self.assertEqual(guard_action_pins(repo), [])
                     with mock.patch(
                         "agent_cli.a38.local_ci_revision",
                         side_effect=AssertionError("revision must not be resolved"),
@@ -1686,19 +1686,62 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertIsNone(revision)
             self.assertEqual(root, module.resolve().parents[2])
 
-    def test_guard_pin_is_the_first_sha(self) -> None:
+    def test_every_uses_pin_is_collected_in_file_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             workflow = repo / ".github" / "workflows" / "a38-guard.yml"
             workflow.parent.mkdir(parents=True)
             workflow.write_text(
-                "uses: DFXswiss/agent/.github/actions/a38-guard@"
+                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
                 f"{HEAD_A}\n"
-                "uses: DFXswiss/agent/.github/actions/a38-guard@"
+                "      - uses: 'DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_B}'\n"
+                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [HEAD_A, HEAD_B])
+
+    def test_a_revision_outside_a_uses_value_is_not_a_pin(self) -> None:
+        # A bumped pin leaves the old SHA behind in a comment or in prose. Taking the
+        # first textual match accepted a CLI older than the revision actually installed.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                "# bumped from DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n"
+                "  # uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n"
+                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
                 f"{HEAD_B}\n",
                 encoding="utf-8",
             )
-            self.assertEqual(guard_action_pin(repo), HEAD_A)
+            self.assertEqual(guard_action_pins(repo), [HEAD_B])
+
+    def test_a_later_pin_the_cli_predates_is_refused(self) -> None:
+        # Passing the first pin says nothing about a second step on a newer revision.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ancestor, descendant = _init_two_commit_checkout(checkout)
+            repo = root / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n"
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{HEAD_B}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [ancestor, HEAD_B])
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                with self.assertRaises(A38Error) as caught:
+                    ensure_local_ci_cli_satisfies_pin(repo)
+            self.assertIn(HEAD_B, str(caught.exception))
 
     def test_shallow_module_path_is_unknown(self) -> None:
         self.assertEqual(

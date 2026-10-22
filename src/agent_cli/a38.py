@@ -90,8 +90,13 @@ ORIGIN_SSH_RE = re.compile(
 
 TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 
+# Only a ``uses:`` value is what Actions installs. Matching the reference anywhere in
+# the file accepted a revision from a comment or from prose, and a leading ``#`` cannot
+# satisfy this pattern.
 GUARD_ACTION_PIN_RE = re.compile(
-    r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})"
+    r"^[ \t]*(?:-[ \t]+)?uses:[ \t]*['\"]?"
+    r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})",
+    re.MULTILINE,
 )
 LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
 
@@ -2030,17 +2035,22 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if verdict.get("ok") is True and verdict.get("status") == "pass" else 1
 
 
-def guard_action_pin(repo_path: Path) -> str | None:
-    """The guard revision the target repository installs, or None when absent."""
+def guard_action_pins(repo_path: Path) -> list[str]:
+    """Every guard revision the target repository installs, in file order.
+
+    All of them, not the first one: a workflow may install the action in more than one
+    step, and reporting only the first match let a CLI that predates a later pin pass.
+    """
     path = Path(repo_path) / GUARD_WORKFLOW_PATH
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return None
-    match = GUARD_ACTION_PIN_RE.search(text)
-    if match is None:
-        return None
-    return match.group(1)
+        return []
+    # dict keys deduplicate while keeping file order; the same pin twice is one pin.
+    found = dict.fromkeys(
+        match.group(1) for match in GUARD_ACTION_PIN_RE.finditer(text)
+    )
+    return list(found)
 
 
 def _is_git_checkout(marker: Path) -> bool:
@@ -2118,13 +2128,14 @@ def ensure_local_ci_cli_satisfies_pin(
     workflow = repo_path / GUARD_WORKFLOW_PATH
     if not workflow.exists():
         return None
-    pin = guard_action_pin(repo_path)
-    if pin is None:
+    pins = guard_action_pins(repo_path)
+    if not pins:
         # A branch or tag ref is a legitimate pin, but it cannot be compared.
         return (
             "could not read a guard revision pin from "
             f"{GUARD_WORKFLOW_PATH}; no version comparison was possible"
         )
+    pin_text = ", ".join(pins)
     revision, root = local_ci_revision(env)
     if revision is None:
         raise A38Error(
@@ -2132,7 +2143,7 @@ def ensure_local_ci_cli_satisfies_pin(
             "checkout, or Git could not report its HEAD, so the report would be written by an "
             "unknown CLI version. Install the "
             "CLI from a Git checkout at or after "
-            f"{pin}, or set {LOCAL_CI_REVISION_ENV} to its 40-character commit SHA."
+            f"{pin_text}, or set {LOCAL_CI_REVISION_ENV} to its 40-character commit SHA."
         )
     if root is None:
         return (
@@ -2141,29 +2152,38 @@ def ensure_local_ci_cli_satisfies_pin(
             "against a Git checkout"
         )
     runner = run or _default_run
-    completed = _git(
-        root,
-        "merge-base",
-        "--is-ancestor",
-        pin,
-        revision,
-        run=runner,
-    )
-    if completed.returncode == 0:
+    # Every installed pin has to be satisfied. Passing one of them says nothing about a
+    # later step that installs a newer revision.
+    for pin in pins:
+        completed = _git(
+            root,
+            "merge-base",
+            "--is-ancestor",
+            pin,
+            revision,
+            run=runner,
+        )
+        if completed.returncode == 1:
+            raise A38Error(
+                f"this agent installation ({revision}) predates the guard revision {pin} that "
+                "this repository installs; a report written now would be rejected with 'report "
+                "outcome does not match the pull request'. Update the CLI to "
+                f"{pin} or later."
+            )
+        if completed.returncode != 0:
+            raise A38Error(
+                f"cannot prove this agent installation ({revision}) is at or after the guard "
+                f"revision {pin}; that commit is not present in this checkout. Fetch it and "
+                "run again."
+            )
+    if len(pins) == 1:
         return (
-            f"local CI CLI {revision} satisfies the guard revision {pin} "
+            f"local CI CLI {revision} satisfies the guard revision {pins[0]} "
             "installed by this repository"
         )
-    if completed.returncode == 1:
-        raise A38Error(
-            f"this agent installation ({revision}) predates the guard revision {pin} that this "
-            "repository installs; a report written now would be rejected with 'report outcome "
-            "does not match the pull request'. Update the CLI to "
-            f"{pin} or later."
-        )
-    raise A38Error(
-        f"cannot prove this agent installation ({revision}) is at or after the guard revision "
-        f"{pin}; that commit is not present in this checkout. Fetch it and run again."
+    return (
+        f"local CI CLI {revision} satisfies every guard revision installed by this "
+        f"repository ({pin_text})"
     )
 
 
