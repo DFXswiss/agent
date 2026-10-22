@@ -1643,6 +1643,23 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertEqual(revision, head)
             self.assertEqual(root, module.resolve().parents[2])
 
+    def test_git_dir_in_the_environment_cannot_redirect_the_proof(self) -> None:
+        """GIT_DIR replaces discovery even against an explicit -C, so it must be stripped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            real_head = _git(path, "rev-parse", "HEAD").lower()
+            decoy = Path(tmp) / "decoy"
+            _init_repo(decoy)
+            decoy_head = _git(decoy, "rev-parse", "HEAD").lower()
+            self.assertNotEqual(real_head, decoy_head)
+            with mock.patch.dict(
+                os.environ, {"GIT_DIR": str(decoy / ".git")}, clear=False
+            ):
+                revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertEqual(revision, real_head)
+            self.assertEqual(root, module.resolve().parents[2])
+
     def test_gitdir_pointer_file_counts_as_checkout(self) -> None:
         """A worktree or submodule carries .git as a pointer file, not a directory."""
         with tempfile.TemporaryDirectory() as tmp:
