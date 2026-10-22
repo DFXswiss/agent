@@ -10,7 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 import unittest
 from typing import Any
 from unittest import mock
@@ -3801,7 +3801,7 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
         self.assertEqual(result.pr, 1)
 
     def test_malformed_head_branch_makes_no_head_request(self) -> None:
-        for branch in ("x&state=closed", "a" * 76):
+        for branch in ("x&state=closed", "a" * 256, "feature/../escape", "trailing."):
             fake = FakeAPI()
             urls: list[str] = []
             inner = fake.request_fn
@@ -3824,6 +3824,35 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
                 publish=True,
             )
             self.assertFalse(any("head=" in url for url in urls))
+
+    def test_long_valid_head_branch_still_resolves(self) -> None:
+        # A valid branch past the 75-character status-context bound must still be looked
+        # up; rejecting it skipped exactly the fork pull request this lookup is for.
+        branch = "feature/" + "a" * 120
+        fake = FakeAPI()
+        urls: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        reconcile_event(
+            fake.api(),
+            event_name="workflow_run",
+            payload=_workflow_run_payload(
+                head_branch=branch,
+                head_repo_full_name="contributor/public-app",
+            ),
+            dry_run=False,
+            publish=True,
+        )
+        self.assertTrue(
+            any(f"head=contributor:{quote(branch, safe='')}" in url for url in urls)
+        )
 
     def test_slash_in_head_branch_is_percent_encoded(self) -> None:
         fake = FakeAPI()

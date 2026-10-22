@@ -378,6 +378,26 @@ def _validate_base_for_context(base_ref: str) -> str:
     return base_ref
 
 
+def _validate_head_branch(head_branch: str) -> str:
+    """A head branch bounded for a query, not for a status context.
+
+    Deliberately separate from ``_validate_base_for_context``: that bound is 75 characters
+    because the value ends up in a status context name. Reusing it here rejected valid long
+    fork branches, which is the case this lookup exists to resolve.
+    """
+    if not isinstance(head_branch, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", head_branch
+    ):
+        raise GuardError("head branch must be a bounded branch name (1–255 characters)")
+    if (
+        ".." in head_branch
+        or "//" in head_branch
+        or head_branch.endswith(("/", ".", ".lock"))
+    ):
+        raise GuardError("invalid head branch name")
+    return head_branch
+
+
 def status_context_enforce(base_ref: str) -> str:
     branch = _validate_base_for_context(base_ref)
     return f"A38 / report ({branch})"
@@ -3145,7 +3165,7 @@ def _open_pull_numbers_for_head(
     # Author-controlled. A rejected value is ignored and never interpolated.
     try:
         _validate_repo(head_repo)
-        _validate_base_for_context(head_branch)
+        _validate_head_branch(head_branch)
     except GuardError:
         return []
     owner = head_repo.split("/", 1)[0]

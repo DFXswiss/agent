@@ -26,7 +26,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
 from .readme_only import (
@@ -90,13 +90,11 @@ ORIGIN_SSH_RE = re.compile(
 
 TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 
-# Only a ``uses:`` value is what Actions installs. Matching the reference anywhere in
-# the file accepted a revision from a comment or from prose, and a leading ``#`` cannot
-# satisfy this pattern.
+# Matched against a whole ``uses`` scalar from the parsed workflow, never against the file
+# text: a revision in a comment or a block scalar is not what Actions installs, and a
+# quoted ``"uses"`` key is still a ``uses`` key.
 GUARD_ACTION_PIN_RE = re.compile(
-    r"^[ \t]*(?:-[ \t]+)?uses:[ \t]*['\"]?"
-    r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})",
-    re.MULTILINE,
+    r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})"
 )
 LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
 
@@ -2035,21 +2033,53 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if verdict.get("ok") is True and verdict.get("status") == "pass" else 1
 
 
+def _uses_values(node: Any) -> Iterator[str]:
+    """Every ``uses`` scalar in a parsed workflow, at any depth.
+
+    Not only ``jobs.*.steps[*].uses``: a job may call a reusable workflow through its own
+    ``uses``, and anchoring on one shape would miss a pin that Actions does install.
+    """
+    if isinstance(node, Mapping):
+        for key, value in node.items():
+            if key == "uses" and isinstance(value, str):
+                yield value
+            yield from _uses_values(value)
+    elif isinstance(node, Sequence) and not isinstance(node, (str, bytes)):
+        for item in node:
+            yield from _uses_values(item)
+
+
 def guard_action_pins(repo_path: Path) -> list[str]:
-    """Every guard revision the target repository installs, in file order.
+    """Every guard revision the target repository installs, in document order.
 
     All of them, not the first one: a workflow may install the action in more than one
     step, and reporting only the first match let a CLI that predates a later pin pass.
+    The workflow is parsed rather than scanned, so a revision in a comment or in a block
+    scalar is never mistaken for an installed one.
     """
     path = Path(repo_path) / GUARD_WORKFLOW_PATH
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    # dict keys deduplicate while keeping file order; the same pin twice is one pin.
-    found = dict.fromkeys(
-        match.group(1) for match in GUARD_ACTION_PIN_RE.finditer(text)
-    )
+    # Imported here, as the guard's own loader does: the strict loader itself lives in
+    # a38_guard, which imports from this module, so it cannot be imported back.
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return []
+    try:
+        document = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 — any malformed document is simply unprovable
+        # Nothing is proved either way, and the caller reports that no comparison was
+        # possible rather than inventing one.
+        return []
+    # dict keys deduplicate while keeping document order; the same pin twice is one pin.
+    found: dict[str, None] = {}
+    for value in _uses_values(document):
+        match = GUARD_ACTION_PIN_RE.fullmatch(value.strip())
+        if match is not None:
+            found.setdefault(match.group(1), None)
     return list(found)
 
 
@@ -2097,6 +2127,22 @@ def local_ci_revision(
     if root is None:
         # Nothing to measure: an explicit declaration is the recorded-revision path.
         return (explicit, None) if explicit is not None else (None, None)
+
+    # The layout alone does not bind HEAD to this source. A gitdir pointer can lead into an
+    # unrelated repository — measured: `rev-parse --show-toplevel` still reports this tree
+    # while HEAD comes from the other one — and an edited package would run code that HEAD
+    # does not contain. So HEAD counts only when the loaded source is HEAD's source.
+    relative = loaded_file.relative_to(root).as_posix()
+    try:
+        recorded = _git(root, "rev-parse", f"HEAD:{relative}", run=_default_run)
+        loaded = _git(root, "hash-object", str(loaded_file), run=_default_run)
+        edited = _git(root, "status", "--porcelain", "--", "src/agent_cli", run=_default_run)
+    except (subprocess.SubprocessError, OSError):
+        return (None, root)
+    if recorded.returncode != 0 or loaded.returncode != 0 or edited.returncode != 0:
+        return (None, root)
+    if recorded.stdout.strip() != loaded.stdout.strip() or edited.stdout.strip():
+        return (None, root)
 
     # A checkout is provable, so HEAD decides. A declaration must never stand in for it:
     # otherwise exporting the pin would make the comparison pass against itself.
@@ -2164,11 +2210,13 @@ def ensure_local_ci_cli_satisfies_pin(
             run=runner,
         )
         if completed.returncode == 1:
+            # "Not an ancestor" also covers a pin that merely diverged from this revision,
+            # where neither one predates the other, so the wording stays neutral.
             raise A38Error(
-                f"this agent installation ({revision}) predates the guard revision {pin} that "
-                "this repository installs; a report written now would be rejected with 'report "
-                "outcome does not match the pull request'. Update the CLI to "
-                f"{pin} or later."
+                f"this agent installation ({revision}) does not contain the guard revision "
+                f"{pin} that this repository installs; a report written now would be rejected "
+                "with 'report outcome does not match the pull request'. Update the CLI to a "
+                f"revision that contains {pin}."
             )
         if completed.returncode != 0:
             raise A38Error(

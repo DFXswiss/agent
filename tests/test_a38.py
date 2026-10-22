@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import sys
 import subprocess
@@ -191,11 +192,9 @@ def _init_repo(path: Path, *, origin: str = "https://github.com/example/app.git"
     return _git(path, "rev-parse", "HEAD").lower()
 
 
-def _init_two_commit_checkout(path: Path) -> tuple[str, str]:
-    """Create a linear two-commit repository and return ``(ancestor, descendant)``."""
-    ancestor = _init_repo(path)
-    (path / "README").write_text("two\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README"], cwd=path, check=True, capture_output=True)
+def _commit_all(path: Path, message: str) -> str:
+    """Commit everything in ``path`` and return the new revision."""
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True)
     subprocess.run(
         [
             "git",
@@ -205,13 +204,20 @@ def _init_two_commit_checkout(path: Path) -> tuple[str, str]:
             "core.hooksPath=/dev/null",
             "commit",
             "-m",
-            "second",
+            message,
         ],
         cwd=path,
         check=True,
         capture_output=True,
     )
-    descendant = _git(path, "rev-parse", "HEAD").lower()
+    return _git(path, "rev-parse", "HEAD").lower()
+
+
+def _init_two_commit_checkout(path: Path) -> tuple[str, str]:
+    """Create a linear two-commit repository and return ``(ancestor, descendant)``."""
+    ancestor = _init_repo(path)
+    (path / "README").write_text("two\n", encoding="utf-8")
+    descendant = _commit_all(path, "second")
     return ancestor, descendant
 
 
@@ -253,11 +259,29 @@ def _installation_module(path: Path, *, git: bool) -> Path:
     return module
 
 
-def _write_guard_workflow(repo: Path, ref: str) -> None:
+def _guard_workflow_text(steps: str) -> str:
+    """A real workflow document, because the pin is read from parsed YAML."""
+    return (
+        "name: A38 guard\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "jobs:\n"
+        "  guard:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+    ) + steps
+
+
+def _write_guard_workflow(repo: Path, *refs: str) -> None:
     workflow = repo / ".github" / "workflows" / "a38-guard.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(
-        f"uses: DFXswiss/agent/.github/actions/a38-guard@{ref}\n",
+        _guard_workflow_text(
+            "".join(
+                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ref}\n"
+                for ref in refs
+            )
+        ),
         encoding="utf-8",
     )
 
@@ -1437,13 +1461,13 @@ class LocalCiCliPinTests(unittest.TestCase):
                 with self.assertRaises(A38Error) as raised:
                     ensure_local_ci_cli_satisfies_pin(repo)
             message = str(raised.exception)
-            self.assertIn("predates the guard revision", message)
+            self.assertIn("does not contain the guard revision", message)
             self.assertEqual(
                 message,
-                f"this agent installation ({ancestor}) predates the guard revision "
+                f"this agent installation ({ancestor}) does not contain the guard revision "
                 f"{descendant} that this repository installs; a report written now would be "
-                "rejected with 'report outcome does not match the pull request'. Update the "
-                f"CLI to {descendant} or later.",
+                "rejected with 'report outcome does not match the pull request'. Update "
+                f"the CLI to a revision that contains {descendant}.",
             )
 
     def test_unknown_cli_revision_is_refused(self) -> None:
@@ -1566,12 +1590,15 @@ class LocalCiCliPinTests(unittest.TestCase):
             root = Path(tmp)
             repo = root / "repo"
             head = _init_repo(repo)
+            # A real installation has its own source committed, which is what binds HEAD
+            # to the code that runs. The stale revision is therefore a commit that already
+            # carries the module.
             installation = root / "install"
-            ancestor, descendant = _init_two_commit_checkout(installation)
+            module = _installation_module(installation, git=True)
+            ancestor = _git(installation, "rev-parse", "HEAD").lower()
+            (installation / "README").write_text("two\n", encoding="utf-8")
+            descendant = _commit_all(installation, "second")
             _git(installation, "checkout", "--detach", ancestor)
-            module = installation / "src" / "agent_cli" / "a38.py"
-            module.parent.mkdir(parents=True)
-            module.write_text("# synthetic installation\n", encoding="utf-8")
             _write_guard_workflow(repo, descendant)
             policy = root / "a38.json"
             policy.write_text(_policy_text(), encoding="utf-8")
@@ -1597,7 +1624,7 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             printed = stderr.getvalue()
             self.assertTrue(printed.startswith("a38: "))
-            self.assertIn("predates the guard revision", printed)
+            self.assertIn("does not contain the guard revision", printed)
             self.assertEqual(output.read_text(encoding="utf-8"), sentinel)
 
     def test_checkout_revision_is_head(self) -> None:
@@ -1680,6 +1707,34 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertEqual(revision, head)
             self.assertEqual(root, module.resolve().parents[2])
 
+    def test_edited_source_proves_nothing(self) -> None:
+        """HEAD describes committed code; edited code is not at any revision."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            module.write_text("# placeholder\n# local edit\n", encoding="utf-8")
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_a_pointer_into_another_repository_proves_nothing(self) -> None:
+        """A copied tree can point at a foreign Git directory, whose HEAD is not its own."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            own_head = _git(path, "rev-parse", "HEAD").lower()
+            foreign = Path(tmp) / "foreign"
+            _init_repo(foreign)
+            foreign_head = _git(foreign, "rev-parse", "HEAD").lower()
+            self.assertNotEqual(own_head, foreign_head)
+            # Point this tree's .git at the other repository, as a stale copy would.
+            marker = path / ".git"
+            shutil.rmtree(marker)
+            marker.write_text(f"gitdir: {foreign / '.git'}\n", encoding="utf-8")
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
     def test_git_error_yields_no_revision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "installation"
@@ -1692,49 +1747,78 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertIsNone(revision)
             self.assertEqual(root, module.resolve().parents[2])
 
-    def test_every_uses_pin_is_collected_in_file_order(self) -> None:
+    def test_every_uses_pin_is_collected_in_document_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             workflow = repo / ".github" / "workflows" / "a38-guard.yml"
             workflow.parent.mkdir(parents=True)
-            # HEAD_B is written first so that sorting the pins would disagree with file
-            # order. The forms cover a list item, a double-quoted scalar, a tab indent, a
-            # trailing comment, CRLF, and a repeat that has to collapse to one pin.
-            workflow.write_bytes(
-                (
+            # HEAD_B comes first so that sorting the pins would disagree with document
+            # order. A double-quoted scalar, a trailing comment and a repeat that has to
+            # collapse to one pin are covered here too.
+            workflow.write_text(
+                _guard_workflow_text(
                     "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
-                    f"{HEAD_B}\r\n"
-                    '\tuses: "DFXswiss/agent/.github/actions/a38-guard@'
-                    f'{HEAD_A}"  # pinned\r\n'
+                    f"{HEAD_B}\n"
+                    '      - uses: "DFXswiss/agent/.github/actions/a38-guard@'
+                    f'{HEAD_A}"  # pinned\n'
                     "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
-                    f"{HEAD_B}\r\n"
-                ).encode("utf-8")
+                    f"{HEAD_B}\n"
+                ),
+                encoding="utf-8",
             )
             self.assertEqual(guard_action_pins(repo), [HEAD_B, HEAD_A])
 
-    def test_a_revision_outside_a_uses_value_is_not_a_pin(self) -> None:
-        # A bumped pin leaves the old SHA behind in a comment or in prose. Taking the
-        # first textual match accepted a CLI older than the revision actually installed.
+    def test_a_job_level_reusable_workflow_pin_is_collected(self) -> None:
+        # A job may install the action through its own `uses`, not only through a step.
+        # Anchoring the walk on jobs.*.steps would miss a pin that Actions does install.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             workflow = repo / ".github" / "workflows" / "a38-guard.yml"
             workflow.parent.mkdir(parents=True)
             workflow.write_text(
-                "# bumped from DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_A}\n"
-                "  # uses: DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_A}\n"
-                "    previous: uses: DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_A}\n"
-                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
-                f"{HEAD_B}\n",
+                "name: A38 guard\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "jobs:\n"
+                "  guard:\n"
+                "    uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [HEAD_A])
+
+    def test_an_unparseable_workflow_yields_no_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text("jobs:\n  guard:\n   - [unbalanced\n", encoding="utf-8")
+            self.assertEqual(guard_action_pins(repo), [])
+
+    def test_a_revision_outside_a_uses_value_is_not_a_pin(self) -> None:
+        # A bumped pin leaves the old SHA behind in a comment, and a run: block scalar can
+        # quote one too. Neither is what Actions installs. A quoted "uses" key is still a
+        # uses key, so the parsed document decides rather than the file text.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                _guard_workflow_text(
+                    "      - name: note\n"
+                    "        run: |\n"
+                    "          echo 'uses: DFXswiss/agent/.github/actions/a38-guard@"
+                    f"{HEAD_A}'\n"
+                    '      - "uses": DFXswiss/agent/.github/actions/a38-guard@'
+                    f"{HEAD_B}\n"
+                ),
                 encoding="utf-8",
             )
             self.assertEqual(guard_action_pins(repo), [HEAD_B])
 
-    def test_a_later_pin_the_cli_predates_is_refused(self) -> None:
+    def test_a_later_pin_not_contained_is_refused(self) -> None:
         # Passing the first pin says nothing about a second step on another revision. The
-        # second pin is a real commit, so this exercises the "predates" exit code 1 rather
+        # second pin is a real commit, so this exercises the exit code 1 branch rather
         # than the unknown-object branch, and the message is asserted in full to tell the
         # two refusals apart.
         with tempfile.TemporaryDirectory() as tmp:
@@ -1743,13 +1827,7 @@ class LocalCiCliPinTests(unittest.TestCase):
             ancestor, descendant = _init_two_commit_checkout(checkout)
             beside = _commit_beside(checkout, ancestor)
             repo = root / "repo"
-            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
-            workflow.parent.mkdir(parents=True)
-            workflow.write_text(
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n"
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{beside}\n",
-                encoding="utf-8",
-            )
+            _write_guard_workflow(repo, ancestor, beside)
             self.assertEqual(guard_action_pins(repo), [ancestor, beside])
             with mock.patch(
                 "agent_cli.a38.local_ci_revision",
@@ -1759,13 +1837,13 @@ class LocalCiCliPinTests(unittest.TestCase):
                     ensure_local_ci_cli_satisfies_pin(repo)
             self.assertEqual(
                 str(caught.exception),
-                f"this agent installation ({descendant}) predates the guard revision {beside} "
-                "that this repository installs; a report written now would be rejected with "
-                "'report outcome does not match the pull request'. Update the CLI to "
-                f"{beside} or later.",
+                f"this agent installation ({descendant}) does not contain the guard "
+                f"revision {beside} that this repository installs; a report written now "
+                "would be rejected with 'report outcome does not match the pull "
+                f"request'. Update the CLI to a revision that contains {beside}.",
             )
 
-    def test_a_predated_pin_is_refused_even_when_it_is_not_last(self) -> None:
+    def test_an_uncontained_pin_is_refused_even_when_it_is_not_last(self) -> None:
         # The predated pin comes first and a satisfied pin follows, so a loop that only
         # trusts exit code 1 on the last pin would fall through to the wrong refusal. The
         # message is asserted in full, because both refusals name the same pin.
@@ -1775,13 +1853,7 @@ class LocalCiCliPinTests(unittest.TestCase):
             ancestor, descendant = _init_two_commit_checkout(checkout)
             beside = _commit_beside(checkout, ancestor)
             repo = root / "repo"
-            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
-            workflow.parent.mkdir(parents=True)
-            workflow.write_text(
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{beside}\n"
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n",
-                encoding="utf-8",
-            )
+            _write_guard_workflow(repo, beside, ancestor)
             self.assertEqual(guard_action_pins(repo), [beside, ancestor])
             with mock.patch(
                 "agent_cli.a38.local_ci_revision",
@@ -1791,10 +1863,10 @@ class LocalCiCliPinTests(unittest.TestCase):
                     ensure_local_ci_cli_satisfies_pin(repo)
             self.assertEqual(
                 str(caught.exception),
-                f"this agent installation ({descendant}) predates the guard revision {beside} "
-                "that this repository installs; a report written now would be rejected with "
-                "'report outcome does not match the pull request'. Update the CLI to "
-                f"{beside} or later.",
+                f"this agent installation ({descendant}) does not contain the guard "
+                f"revision {beside} that this repository installs; a report written now "
+                "would be rejected with 'report outcome does not match the pull "
+                f"request'. Update the CLI to a revision that contains {beside}.",
             )
 
     def test_a_failing_first_pin_is_not_rescued_by_a_later_one(self) -> None:
@@ -1805,13 +1877,7 @@ class LocalCiCliPinTests(unittest.TestCase):
             checkout = root / "checkout"
             ancestor, descendant = _init_two_commit_checkout(checkout)
             repo = root / "repo"
-            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
-            workflow.parent.mkdir(parents=True)
-            workflow.write_text(
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{HEAD_B}\n"
-                f"      - uses: DFXswiss/agent/.github/actions/a38-guard@{ancestor}\n",
-                encoding="utf-8",
-            )
+            _write_guard_workflow(repo, HEAD_B, ancestor)
             self.assertEqual(guard_action_pins(repo), [HEAD_B, ancestor])
             with mock.patch(
                 "agent_cli.a38.local_ci_revision",
