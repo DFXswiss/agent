@@ -593,7 +593,7 @@ def _git(
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith("GIT_") and key not in {"GH_TOKEN", "GITHUB_TOKEN"}
+        if not key.startswith("GIT_") and key not in TOKEN_ENV_DROP
     }
     return run(["git", "-C", str(repo_path), *parts], None, env)
 
