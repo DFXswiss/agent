@@ -1540,7 +1540,8 @@ class LocalCiCliPinTests(unittest.TestCase):
                     "commit SHA",
                 )
 
-    def test_declared_revision_without_checkout_is_accepted(self) -> None:
+    def test_declared_revision_without_checkout_must_be_the_pin(self) -> None:
+        """Without ancestry the declaration is only trusted where nothing needs proving."""
         declared = "0123456789abcdef0123456789abcdef01234567"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1553,7 +1554,7 @@ class LocalCiCliPinTests(unittest.TestCase):
                 (declared, None),
             )
             repo = root / "repo"
-            _write_guard_workflow(repo, HEAD_A)
+            _write_guard_workflow(repo, declared)
             with mock.patch(
                 "agent_cli.a38.local_ci_revision",
                 return_value=(declared, None),
@@ -1562,8 +1563,30 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertEqual(
                 note,
                 f"local CI CLI revision {declared} was declared via the "
-                "A38_LOCAL_CI_REVISION environment variable and was not verified "
-                "against a Git checkout",
+                "A38_LOCAL_CI_REVISION environment variable and is the guard revision "
+                "this repository installs",
+            )
+
+    def test_a_declared_revision_that_is_not_the_pin_is_refused(self) -> None:
+        # The operator sets this variable, so accepting any value would make the gate
+        # advisory: an older installation could declare itself and write the report.
+        declared = "0123456789abcdef0123456789abcdef01234567"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            _write_guard_workflow(repo, HEAD_A)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(declared, None),
+            ):
+                with self.assertRaises(A38Error) as caught:
+                    ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
+            self.assertEqual(
+                str(caught.exception),
+                f"the declared revision of this agent installation ({declared}) is not the "
+                f"guard revision {HEAD_A} that this repository installs, and without a Git "
+                "checkout their relationship cannot be proved. Install the CLI from a Git "
+                "checkout, or set A38_LOCAL_CI_REVISION to the installed guard revision.",
             )
 
     def test_non_sha_pin_warns_without_comparing(self) -> None:
@@ -1717,6 +1740,19 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertIsNone(revision)
             self.assertEqual(root, module.resolve().parents[2])
 
+    def test_an_edit_elsewhere_in_the_package_proves_nothing(self) -> None:
+        """The blob check covers this module; the package check covers its siblings."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            sibling = module.parent / "chain.py"
+            sibling.write_text("# committed\n", encoding="utf-8")
+            _commit_all(path, "add sibling")
+            sibling.write_text("# committed\n# local edit\n", encoding="utf-8")
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
     def test_a_pointer_into_another_repository_proves_nothing(self) -> None:
         """A copied tree can point at a foreign Git directory, whose HEAD is not its own."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -1768,9 +1804,10 @@ class LocalCiCliPinTests(unittest.TestCase):
             )
             self.assertEqual(guard_action_pins(repo), [HEAD_B, HEAD_A])
 
-    def test_a_job_level_reusable_workflow_pin_is_collected(self) -> None:
-        # A job may install the action through its own `uses`, not only through a step.
-        # Anchoring the walk on jobs.*.steps would miss a pin that Actions does install.
+    def test_a_uses_outside_a_step_is_not_a_pin(self) -> None:
+        # Only `jobs.<id>.steps[*].uses` installs a composite action. A job-level `uses`
+        # names a reusable workflow, and a `uses` key under `env` or `with` is just data;
+        # treating either as installed would refuse over a pin Actions never runs.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             workflow = repo / ".github" / "workflows" / "a38-guard.yml"
@@ -1780,9 +1817,36 @@ class LocalCiCliPinTests(unittest.TestCase):
                 "on:\n"
                 "  workflow_dispatch:\n"
                 "jobs:\n"
+                "  called:\n"
+                "    uses: DFXswiss/agent/.github/workflows/reusable.yml@"
+                f"{HEAD_A}\n"
                 "  guard:\n"
-                "    uses: DFXswiss/agent/.github/actions/a38-guard@"
+                "    runs-on: ubuntu-latest\n"
+                "    env:\n"
+                "      uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_A}\n"
+                "    steps:\n"
+                "      - uses: DFXswiss/agent/.github/actions/a38-guard@"
+                f"{HEAD_B}\n"
+                "        with:\n"
+                "          uses: DFXswiss/agent/.github/actions/a38-guard@"
                 f"{HEAD_A}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(guard_action_pins(repo), [HEAD_B])
+
+    def test_the_repository_part_of_the_reference_is_case_insensitive(self) -> None:
+        # GitHub resolves owner/repository case-insensitively, so a lower-case reference
+        # installs the same action; missing it would wave an older CLI through.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            workflow = repo / ".github" / "workflows" / "a38-guard.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                _guard_workflow_text(
+                    "      - uses: dfxswiss/Agent/.github/actions/a38-guard@"
+                    f"{HEAD_A}\n"
+                ),
                 encoding="utf-8",
             )
             self.assertEqual(guard_action_pins(repo), [HEAD_A])

@@ -92,9 +92,10 @@ TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
 
 # Matched against a whole ``uses`` scalar from the parsed workflow, never against the file
 # text: a revision in a comment or a block scalar is not what Actions installs, and a
-# quoted ``"uses"`` key is still a ``uses`` key.
+# quoted ``"uses"`` key is still a ``uses`` key. The repository part is case-insensitive
+# because GitHub resolves it that way, while the revision stays lowercase and exact.
 GUARD_ACTION_PIN_RE = re.compile(
-    r"DFXswiss/agent/\.github/actions/a38-guard@([0-9a-f]{40})"
+    r"(?i:DFXswiss/agent/\.github/actions/a38-guard@)([0-9a-f]{40})"
 )
 LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
 
@@ -2033,20 +2034,26 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if verdict.get("ok") is True and verdict.get("status") == "pass" else 1
 
 
-def _uses_values(node: Any) -> Iterator[str]:
-    """Every ``uses`` scalar in a parsed workflow, at any depth.
+def _step_uses_values(document: Any) -> Iterator[str]:
+    """Every ``uses`` that an Actions step installs: ``jobs.<id>.steps[*].uses``.
 
-    Not only ``jobs.*.steps[*].uses``: a job may call a reusable workflow through its own
-    ``uses``, and anchoring on one shape would miss a pin that Actions does install.
+    The guard is a composite action, so a step is the only place that can install it — a
+    job-level ``uses`` must name a reusable workflow under ``.github/workflows/``. Reading
+    every ``uses`` key at any depth also picked up values under ``env`` or ``with``, which
+    Actions never installs, and a stray one there would have caused a false refusal.
     """
-    if isinstance(node, Mapping):
-        for key, value in node.items():
-            if key == "uses" and isinstance(value, str):
-                yield value
-            yield from _uses_values(value)
-    elif isinstance(node, Sequence) and not isinstance(node, (str, bytes)):
-        for item in node:
-            yield from _uses_values(item)
+    jobs = document.get("jobs") if isinstance(document, Mapping) else None
+    if not isinstance(jobs, Mapping):
+        return
+    for job in jobs.values():
+        if not isinstance(job, Mapping):
+            continue
+        steps = job.get("steps")
+        if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
+            continue
+        for step in steps:
+            if isinstance(step, Mapping) and isinstance(step.get("uses"), str):
+                yield step["uses"]
 
 
 def guard_action_pins(repo_path: Path) -> list[str]:
@@ -2076,7 +2083,7 @@ def guard_action_pins(repo_path: Path) -> list[str]:
         return []
     # dict keys deduplicate while keeping document order; the same pin twice is one pin.
     found: dict[str, None] = {}
-    for value in _uses_values(document):
+    for value in _step_uses_values(document):
         match = GUARD_ACTION_PIN_RE.fullmatch(value.strip())
         if match is not None:
             found.setdefault(match.group(1), None)
@@ -2192,10 +2199,21 @@ def ensure_local_ci_cli_satisfies_pin(
             f"{pin_text}, or set {LOCAL_CI_REVISION_ENV} to its 40-character commit SHA."
         )
     if root is None:
-        return (
-            f"local CI CLI revision {revision} was declared via the "
-            f"{LOCAL_CI_REVISION_ENV} environment variable and was not verified "
-            "against a Git checkout"
+        # Without a checkout there is no ancestry to measure, so a declaration can only be
+        # trusted where it needs no measuring: when it names exactly the revision installed.
+        # Accepting any declared value would have made the gate advisory, since the operator
+        # sets it.
+        if set(pins) == {revision}:
+            return (
+                f"local CI CLI revision {revision} was declared via the "
+                f"{LOCAL_CI_REVISION_ENV} environment variable and is the guard revision "
+                "this repository installs"
+            )
+        raise A38Error(
+            f"the declared revision of this agent installation ({revision}) is not the guard "
+            f"revision {pin_text} that this repository installs, and without a Git checkout "
+            "their relationship cannot be proved. Install the CLI from a Git checkout, or "
+            f"set {LOCAL_CI_REVISION_ENV} to the installed guard revision."
         )
     runner = run or _default_run
     # Every installed pin has to be satisfied. Passing one of them says nothing about a
