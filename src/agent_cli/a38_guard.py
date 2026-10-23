@@ -378,6 +378,41 @@ def _validate_base_for_context(base_ref: str) -> str:
     return base_ref
 
 
+# What Git itself refuses inside a ref name, plus the control range and DEL.
+_REF_FORBIDDEN_CHARS = frozenset(
+    " ~^:?*[\\\x7f" + "".join(chr(code) for code in range(0x20))
+)
+
+
+def _validate_head_branch(head_branch: str) -> str:
+    """A head branch bounded for a query, not for a status context.
+
+    Deliberately separate from ``_validate_base_for_context``: that bound is 75 characters
+    because the value ends up in a status context name. Reusing it here rejected valid long
+    fork branches, which is the case this lookup exists to resolve.
+
+    Shaped after Git's own ref rules rather than an ASCII allow-list. The value is
+    percent-encoded with ``safe=""`` before it reaches the query, so encoding is what keeps
+    it from adding a parameter; an allow-list only has to reject what Git rejects, and a
+    narrow one dropped valid names such as ``_topic`` or a branch containing ``&``.
+    """
+    if not isinstance(head_branch, str) or not 1 <= len(head_branch) <= 255:
+        raise GuardError("head branch must be a bounded branch name (1–255 characters)")
+    if any(ch in _REF_FORBIDDEN_CHARS for ch in head_branch):
+        raise GuardError("invalid head branch name")
+    if (
+        ".." in head_branch
+        or "//" in head_branch
+        or "@{" in head_branch
+        or "/." in head_branch
+        or head_branch == "@"
+        or head_branch.startswith((".", "/", "-"))
+        or head_branch.endswith(("/", ".", ".lock"))
+    ):
+        raise GuardError("invalid head branch name")
+    return head_branch
+
+
 def status_context_enforce(base_ref: str) -> str:
     branch = _validate_base_for_context(base_ref)
     return f"A38 / report ({branch})"
@@ -3138,6 +3173,37 @@ def _open_pull_numbers_for_commit(api: GitHubApi, repo: str, sha: str) -> list[i
     return sorted(set(numbers))
 
 
+def _open_pull_numbers_for_head(
+    api: GitHubApi, repo: str, head_repo: str, head_branch: str
+) -> list[int]:
+    """Open PR numbers whose head is ``head_repo``:``head_branch``."""
+    # Author-controlled. A rejected value is ignored and never interpolated.
+    try:
+        _validate_repo(head_repo)
+        _validate_head_branch(head_branch)
+    except GuardError:
+        return []
+    owner = head_repo.split("/", 1)[0]
+    encoded_owner = urllib.parse.quote(owner, safe="")
+    encoded_branch = urllib.parse.quote(head_branch, safe="")
+    items = api.paginate(
+        f"/repos/{repo}/pulls?state=open&head={encoded_owner}:{encoded_branch}"
+    )
+    numbers: list[int] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise GuardError("workflow_run pull list entry is not an object")
+        if "state" in item and item["state"] != "open":
+            continue
+        number = item.get("number")
+        # `bool` subclasses `int`, so `isinstance` would accept a JSON `true` here and pass it
+        # on as a pull request number.
+        if type(number) is not int or number <= 0:
+            raise GuardError("open pull request number is not a positive integer")
+        numbers.append(number)
+    return sorted(set(numbers))
+
+
 def _reconcile_workflow_run(
     api: GitHubApi,
     *,
@@ -3173,7 +3239,28 @@ def _reconcile_workflow_run(
     if repo is not None and _validate_repo(repo) != event_repo:
         raise GuardError("event repository does not match --repo")
 
-    numbers = _open_pull_numbers_for_commit(api, event_repo, head_sha)
+    # The commits endpoint names the pull request that introduced the SHA.
+    # That is empty for a fork head and can be a closed pull request. The open
+    # pull request is the one whose head ref is this run. Do not require the
+    # pull request head to still equal head_sha: the branch may have moved,
+    # and reconcile_pull re-reads live state.
+    head_branch = run.get("head_branch")
+    head_repository = run.get("head_repository")
+    head_repo = (
+        head_repository.get("full_name") if isinstance(head_repository, dict) else None
+    )
+    head_numbers: list[int] = []
+    if (
+        isinstance(head_branch, str)
+        and head_branch
+        and isinstance(head_repo, str)
+        and head_repo
+    ):
+        head_numbers = _open_pull_numbers_for_head(
+            api, event_repo, head_repo, head_branch
+        )
+    commit_numbers = _open_pull_numbers_for_commit(api, event_repo, head_sha)
+    numbers = sorted(set(head_numbers + commit_numbers))
     if pr is not None:
         if pr not in numbers:
             raise GuardError("event pull request does not match --pr")

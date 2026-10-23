@@ -26,10 +26,11 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from .a38_job_adapters import ADAPTERS
 from .readme_only import (
+    GUARD_WORKFLOW_PATH,
     MAX_FILES,
     git_changed_paths,
     markdown_and_guard_docs_only,
@@ -88,6 +89,17 @@ ORIGIN_SSH_RE = re.compile(
 )
 
 TOKEN_ENV_DROP = frozenset({"GITHUB_TOKEN", "GH_TOKEN"})
+
+# Matched against a whole ``uses`` scalar from the parsed workflow, never against the file
+# text: a revision in a comment or a block scalar is not what Actions installs, and a
+# quoted ``"uses"`` key is still a ``uses`` key. Only the owner and repository are
+# case-insensitive, because that is what GitHub resolves that way; the path to the action
+# inside the repository is a real file path and stays exact. A 40-hex revision in either
+# case names the same commit, so both are accepted and normalised to lower case.
+GUARD_ACTION_PIN_RE = re.compile(
+    r"(?i:DFXswiss/agent)/\.github/actions/a38-guard@([0-9A-Fa-f]{40})"
+)
+LOCAL_CI_REVISION_ENV = "A38_LOCAL_CI_REVISION"
 
 RunFn = Callable[[list[str], Path | None, Mapping[str, str] | None], subprocess.CompletedProcess[str]]
 ConfigParser = Callable[[str], tuple[Any, dict[str, Any]]]
@@ -581,7 +593,15 @@ def _git(
     *parts: str,
     run: RunFn,
 ) -> subprocess.CompletedProcess[str]:
-    return run(["git", "-C", str(repo_path), *parts], None, None)
+    # GIT_DIR and its siblings replace repository discovery even against an explicit
+    # -C, so a statement about this checkout must not inherit them from the caller.
+    # The guard sanitises its own revision lookup the same way.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and key not in TOKEN_ENV_DROP
+    }
+    return run(["git", "-C", str(repo_path), *parts], None, env)
 
 
 def _require_clean_tree(repo_path: Path, *, run: RunFn) -> None:
@@ -2016,6 +2036,317 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if verdict.get("ok") is True and verdict.get("status") == "pass" else 1
 
 
+def _step_uses_values(document: Any) -> Iterator[str]:
+    """Every ``uses`` that an Actions step installs: ``jobs.<id>.steps[*].uses``.
+
+    The guard is a composite action, so a step is the only place that can install it — a
+    job-level ``uses`` must name a reusable workflow under ``.github/workflows/``. Reading
+    every ``uses`` key at any depth also picked up values under ``env`` or ``with``, which
+    Actions never installs, and a stray one there would have caused a false refusal.
+    """
+    jobs = document.get("jobs") if isinstance(document, Mapping) else None
+    if not isinstance(jobs, Mapping):
+        return
+    for job in jobs.values():
+        if not isinstance(job, Mapping):
+            continue
+        steps = job.get("steps")
+        if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
+            continue
+        for step in steps:
+            if isinstance(step, Mapping) and isinstance(step.get("uses"), str):
+                yield step["uses"]
+
+
+def guard_action_pins(repo_path: Path) -> list[str]:
+    """Every guard revision the target repository installs, in document order.
+
+    All of them, not the first one: a workflow may install the action in more than one
+    step, and reporting only the first match let a CLI that predates a later pin pass.
+    The workflow is parsed rather than scanned, so a revision in a comment or in a block
+    scalar is never mistaken for an installed one.
+    """
+    path = Path(repo_path) / GUARD_WORKFLOW_PATH
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    # Imported here, as the guard's own loader does: the strict loader itself lives in
+    # a38_guard, which imports from this module, so it cannot be imported back.
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return []
+    try:
+        document = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 — any malformed document is simply unprovable
+        # Nothing is proved either way, and the caller reports that no comparison was
+        # possible rather than inventing one.
+        return []
+    # dict keys deduplicate while keeping document order; the same pin twice is one pin.
+    found: dict[str, None] = {}
+    for value in _step_uses_values(document):
+        match = GUARD_ACTION_PIN_RE.fullmatch(value.strip())
+        if match is not None:
+            found.setdefault(match.group(1).lower(), None)
+    return list(found)
+
+
+def _is_git_checkout(marker: Path) -> bool:
+    """True for a .git directory and for a gitdir pointer file (worktree, submodule)."""
+    if marker.is_dir():
+        return True
+    try:
+        if not marker.is_file():
+            return False
+        head = marker.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return head.startswith("gitdir:")
+
+
+PACKAGE_RELPATH = "src/agent_cli"
+
+
+def _package_matches_revision(root: Path, revision: str, *, run: RunFn) -> bool:
+    """True when every Python file of the package on disk is this revision's blob.
+
+    Compared by content rather than through ``git status``, because the index can be told
+    to report a modified file as clean (``--skip-worktree``, ``--assume-unchanged``).
+
+    ``--no-filters`` matters: ``hash-object`` runs configured clean filters by default, so a
+    filter driver could transform edited source back into the committed bytes and the compare
+    would succeed on code this revision does not contain. ``--no-replace-objects`` matters for
+    the same reason one step further out: a replacement ref is repository-local, survives the
+    ``GIT_*`` sanitisation, and can substitute a forged tree for the revision being read.
+    """
+    try:
+        listed = _git(
+            root,
+            "--no-replace-objects",
+            "ls-tree",
+            "-r",
+            "-z",
+            revision,
+            "--",
+            PACKAGE_RELPATH,
+            run=run,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    if listed.returncode != 0:
+        return False
+
+    recorded: dict[str, str] = {}
+    for entry in listed.stdout.split("\0"):
+        if not entry:
+            continue
+        # "<mode> <type> <sha>\t<path>"
+        meta, _, path = entry.partition("\t")
+        fields = meta.split()
+        if not path or len(fields) != 3 or fields[1] != "blob":
+            continue
+        if path.endswith(".py"):
+            recorded[path] = fields[2]
+    if not recorded:
+        # Nothing to compare against: the revision does not carry this package.
+        return False
+
+    package_dir = root / PACKAGE_RELPATH
+    present = {
+        candidate.relative_to(root).as_posix()
+        for candidate in package_dir.rglob("*.py")
+        if "__pycache__" not in candidate.parts
+    }
+    if present != set(recorded):
+        # A file the revision does not have, or one it has and the tree does not.
+        return False
+
+    paths = sorted(recorded)
+    try:
+        hashed = _git(
+            root, "--no-replace-objects", "hash-object", "--no-filters", "--", *paths, run=run
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    if hashed.returncode != 0:
+        return False
+    actual = hashed.stdout.split()
+    if len(actual) != len(paths):
+        return False
+    return all(recorded[path] == blob for path, blob in zip(paths, actual))
+
+
+def local_ci_revision(
+    env: Mapping[str, str] | None = None,
+    *,
+    module_file: str | os.PathLike[str] | None = None,
+) -> tuple[str | None, Path | None]:
+    """This installation's own revision and its checkout root, when provable."""
+    source_env = env if env is not None else os.environ
+    explicit = source_env.get(LOCAL_CI_REVISION_ENV)
+    if explicit is not None and HEAD_RE.fullmatch(explicit) is None:
+        raise A38Error(
+            f"{LOCAL_CI_REVISION_ENV} must be a 40-character lowercase hexadecimal commit SHA"
+        )
+
+    # Only this exact layout qualifies. Do not walk parents or the working directory:
+    # a copied source snapshot must stay unprovable.
+    loaded_file = Path(module_file or __file__).resolve()
+    root: Path | None
+    try:
+        root_candidate = loaded_file.parents[2]
+    except IndexError:
+        root = None
+    else:
+        installed = (root_candidate / "src" / "agent_cli" / "a38.py").resolve()
+        if installed == loaded_file and _is_git_checkout(root_candidate / ".git"):
+            root = root_candidate
+        else:
+            root = None
+
+    if root is None:
+        # Nothing to measure: an explicit declaration is the recorded-revision path.
+        return (explicit, None) if explicit is not None else (None, None)
+
+    # A checkout is provable, so HEAD decides. A declaration must never stand in for it:
+    # otherwise exporting the pin would make the comparison pass against itself.
+    try:
+        completed = _git(root, "--no-replace-objects", "rev-parse", "HEAD", run=_default_run)
+    except (subprocess.SubprocessError, OSError):
+        return (None, root)
+    if completed.returncode != 0:
+        return (None, root)
+    revision = completed.stdout.strip()
+    if HEAD_RE.fullmatch(revision) is None:
+        return (None, root)
+
+    # The layout alone does not bind that revision to this source. A gitdir pointer can lead
+    # into an unrelated repository — measured: `rev-parse --show-toplevel` still reports this
+    # tree while HEAD comes from the other one — and an edited package would run code the
+    # revision does not contain.
+    #
+    # Every file of the package is compared by content, not by `git status`: the index can be
+    # told to lie about a file (`update-index --skip-worktree`, `--assume-unchanged`), and then
+    # a modified file is reported clean. Hashing the bytes ignores the index entirely.
+    #
+    # What this cannot prove, and does not claim to: the modules were imported before this
+    # function ran, so no filesystem check describes what is already in memory, and cached
+    # bytecode is validated by CPython on mtime and size rather than on a source hash.
+    # Refusing on the presence of ``__pycache__`` is not an option — importing this package
+    # creates it — so the guarantee here is "the package source on disk is this revision's",
+    # which is what catches a stale or locally edited installation.
+    if not _package_matches_revision(root, revision, run=_default_run):
+        return (None, root)
+    try:
+        settled = _git(root, "--no-replace-objects", "rev-parse", "HEAD", run=_default_run)
+    except (subprocess.SubprocessError, OSError):
+        return (None, root)
+    if settled.returncode != 0 or settled.stdout.strip() != revision:
+        return (None, root)
+
+    if explicit is not None and explicit != revision:
+        raise A38Error(
+            f"{LOCAL_CI_REVISION_ENV} ({explicit}) does not match the HEAD of this checkout "
+            f"({revision}); unset it, or check out the declared revision"
+        )
+    return (revision, root)
+
+
+def ensure_local_ci_cli_satisfies_pin(
+    repo_path: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    run: RunFn | None = None,
+) -> str | None:
+    """Raise A38Error unless this CLI is provably at or after the repository's guard pin."""
+    repo_path = Path(repo_path)
+    workflow = repo_path / GUARD_WORKFLOW_PATH
+    if not workflow.exists():
+        return None
+    pins = guard_action_pins(repo_path)
+    if not pins:
+        # A branch or tag ref is a legitimate pin, but it cannot be compared.
+        return (
+            "could not read a guard revision pin from "
+            f"{GUARD_WORKFLOW_PATH}; no version comparison was possible"
+        )
+    pin_text = ", ".join(pins)
+    revision, root = local_ci_revision(env)
+    if revision is None and root is not None:
+        # The checkout is there; what failed is binding its source to HEAD. Naming the
+        # environment variable here would send the operator down a path this very case
+        # ignores, because a provable checkout always decides over a declaration.
+        raise A38Error(
+            f"this agent installation is a Git checkout at {root}, but its {PACKAGE_RELPATH} "
+            "does not match the revision it reports, so the report would be written by an "
+            "unknown CLI version. Commit or restore the package, or check out a revision at "
+            f"or after {pin_text}."
+        )
+    if revision is None:
+        raise A38Error(
+            "cannot determine the revision of this agent installation; it is not a Git "
+            "checkout, or Git could not report its HEAD, so the report would be written by an "
+            "unknown CLI version. Install the "
+            "CLI from a Git checkout at or after "
+            f"{pin_text}, or set {LOCAL_CI_REVISION_ENV} to its 40-character commit SHA."
+        )
+    if root is None:
+        # Without a checkout there is no ancestry to measure, so a declaration can only be
+        # trusted where it needs no measuring: when it names exactly the revision installed.
+        # Accepting any declared value would have made the gate advisory, since the operator
+        # sets it.
+        if set(pins) == {revision}:
+            return (
+                f"local CI CLI revision {revision} was declared via the "
+                f"{LOCAL_CI_REVISION_ENV} environment variable and is the guard revision "
+                "this repository installs"
+            )
+        raise A38Error(
+            f"the declared revision of this agent installation ({revision}) is not the guard "
+            f"revision {pin_text} that this repository installs, and without a Git checkout "
+            "their relationship cannot be proved. Install the CLI from a Git checkout, or "
+            f"set {LOCAL_CI_REVISION_ENV} to the installed guard revision."
+        )
+    runner = run or _default_run
+    # Every installed pin has to be satisfied. Passing one of them says nothing about a
+    # later step that installs a newer revision.
+    for pin in pins:
+        completed = _git(
+            root,
+            "--no-replace-objects",
+            "merge-base",
+            "--is-ancestor",
+            pin,
+            revision,
+            run=runner,
+        )
+        if completed.returncode == 1:
+            # "Not an ancestor" also covers a pin that merely diverged from this revision,
+            # where neither one predates the other, so the wording stays neutral.
+            raise A38Error(
+                f"this agent installation ({revision}) does not contain the guard revision "
+                f"{pin} that this repository installs; a report written now would be rejected "
+                "with 'report outcome does not match the pull request'. Update the CLI to a "
+                f"revision that contains {pin}."
+            )
+        if completed.returncode != 0:
+            raise A38Error(
+                f"cannot prove this agent installation ({revision}) is at or after the guard "
+                f"revision {pin}; that commit is not present in this checkout. Fetch it and "
+                "run again."
+            )
+    if len(pins) == 1:
+        return (
+            f"local CI CLI {revision} satisfies the guard revision {pins[0]} "
+            "installed by this repository"
+        )
+    return (
+        f"local CI CLI {revision} satisfies every guard revision installed by this "
+        f"repository ({pin_text})"
+    )
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     private: bool | None
     if args.private:
@@ -2025,6 +2356,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     else:
         private = None
     try:
+        note = ensure_local_ci_cli_satisfies_pin(Path(args.repo))
+        if note:
+            print(f"a38: {note}", file=sys.stderr)
         # Establish a safe output destination before any policy/value preflight.
         # Unsafe/ambiguous paths and parser usage errors never delete files.
         _prepare_run_output(

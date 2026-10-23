@@ -10,7 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 import unittest
 from typing import Any
 from unittest import mock
@@ -250,6 +250,7 @@ class FakeAPI:
         self.mutate_head_on_publish: str | None = None
         self.open_pulls: list[int] = [1]
         self.commit_pulls: list = []
+        self.head_pulls: list = []
         self.reviews: list[dict[str, Any]] = []
         self.permissions: dict[str, dict[str, Any]] = {}
         self.pull_files: list[dict[str, Any]] = []
@@ -416,6 +417,13 @@ class FakeAPI:
             if a38_guard.HEAD_SHA_RE.fullmatch(ref.lower() if isinstance(ref, str) else ""):
                 return 200, {"sha": ref.lower(), **committed}, {}
             return 404, {"message": "Not Found"}, {}
+
+        if (
+            method_u == "GET"
+            and path_only == f"/repos/{REPO}/pulls"
+            and "head" in parse_qs(urlparse(path).query)
+        ):
+            return 200, list(self.head_pulls), {}
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls":
             items = [{"number": n} for n in self.open_pulls]
@@ -3429,6 +3437,8 @@ def _workflow_run_payload(
     pull_requests: list[Any] | None = None,
     repo: str = REPO,
     omit_path: bool = False,
+    head_branch: str | None = None,
+    head_repo_full_name: str | None = None,
 ) -> dict[str, Any]:
     run: dict[str, Any] = {
         "pull_requests": pull_requests if pull_requests is not None else [{"number": 99}],
@@ -3437,6 +3447,10 @@ def _workflow_run_payload(
         run["path"] = path
     if head_sha is not None:
         run["head_sha"] = head_sha
+    if head_branch is not None:
+        run["head_branch"] = head_branch
+    if head_repo_full_name is not None:
+        run["head_repository"] = {"full_name": head_repo_full_name}
     return {
         "action": action,
         "workflow_run": run,
@@ -3672,6 +3686,309 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
             )
         self.assertEqual(calls, [(REPO, 1)])
         self.assertIsInstance(result, Assessment)
+
+    def test_fork_head_resolves_open_pull_when_commit_list_is_empty(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = []
+        fake.head_pulls = [{"number": 1}]
+        fake.open_pulls = []
+        payload = _workflow_run_payload(
+            head_branch="topic",
+            head_repo_full_name="contributor/public-app",
+        )
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            result = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=payload,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [(REPO, 1)])
+        self.assertIsInstance(result, Assessment)
+        assert isinstance(result, Assessment)
+        self.assertEqual(result.pr, 1)
+
+    def test_overlapping_head_and_commit_pulls_reconcile_once(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "open"}]
+        fake.head_pulls = [{"number": 1}]
+        fake.open_pulls = []
+        payload = _workflow_run_payload(
+            head_branch="topic",
+            head_repo_full_name="contributor/public-app",
+        )
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=payload,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls, [(REPO, 1)])
+
+    def test_distinct_head_and_commit_pulls_are_both_reconciled(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "open"}]
+        fake.head_pulls = [{"number": 2, "state": "open"}]
+        fake.open_pulls = []
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(
+                    head_branch="topic",
+                    head_repo_full_name="contributor/public-app",
+                ),
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [(REPO, 1), (REPO, 2)])
+
+    def test_empty_head_and_commit_pulls_are_ignored(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = []
+        fake.head_pulls = []
+        fake.open_pulls = []
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            out = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(
+                    head_branch="topic",
+                    head_repo_full_name="contributor/public-app",
+                ),
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [])
+        assert isinstance(out, dict)
+        self.assertEqual(out["status"], "ignored")
+        self.assertIn("ignored workflow_run with no open pull request", out["reasons"])
+
+    def test_absent_head_fields_use_commit_pulls(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = [{"number": 1, "state": "open"}]
+        payload = _workflow_run_payload()
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            result = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=payload,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [(REPO, 1)])
+        self.assertIsInstance(result, Assessment)
+        assert isinstance(result, Assessment)
+        self.assertEqual(result.pr, 1)
+
+    def test_malformed_head_branch_makes_no_head_request(self) -> None:
+        # `&` is NOT here: it is valid in a Git ref and percent-encoding keeps it from
+        # adding a query parameter, so rejecting it would skip a real fork branch.
+        for branch in (
+            "a" * 256,
+            "feature/../escape",
+            "trailing.",
+            "has space",
+            "tilde~name",
+            ".leading",
+            "ends/",
+            "caret^name",
+        ):
+            fake = FakeAPI()
+            urls: list[str] = []
+            inner = fake.request_fn
+
+            def request_fn(
+                method: str, url: str, body: bytes | None = None
+            ) -> tuple[int, Any, dict[str, str]]:
+                urls.append(url)
+                return inner(method, url, body)
+
+            fake.request_fn = request_fn  # type: ignore[method-assign]
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(
+                    head_branch=branch,
+                    head_repo_full_name="contributor/public-app",
+                ),
+                dry_run=False,
+                publish=True,
+            )
+            self.assertFalse(any("head=" in url for url in urls))
+
+    def test_punctuation_in_a_head_branch_is_encoded_not_rejected(self) -> None:
+        # Valid Git ref names that an ASCII allow-list dropped: a leading underscore and
+        # an ampersand. Encoding with safe="" is what keeps them out of the query grammar.
+        for branch in ("_topic", "fix/a&b=c", "release+1"):
+            with self.subTest(branch=branch):
+                fake = FakeAPI()
+                urls: list[str] = []
+                inner = fake.request_fn
+
+                def request_fn(
+                    method: str, url: str, body: bytes | None = None
+                ) -> tuple[int, Any, dict[str, str]]:
+                    urls.append(url)
+                    return inner(method, url, body)
+
+                fake.request_fn = request_fn  # type: ignore[method-assign]
+                reconcile_event(
+                    fake.api(),
+                    event_name="workflow_run",
+                    payload=_workflow_run_payload(
+                        head_branch=branch,
+                        head_repo_full_name="contributor/public-app",
+                    ),
+                    dry_run=False,
+                    publish=True,
+                )
+                encoded = quote(branch, safe="")
+                self.assertTrue(
+                    any(f"head=contributor:{encoded}" in url for url in urls),
+                    f"no head lookup for {branch!r}",
+                )
+                # `_topic` encodes to itself, so only assert the difference where there is one.
+                if encoded != branch:
+                    self.assertFalse(
+                        any(f"head=contributor:{branch}" in url for url in urls)
+                    )
+
+    def test_long_valid_head_branch_still_resolves(self) -> None:
+        # A valid branch past the 75-character status-context bound must still be looked
+        # up; rejecting it skipped exactly the fork pull request this lookup is for.
+        branch = "feature/" + "a" * 120
+        fake = FakeAPI()
+        urls: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        reconcile_event(
+            fake.api(),
+            event_name="workflow_run",
+            payload=_workflow_run_payload(
+                head_branch=branch,
+                head_repo_full_name="contributor/public-app",
+            ),
+            dry_run=False,
+            publish=True,
+        )
+        self.assertTrue(
+            any(f"head=contributor:{quote(branch, safe='')}" in url for url in urls)
+        )
+
+    def test_slash_in_head_branch_is_percent_encoded(self) -> None:
+        fake = FakeAPI()
+        urls: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            urls.append(url)
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        reconcile_event(
+            fake.api(),
+            event_name="workflow_run",
+            payload=_workflow_run_payload(
+                head_branch="feat/some-topic",
+                head_repo_full_name="contributor/public-app",
+            ),
+            dry_run=False,
+            publish=True,
+        )
+        head_urls = [url for url in urls if "head=" in url]
+        self.assertEqual(len(head_urls), 1)
+        after = head_urls[0].split("head=", 1)[1]
+        self.assertIn("feat%2Fsome-topic", after)
+        self.assertNotIn("/", after)
+
+    def test_head_pull_list_entry_not_object(self) -> None:
+        fake = FakeAPI()
+        fake.head_pulls = ["not-an-object"]
+        fake.open_pulls = []
+        with self.assertRaisesRegex(GuardError, "not an object"):
+            reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(
+                    head_branch="topic",
+                    head_repo_full_name="contributor/public-app",
+                ),
+                dry_run=False,
+                publish=True,
+            )
+
+    def test_head_pull_number_not_a_positive_integer(self) -> None:
+        # `True` is here because `bool` subclasses `int`: an `isinstance` check accepts it and
+        # then `/pulls/True` is requested instead of the shape error.
+        for number in ("1", True, 0, -1, 1.0, None):
+            with self.subTest(number=number):
+                fake = FakeAPI()
+                fake.head_pulls = [{"number": number, "state": "open"}]
+                fake.open_pulls = []
+                with self.assertRaisesRegex(GuardError, "not a positive integer"):
+                    reconcile_event(
+                        fake.api(),
+                        event_name="workflow_run",
+                        payload=_workflow_run_payload(
+                            head_branch="topic",
+                            head_repo_full_name="contributor/public-app",
+                        ),
+                        dry_run=False,
+                        publish=True,
+                    )
+
+    def test_head_pull_with_closed_state_is_skipped(self) -> None:
+        fake = FakeAPI()
+        fake.commit_pulls = []
+        fake.head_pulls = [{"number": 1, "state": "closed"}]
+        fake.open_pulls = []
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            out = reconcile_event(
+                fake.api(),
+                event_name="workflow_run",
+                payload=_workflow_run_payload(
+                    head_branch="topic",
+                    head_repo_full_name="contributor/public-app",
+                ),
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [])
+        assert isinstance(out, dict)
+        self.assertEqual(out["status"], "ignored")
+        self.assertIn("ignored workflow_run with no open pull request", out["reasons"])
 
     def test_example_workflow_contains_workflow_run_trigger(self) -> None:
         text = (
