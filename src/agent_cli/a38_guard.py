@@ -3196,8 +3196,10 @@ def _open_pull_numbers_for_head(
         if "state" in item and item["state"] != "open":
             continue
         number = item.get("number")
-        if not isinstance(number, int):
-            raise GuardError("open pull request number is not an integer")
+        # `bool` subclasses `int`, so `isinstance` would accept a JSON `true` here and pass it
+        # on as a pull request number.
+        if type(number) is not int or number <= 0:
+            raise GuardError("open pull request number is not a positive integer")
         numbers.append(number)
     return sorted(set(numbers))
 

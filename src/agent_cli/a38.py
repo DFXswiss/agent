@@ -2113,9 +2113,25 @@ def _package_matches_revision(root: Path, revision: str, *, run: RunFn) -> bool:
 
     Compared by content rather than through ``git status``, because the index can be told
     to report a modified file as clean (``--skip-worktree``, ``--assume-unchanged``).
+
+    ``--no-filters`` matters: ``hash-object`` runs configured clean filters by default, so a
+    filter driver could transform edited source back into the committed bytes and the compare
+    would succeed on code this revision does not contain. ``--no-replace-objects`` matters for
+    the same reason one step further out: a replacement ref is repository-local, survives the
+    ``GIT_*`` sanitisation, and can substitute a forged tree for the revision being read.
     """
     try:
-        listed = _git(root, "ls-tree", "-r", "-z", revision, "--", PACKAGE_RELPATH, run=run)
+        listed = _git(
+            root,
+            "--no-replace-objects",
+            "ls-tree",
+            "-r",
+            "-z",
+            revision,
+            "--",
+            PACKAGE_RELPATH,
+            run=run,
+        )
     except (subprocess.SubprocessError, OSError):
         return False
     if listed.returncode != 0:
@@ -2148,7 +2164,9 @@ def _package_matches_revision(root: Path, revision: str, *, run: RunFn) -> bool:
 
     paths = sorted(recorded)
     try:
-        hashed = _git(root, "hash-object", "--", *paths, run=run)
+        hashed = _git(
+            root, "--no-replace-objects", "hash-object", "--no-filters", "--", *paths, run=run
+        )
     except (subprocess.SubprocessError, OSError):
         return False
     if hashed.returncode != 0:
@@ -2194,7 +2212,7 @@ def local_ci_revision(
     # A checkout is provable, so HEAD decides. A declaration must never stand in for it:
     # otherwise exporting the pin would make the comparison pass against itself.
     try:
-        completed = _git(root, "rev-parse", "HEAD", run=_default_run)
+        completed = _git(root, "--no-replace-objects", "rev-parse", "HEAD", run=_default_run)
     except (subprocess.SubprocessError, OSError):
         return (None, root)
     if completed.returncode != 0:
@@ -2221,7 +2239,7 @@ def local_ci_revision(
     if not _package_matches_revision(root, revision, run=_default_run):
         return (None, root)
     try:
-        settled = _git(root, "rev-parse", "HEAD", run=_default_run)
+        settled = _git(root, "--no-replace-objects", "rev-parse", "HEAD", run=_default_run)
     except (subprocess.SubprocessError, OSError):
         return (None, root)
     if settled.returncode != 0 or settled.stdout.strip() != revision:
@@ -2296,6 +2314,7 @@ def ensure_local_ci_cli_satisfies_pin(
     for pin in pins:
         completed = _git(
             root,
+            "--no-replace-objects",
             "merge-base",
             "--is-ancestor",
             pin,

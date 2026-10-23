@@ -1831,6 +1831,61 @@ class LocalCiCliPinTests(unittest.TestCase):
             self.assertIsNone(revision)
             self.assertEqual(root, module.resolve().parents[2])
 
+    def test_a_clean_filter_cannot_launder_an_edit(self) -> None:
+        """``hash-object`` runs clean filters by default; this proof must not."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            (path / ".gitattributes").write_text(
+                "src/agent_cli/a38.py filter=launder\n", encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "config", "filter.launder.clean", "sed -e 's/ LOCAL//'"],
+                cwd=path,
+                check=True,
+                capture_output=True,
+            )
+            module.write_text("# placeholder LOCAL\n", encoding="utf-8")
+            # The blind spot this guards against: filtered hashing returns the committed blob
+            # for an edited file, so a comparison that honours filters would accept it.
+            self.assertEqual(
+                _git(path, "hash-object", "--", "src/agent_cli/a38.py"),
+                _git(path, "rev-parse", "HEAD:src/agent_cli/a38.py"),
+            )
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_a_replacement_object_cannot_forge_the_tree(self) -> None:
+        """A replace ref is repository-local and survives the GIT_* sanitisation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            head = _git(path, "rev-parse", "HEAD")
+            parent = _git(path, "rev-parse", "HEAD^")
+            module.write_text("# tampered\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "src/agent_cli/a38.py"],
+                cwd=path,
+                check=True,
+                capture_output=True,
+            )
+            forged_tree = _git(path, "write-tree")
+            subprocess.run(["git", "reset", "-q"], cwd=path, check=True, capture_output=True)
+            forged = _git(path, "commit-tree", forged_tree, "-p", parent, "-m", "forged")
+            subprocess.run(
+                ["git", "replace", head, forged], cwd=path, check=True, capture_output=True
+            )
+            # The blind spot: with replacement honoured, the revision appears to carry the
+            # tampered tree, so the content compare would succeed against the edited file.
+            self.assertNotEqual(
+                _git(path, "ls-tree", "-r", head, "--", "src/agent_cli"),
+                _git(path, "--no-replace-objects", "ls-tree", "-r", head, "--", "src/agent_cli"),
+            )
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
     def test_a_pointer_into_another_repository_proves_nothing(self) -> None:
         """A copied tree can point at a foreign Git directory, whose HEAD is not its own."""
         with tempfile.TemporaryDirectory() as tmp:

@@ -3946,21 +3946,25 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
                 publish=True,
             )
 
-    def test_head_pull_number_not_integer(self) -> None:
-        fake = FakeAPI()
-        fake.head_pulls = [{"number": "1", "state": "open"}]
-        fake.open_pulls = []
-        with self.assertRaisesRegex(GuardError, "not an integer"):
-            reconcile_event(
-                fake.api(),
-                event_name="workflow_run",
-                payload=_workflow_run_payload(
-                    head_branch="topic",
-                    head_repo_full_name="contributor/public-app",
-                ),
-                dry_run=False,
-                publish=True,
-            )
+    def test_head_pull_number_not_a_positive_integer(self) -> None:
+        # `True` is here because `bool` subclasses `int`: an `isinstance` check accepts it and
+        # then `/pulls/True` is requested instead of the shape error.
+        for number in ("1", True, 0, -1, 1.0, None):
+            with self.subTest(number=number):
+                fake = FakeAPI()
+                fake.head_pulls = [{"number": number, "state": "open"}]
+                fake.open_pulls = []
+                with self.assertRaisesRegex(GuardError, "not a positive integer"):
+                    reconcile_event(
+                        fake.api(),
+                        event_name="workflow_run",
+                        payload=_workflow_run_payload(
+                            head_branch="topic",
+                            head_repo_full_name="contributor/public-app",
+                        ),
+                        dry_run=False,
+                        publish=True,
+                    )
 
     def test_head_pull_with_closed_state_is_skipped(self) -> None:
         fake = FakeAPI()
