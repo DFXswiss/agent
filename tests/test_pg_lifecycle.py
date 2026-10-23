@@ -662,7 +662,17 @@ def test_daemon_uninstall_refuses_foreign_home(
 
 
 def test_real_cluster_stop_roundtrip(tmp_path: Path) -> None:
-    from agent_cli.pg import cluster_running, ensure_cluster, stop_cluster
+    from agent_cli.pg import PgError, _bin, cluster_running, ensure_cluster, stop_cluster
+
+    # This test creates its own cluster, so it needs the PostgreSQL server binaries rather
+    # than a server to connect to. CI provides the latter as a service container, which the
+    # `pg_admin_dsn` fixture uses via AGENT_TEST_PG, so the rest of the suite does not need
+    # them — but this test bypasses that fixture. Resolve through `_bin`, not `shutil.which`,
+    # so the Homebrew directories that `extra_pg_bin_dirs` adds still count.
+    try:
+        _bin("initdb")
+    except PgError as exc:
+        pytest.skip(str(exc))
 
     data = tmp_path / "pg"
     ensure_cluster(data)
