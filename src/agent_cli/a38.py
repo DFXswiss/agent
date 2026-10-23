@@ -2105,6 +2105,60 @@ def _is_git_checkout(marker: Path) -> bool:
     return head.startswith("gitdir:")
 
 
+PACKAGE_RELPATH = "src/agent_cli"
+
+
+def _package_matches_revision(root: Path, revision: str, *, run: RunFn) -> bool:
+    """True when every Python file of the package on disk is this revision's blob.
+
+    Compared by content rather than through ``git status``, because the index can be told
+    to report a modified file as clean (``--skip-worktree``, ``--assume-unchanged``).
+    """
+    try:
+        listed = _git(root, "ls-tree", "-r", "-z", revision, "--", PACKAGE_RELPATH, run=run)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    if listed.returncode != 0:
+        return False
+
+    recorded: dict[str, str] = {}
+    for entry in listed.stdout.split("\0"):
+        if not entry:
+            continue
+        # "<mode> <type> <sha>\t<path>"
+        meta, _, path = entry.partition("\t")
+        fields = meta.split()
+        if not path or len(fields) != 3 or fields[1] != "blob":
+            continue
+        if path.endswith(".py"):
+            recorded[path] = fields[2]
+    if not recorded:
+        # Nothing to compare against: the revision does not carry this package.
+        return False
+
+    package_dir = root / PACKAGE_RELPATH
+    present = {
+        candidate.relative_to(root).as_posix()
+        for candidate in package_dir.rglob("*.py")
+        if "__pycache__" not in candidate.parts
+    }
+    if present != set(recorded):
+        # A file the revision does not have, or one it has and the tree does not.
+        return False
+
+    paths = sorted(recorded)
+    try:
+        hashed = _git(root, "hash-object", "--", *paths, run=run)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    if hashed.returncode != 0:
+        return False
+    actual = hashed.stdout.split()
+    if len(actual) != len(paths):
+        return False
+    return all(recorded[path] == blob for path, blob in zip(paths, actual))
+
+
 def local_ci_revision(
     env: Mapping[str, str] | None = None,
     *,
@@ -2152,27 +2206,25 @@ def local_ci_revision(
     # The layout alone does not bind that revision to this source. A gitdir pointer can lead
     # into an unrelated repository — measured: `rev-parse --show-toplevel` still reports this
     # tree while HEAD comes from the other one — and an edited package would run code the
-    # revision does not contain. So the source is measured against this exact revision, and
-    # HEAD is read again afterwards: a checkout landing in between would otherwise hand back
-    # a revision whose source was never the loaded one.
-    relative = loaded_file.relative_to(root).as_posix()
+    # revision does not contain.
+    #
+    # Every file of the package is compared by content, not by `git status`: the index can be
+    # told to lie about a file (`update-index --skip-worktree`, `--assume-unchanged`), and then
+    # a modified file is reported clean. Hashing the bytes ignores the index entirely.
+    #
+    # What this cannot prove, and does not claim to: the modules were imported before this
+    # function ran, so no filesystem check describes what is already in memory, and cached
+    # bytecode is validated by CPython on mtime and size rather than on a source hash.
+    # Refusing on the presence of ``__pycache__`` is not an option — importing this package
+    # creates it — so the guarantee here is "the package source on disk is this revision's",
+    # which is what catches a stale or locally edited installation.
+    if not _package_matches_revision(root, revision, run=_default_run):
+        return (None, root)
     try:
-        recorded = _git(root, "rev-parse", f"{revision}:{relative}", run=_default_run)
-        loaded = _git(root, "hash-object", str(loaded_file), run=_default_run)
-        edited = _git(root, "status", "--porcelain", "--", "src/agent_cli", run=_default_run)
         settled = _git(root, "rev-parse", "HEAD", run=_default_run)
     except (subprocess.SubprocessError, OSError):
         return (None, root)
-    if (
-        recorded.returncode != 0
-        or loaded.returncode != 0
-        or edited.returncode != 0
-        or settled.returncode != 0
-    ):
-        return (None, root)
-    if recorded.stdout.strip() != loaded.stdout.strip() or edited.stdout.strip():
-        return (None, root)
-    if settled.stdout.strip() != revision:
+    if settled.returncode != 0 or settled.stdout.strip() != revision:
         return (None, root)
 
     if explicit is not None and explicit != revision:
@@ -2203,6 +2255,16 @@ def ensure_local_ci_cli_satisfies_pin(
         )
     pin_text = ", ".join(pins)
     revision, root = local_ci_revision(env)
+    if revision is None and root is not None:
+        # The checkout is there; what failed is binding its source to HEAD. Naming the
+        # environment variable here would send the operator down a path this very case
+        # ignores, because a provable checkout always decides over a declaration.
+        raise A38Error(
+            f"this agent installation is a Git checkout at {root}, but its {PACKAGE_RELPATH} "
+            "does not match the revision it reports, so the report would be written by an "
+            "unknown CLI version. Commit or restore the package, or check out a revision at "
+            f"or after {pin_text}."
+        )
     if revision is None:
         raise A38Error(
             "cannot determine the revision of this agent installation; it is not a Git "

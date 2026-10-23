@@ -1568,6 +1568,24 @@ class LocalCiCliPinTests(unittest.TestCase):
                 "this repository installs",
             )
 
+    def test_an_unbound_checkout_does_not_point_at_the_env_var(self) -> None:
+        # A provable checkout always decides over a declaration, so naming the variable in
+        # this refusal would send the operator down a path this very case ignores.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            _write_guard_workflow(repo, HEAD_A)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(None, root / "install"),
+            ):
+                with self.assertRaises(A38Error) as caught:
+                    ensure_local_ci_cli_satisfies_pin(repo, run=_forbid_run)
+            message = str(caught.exception)
+            self.assertIn("is a Git checkout at", message)
+            self.assertIn("src/agent_cli", message)
+            self.assertNotIn("A38_LOCAL_CI_REVISION", message)
+
     def test_a_declared_revision_that_is_not_the_pin_is_refused(self) -> None:
         # The operator sets this variable, so accepting any value would make the gate
         # advisory: an older installation could declare itself and write the report.
@@ -1778,6 +1796,37 @@ class LocalCiCliPinTests(unittest.TestCase):
             sibling.write_text("# committed\n", encoding="utf-8")
             _commit_all(path, "add sibling")
             sibling.write_text("# committed\n# local edit\n", encoding="utf-8")
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_a_skip_worktree_edit_proves_nothing(self) -> None:
+        """The index can be told to call a modified file clean; its content cannot."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            sibling = module.parent / "chain.py"
+            sibling.write_text("# committed\n", encoding="utf-8")
+            _commit_all(path, "add sibling")
+            subprocess.run(
+                ["git", "update-index", "--skip-worktree", "src/agent_cli/chain.py"],
+                cwd=path,
+                check=True,
+                capture_output=True,
+            )
+            sibling.write_text("# committed\n# hidden edit\n", encoding="utf-8")
+            # The blind spot this guards against: porcelain reports nothing.
+            self.assertEqual(_git(path, "status", "--porcelain"), "")
+            revision, root = local_ci_revision(env={}, module_file=module)
+            self.assertIsNone(revision)
+            self.assertEqual(root, module.resolve().parents[2])
+
+    def test_an_untracked_package_module_proves_nothing(self) -> None:
+        """A module the revision does not carry is still imported from this package."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installation"
+            module = _installation_module(path, git=True)
+            (module.parent / "extra.py").write_text("# not committed\n", encoding="utf-8")
             revision, root = local_ci_revision(env={}, module_file=module)
             self.assertIsNone(revision)
             self.assertEqual(root, module.resolve().parents[2])
