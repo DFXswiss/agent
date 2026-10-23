@@ -25,26 +25,50 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def _budget(policy: Any, job_type: str, key: str) -> int | None:
-    """Return a non-negative int budget or None if missing or invalid (bool rejected)."""
-    if not isinstance(policy, dict):
+def _budget(runner_config: Any, job_type: str, key: str) -> int | None:
+    """Return a non-negative int budget or None if missing or invalid (bool rejected).
+
+    A skill without its own setting inherits the value from `defaults` —
+    the single fallback level the runner configuration allows, and the one
+    the original resolves these two budgets through. Without it a
+    defaults-only configuration, which is ordinary, yields None for every
+    skill and every running job is skipped forever.
+
+    A setting that is present but malformed is not replaced by the default.
+    The fallback triggers on an absent value only, so a broken setting stays
+    visible instead of being papered over by the default.
+
+    This resolution rule is stated once here and relied on by
+    `health.runner_config_problems`, which must carry a validity rule for
+    every key this function resolves — otherwise a config passes the health
+    check and then fails to produce a budget. The two are not wired
+    together in code; what holds them in step is
+    `test_any_config_this_calls_healthy_yields_a_usable_budget`, which
+    asserts the implication over healthy and broken configs alike. A new
+    key resolved here, or a second inheritance level, needs that test and
+    that check updated with it.
+    """
+    if not isinstance(runner_config, dict):
         return None
-    skills = policy.get("skills")
-    if not isinstance(skills, dict):
-        return None
-    skill = skills.get(job_type)
-    if not isinstance(skill, dict):
-        return None
-    raw = skill.get(key)
+    raw: Any = None
+    skills = runner_config.get("skills")
+    if isinstance(skills, dict):
+        skill = skills.get(job_type)
+        if isinstance(skill, dict):
+            raw = skill.get(key)
+    if raw is None:
+        defaults = runner_config.get("defaults")
+        if isinstance(defaults, dict):
+            raw = defaults.get(key)
     if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
         return raw
     return None
 
 
-def done_kind(policy: Any, job_type: str) -> str:
+def done_kind(runner_config: Any, job_type: str) -> str:
     """Return the done_kind configured for job_type, or a derived default."""
-    if isinstance(policy, dict):
-        skills = policy.get("skills")
+    if isinstance(runner_config, dict):
+        skills = runner_config.get("skills")
         if isinstance(skills, dict):
             skill = skills.get(job_type)
             if isinstance(skill, dict):
@@ -55,7 +79,7 @@ def done_kind(policy: Any, job_type: str) -> str:
                     # Unrecognised setting must degrade to the weakest proof,
                     # never to a convenient one.
                     return "marker"
-    # Derive from job type when the policy is silent or unusable.
+    # Derive from job type when the runner config is silent or unusable.
     if job_type in ("pr-review", "pr-ready"):
         return "pr-reviewed"
     if job_type == "merge-conflict":
@@ -136,7 +160,7 @@ def finalize_running(
     *,
     socket: str,
     repos_root: str,
-    policy: Any,
+    runner_config: Any,
     login: str,
     exit_code_of: Callable[[str], int | None],
     transcript_of: Callable[[str], str],
@@ -189,9 +213,14 @@ def finalize_running(
             completed = runner(workspace.has_session_argv(socket, session))
             if completed.returncode == 0:
                 # Session alive and no exit code: apply timeout/stall budgets.
-                timeout_minutes = _budget(policy, job_type, "timeout_minutes")
-                stall_minutes = _budget(policy, job_type, "stall_minutes")
-                if timeout_minutes is None or stall_minutes is None:
+                # The two are resolved separately, and the stall budget only
+                # once the job is known not to be overdue. Requiring both up
+                # front would let a missing stall_minutes disable the timeout
+                # watchdog as well, so a job that has blown its limit would
+                # run forever over a setting that check does not need. The
+                # original orders it this way for the same reason.
+                timeout_minutes = _budget(runner_config, job_type, "timeout_minutes")
+                if timeout_minutes is None:
                     skipped += 1
                     continue
                 overdue = watchdog.is_overdue(started, now_epoch, timeout_minutes)
@@ -202,6 +231,10 @@ def finalize_running(
                     runner(workspace.kill_session_argv(socket, session))
                     outcome = "timeout"
                 else:
+                    stall_minutes = _budget(runner_config, job_type, "stall_minutes")
+                    if stall_minutes is None:
+                        skipped += 1
+                        continue
                     pane = runner(watchdog.pane_pids_argv(socket, session))
                     if pane.returncode != 0:
                         skipped += 1
@@ -255,7 +288,7 @@ def finalize_running(
             else:
                 outcome = "crashed"
 
-        kind = done_kind(policy, job_type)
+        kind = done_kind(runner_config, job_type)
         contract_followed = transcript_has_marker(transcript_of(job_id), ref)
 
         if outcome == "success":
