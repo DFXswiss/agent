@@ -11,6 +11,7 @@ from agent_cli.a38_guard import LOCAL_CI_BEGIN, LOCAL_CI_END, choose_author_repo
 from agent_cli.allow import codex_second_review_na
 from agent_cli.a38_review import (
     BLOCKING_REVIEW_REASON,
+    SECOND_REVIEW_MISSING,
     COMPLIANCE_PROMPT,
     REVIEW_BEGIN,
     REVIEW_END,
@@ -18,6 +19,7 @@ from agent_cli.a38_review import (
     parse_review_block,
     render_review_record,
     review_rules_bound,
+    second_run_status,
     select_review_comment,
     evaluate_review_gate,
     unresolved_thread_reasons,
@@ -791,7 +793,7 @@ def test_review_record_requires_prompt_model_and_set_aside() -> None:
     assert validate_review_record(placeholder, payload) == ["review provider missing"]
     wrong_runs = _body(payload).replace(
         "Runs: `conformity-a` with `logic-a`, and `conformity-b` with `logic-b`.",
-        "Runs: `conformity-a` with `logic-a`. The second run may be omitted.",
+        "Runs: `conformity-a` with `logic-a`. Two reviews are required.",
         1,
     )
     assert "review runs line does not match" in validate_review_record(wrong_runs, payload)
@@ -839,7 +841,7 @@ def test_one_run_record_and_na_lane_shape() -> None:
     payload["passes"] = 1
     body = _body(payload, passes=1)
     assert validate_review_record(body, payload) == []
-    assert "The second run may be omitted." in body
+    assert "Two reviews are required." in body
     evidence = f"markdown-only rebase, previously approved at {OTHER}"
     na = _pass_payload()
     na["lanes"] = _run("a", result="n_a", evidence=evidence)
@@ -891,7 +893,7 @@ def test_review_record_ignores_field_order_and_extra_lines() -> None:
         f"Model: {_RECORD_MODEL}\nProvider: {_RECORD_PROVIDER}",
     )
     worded = reordered.replace(
-        "Runs: `conformity-a` with `logic-a`. The second run may be omitted.",
+        "Runs: `conformity-a` with `logic-a`. Two reviews are required.",
         "Runs: logic-a with conformity-a (the other run is omitted).",
     )
     extra = worded.replace(
@@ -952,7 +954,7 @@ def test_pass_result_wording_does_not_reject_an_explanation() -> None:
     assert validate_review_record(body, payload) == []
     accepted = (
         "Result: pass, no findings left.",
-        "Result: pass. The second run was not required.",
+        "Result: pass. The lane finished.",
         "Result: pass. It did not fail.",
         "Result: passed, no findings left.",
         "Result: **pass**, no findings left.",
@@ -1014,11 +1016,12 @@ def test_runs_and_final_result_follow_the_clause_rule() -> None:
     payload["lanes"] = _run("a")
     body = _body(payload, passes=1)
     rendered_runs = (
-        "Runs: `conformity-a` with `logic-a`. The second run may be omitted."
+        "Runs: `conformity-a` with `logic-a`. Two reviews are required."
     )
     accepted_runs = (
         "Runs: `conformity-a` with `logic-a`, not a different repository. "
-        "The second run may be omitted.",
+        "Two reviews are required.",
+        "Runs: `conformity-a` with `logic-a`. The second run may be omitted.",
     )
     for line in accepted_runs:
         worded = body.replace(rendered_runs, line)
@@ -1890,7 +1893,12 @@ class _GateApi:
         return 404, {}, {}
 
 
-def _gate(api: _GateApi, comments: list[dict]) -> tuple[bool, list[str]]:
+def _gate(
+    api: _GateApi,
+    comments: list[dict],
+    *,
+    one_review_author: bool = False,
+) -> tuple[bool, list[str]]:
     return evaluate_review_gate(
         api,
         repo="o/r",
@@ -1900,6 +1908,7 @@ def _gate(api: _GateApi, comments: list[dict]) -> tuple[bool, list[str]]:
         author_id=10,
         comments=comments,
         markdown_only=False,
+        one_review_author=one_review_author,
     )
 
 
@@ -1926,6 +1935,23 @@ def _second_run_comment(
     return _comment(_body(payload, passes=payload["passes"]), cid=cid, user=10, created=created)
 
 
+def test_gate_requires_a_second_run_unless_the_opener_is_listed() -> None:
+    ok, reasons = _gate(_gate_api(), [_first_run_comment()])
+    assert ok is False
+    assert reasons == [SECOND_REVIEW_MISSING]
+    excused, excused_reasons = _gate(
+        _gate_api(), [_first_run_comment()], one_review_author=True
+    )
+    assert excused is True
+    assert excused_reasons == []
+
+
+def test_gate_a_missing_first_run_does_not_also_report_the_second() -> None:
+    ok, reasons = _gate(_gate_api(), [])
+    assert ok is False
+    assert reasons == ["review completion comment missing"]
+
+
 def test_gate_drafts_when_the_second_run_blocks_the_merge() -> None:
     second = _second_run_comment(
         _v2_second(blocks_merge=True, defects=2),
@@ -1935,6 +1961,75 @@ def test_gate_drafts_when_the_second_run_blocks_the_merge() -> None:
     ok, reasons = _gate(_gate_api(), [_first_run_comment(), second])
     assert ok is False
     assert reasons == [BLOCKING_REVIEW_REASON]
+
+
+def test_gate_a_second_run_without_the_prompt_is_not_a_signal() -> None:
+    payload = _v2_second(blocks_merge=False, defects=0)
+    body = _body(payload, passes=1)
+    stripped = body.replace("```text\n" + _RECORD_PROMPT + "\n```\n", "")
+    assert stripped != body
+    assert validate_visible(stripped, 1) == []
+    assert validate_review_record(stripped, payload) != []
+    comment = _comment(stripped, cid=2, user=10, created="2026-09-03T00:00:00Z")
+    status = second_run_status(
+        [_first_run_comment(), comment],
+        author_id=10,
+        guard_user_id=99,
+        committed_at="2026-09-01T00:00:00Z",
+        head=HEAD,
+        markdown_only=False,
+        rules_bound=True,
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+    )
+    assert status == "absent"
+    ok, reasons = _gate(_gate_api(), [_first_run_comment(), comment])
+    assert ok is False
+    assert reasons == [SECOND_REVIEW_MISSING]
+
+
+def test_second_run_prompt_without_the_rules_sentence_needs_review_md() -> None:
+    payload = _v2_second(blocks_merge=False, defects=0)
+    shaped = "Review the complete pull request diff and leave the tree unchanged."
+    for lane in payload["lanes"]:
+        lane["prompt"] = shaped
+    record = render_review_record(payload, rules_bound=False)
+    body = (
+        "EN:\n"
+        f"Second review with {_RECORD_MODEL}\n"
+        "No defects.\n\n"
+        "DE:\n"
+        f"Zweiter Review mit {_RECORD_MODEL}\n"
+        "Keine Mängel.\n\n"
+        "<details>\n<summary>Details</summary>\n\n"
+        + record
+        + f"{REVIEW_BEGIN}\n```json\n"
+        + json.dumps(payload)
+        + f"\n```\n{REVIEW_END}\n"
+    )
+    assert COMPLIANCE_PROMPT not in body
+    parsed = parse_review_block(body)
+    assert validate_review_record(body, parsed, rules_bound=False) == []
+    assert validate_review_record(body, parsed, rules_bound=True) != []
+    comment = _comment(body, cid=2, user=10, created="2026-09-03T00:00:00Z")
+    common = dict(
+        author_id=10,
+        guard_user_id=99,
+        committed_at="2026-09-01T00:00:00Z",
+        head=HEAD,
+        markdown_only=False,
+        covered_at={HEAD: "2026-09-01T00:00:00Z"},
+    )
+    assert second_run_status([comment], rules_bound=False, **common) == "clear"
+    assert second_run_status([comment], rules_bound=True, **common) == "absent"
+
+
+def test_wrong_head_second_run_does_not_block() -> None:
+    payload = _v2_second(blocks_merge=True, defects=1)
+    payload["head"] = OTHER
+    comment = _second_run_comment(payload, cid=2, created="2026-09-03T00:00:00Z")
+    ok, reasons = _gate(_gate_api(), [_first_run_comment(), comment])
+    assert BLOCKING_REVIEW_REASON not in reasons
+    assert reasons == [SECOND_REVIEW_MISSING]
 
 
 def test_gate_keeps_ready_when_second_run_defects_do_not_block() -> None:
@@ -1971,8 +2066,13 @@ def test_gate_true_without_a_count_does_not_draft() -> None:
         created="2026-09-03T00:00:00Z",
     )
     ok, reasons = _gate(_gate_api(), [_first_run_comment(), second])
-    assert ok is True
-    assert reasons == []
+    assert ok is False
+    assert reasons == [SECOND_REVIEW_MISSING]
+    excused, excused_reasons = _gate(
+        _gate_api(), [_first_run_comment(), second], one_review_author=True
+    )
+    assert excused is True
+    assert excused_reasons == []
 
 
 def test_gate_a_sentence_that_disagrees_does_not_draft() -> None:
@@ -1984,8 +2084,13 @@ def test_gate_a_sentence_that_disagrees_does_not_draft() -> None:
     )
     second = _comment(body, cid=2, user=10, created="2026-09-03T00:00:00Z")
     ok, reasons = _gate(_gate_api(), [_first_run_comment(), second])
-    assert ok is True
-    assert reasons == []
+    assert ok is False
+    assert reasons == [SECOND_REVIEW_MISSING]
+    excused, excused_reasons = _gate(
+        _gate_api(), [_first_run_comment(), second], one_review_author=True
+    )
+    assert excused is True
+    assert excused_reasons == []
 
 
 def test_gate_a_disagreeing_newer_comment_does_not_clear_a_block() -> None:
@@ -2031,8 +2136,13 @@ def test_gate_a_second_run_without_the_title_model_is_not_a_signal() -> None:
     )
     second = _comment(body, cid=2, user=10, created="2026-09-03T00:00:00Z")
     ok, reasons = _gate(_gate_api(), [_first_run_comment(), second])
-    assert ok is True
-    assert reasons == []
+    assert ok is False
+    assert reasons == [SECOND_REVIEW_MISSING]
+    excused, excused_reasons = _gate(
+        _gate_api(), [_first_run_comment(), second], one_review_author=True
+    )
+    assert excused is True
+    assert excused_reasons == []
 
 
 def test_gate_a_broken_newer_second_run_does_not_clear_a_block() -> None:
@@ -2082,7 +2192,12 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
         HEAD: "2026-09-01T00:00:00Z",
     }
     ahead = _GateApi(commits, {to_head: _ahead(), to_base: _ahead()})
-    ok, reasons = _gate(ahead, [comment])
+    clear = _second_run_comment(
+        _v2_second(blocks_merge=False, defects=0),
+        cid=70,
+        created="2026-09-02T00:00:00Z",
+    )
+    ok, reasons = _gate(ahead, [comment, clear])
     assert reasons == []
     assert ok is True
     assert ahead.compare_calls == [to_head, to_base]
@@ -2094,7 +2209,7 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
             to_base: _ahead(),
         },
     )
-    ok, reasons = _gate(same, [comment])
+    ok, reasons = _gate(same, [comment, clear])
     assert ok is True
     assert reasons == []
 
@@ -2105,7 +2220,7 @@ def test_gate_keeps_a_review_of_a_commit_still_in_the_pull_request() -> None:
         created="2026-09-02T00:00:00Z",
     )
     exact = _GateApi({BASE: "2026-07-01T00:00:00Z", HEAD: "2026-09-01T00:00:00Z"})
-    ok, reasons = _gate(exact, [current])
+    ok, reasons = _gate(exact, [current, clear])
     assert ok is True
     assert exact.compare_calls == []
 

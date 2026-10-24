@@ -35,7 +35,12 @@ REVIEW_BEGIN = "<!-- A38-REVIEW:v1 -->"
 REVIEW_END = "<!-- /A38-REVIEW:v1 -->"
 LIFECYCLE_REASON = "Review completion missing"
 BLOCKING_REVIEW_REASON = "Review defects block the merge"
-# One full run is conformity plus logic of the same suffix. The other run is optional.
+SECOND_REVIEW_MISSING = "second review comment missing"
+# Each comment holds one full run: conformity plus logic of one suffix.
+# Two reviews are required before Ready. One review is enough only when the
+# opener is listed in one_review_authors on the trusted default branch.
+# A missing file, a missing key, or an empty list keeps two reviews required.
+# An entry that exists only on the pull request head does not count.
 RUNS = (
     ("conformity-a", "logic-a"),
     ("conformity-b", "logic-b"),
@@ -340,8 +345,12 @@ def validate_visible(body: str, passes: int) -> list[str]:
     kind = "second" if _lane_ids_of(body) == set(RUNS[1]) else "first"
     reasons: list[str] = []
     # A pass run must name one model in both titles. An n_a run must not.
-    # The second run stays optional: this rejects a comment that was posted,
-    # and a missing second-run comment never reaches this check.
+    # Two reviews are required. This still rejects a posted comment on its
+    # own shape. Absence of the second run is a separate Ready failure.
+    # One review is enough only when the opener is listed in one_review_authors
+    # on the trusted default branch. A missing file, a missing key, or an empty
+    # list keeps two reviews required. An entry only on the pull request head
+    # does not count.
     if required and _stated_title_model(lines, kind) is None:
         _add(reasons, "review title model missing")
 
@@ -657,7 +666,7 @@ def _runs_line(lane_ids: Sequence[str]) -> str | None:
     complete = [pair for pair in RUNS if all(lane_id in present for lane_id in pair)]
     if len(complete) == 1:
         left, right = complete[0]
-        return f"Runs: `{left}` with `{right}`. The second run may be omitted."
+        return f"Runs: `{left}` with `{right}`. Two reviews are required."
     if len(complete) == 2:
         return "Runs: `conformity-a` with `logic-a`, and `conformity-b` with `logic-b`."
     return None
@@ -1456,34 +1465,43 @@ def _second_run_merge_signal(payload: Mapping[str, Any]) -> bool | None:
     return None
 
 
-def newest_second_run_blocks_merge(
+def second_run_status(
     comments: Sequence[Mapping[str, Any]],
     *,
     author_id: int,
     guard_user_id: int,
     committed_at: str,
     head: str,
+    markdown_only: bool,
+    rules_bound: bool,
     covered_at: Mapping[str, str] | None = None,
     ancestry_unavailable: Collection[str] | None = None,
-) -> bool:
-    """True when the newest well-formed second-run comment counts blocking defects.
+) -> str:
+    """``blocking``, ``clear``, or ``absent`` for the newest well-formed second run.
 
-    The signal is boolean ``blocks_merge`` true together with ``defects`` >= 1.
-    The visible sentence must be the one that flag requires, and a pass run
-    must name one shared non-empty model in both titles. The guard does not
-    judge that name. A newer well-formed second-run comment with
-    ``blocks_merge`` false clears the draft. A comment that does not parse,
-    whose sentence does not match the flag, whose pass-run titles do not
-    name that model, or whose flag is not a boolean paired with a counted
-    defect, is skipped: it neither drafts nor clears. Absence of a
-    second-run comment is not a failure. This does not choose the completion
-    comment.
+    The signal is boolean ``blocks_merge`` together with a counted ``defects``.
+    A v1 second run with ``defects`` 0 and no flag is ``clear``. The visible
+    sentence must be the one that flag requires, and a pass run must name one
+    shared non-empty model in both titles. The guard does not judge that name.
+    The comment must also pass the same declaration and human-record checks
+    as the first run, including the prompt. A comment that does not parse,
+    whose declaration or record is invalid, whose prompt or record is missing,
+    whose sentence does not match the flag, whose pass-run titles do not name
+    that model, or whose flag is not a boolean paired with a counted defect,
+    is skipped. A declared head that is not this pull request and not an
+    ancestor the caller already proved is skipped before those checks.
+    ``absent`` is no well-formed second run. Under the standard that absence
+    fails Ready. One review is enough only when the opener is listed in
+    one_review_authors on the trusted default-branch file. A missing file,
+    a missing key, or an empty list keeps that failure. An entry only on
+    the pull request head does not count.
+    This does not choose the first-run completion comment.
     """
     committed = _utc(committed_at)
     if committed is None:
-        return False
+        return "absent"
     if covered_at is not None and _utc(covered_at.get(head, "")) is None:
-        return False
+        return "absent"
     candidates, _mixed = _review_candidates(
         comments,
         author_id=author_id,
@@ -1507,12 +1525,48 @@ def newest_second_run_blocks_merge(
         signal = _second_run_merge_signal(payload)
         if signal is None:
             continue
-        # The sentence and the flag are one fact. A mismatch is not a signal.
-        passes = payload.get("passes")
-        if not _is_int(passes) or validate_visible(text, passes):
+        # Same declaration and record as the first run. A missing prompt
+        # or a missing human record is not a signal. The sentence check
+        # lives in that declaration.
+        if _declaration_reasons(
+            text,
+            head=head,
+            markdown_only=markdown_only,
+            rules_bound=rules_bound,
+            covered_heads=None if covered_at is None else covered_at.keys(),
+        ):
             continue
-        return signal
-    return False
+        return "blocking" if signal else "clear"
+    return "absent"
+
+
+def newest_second_run_blocks_merge(
+    comments: Sequence[Mapping[str, Any]],
+    *,
+    author_id: int,
+    guard_user_id: int,
+    committed_at: str,
+    head: str,
+    markdown_only: bool,
+    rules_bound: bool,
+    covered_at: Mapping[str, str] | None = None,
+    ancestry_unavailable: Collection[str] | None = None,
+) -> bool:
+    """True when the newest well-formed second-run comment counts blocking defects."""
+    return (
+        second_run_status(
+            comments,
+            author_id=author_id,
+            guard_user_id=guard_user_id,
+            committed_at=committed_at,
+            head=head,
+            markdown_only=markdown_only,
+            rules_bound=rules_bound,
+            covered_at=covered_at,
+            ancestry_unavailable=ancestry_unavailable,
+        )
+        == "blocking"
+    )
 
 
 def select_review_comment(
@@ -1533,12 +1587,17 @@ def select_review_comment(
     new comment instead. Other comments do not remove an earlier valid
     declaration. A newer malformed declaration falls back to an older valid one.
     A later second-run comment is ignored for this choice and does not hide
-    an older valid first-run comment. It does not supply the completion
-    failure, well-formed or not. If it is the only review comment, the
-    result is ``review completion comment missing``. Blocking defects on
-    that later comment are a separate gate: they do not choose this
-    comment, and they still return Ready to Draft. A comment that also
-    carries local-CI markers is skipped.
+    an older valid first-run comment. It does not replace this comment.
+    If it is the only review comment, the result is
+    ``review completion comment missing``. Two reviews are required. One review
+    is enough only when the opener is listed in one_review_authors on the
+    trusted default-branch file. A missing file, a missing key, or an empty
+    list keeps two reviews required. An entry only on the pull request head
+    does not count. That check is separate and uses
+    ``second review comment missing``. Blocking defects on the
+    second run are also separate: they do not choose this comment, and
+    they still return Ready to Draft. A comment that also carries
+    local-CI markers is skipped.
 
     Without ``covered_at``, the declaration must name ``head`` and the comment
     must be created after ``committed_at``. With ``covered_at``, each key is a
@@ -1572,8 +1631,12 @@ def select_review_comment(
     for _stamp, _cid, comment, forced in candidates:
         body = comment.get("body")
         text = body if isinstance(body, str) else ""
-        # The second run is optional. It never satisfies Ready and never
-        # supplies this failure, well-formed or not.
+        # The second run never satisfies this selector. Absence is a
+        # separate Ready failure under the standard. One review is enough
+        # only when the opener is listed in one_review_authors on the trusted
+        # default branch. A missing file, a missing key, or an empty list
+        # keeps two reviews required. An entry only on the pull request head
+        # does not count.
         if _lane_ids_of(text) == set(RUNS[1]):
             continue
         if forced:
@@ -1899,7 +1962,16 @@ def evaluate_review_gate(
     author_id: int,
     comments: Sequence[Mapping[str, Any]],
     markdown_only: bool,
+    one_review_author: bool = False,
 ) -> tuple[bool, list[str]]:
+    """Ready needs two review runs. ``one_review_author`` is the only exception.
+
+    The flag is true only when the pull opener is listed in
+    ``one_review_authors`` on the trusted default-branch pr-guard config.
+    A missing file, a missing key, or an empty list keeps two reviews required.
+    An entry that exists only on the pull request head does not count.
+    A blocking second run still fails Ready for that opener.
+    """
     try:
         guard_id, _login = api.resolve_own_user()
     except Exception as exc:
@@ -1940,18 +2012,29 @@ def evaluate_review_gate(
             ancestry_unavailable=unread,
         )
         reasons.extend(selected)
-        # The completion comment stays the first run. A second run that
-        # counts blocking defects still returns Ready to Draft.
-        if newest_second_run_blocks_merge(
-            comments,
-            author_id=author_id,
-            guard_user_id=guard_id,
-            committed_at=committed_at,
-            head=head,
-            covered_at=covered,
-            ancestry_unavailable=unread,
-        ):
-            _add(reasons, BLOCKING_REVIEW_REASON)
+        # The completion comment stays the first run. Two reviews are
+        # required. One review is enough only when this opener is listed in
+        # one_review_authors on the trusted default branch. A missing file,
+        # a missing key, or an empty list keeps two reviews required. An
+        # entry only on the pull request head does not count. A second run
+        # that counts blocking defects still returns Ready to Draft,
+        # including for that exception.
+        if not selected:
+            status = second_run_status(
+                comments,
+                author_id=author_id,
+                guard_user_id=guard_id,
+                committed_at=committed_at,
+                head=head,
+                markdown_only=markdown_only,
+                rules_bound=rules_bound,
+                covered_at=covered,
+                ancestry_unavailable=unread,
+            )
+            if status == "blocking":
+                _add(reasons, BLOCKING_REVIEW_REASON)
+            elif status == "absent" and not one_review_author:
+                _add(reasons, SECOND_REVIEW_MISSING)
     reasons.extend(_load_threads(api, repo, number))
     if reasons:
         return False, reasons

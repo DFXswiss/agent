@@ -2,7 +2,7 @@
 
 Worked comments for the visible text in [docs/a38.md](../docs/a38.md). Each comment below is a complete declaration. A second-run declaration on schema `a38-review/v2` includes the JSON boolean `blocks_merge`. This file is not a second specification.
 
-`EN:` comes first. Each label is its own line. The first review has a title and two sentences in each language. The second review has a title and one sentence: no defects, defects that do not block the merge, or defects that must be fixed. A blank line separates the languages. The title of a pass run names the model, the same text in both languages: `First review with <model>` / `Erster Review mit <model>`, and `Second review with <model>` / `Zweiter Review mit <model>`. That text is the `Model` line of every pass lane in the comment. The guard requires the slot on the comment Ready reads and does not judge the name. An `n_a` run names no model. The second-run comment stays optional. The task sentence and the machine block stay in `<details>`.
+`EN:` comes first. Each label is its own line. The first review has a title and two sentences in each language. The second review has a title and one sentence: no defects, defects that do not block the merge, or defects that must be fixed. A blank line separates the languages. The title of a pass run names the model, the same text in both languages: `First review with <model>` / `Erster Review mit <model>`, and `Second review with <model>` / `Zweiter Review mit <model>`. That text is the `Model` line of every pass lane in the comment. The guard requires the slot on the comment Ready reads and does not judge the name. An `n_a` run names no model. Two review comments are required before Ready. One review is enough only when the pull request opener is listed in `one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Each comment still holds exactly one run. The task sentence and the machine block stay in `<details>`.
 
 The head below is a placeholder. Use the current 40-hex head. When the base revision has no `REVIEW.md`, the prompts are the two sentences shown. When it has `REVIEW.md`, each prompt is the compliance sentence from the specification.
 
@@ -25,7 +25,7 @@ Der Zahlungsbetrag wird vor dem Senden gegen die Rechnung geprüft.
 <summary>Details</summary>
 
 Head: `0123456789abcdef0123456789abcdef01234567`
-Runs: `conformity-a` with `logic-a`. The second run may be omitted.
+Runs: `conformity-a` with `logic-a`. Two reviews are required.
 Lane `conformity-a`:
 Provider: xAI
 Model: Grok 4.7
@@ -58,7 +58,7 @@ Set aside: none.
 
 ## Second review, no defects
 
-A later comment. It does not satisfy Ready. The only sentence under the title is `No defects.` / `Keine Mängel.`. `blocks_merge` is false and `defects` is 0. Do not add a sentence about the merge. The sentence about what the pull request changes stays in the details.
+A later comment. Ready requires it together with the first review. One review is enough only when the pull request opener is listed in `one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. It does not replace the first-run comment, and it does not start CI. The only sentence under the title is `No defects.` / `Keine Mängel.`. `blocks_merge` is false and `defects` is 0. Do not add a sentence about the merge. The sentence about what the pull request changes stays in the details.
 
 ````
 EN:
@@ -77,7 +77,7 @@ The payment amount is checked against the invoice before it is sent.
 Der Zahlungsbetrag wird vor dem Senden gegen die Rechnung geprüft.
 
 Head: `0123456789abcdef0123456789abcdef01234567`
-Runs: `conformity-b` with `logic-b`. The second run may be omitted.
+Runs: `conformity-b` with `logic-b`. Two reviews are required.
 Lane `conformity-b`:
 Provider: OpenAI
 Model: Codex Astra 6
@@ -110,7 +110,7 @@ Set aside: none.
 
 ## Second review, defects that do not block the merge
 
-One sentence. `blocks_merge` is false and `defects` is an integer >= 1. Each defect is named in the details. The first review stays in place. This comment does not return the pull request to draft, and it does not satisfy Ready.
+One sentence. `blocks_merge` is false and `defects` is an integer >= 1. Each defect is named in the details. The first review stays in place. This comment does not return the pull request to draft, and it does not replace the first-run comment.
 
 ````
 EN:
@@ -129,7 +129,7 @@ The amount is taken from the request, so the caller can underpay. This does not 
 Der Betrag kommt aus dem Request, der Aufrufer kann zu wenig zahlen. Das blockiert den Merge nicht.
 
 Head: `0123456789abcdef0123456789abcdef01234567`
-Runs: `conformity-b` with `logic-b`. The second run may be omitted.
+Runs: `conformity-b` with `logic-b`. Two reviews are required.
 Lane `conformity-b`:
 Provider: OpenAI
 Model: Codex Astra 6
@@ -162,7 +162,7 @@ Set aside: none.
 
 ## Second review, defects that must be fixed
 
-One sentence. `blocks_merge` is true and `defects` is an integer >= 1. The guard returns a ready pull request to draft. The reason is `Review defects block the merge`. A write hold does not keep Ready. This comment does not satisfy Ready. The first review stays in place. A newer second-run comment with `blocks_merge` false clears the draft.
+One sentence. `blocks_merge` is true and `defects` is an integer >= 1. The guard returns a ready pull request to draft. The reason is `Review defects block the merge`. A write hold does not keep Ready. This comment does not replace the first-run comment. The first review stays in place. A newer second-run comment with `blocks_merge` false clears the draft.
 
 ````
 EN:
@@ -181,7 +181,7 @@ The amount is taken from the request, so the caller can underpay. This must be f
 Der Betrag kommt aus dem Request, der Aufrufer kann zu wenig zahlen. Das muss vor dem Merge behoben werden.
 
 Head: `0123456789abcdef0123456789abcdef01234567`
-Runs: `conformity-b` with `logic-b`. The second run may be omitted.
+Runs: `conformity-b` with `logic-b`. Two reviews are required.
 Lane `conformity-b`:
 Provider: OpenAI
 Model: Codex Astra 6

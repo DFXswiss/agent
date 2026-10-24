@@ -462,7 +462,25 @@ class TestCloseAllowed(unittest.TestCase):
         cl["contributing_read"] = "ja"
         cl["grok_pr_quality"] = "ja"
         cl["grok_pr_logic"] = "ja"
+        listed = {
+            "pull_opener": "alice",
+            "trusted_pr_guard": {
+                "schema": "pr-guard/v1",
+                "a38": {"enforce": [], "exclude": [], "default": "enforce"},
+                "one_review_authors": ["alice"],
+            },
+        }
         allowed = close_allowed(
+            "review",
+            "codex_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence="second review not posted",
+            snapshot=listed,
+            status="n_a",
+        )
+        self.assertTrue(allowed.allowed)
+        denied_standard = close_allowed(
             "review",
             "codex_pr_quality",
             checklist=cl,
@@ -471,7 +489,7 @@ class TestCloseAllowed(unittest.TestCase):
             snapshot={},
             status="n_a",
         )
-        self.assertTrue(allowed.allowed)
+        self.assertFalse(denied_standard.allowed)
         denied = close_allowed(
             "review",
             "codex_pr_quality",

@@ -126,11 +126,11 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
         self.assertIn(
-            "A later comment that records only the second review run is optional and does not delay Ready.",
+            "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
             body,
         )
         self.assertIn(
-            "Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.",
+            "Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind.",
             body,
         )
         self.assertIn("lass den Pull Request im Draft", body)
@@ -390,11 +390,11 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
         self.assertIn(
-            "A later comment that records only the second review run is optional and does not delay Ready.",
+            "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
             body,
         )
         self.assertIn(
-            "Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.",
+            "Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind.",
             body,
         )
         self.assertIn("lass den Pull Request im Draft", body)

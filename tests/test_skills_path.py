@@ -144,6 +144,8 @@ def test_the_contract_states_when_approving_is_allowed() -> None:
     # Collapse the wrapping: a phrase split across two lines is the same rule, and a
     # test that fails on a reflow measures the line width rather than the contract.
     rule = " ".join(contract[start : contract.index("Locate these files", start)].split())
+    assert "both review runs" in rule
+    assert "one_review_authors" in rule
     assert "the first review run" in rule
     assert "CI on this head is green" in rule
     assert "event: APPROVE" in rule

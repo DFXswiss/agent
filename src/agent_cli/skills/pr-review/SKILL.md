@@ -140,13 +140,18 @@ publication gates.
 A draft plus local tests is not done. Quality and logic of one vendor stage
 run in parallel on **this** head. The session that authored the diff does not
 sit those reviews. Inner `review-loop` rounds are not these gates. Stay draft
-until the first review run on this head is approved. That approval still
+until both review runs on this head are approved. The first review run is
+`conformity-a` with `logic-a`. The second review run is `conformity-b` with
+`logic-b`. That approval still
 covers a later commit when the current head contains the reviewed commit and
 that commit is after the pull request base. The target
 repository's written CI rules hold on this head.
-CI stays bound to the current head. The second review run
-may be omitted; then those checklist keys are `n_a` with evidence exactly
-`second review not posted`, and `done` does not wait for those two gates. The frozen `dfx-local-ci/v1` format and legacy verifier do not
+CI stays bound to the current head. Two review runs are required. The checklist
+keys for the second run are `n_a` with evidence exactly
+`second review not posted` only when the pull request opener is listed in
+`one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. That list is the
+exception. A missing file, a missing key, and an empty list keep the standard,
+and `done` waits for both gates. An entry that exists only on the pull request head does not count. The frozen `dfx-local-ci/v1` format and legacy verifier do not
 themselves determine applicability. Private visibility alone is not A38 opt-in or
 permission to skip GitHub CI. Under the central [A38 standard](../../../../docs/a38.md)
 and [guard guide](../../../../docs/a38-guard.md), private local code-gate equivalence
@@ -160,23 +165,28 @@ required GitHub-only checks, technical merge restrictions, review gates, and
 human merge remain required.
 `agent allow --action pr-ready` only checks task state; do
 not mark ready if it denies. Then one comment whose lanes are exactly
-`conformity-a` with `logic-a`. A later comment that records only
-`conformity-b` with `logic-b` is optional and does not delay Ready. It does
-not satisfy Ready, does not start CI, and is ignored when the guard chooses
-the review comment. A newer one does not hide an older valid first-run
+`conformity-a` with `logic-a`, and a later comment whose lanes are exactly
+`conformity-b` with `logic-b`. Two reviews are required before Ready. One
+review is enough only when the pull request opener is listed in
+`one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. The second
+comment does not replace the first-run comment, does not start CI, and is ignored
+when the guard chooses the review comment. Ready still requires it under the standard. A newer one does not hide an older valid first-run
 comment. Choosing that comment ignores the second run. The newest
 well-formed second-run comment that covers this head still returns a ready
 pull request to draft when its JSON boolean `blocks_merge` is true and
 `defects` is an integer >= 1. The reason is `Review defects block the merge`.
 A write hold does not keep Ready. A newer well-formed second-run comment
 with `blocks_merge` false clears that. A comment that does not parse, whose
-visible sentence does not match `blocks_merge`, whose pass-run titles do not
-name one shared non-empty model, or whose `blocks_merge` is not that boolean
-paired with a counted `defects`, does not clear an older blocking comment and
-does not itself return the pull request to draft. The guard does not judge
-that model name. The second-run comment does not supply the completion
-failure, well-formed or not. Posted before the first run, it still does not
-satisfy Ready. If the only review comment is the second run, the result is
+declaration or human record is invalid (including a missing prompt or a
+missing record), whose visible sentence does not match `blocks_merge`, whose
+pass-run titles do not name one shared non-empty model, or whose
+`blocks_merge` is not that boolean paired with a counted `defects`, does not
+clear an older blocking comment and does not itself return the pull request
+to draft. Under the standard that
+comment leaves the second review missing (`second review comment missing`).
+For an opener on the exception list, that absence does not fail Ready. The
+guard does not judge that model name. Posted before the first run, the second
+comment still does not replace the first-run comment. If the only review comment is the second run, the result is
 `review completion comment missing`. The comment Ready reads is the first
 run. A pass run there that does not name one shared non-empty model in both
 titles is `review title model missing`. An `n_a` run names no model. A comment that contains both full runs is neither comment
@@ -186,8 +196,10 @@ not merge and not pull-request completion.
 
 ## Approving
 
-Once the first review run on **this** head is `approved` and CI on this head is
-green, insert a `review.post` with `event: APPROVE` alongside the first-run comment.
+Once both review runs on **this** head are `approved` and CI on this head is
+green, insert a `review.post` with `event: APPROVE` alongside the first review run comment.
+One review is enough for that step only when the pull request opener is listed in
+`one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.
 That is a review this account submits on the pull request, not a merge and not
 completion: the agent still does not merge, and a human still does. Claim
 completion only after that human merge is verified.

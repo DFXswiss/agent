@@ -7,7 +7,9 @@ with a snapshot of the current session.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
+
+from .pr_guard_config import one_review_for
 
 ACTIONS = ("claim-done", "pr-ready", "pr-create", "task-done")
 # Ready may arrive before the last gate (draft CI); gate-blocked is not enough.
@@ -162,9 +164,19 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
         return [f"{tid}:workflow={workflow}"]
 
     checklist = task.get("checklist") or {}
+    # Two reviews are required. Both Codex keys may be n_a only when this
+    # opener is listed in one_review_authors on the trusted default-branch
+    # file. A missing file, a missing key, or an empty list keeps both gates.
+    # An entry that exists only on the pull request head does not count.
+    trusted = task.get("trusted_pr_guard")
+    opener = task.get("pull_opener")
     skip_codex_gates = (
         checklist.get("codex_pr_quality") == "n_a"
         and checklist.get("codex_pr_logic") == "n_a"
+        and one_review_for(
+            trusted if isinstance(trusted, Mapping) else None,
+            opener if isinstance(opener, str) else "",
+        )
     )
     for key in required:
         st = checklist.get(key)

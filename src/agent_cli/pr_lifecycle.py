@@ -11,7 +11,7 @@ import re
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
-from .a38_review import BLOCKING_REVIEW_REASON, LIFECYCLE_REASON
+from .a38_review import BLOCKING_REVIEW_REASON, LIFECYCLE_REASON, SECOND_REVIEW_MISSING
 from .readme_only import pull_is_guard_docs_only
 from .workflow_approval import (
     _counts_for_ready_inventory,
@@ -183,19 +183,35 @@ def _join_de_phrases(parts: list[str]) -> str:
     return ", ".join(parts[:-1]) + f" und {parts[-1]}"
 
 
+def _review_returns_ready_to_draft(reasons: Sequence[str]) -> bool:
+    """True when a review cause must return Ready to Draft, including a write hold."""
+    return any(
+        reason in {LIFECYCLE_REASON, BLOCKING_REVIEW_REASON, SECOND_REVIEW_MISSING}
+        for reason in reasons
+    )
+
+
 def _note_review(reasons: list[str], assessment: Any) -> None:
     """Enforce-only. A missing review or blocking defects return Ready to Draft.
 
-    A write hold must not keep Ready through either reason. Blocking defects
-    do not also claim that the completion comment is missing.
+    A write hold must not keep Ready through these reasons. Blocking defects
+    do not also claim that the completion comment is missing. When the only
+    review cause is ``second review comment missing``, that string is kept
+    and is not rewritten as ``Review completion missing``.
     """
     if assessment.mode != "enforce" or assessment.review_ok:
         return
     review_reasons = getattr(assessment, "review_reasons", None)
     listed = list(review_reasons) if isinstance(review_reasons, list) else []
-    others = [reason for reason in listed if reason != BLOCKING_REVIEW_REASON]
+    if SECOND_REVIEW_MISSING in listed and SECOND_REVIEW_MISSING not in reasons:
+        reasons.insert(0, SECOND_REVIEW_MISSING)
     if BLOCKING_REVIEW_REASON in listed and BLOCKING_REVIEW_REASON not in reasons:
         reasons.insert(0, BLOCKING_REVIEW_REASON)
+    others = [
+        reason
+        for reason in listed
+        if reason not in {BLOCKING_REVIEW_REASON, SECOND_REVIEW_MISSING}
+    ]
     if (others or not listed) and LIFECYCLE_REASON not in reasons:
         reasons.insert(0, LIFECYCLE_REASON)
 
@@ -231,11 +247,17 @@ def visible_transition_sentences(
 
     conflicts = "Merge conflicts" in reasons
     review_missing = LIFECYCLE_REASON in reasons
+    second_missing = SECOND_REVIEW_MISSING in reasons
     blocking = BLOCKING_REVIEW_REASON in reasons
     ci_reasons = [
         r
         for r in reasons
-        if r not in {"Merge conflicts", LIFECYCLE_REASON, BLOCKING_REVIEW_REASON}
+        if r not in {
+            "Merge conflicts",
+            LIFECYCLE_REASON,
+            BLOCKING_REVIEW_REASON,
+            SECOND_REVIEW_MISSING,
+        }
     ]
 
     missing = any(
@@ -263,6 +285,9 @@ def visible_transition_sentences(
     if review_missing:
         en_parts.append("the review completion is missing or invalid")
         de_parts.append("der Review-Abschluss fehlt oder ungültig ist")
+    if second_missing:
+        en_parts.append("the second review comment is missing")
+        de_parts.append("der zweite Review-Kommentar fehlt")
     if blocking:
         en_parts.append("the second review found defects that must be fixed")
         de_parts.append("der zweite Review Mängel gefunden hat, die behoben werden müssen")
@@ -1081,20 +1106,20 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         pull["draft"] and write_hold and we_drafted
         and pull.get("mergeable") is True
         and "Merge conflicts" not in reasons
-        and LIFECYCLE_REASON not in reasons
-        and BLOCKING_REVIEW_REASON not in reasons
+        and not _review_returns_ready_to_draft(reasons)
     )
     # Write collaborator Ready hold: do not auto-draft for red/missing CI while
     # author or the latest ready_for_review actor has write/maintain/admin.
-    # Confirmed merge conflicts, a missing or invalid review completion, and blocking defects always return Ready to Draft, including in a hold.
+    # Confirmed merge conflicts, a missing or invalid review completion, a
+    # missing second review comment, and blocking defects always return Ready
+    # to Draft, including in a hold.
     # Markdown-only and guard-docs are report waivers only — they do not hold Ready through red CI.
     if (
         not pull["draft"]
         and reasons
         and write_hold
         and "Merge conflicts" not in reasons
-        and LIFECYCLE_REASON not in reasons
-        and BLOCKING_REVIEW_REASON not in reasons
+        and not _review_returns_ready_to_draft(reasons)
     ):
         hold = {
             "repo": assessment.repo,
@@ -1196,8 +1221,7 @@ def reconcile_lifecycle(api: Any, assessment: Any, *, dry_run: bool = False) -> 
         target == "draft"
         and write_hold
         and "Merge conflicts" not in final_reasons
-        and LIFECYCLE_REASON not in final_reasons
-        and BLOCKING_REVIEW_REASON not in final_reasons
+        and not _review_returns_ready_to_draft(final_reasons)
     ):
         hold = {
             "repo": assessment.repo,

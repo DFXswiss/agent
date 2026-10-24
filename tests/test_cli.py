@@ -29,6 +29,130 @@ def _last_agent_id(out: str) -> str:
     return agent_line.split()[1]
 
 
+@pytest.mark.no_pg
+def test_done_decision_ignores_the_stored_one_review_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli.allow import ready_for_done_blocking
+    from agent_cli.main import _done_one_review
+    from agent_cli.pr_guard_config import PrGuardLookupError
+    from test_allow import _ready_task
+
+    stored = {"one_review_authors": ["alice"]}
+    calls = {"n": 0}
+
+    def live(task: dict) -> tuple[str, dict | None]:
+        calls["n"] += 1
+        assert task["payload"]["one_review_author"]["trusted_pr_guard"] == stored
+        return "alice", None
+
+    monkeypatch.setattr("agent_cli.main._live_one_review", live)
+    task = {
+        "payload": {
+            "one_review_author": {
+                "pull_opener": "alice",
+                "trusted_pr_guard": stored,
+            }
+        }
+    }
+    login, config = _done_one_review(
+        task,
+        {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+    )
+    assert calls["n"] == 1
+    assert login == "alice"
+    assert config is None
+    done = _ready_task()
+    done["checklist"]["codex_pr_quality"] = "n_a"
+    done["checklist"]["codex_pr_logic"] = "n_a"
+    done["gates"] = [gate for gate in done["gates"] if gate["stage"] == "grok-pr"]
+    done["pull_opener"] = login
+    done["trusted_pr_guard"] = config
+    blocking = " ".join(ready_for_done_blocking(done))
+    assert "codex_pr_quality=n_a" in blocking
+    assert "codex_pr_logic=n_a" in blocking
+
+    def boom(_task: dict) -> tuple[str, dict | None]:
+        raise AssertionError("live read")
+
+    monkeypatch.setattr("agent_cli.main._live_one_review", boom)
+    assert _done_one_review(
+        task,
+        {"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+    ) == ("", None)
+
+    def missing(_task: dict) -> tuple[str, dict | None]:
+        raise PrGuardLookupError("down")
+
+    monkeypatch.setattr("agent_cli.main._live_one_review", missing)
+    with pytest.raises(SystemExit, match="trusted review list could not be read"):
+        _done_one_review(
+            task,
+            {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        )
+
+
+@pytest.mark.no_pg
+def test_load_task_dict_does_not_read_the_trusted_review_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(_task: dict) -> tuple[str, dict | None]:
+        raise AssertionError("live read")
+
+    monkeypatch.setattr("agent_cli.main._live_one_review", boom)
+
+    class LocalStore:
+        def row(self, table: str, row_id: str) -> dict | None:
+            assert (table, row_id) == ("task", "task-1")
+            return {
+                "id": "task-1",
+                "payload": {
+                    "one_review_author": {
+                        "pull_opener": "alice",
+                        "trusted_pr_guard": {"one_review_authors": ["alice"]},
+                    }
+                },
+            }
+
+        def rows(self, table: str) -> list[dict]:
+            if table == "checklist_item":
+                return [
+                    {"task_id": "task-1", "key": "codex_pr_quality", "status": "n_a"},
+                    {"task_id": "task-1", "key": "codex_pr_logic", "status": "n_a"},
+                ]
+            if table in ("local_check", "review_gate"):
+                return []
+            raise AssertionError(table)
+
+    snap = load_task_dict(LocalStore(), "task-1")
+    assert snap["pull_opener"] == ""
+    assert snap["trusted_pr_guard"] is None
+
+
+def test_task_repo_and_pr_uses_the_pull_target_not_the_push_remote() -> None:
+    from agent_cli.main import _task_repo_and_pr
+
+    repo, number = _task_repo_and_pr({
+        "repo": "ignored/task-repo",
+        "ref": "12",
+        "payload": {
+            "coordinator": {
+                "publication_repo": "fork/widget",
+                "pr_number": 34,
+                "source": {"repo": "acme/widget"},
+            }
+        },
+    })
+    assert repo == "acme/widget"
+    assert number == "34"
+
+    fallback_repo, fallback_number = _task_repo_and_pr({
+        "repo": "acme/widget",
+        "ref": "12",
+        "payload": {"coordinator": {"publication_repo": "fork/widget"}},
+    })
+    assert fallback_repo == "acme/widget"
+    assert fallback_number == "12"
+
+
 def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])

@@ -35,6 +35,7 @@ from .pr_guard_config import (
     PrGuardConfigError,
     evaluate_a38_scope,
     load_pr_guard_config,
+    one_review_for,
 )
 from .readme_only import (
     GUARD_WORKFLOW_PATH,
@@ -50,6 +51,8 @@ API_ORIGIN = "https://api.github.com"
 API_HOST = "api.github.com"
 POLICY_PATH = ".github/a38.json"
 GUARD_MARKER = "<!-- PR-GUARD:A38:v1 -->"
+APPROVAL_MARKER = "<!-- PR-GUARD:APPROVAL:v1 -->"
+_APPROVAL_SUFFIX = " bytes changed vs base; a maintainer must approve the current head"
 GUARD_DOCS = "docs/a38-guard.md"
 POLICY_DOCS = "docs/a38.md"
 CENTRAL_REPO = "DFXswiss/agent"
@@ -1583,69 +1586,82 @@ def _steps_url(url: str) -> str:
     return base + "#what-you-must-do"
 
 
+def _approval_split(reasons: Sequence[str]) -> tuple[list[str], list[str]]:
+    paths: list[str] = []
+    others: list[str] = []
+    for reason in reasons:
+        if reason.endswith(_APPROVAL_SUFFIX):
+            path = reason[: -len(_APPROVAL_SUFFIX)].strip()
+            if path and path not in paths:
+                paths.append(path)
+        else:
+            others.append(reason)
+    return paths, others
+
+
+def build_approval_comment(assessment: Assessment) -> str | None:
+    """Separate comment when changed bytes still need approval.
+
+    The welcome comment stays. This one is absent when nothing needs that
+    approval, including on a pull request that is not a draft. A docs-waiver
+    draft keeps the welcome and does not get this extra posting.
+    """
+    if _draft_docs_waiver_pass(assessment):
+        return None
+    paths, others = _approval_split(assessment.reasons)
+    if not paths:
+        return None
+    details = ""
+    for path in paths:
+        details += f"- Changed paths: `{path}`\n"
+    details += (
+        "- An ordinary approving review on the current head is enough. "
+        "No special review text is required. The reviewer needs write, "
+        "maintain, or admin and must not be the author.\n"
+    )
+    for path in paths:
+        details += f"- Geänderte Pfade: `{path}`\n"
+    details += (
+        "- Eine gewöhnliche freigebende Review auf dem aktuellen Head reicht. "
+        "Kein besonderer Review-Text. Die Person braucht Schreib-, Maintain- "
+        "oder Admin-Recht und darf nicht der Autor sein.\n"
+    )
+    if others:
+        details += "- Other problems: " + "; ".join(others) + "\n"
+    body = (
+        f"{APPROVAL_MARKER}\n\n"
+        "EN:\n"
+        "Approval required\n"
+        "This pull request needs an approval on the current head from someone "
+        "with write, maintain, or admin who is not the author, so the guard "
+        "can continue.\n\n"
+        "DE:\n"
+        "Freigabe nötig\n"
+        "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
+        "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
+        "ist, damit der Guard die Arbeit fortsetzen kann.\n\n"
+        f"<details>\n<summary>Details</summary>\n\n{details}\n</details>\n"
+    )
+    if len(body) > MAX_COMMENT_BODY:
+        body = body[: MAX_COMMENT_BODY - 1] + "…\n"
+    return body
+
+
 def build_comment_body(assessment: Assessment) -> str:
-    if assessment.draft and not _draft_docs_waiver_pass(assessment):
-        if not assessment.hard_fail:
-            suffix = (
-                " bytes changed vs base; a maintainer must approve the current head"
-            )
-            approval_paths: list[str] = []
-            other_reasons: list[str] = []
-            matched = False
-            for reason in assessment.reasons:
-                if reason.endswith(suffix):
-                    matched = True
-                    path = reason[: -len(suffix)].strip()
-                    if path and path not in approval_paths:
-                        approval_paths.append(path)
-                else:
-                    other_reasons.append(reason)
-            if matched:
-                details = ""
-                for path in approval_paths:
-                    details += f"- Changed paths: `{path}`\n"
-                details += (
-                    "- An ordinary approving review on the current head is enough. "
-                    "No special review text is required. The reviewer needs write, "
-                    "maintain, or admin and must not be the author.\n"
-                )
-                for path in approval_paths:
-                    details += f"- Geänderte Pfade: `{path}`\n"
-                details += (
-                    "- Eine gewöhnliche freigebende Review auf dem aktuellen Head reicht. "
-                    "Kein besonderer Review-Text. Die Person braucht Schreib-, Maintain- "
-                    "oder Admin-Recht und darf nicht der Autor sein.\n"
-                )
-                if other_reasons:
-                    details += "- Other problems: " + "; ".join(other_reasons) + "\n"
-                body = (
-                    f"{GUARD_MARKER}\n\n"
-                    "EN:\n"
-                    "Approval required\n"
-                    "This pull request needs an approval on the current head from someone "
-                    "with write, maintain, or admin who is not the author, so the guard "
-                    "can continue.\n\n"
-                    "DE:\n"
-                    "Freigabe nötig\n"
-                    "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
-                    "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
-                    "ist, damit der Guard die Arbeit fortsetzen kann.\n\n"
-                    f"<details>\n<summary>Details</summary>\n\n{details}\n</details>\n"
-                )
-                if len(body) > MAX_COMMENT_BODY:
-                    body = body[: MAX_COMMENT_BODY - 1] + "…\n"
-                return body
+    # Every open draft gets the short greeting, including a docs waiver.
+    # The waiver comment is only for a pull request that is not a draft.
+    if assessment.draft:
         url = _steps_url(assessment.standard_url)
         return (
             f"{GUARD_MARKER}\n\n"
             "EN:\n"
             "Draft instructions\n"
             f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n"
-            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs, and the review record lets the guard mark it ready once that CI and the required checks are green. A later comment that records only the second review run is optional and does not delay Ready.\n\n"
+            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs. Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.\n\n"
             "DE:\n"
             "Entwurf-Hinweise\n"
             f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
-            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe, und der Review-Nachweis lässt den Guard Ready setzen, sobald diese CI und die erforderlichen Checks grün sind. Ein späterer Kommentar, der nur den zweiten Review-Lauf festhält, ist optional und verzögert Ready nicht.\n"
+            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe. Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind. Ein Review reicht nur, wenn der PR-Eröffner in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht. Fehlt die Datei, der Schlüssel, oder ist die Liste leer, bleiben zwei Reviews Pflicht. Ein Eintrag nur im PR-Head zählt nicht.\n"
         )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"
@@ -2625,13 +2641,14 @@ def assess_pull(
         author_id=snap.author_id,
         comments=comments,
         markdown_only=markdown_only,
+        one_review_author=one_review_for(trusted.config, snap.author_login),
     )
     _apply_review_result(assessment, review_ok, review_reasons)
     return assessment
 
 
-def _find_own_guard_comment(
-    comments: Sequence[Mapping[str, Any]], own_id: int
+def _find_own_marked_comment(
+    comments: Sequence[Mapping[str, Any]], own_id: int, marker: str
 ) -> Mapping[str, Any] | None:
     owned: list[tuple[str, int, Mapping[str, Any]]] = []
     for comment in comments:
@@ -2640,7 +2657,7 @@ def _find_own_guard_comment(
             continue
         # Never trust type==Bot alone; numeric id must match the resolved actor.
         body = comment.get("body")
-        if not isinstance(body, str) or GUARD_MARKER not in body:
+        if not isinstance(body, str) or marker not in body:
             continue
         cid = comment.get("id")
         if not isinstance(cid, int):
@@ -2653,6 +2670,75 @@ def _find_own_guard_comment(
         return None
     owned.sort(key=lambda item: (item[0], item[1]))
     return owned[-1][2]
+
+
+def _find_own_guard_comment(
+    comments: Sequence[Mapping[str, Any]], own_id: int
+) -> Mapping[str, Any] | None:
+    return _find_own_marked_comment(comments, own_id, GUARD_MARKER)
+
+
+def _sync_approval_comment(
+    api: GitHubApi,
+    assessment: Assessment,
+    comments: Sequence[Mapping[str, Any]],
+    own_id: int,
+    *,
+    delete_only: bool = False,
+) -> None:
+    """Post, update, or remove the extra approval comment.
+
+    The welcome comment is independent. This comment exists while changed
+    bytes still need a maintainer approval, including when the pull request
+    is Ready. It is removed when that approval is no longer required.
+    ``delete_only`` removes a leftover approval comment and never posts one.
+    """
+    wanted = None if delete_only else build_approval_comment(assessment)
+    existing = _find_own_marked_comment(comments, own_id, APPROVAL_MARKER)
+    if wanted is None:
+        if existing is None:
+            return
+        cid = existing["id"]
+        status, _data, _ = api.request(
+            "DELETE",
+            f"/repos/{assessment.repo}/issues/comments/{cid}",
+            retry=False,
+        )
+        if status in {401, 403}:
+            raise GuardError(f"GitHub API denied ({status}) deleting approval comment")
+        if status not in {200, 204}:
+            raise GuardError(f"approval comment delete HTTP {status}")
+        assessment.writes.append(f"comment:approval:delete:{cid}")
+        return
+    if existing is not None and existing.get("body") == wanted:
+        assessment.writes.append("comment:approval:unchanged")
+        return
+    if existing is not None:
+        cid = existing["id"]
+        status, _data, _ = api.request(
+            "PATCH",
+            f"/repos/{assessment.repo}/issues/comments/{cid}",
+            body={"body": wanted},
+            retry=False,
+        )
+        if status in {401, 403}:
+            raise GuardError(f"GitHub API denied ({status}) updating approval comment")
+        if status < 200 or status >= 300:
+            raise GuardError(f"approval comment update HTTP {status}")
+        assessment.writes.append(f"comment:approval:update:{cid}")
+        return
+    status, data, _ = api.request(
+        "POST",
+        f"/repos/{assessment.repo}/issues/{assessment.pr}/comments",
+        body={"body": wanted},
+        retry=False,
+    )
+    if status in {401, 403}:
+        raise GuardError(f"GitHub API denied ({status}) creating approval comment")
+    if status < 200 or status >= 300:
+        raise GuardError(f"approval comment create HTTP {status}")
+    new_id = data.get("id") if isinstance(data, dict) else None
+    assessment.writes.append(f"comment:approval:create:{new_id}")
 
 
 def _existing_status(
@@ -2714,6 +2800,10 @@ def publish_assessment(
                 author_id=fresh.author_id,
                 comments=gate_comments,
                 markdown_only=gate_markdown,
+                one_review_author=one_review_for(
+                    resolve_trusted_guard_config(api, fresh).config,
+                    fresh.author_login,
+                ),
             )
             if not gate_ok:
                 # Statuses are append-only. Never leave or write enforce success
@@ -2806,8 +2896,9 @@ def publish_assessment(
             raise GuardError(f"status create HTTP {status}")
         assessment.writes.append(f"status:create:{context}")
 
-    # Configured exclusions: clear the target-branch status only. Do not look up
-    # or write comments, reports, or approvals, and do not touch another context.
+    # Configured exclusions: clear the target-branch status only. Do not write
+    # the welcome or a new approval comment. Delete a leftover approval comment.
+    # Do not touch another context.
     if assessment.status == "not_applicable":
         if assessment.scope_decision != "exclude":
             raise GuardError(
@@ -2818,6 +2909,11 @@ def publish_assessment(
             "success",
             assessment.description or truncate_desc(NOT_APPLICABLE_DESCRIPTION),
             require_report=False,
+        )
+        own_id, _own_login = api.resolve_own_user()
+        comments = collect_comments(api, assessment.repo, assessment.pr)
+        _sync_approval_comment(
+            api, assessment, comments, own_id, delete_only=True
         )
         return assessment
 
@@ -2842,6 +2938,10 @@ def publish_assessment(
         author_id=fresh.author_id,
         comments=comments,
         markdown_only=fresh_markdown,
+        one_review_author=one_review_for(
+            resolve_trusted_guard_config(api, fresh).config,
+            fresh.author_login,
+        ),
     )
     review_changed = fresh_ok != assessment.review_ok or list(fresh_reasons) != list(
         assessment.review_reasons
@@ -2882,6 +2982,8 @@ def publish_assessment(
             raise GuardError(f"comment create HTTP {status}")
         new_id = data.get("id") if isinstance(data, dict) else None
         assessment.writes.append(f"comment:create:{new_id}")
+
+    _sync_approval_comment(api, assessment, comments, own_id)
 
     if assessment.mode == "observe":
         _post_status(

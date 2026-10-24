@@ -201,6 +201,7 @@ class FakeGh:
         self.branches = {"develop"}
         self.staged = False
         self.commit_count = 0
+        self.pr_guard_body: str | None = None
 
     def __call__(self, argv: list[str]) -> Completed:
         if argv and argv[0] == "env":
@@ -406,6 +407,15 @@ class FakeGh:
             if "--paginate" in argv and "--slurp" not in argv:
                 return Completed(0, "invalid concatenated pages", "")
             return Completed(0, json.dumps(self.comments), "")
+
+        if argv[:2] == ["gh", "api"] and argv[-1] == "repos/example/project":
+            return Completed(0, json.dumps({"default_branch": "develop"}), "")
+        if argv[:2] == ["gh", "api"] and str(argv[-1]).startswith("repos/example/project/commits/"):
+            return Completed(0, json.dumps({"sha": "c" * 40}), "")
+        if argv[:2] == ["gh", "api"] and "contents/.github/pr-guard.json" in str(argv[-1]):
+            if not self.pr_guard_body:
+                return Completed(1, "", "HTTP 404: Not Found")
+            return Completed(0, self.pr_guard_body, "")
 
         return Completed(1, "", f"unhandled: {argv}")
 

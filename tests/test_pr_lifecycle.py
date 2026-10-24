@@ -7,7 +7,11 @@ import pytest
 
 from agent_cli import pr_lifecycle
 from agent_cli.a38_guard import GuardError, reconcile_pull, status_context_enforce
-from agent_cli.a38_review import BLOCKING_REVIEW_REASON, LIFECYCLE_REASON
+from agent_cli.a38_review import (
+    BLOCKING_REVIEW_REASON,
+    LIFECYCLE_REASON,
+    SECOND_REVIEW_MISSING,
+)
 from agent_cli.pr_guard_config import load_pr_guard_config, PrGuardConfigError
 from agent_cli.pr_lifecycle import (
     AUTH_MARKER,
@@ -1383,6 +1387,40 @@ def _write_author(fake: LifecycleAPI) -> None:
         "permission": "write",
         "user": {"id": AUTHOR_ID, "login": "author", "type": "User"},
     }
+
+
+def test_visible_transition_sentences_missing_second_review_only():
+    en, de = visible_transition_sentences({
+        "state": "draft",
+        "reasons": [SECOND_REVIEW_MISSING],
+    })
+    assert en == (
+        "This pull request is back in Draft because the second review comment is missing."
+    )
+    assert de == (
+        "Dieser Pull Request steht wieder auf Draft, weil der zweite Review-Kommentar fehlt."
+    )
+    assert "the review completion is missing or invalid" not in en
+    assert "CI" not in en
+
+
+def test_write_author_ready_missing_second_review_returns_to_draft():
+    fake = LifecycleAPI()
+    _write_author(fake)
+    fake.include_second_review = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.write_ready
+    assert result.write_ready_reason == "author has write"
+    assert result.lifecycle["action"] == "draft"
+    assert SECOND_REVIEW_MISSING in result.lifecycle["reasons"]
+    assert LIFECYCLE_REASON not in result.lifecycle["reasons"]
+    assert BLOCKING_REVIEW_REASON not in result.lifecycle["reasons"]
+    assert fake.pull["draft"]
+    assert fake.transitions == [True]
+    body = "\n".join(comment.get("body", "") for comment in fake.comments)
+    assert "the second review comment is missing" in body
+    assert "der zweite Review-Kommentar fehlt" in body
+    assert "the review completion is missing or invalid" not in body
 
 
 def test_write_author_ready_blocking_second_run_returns_to_draft():
