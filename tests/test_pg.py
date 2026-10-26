@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -75,3 +76,57 @@ def test_bin_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     with pytest.raises(PgError, match="pg_ctl is not installed"):
         _bin("pg_ctl")
+
+
+def test_pg_process_env_overrides_broken_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli.pg import _pg_process_env
+
+    monkeypatch.setenv("LC_ALL", "not_a_real_locale")
+    monkeypatch.setenv("LC_CTYPE", "UTF-8")
+    monkeypatch.setenv("AGENT_KEEP", "yes")
+    env = _pg_process_env()
+    assert env["LC_ALL"] == "C"
+    assert env["LC_CTYPE"] == "UTF-8"  # LC_ALL wins; the broken value stays inert
+    assert env["AGENT_KEEP"] == "yes"
+
+
+def test_running_passes_forced_locale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_cli.pg as pg
+
+    seen: list[dict | None] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(argv, 3, "", "")
+
+    monkeypatch.setattr(pg.subprocess, "run", fake_run)
+    monkeypatch.setenv("LC_ALL", "not_a_real_locale")
+    assert pg._running(tmp_path) is False
+    assert seen and seen[0] is not None and seen[0]["LC_ALL"] == "C"
+
+
+def test_start_cluster_existing_passes_forced_locale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agent_cli.pg as pg
+
+    pgdata = tmp_path / "data"
+    pgdata.mkdir()
+    (pgdata / "PG_VERSION").write_text("17\n", encoding="utf-8")
+    (tmp_path / "port").write_text("5433\n", encoding="utf-8")
+    start_envs: list[dict | None] = []
+
+    def fake_run(argv, **kwargs):
+        if "status" in argv:
+            return subprocess.CompletedProcess(argv, 3, "", "")
+        if "start" in argv:
+            start_envs.append(kwargs.get("env"))
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(f"unexpected argv {argv}")
+
+    monkeypatch.setattr(pg.subprocess, "run", fake_run)
+    monkeypatch.setenv("LC_CTYPE", "UTF-8")
+    dsn = pg.start_cluster(tmp_path)
+    assert dsn == "host=127.0.0.1 port=5433 user=agent dbname=postgres"
+    assert start_envs and start_envs[0] is not None and start_envs[0]["LC_ALL"] == "C"
+

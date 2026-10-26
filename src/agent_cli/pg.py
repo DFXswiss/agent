@@ -100,6 +100,21 @@ def _bin(name: str) -> str:
     raise PgError(f"{name} is not installed")
 
 
+def _pg_process_env() -> dict[str, str]:
+    """Process environment for every postgres utility invocation.
+
+    Postgres refuses to start when the inherited session locale is empty or
+    invalid ("FATAL:  postmaster became multithreaded during startup", hint:
+    set LC_ALL) — a launchd session without a GUI login context can provide
+    exactly that. LC_ALL overrides every other LC_* variable, and "C" is a
+    valid locale on every supported platform, so the utilities stay
+    deterministic regardless of how the caller was launched.
+    """
+    env = dict(os.environ)
+    env["LC_ALL"] = "C"
+    return env
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -162,6 +177,7 @@ def _running(pgdata: Path) -> bool:
         check=False,
         capture_output=True,
         text=True,
+        env=_pg_process_env(),
     )
     if status.returncode == 0:
         return True
@@ -189,6 +205,7 @@ def start_cluster(data_dir: Path) -> str:
                 check=False,
                 capture_output=True,
                 text=True,
+                env=_pg_process_env(),
             )
             if started.returncode != 0:
                 raise PgError((started.stderr or started.stdout or log.read_text(encoding="utf-8")).strip())
@@ -199,6 +216,7 @@ def start_cluster(data_dir: Path) -> str:
         check=False,
         capture_output=True,
         text=True,
+        env=_pg_process_env(),
     )
     if completed.returncode != 0:
         raise PgError((completed.stderr or completed.stdout or "initdb failed").strip())
@@ -218,6 +236,7 @@ def start_cluster(data_dir: Path) -> str:
         check=False,
         capture_output=True,
         text=True,
+        env=_pg_process_env(),
     )
     if started.returncode != 0:
         raise PgError((started.stderr or started.stdout or log.read_text(encoding="utf-8")).strip())
@@ -235,6 +254,7 @@ def stop_cluster(data_dir: Path) -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_pg_process_env(),
     )
     if completed.returncode != 0:
         raise PgError((completed.stderr or completed.stdout or "pg_ctl stop failed").strip())
