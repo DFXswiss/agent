@@ -212,7 +212,16 @@ def start_cluster(data_dir: Path) -> str:
             return existing
         raise PgError("postgres data directory exists but port file is missing")
     completed = subprocess.run(  # noqa: S603
-        [_bin("initdb"), "-D", str(pgdata), "--auth=trust", "-U", "agent", "--no-instructions"],
+        [
+            _bin("initdb"),
+            "-D",
+            str(pgdata),
+            "--auth=trust",
+            "-U",
+            "agent",
+            "--encoding=UTF8",
+            "--no-instructions",
+        ],
         check=False,
         capture_output=True,
         text=True,
