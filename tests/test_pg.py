@@ -78,6 +78,18 @@ def test_bin_raises_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
         _bin("pg_ctl")
 
 
+def _hermetic_pg_bins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve _bin() to controlled stubs so the env tests need no host postgres."""
+    bins = tmp_path / "bin"
+    bins.mkdir(exist_ok=True)
+    for name in ("pg_ctl", "initdb"):
+        exe = bins / name
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        exe.chmod(0o755)
+    monkeypatch.setenv("AGENT_PG_BIN", str(bins))
+    monkeypatch.setenv("PATH", "")
+
+
 def test_pg_process_env_overrides_broken_locale(monkeypatch: pytest.MonkeyPatch) -> None:
     from agent_cli.pg import _pg_process_env
 
@@ -93,6 +105,7 @@ def test_pg_process_env_overrides_broken_locale(monkeypatch: pytest.MonkeyPatch)
 def test_running_passes_forced_locale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import agent_cli.pg as pg
 
+    _hermetic_pg_bins(tmp_path, monkeypatch)
     seen: list[dict | None] = []
 
     def fake_run(argv, **kwargs):
@@ -110,6 +123,7 @@ def test_start_cluster_existing_passes_forced_locale(
 ) -> None:
     import agent_cli.pg as pg
 
+    _hermetic_pg_bins(tmp_path, monkeypatch)
     pgdata = tmp_path / "data"
     pgdata.mkdir()
     (pgdata / "PG_VERSION").write_text("17\n", encoding="utf-8")
@@ -136,6 +150,7 @@ def test_start_cluster_fresh_pins_utf8_and_locale(
 ) -> None:
     import agent_cli.pg as pg
 
+    _hermetic_pg_bins(tmp_path, monkeypatch)
     initdb_calls: list[list[str]] = []
     initdb_envs: list[dict | None] = []
     start_envs: list[dict | None] = []
