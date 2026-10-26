@@ -1483,6 +1483,83 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertIn("Approval required", notice)
         self.assertIn(".github/workflows/script-tests.yml", notice)
 
+    def test_draft_hard_fail_approval_comment_does_not_promise_continuation(self) -> None:
+        notice = a38_guard.build_approval_comment(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=True,
+                reasons=[
+                    ".github/workflows/script-tests.yml bytes changed vs base; "
+                    "a maintainer must approve the current head",
+                    "commit abcdef0 message: AI co-author trailer",
+                ],
+            )
+        )
+        self.assertIsNotNone(notice)
+        assert notice is not None
+        self.assertIn(a38_guard.APPROVAL_MARKER, notice)
+        lines = notice.splitlines()
+        self.assertEqual(lines[lines.index("EN:") + 1], "Approval required")
+        self.assertEqual(lines[lines.index("DE:") + 1], "Freigabe nötig")
+        self.assertNotIn("so the guard can continue.", notice)
+        self.assertNotIn("on the current head is enough.", notice)
+        self.assertNotIn("auf dem aktuellen Head reicht.", notice)
+        self.assertIn(
+            "and that approval alone does not let the guard continue.",
+            notice,
+        )
+        self.assertIn("Remove those attribution markers.", notice)
+        self.assertIn("Diese Attribution-Marker müssen entfernt werden.", notice)
+
+    def test_draft_hard_fail_approval_comment_names_a_blank_commit_message(self) -> None:
+        notice = a38_guard.build_approval_comment(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=True,
+                reasons=[
+                    ".github/workflows/script-tests.yml bytes changed vs base; "
+                    "a maintainer must approve the current head",
+                    "commit abcdef0 message missing",
+                ],
+            )
+        )
+        self.assertIsNotNone(notice)
+        assert notice is not None
+        self.assertIn("Supply a non-empty commit message.", notice)
+        self.assertIn("Eine nicht-leere Commit-Message liefern.", notice)
+        self.assertNotIn("Remove those attribution markers.", notice)
+
+    def test_approval_comment_without_hard_fail_is_unchanged(self) -> None:
+        notice = a38_guard.build_approval_comment(
+            Assessment(
+                ok=False,
+                status="fail",
+                draft=True,
+                hard_fail=False,
+                reasons=[
+                    ".github/workflows/script-tests.yml bytes changed vs base; "
+                    "a maintainer must approve the current head"
+                ],
+            )
+        )
+        self.assertIsNotNone(notice)
+        assert notice is not None
+        self.assertIn(
+            "An ordinary approving review on the current head is enough.",
+            notice,
+        )
+        self.assertIn(
+            "Eine gewöhnliche freigebende Review auf dem aktuellen Head reicht.",
+            notice,
+        )
+        self.assertIn("so the guard can continue.", notice)
+        self.assertNotIn("Remove those attribution markers.", notice)
+        self.assertNotIn("does not let the guard continue", notice)
+
     def test_approval_comment_is_posted_beside_the_welcome_and_then_removed(self) -> None:
         fake = FakeAPI()
         reason = (

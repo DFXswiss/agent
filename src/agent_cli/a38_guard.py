@@ -1634,6 +1634,49 @@ def _approval_split(reasons: Sequence[str]) -> tuple[list[str], list[str]]:
     return paths, others
 
 
+def _hard_fail_texts(assessment: Assessment) -> tuple[str, str]:
+    """The EN/DE sentences naming the hard-fail cause. Both empty when not a hard fail."""
+    missing_msg = any("message missing" in r for r in assessment.reasons)
+    attr_hit = any(
+        "AI co-author" in r
+        or "AI session" in r
+        or "generated-with" in r
+        or "AI author identity" in r
+        for r in assessment.reasons
+    )
+    if assessment.hard_fail and missing_msg and attr_hit:
+        hard_fail_en = (
+            "Tool-attribution or an unscannable commit message fails dfx pr guard. "
+            "Remove those attribution markers or supply a non-empty commit message."
+        )
+        hard_fail_de = (
+            "Tool-Attribution oder eine nicht lesbare Commit-Message lässt dfx pr guard "
+            "fehlschlagen. Attribution-Marker entfernen oder eine nicht-leere Commit-Message liefern."
+        )
+    elif assessment.hard_fail and missing_msg:
+        hard_fail_en = (
+            "An unscannable or empty commit message fails dfx pr guard. "
+            "Supply a non-empty commit message."
+        )
+        hard_fail_de = (
+            "Eine nicht lesbare oder leere Commit-Message lässt dfx pr guard fehlschlagen. "
+            "Eine nicht-leere Commit-Message liefern."
+        )
+    elif assessment.hard_fail:
+        hard_fail_en = (
+            "Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "
+            "Remove those attribution markers."
+        )
+        hard_fail_de = (
+            "Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
+            "fehlschlagen. Diese Attribution-Marker müssen entfernt werden."
+        )
+    else:
+        hard_fail_en = ""
+        hard_fail_de = ""
+    return hard_fail_en, hard_fail_de
+
+
 def build_approval_comment(assessment: Assessment) -> str | None:
     """Separate comment when changed bytes still need approval.
 
@@ -1646,35 +1689,73 @@ def build_approval_comment(assessment: Assessment) -> str | None:
     paths, others = _approval_split(assessment.reasons)
     if not paths:
         return None
+    hard_fail_en, hard_fail_de = _hard_fail_texts(assessment)
     details = ""
     for path in paths:
         details += f"- Changed paths: `{path}`\n"
-    details += (
-        "- An ordinary approving review on the current head is enough. "
-        "No special review text is required. The reviewer needs write, "
-        "maintain, or admin and must not be the author.\n"
-    )
+    if hard_fail_en:
+        details += f"- {hard_fail_en}\n"
+        details += (
+            "- An ordinary approving review on the current head is still required, "
+            "but it does not let the guard continue on its own while the problem "
+            "above stands. No special review text is required. The reviewer needs "
+            "write, maintain, or admin and must not be the author.\n"
+        )
+    else:
+        details += (
+            "- An ordinary approving review on the current head is enough. "
+            "No special review text is required. The reviewer needs write, "
+            "maintain, or admin and must not be the author.\n"
+        )
     for path in paths:
         details += f"- Geänderte Pfade: `{path}`\n"
-    details += (
-        "- Eine gewöhnliche freigebende Review auf dem aktuellen Head reicht. "
-        "Kein besonderer Review-Text. Die Person braucht Schreib-, Maintain- "
-        "oder Admin-Recht und darf nicht der Autor sein.\n"
-    )
+    if hard_fail_en:
+        details += f"- {hard_fail_de}\n"
+        details += (
+            "- Eine gewöhnliche freigebende Review auf dem aktuellen Head ist "
+            "weiterhin nötig, reicht aber allein nicht, solange das Problem "
+            "darüber besteht. Kein besonderer Review-Text. Die Person braucht "
+            "Schreib-, Maintain- oder Admin-Recht und darf nicht der Autor sein.\n"
+        )
+    else:
+        details += (
+            "- Eine gewöhnliche freigebende Review auf dem aktuellen Head reicht. "
+            "Kein besonderer Review-Text. Die Person braucht Schreib-, Maintain- "
+            "oder Admin-Recht und darf nicht der Autor sein.\n"
+        )
     if others:
         details += "- Other problems: " + "; ".join(others) + "\n"
+    if hard_fail_en:
+        en_sentence = (
+            "This pull request needs an approval on the current head from someone "
+            "with write, maintain, or admin who is not the author, and that "
+            "approval alone does not let the guard continue."
+        )
+        de_sentence = (
+            "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
+            "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
+            "ist, und diese Freigabe allein genügt dem Guard nicht, um die Arbeit "
+            "fortzusetzen."
+        )
+    else:
+        en_sentence = (
+            "This pull request needs an approval on the current head from someone "
+            "with write, maintain, or admin who is not the author, so the guard "
+            "can continue."
+        )
+        de_sentence = (
+            "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
+            "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
+            "ist, damit der Guard die Arbeit fortsetzen kann."
+        )
     body = (
         f"{APPROVAL_MARKER}\n\n"
         "EN:\n"
         "Approval required\n"
-        "This pull request needs an approval on the current head from someone "
-        "with write, maintain, or admin who is not the author, so the guard "
-        "can continue.\n\n"
+        f"{en_sentence}\n\n"
         "DE:\n"
         "Freigabe nötig\n"
-        "Dieser Pull Request braucht auf dem aktuellen Head eine Freigabe von "
-        "jemand mit Schreib-, Maintain- oder Admin-Recht, der nicht der Autor "
-        "ist, damit der Guard die Arbeit fortsetzen kann.\n\n"
+        f"{de_sentence}\n\n"
         f"<details>\n<summary>Details</summary>\n\n{details}\n</details>\n"
     )
     if len(body) > MAX_COMMENT_BODY:
@@ -1703,44 +1784,7 @@ def build_comment_body(assessment: Assessment) -> str:
     if len(problems) > 800:
         problems = problems[:799] + "…"
     waiver_report = assessment.write_ready and not _report_accepted(assessment)
-    missing_msg = any("message missing" in r for r in assessment.reasons)
-    attr_hit = any(
-        "AI co-author" in r
-        or "AI session" in r
-        or "generated-with" in r
-        or "AI author identity" in r
-        for r in assessment.reasons
-    )
-    if assessment.hard_fail and missing_msg and attr_hit:
-        hard_fail_en = (
-            " Tool-attribution or an unscannable commit message fails dfx pr guard. "
-            "Remove those attribution markers or supply a non-empty commit message."
-        )
-        hard_fail_de = (
-            " Tool-Attribution oder eine nicht lesbare Commit-Message lässt dfx pr guard "
-            "fehlschlagen. Attribution-Marker entfernen oder eine nicht-leere Commit-Message liefern."
-        )
-    elif assessment.hard_fail and missing_msg:
-        hard_fail_en = (
-            " An unscannable or empty commit message fails dfx pr guard. "
-            "Supply a non-empty commit message."
-        )
-        hard_fail_de = (
-            " Eine nicht lesbare oder leere Commit-Message lässt dfx pr guard fehlschlagen. "
-            "Eine nicht-leere Commit-Message liefern."
-        )
-    elif assessment.hard_fail:
-        hard_fail_en = (
-            " Tool-attribution in the PR title, PR body, or a commit fails dfx pr guard. "
-            "Remove those attribution markers."
-        )
-        hard_fail_de = (
-            " Tool-Attribution in PR-Titel, PR-Body oder einem Commit lässt dfx pr guard "
-            "fehlschlagen. Diese Attribution-Marker müssen entfernt werden."
-        )
-    else:
-        hard_fail_en = ""
-        hard_fail_de = ""
+    hard_fail_en, hard_fail_de = _hard_fail_texts(assessment)
     if _report_accepted(assessment):
         en_tail = "author local-CI report accepted for this head."
         de_tail = "Autor-Local-CI-Report für diesen Head akzeptiert."
@@ -1785,12 +1829,12 @@ def build_comment_body(assessment: Assessment) -> str:
         en_tail = "author local-CI report missing or invalid for this head."
         de_tail = "Autor-Local-CI-Report für diesen Head fehlt oder ist ungültig."
     en = (
-        (hard_fail_en.lstrip() + " " if hard_fail_en else "")
+        (hard_fail_en + " " if hard_fail_en else "")
         + f"A38 {assessment.status}: "
         + en_tail
     )
     de = (
-        (hard_fail_de.lstrip() + " " if hard_fail_de else "")
+        (hard_fail_de + " " if hard_fail_de else "")
         + f"A38 {assessment.status}: "
         + de_tail
     )
