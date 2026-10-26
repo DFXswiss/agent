@@ -2045,6 +2045,42 @@ class LocalCiCliPinTests(unittest.TestCase):
             )
             self.assertEqual(guard_action_pins(repo), [HEAD_B])
 
+    def test_a_graft_cannot_forge_the_ancestry(self) -> None:
+        """`--no-replace-objects` covers refs/replace but not the legacy grafts file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ancestor, descendant = _init_two_commit_checkout(checkout)
+            beside = _commit_beside(checkout, ancestor)
+            repo = root / "repo"
+            _write_guard_workflow(repo, beside)
+            info = checkout / ".git" / "info"
+            info.mkdir(parents=True, exist_ok=True)
+            (info / "grafts").write_text(f"{descendant} {beside}\n", encoding="utf-8")
+            # The blind spot this guards against: through the graft, Git itself reports the
+            # divergent pin as an ancestor, and the flag that stops replace refs does not help.
+            forged = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "--no-replace-objects",
+                    "merge-base",
+                    "--is-ancestor",
+                    beside,
+                    descendant,
+                ],
+                capture_output=True,
+            )
+            self.assertEqual(forged.returncode, 0)
+            with mock.patch(
+                "agent_cli.a38.local_ci_revision",
+                return_value=(descendant, checkout),
+            ):
+                with self.assertRaises(A38Error) as caught:
+                    ensure_local_ci_cli_satisfies_pin(repo)
+            self.assertIn("rewrites Git history", str(caught.exception))
+
     def test_a_later_pin_not_contained_is_refused(self) -> None:
         # Passing the first pin says nothing about a second step on another revision. The
         # second pin is a real commit, so this exercises the exit code 1 branch rather

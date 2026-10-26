@@ -2253,6 +2253,33 @@ def local_ci_revision(
     return (revision, root)
 
 
+def _ancestry_is_trustworthy(root: Path, *, run: RunFn) -> bool:
+    """False when this repository rewrites history for Git's own traversal.
+
+    ``--no-replace-objects`` covers ``refs/replace`` but not the legacy grafts file, which
+    is a separate mechanism. Measured: with ``<revision> <pin>`` in ``info/grafts``,
+    ``merge-base --is-ancestor`` reports a divergent pin as an ancestor even with that flag,
+    while the package still matches the stale revision — so the source binding passes and
+    only the ancestry lies. ``--git-path`` is used so a worktree or submodule resolves to
+    its real Git directory rather than ``root/.git``.
+    """
+    try:
+        located = _git(root, "--no-replace-objects", "rev-parse", "--git-path", "info/grafts", run=run)
+    except (subprocess.SubprocessError, OSError):
+        return False
+    if located.returncode != 0:
+        return False
+    grafts = Path(located.stdout.strip())
+    if not grafts.is_absolute():
+        grafts = root / grafts
+    try:
+        if not grafts.is_file():
+            return True
+        return not grafts.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+
+
 def ensure_local_ci_cli_satisfies_pin(
     repo_path: Path,
     *,
@@ -2309,6 +2336,13 @@ def ensure_local_ci_cli_satisfies_pin(
             f"set {LOCAL_CI_REVISION_ENV} to the installed guard revision."
         )
     runner = run or _default_run
+    if not _ancestry_is_trustworthy(root, run=runner):
+        raise A38Error(
+            "this agent installation rewrites Git history for its own traversal, or its grafts "
+            "file could not be read, so the ancestry of the guard revision cannot be proved "
+            f"({PACKAGE_RELPATH} matching a revision does not establish it). Remove "
+            "info/grafts from this checkout, or install the CLI from one that does not use it."
+        )
     # Every installed pin has to be satisfied. Passing one of them says nothing about a
     # later step that installs a newer revision.
     for pin in pins:
