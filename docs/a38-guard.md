@@ -149,6 +149,30 @@ A later reconcile reads the latest bot-owned `PR-GUARD:CI-AUTH:v1` comment for t
 
 The trusted default-branch workflow and config must be installed before optional fork workflow approval is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
 
+## Optional held workflow-run drain
+
+A repository may opt in with `"held_run_drain": {"enabled": true}` in the
+trusted default-branch `.github/pr-guard.json`; omission disables the pass. It
+runs only after the per-pull-request work in the repository-wide scheduled
+sweep. A candidate is a `pull_request` run with `run_attempt: 1` still in
+`completed` / `action_required`, whose nonempty head SHA is neither the current
+head nor the merge commit of any open pull request, whose
+`head_repository.full_name` is a nonempty name different from the base
+repository, whose creation time is at least one hour old, and whose jobs
+inventory proves that no job ever started.
+The reported candidate count is the full superseded set found during the pass,
+while actual deletions, or planned deletions in a dry run, remain bounded per sweep.
+The protected-SHA snapshot is collected before the held-run listing, and a
+missing open-pull head SHA fails the pass closed.
+
+The pass re-reads each candidate immediately before deleting it and deletes at
+most 50 runs per sweep, oldest first. A denied or rate-limited delete aborts the
+pass, while a drain failure never changes the guard's exit code. Deleting a
+never-started hold is a distinct write class, not an exception to the rule that
+the guard never cancels: cancel cannot clear `action_required` on a run that is
+already `completed`, so only deletion shrinks the held-run listing. The pass
+never approves, cancels, reruns or dispatches a workflow.
+
 ## Optional environment deployment approval
 
 A repository may separately opt in to approval of deployments waiting on one

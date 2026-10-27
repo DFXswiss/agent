@@ -23,6 +23,7 @@ SCHEMA_ID = "pr-guard/v1"
 CONFIG_PATH = ".github/pr-guard.json"
 TOP_KEYS = frozenset({"schema", "a38"})
 WORKFLOW_APPROVAL_KEYS = frozenset({"enabled", "workflows"})
+HELD_RUN_DRAIN_KEYS = frozenset({"enabled"})
 ENVIRONMENT_APPROVAL_KEYS = frozenset({"enabled", "environment", "workflows"})
 ONE_REVIEW_AUTHORS_KEY = "one_review_authors"
 MAX_ONE_REVIEW_AUTHORS = 64
@@ -171,6 +172,7 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
             if k
             not in {
                 "workflow_approval",
+                "held_run_drain",
                 "environment_approval",
                 "lifecycle",
                 ONE_REVIEW_AUTHORS_KEY,
@@ -221,6 +223,15 @@ def load_pr_guard_config(text: str) -> dict[str, Any]:
         if len(set(paths)) != len(paths) or (enabled and not paths):
             raise PrGuardConfigError("workflow approval needs a nonempty, duplicate-free allowlist when enabled")
         normalized["workflow_approval"] = {"enabled": enabled, "workflows": list(paths)}
+    if "held_run_drain" in payload:
+        drain = payload["held_run_drain"]
+        if not isinstance(drain, dict):
+            raise PrGuardConfigError("held_run_drain must be an object")
+        _require_keys(drain, HELD_RUN_DRAIN_KEYS, "held_run_drain")
+        enabled = drain["enabled"]
+        if type(enabled) is not bool:
+            raise PrGuardConfigError("held_run_drain.enabled must be boolean")
+        normalized["held_run_drain"] = {"enabled": enabled}
     if "environment_approval" in payload:
         approval = payload["environment_approval"]
         if not isinstance(approval, dict):
