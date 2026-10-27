@@ -14,9 +14,10 @@ PAGE_SIZE = 100
 _IN_FLIGHT_STATUSES = frozenset({
     "queued", "in_progress", "waiting", "requested", "pending",
 })
-# Branch listings stay status-scoped. A completed-only history can hit MAX_RUNS
-# and fail the approval closed. action_required is the hold; the rest are the
-# in-flight runs that must stay visible on intermediate commits.
+# Branch listings stay status-scoped. Ten full pages is MAX_RUNS runs with no
+# short page, and that still fails the approval closed. action_required is the
+# hold; the rest are the in-flight runs that must stay visible on intermediate
+# commits.
 _BRANCH_LIST_STATUSES = (
     "action_required",
     "queued",
@@ -50,34 +51,40 @@ def _timestamp(value: Any) -> datetime:
 
 def _list_runs(api: Any, repo: str, params: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     from .a38_guard import GuardError
-    items: list[Mapping[str, Any]] = []
-    total = None
-    for page in range(1, 11):
-        query = urlencode({**params, "per_page": PAGE_SIZE, "page": page})
-        data = api.get_json(f"/repos/{repo}/actions/runs?{query}")
-        if not isinstance(data, Mapping) or type(data.get("total_count")) is not int:
-            raise GuardError("workflow run inventory missing total_count")
-        count = data["total_count"]
-        if count < 0 or count >= MAX_RUNS or (total is not None and count != total):
-            raise GuardError("workflow run inventory changed or exceeds bound")
-        total = count
-        batch = data.get("workflow_runs")
-        if not isinstance(batch, list) or any(not isinstance(r, Mapping) for r in batch):
-            raise GuardError("workflow run inventory invalid")
-        if not batch:
-            # A short or empty page is the end of the list. total_count is a ceiling.
-            if items or total == 0:
+
+    def once() -> list[Mapping[str, Any]] | None:
+        # None means a duplicate id: the list shifted, so this pass is discarded.
+        items: list[Mapping[str, Any]] = []
+        for page in range(1, MAX_RUNS // PAGE_SIZE + 1):
+            query = urlencode({**params, "per_page": PAGE_SIZE, "page": page})
+            data = api.get_json(f"/repos/{repo}/actions/runs?{query}")
+            if not isinstance(data, Mapping) or type(data.get("total_count")) is not int:
+                raise GuardError("workflow run inventory missing total_count")
+            # total_count is a response-shape check. It does not end the list.
+            if data["total_count"] < 0:
+                raise GuardError("workflow run inventory missing total_count")
+            batch = data.get("workflow_runs")
+            if not isinstance(batch, list) or any(not isinstance(r, Mapping) for r in batch):
+                raise GuardError("workflow run inventory invalid")
+            if not batch:
+                # An empty page is the end, including when total_count is stale.
                 return items
-            raise GuardError("workflow run inventory incomplete")
-        items.extend(batch)
-        ids = [r.get("id") for r in items]
-        if any(type(i) is not int or i <= 0 for i in ids) or len(set(ids)) != len(ids):
-            raise GuardError("workflow run inventory has invalid or duplicate IDs")
-        if len(items) > total:
-            raise GuardError("workflow run inventory incomplete")
-        if len(batch) < PAGE_SIZE or len(items) == total:
-            return items
-    raise GuardError("workflow run pagination bound exceeded")
+            items.extend(batch)
+            ids = [r.get("id") for r in items]
+            if any(type(i) is not int or i <= 0 for i in ids):
+                raise GuardError("workflow run inventory has invalid or duplicate IDs")
+            if len(set(ids)) != len(ids):
+                return None
+            if len(batch) < PAGE_SIZE:
+                return items
+        raise GuardError("workflow run pagination bound exceeded")
+
+    listed = once()
+    if listed is None:
+        listed = once()
+    if listed is None:
+        raise GuardError("workflow run inventory has invalid or duplicate IDs")
+    return listed
 
 
 def _runs(api: Any, repo: str, head: str, *, event: str | None = "pull_request") -> list[Mapping[str, Any]]:

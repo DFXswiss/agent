@@ -950,25 +950,27 @@ def test_pagination_boundary_reads_page_two_for_the_pending_run() -> None:
     assert not any(item.get("status") in {"cancelled", "planned-cancel"} for item in result.workflow_approvals)
 
 
-def test_pagination_exact_page_does_not_fetch_another_page() -> None:
+def test_full_page_matching_total_count_still_reads_the_next_page() -> None:
     fake = FakeApproval()
     fake.runs = [fake.run(id=i, event="push") for i in range(1, 100)]
     fake.runs.append(fake.run(id=100))
 
     def inventory(page: int) -> dict:
-        if page != 1:
-            raise AssertionError(f"unexpected page {page} when total_count is 100")
-        return {"total_count": 100, "workflow_runs": copy.deepcopy(fake.runs)}
+        if page == 1:
+            return {"total_count": 100, "workflow_runs": copy.deepcopy(fake.runs)}
+        if page == 2:
+            return {"total_count": 100, "workflow_runs": []}
+        raise AssertionError(f"unexpected page {page} after the empty follow-up")
 
     fake.inventory = inventory
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [100]
-    # Each inventory is the head listing plus one branch listing per held or
-    # in-flight status. That pair runs again before POST, then the unfiltered
-    # sibling read and the manual-activation scan. None may request page 2
-    # when total_count is 100.
-    assert fake.actions_pages == [1] * 16
-    assert 2 not in fake.actions_pages
+    # total_count matching a full page is not the end of the list. The empty
+    # follow-up is. Each inventory is the head listing plus one branch listing
+    # per held or in-flight status. That pair runs again before POST, then the
+    # unfiltered sibling read and the manual-activation scan.
+    assert fake.actions_pages == [1, 2] * 16
+    assert 3 not in fake.actions_pages
     assert any(item["run_id"] == 100 and item["status"] == "approved" for item in result.workflow_approvals)
     assert fake.cancels == []
     assert not any(item.get("status") in {"cancelled", "planned-cancel"} for item in result.workflow_approvals)
@@ -977,7 +979,6 @@ def test_pagination_exact_page_does_not_fetch_another_page() -> None:
 @pytest.mark.parametrize(
     "inventory",
     [
-        {"total_count": 1000, "workflow_runs": []},
         {"total_count": -1, "workflow_runs": []},
         {"workflow_runs": []},
         {"total_count": True, "workflow_runs": []},
@@ -986,10 +987,8 @@ def test_pagination_exact_page_does_not_fetch_another_page() -> None:
         {"total_count": 1, "workflow_runs": [{"id": "101"}]},
         {"total_count": 2, "workflow_runs": [FakeApproval.run(), FakeApproval.run()]},
         {"total_count": 1, "workflow_runs": [FakeApproval.run(), "x"]},
-        {"total_count": 1, "workflow_runs": [FakeApproval.run(id=1), FakeApproval.run(id=2)]},
     ],
     ids=[
-        "at-max-bound",
         "negative-count",
         "missing-total",
         "bool-total",
@@ -998,7 +997,6 @@ def test_pagination_exact_page_does_not_fetch_another_page() -> None:
         "string-id",
         "duplicate-ids",
         "non-mapping-item",
-        "more-rows-than-total",
     ],
 )
 def test_malformed_inventory_fails_closed_without_post(inventory: dict) -> None:
@@ -1009,7 +1007,7 @@ def test_malformed_inventory_fails_closed_without_post(inventory: dict) -> None:
     assert fake.posts == []
 
 
-def test_pagination_count_changed_between_pages_fails_closed() -> None:
+def test_pagination_count_changed_between_pages_is_accepted() -> None:
     fake = FakeApproval()
 
     def inventory(page: int) -> dict:
@@ -1021,9 +1019,13 @@ def test_pagination_count_changed_between_pages_fails_closed() -> None:
         return {"total_count": 102, "workflow_runs": [FakeApproval.run(id=101)]}
 
     fake.inventory = inventory
-    with pytest.raises(GuardError, match="changed or exceeds"):
-        reconcile_pull(fake.api(), REPO, 1)
-    assert fake.posts == []
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert fake.actions_pages == [1, 2] * 16
+    assert any(
+        item["run_id"] == 101 and item["status"] == "approved"
+        for item in result.workflow_approvals
+    )
 
 
 def test_pagination_duplicate_id_across_pages_fails_closed() -> None:
@@ -1040,6 +1042,32 @@ def test_pagination_duplicate_id_across_pages_fails_closed() -> None:
     fake.inventory = inventory
     with pytest.raises(GuardError, match="duplicate"):
         reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == []
+    assert fake.actions_pages == [1, 2, 1, 2]
+
+
+def test_duplicate_id_retry_returns_the_clean_list_when_the_shift_is_transient() -> None:
+    fake = FakeApproval()
+
+    def inventory(page: int) -> dict:
+        # actions_pages already includes this request. The first pass repeats
+        # id 1 on page 2; the retry from page 1 is a clean two-page list.
+        first_attempt = len(fake.actions_pages) <= 2
+        if page == 1:
+            return {
+                "total_count": 101,
+                "workflow_runs": [FakeApproval.run(id=i, event="push") for i in range(1, 101)],
+            }
+        if page == 2 and first_attempt:
+            return {"total_count": 101, "workflow_runs": [FakeApproval.run(id=1, event="push")]}
+        if page == 2:
+            return {"total_count": 101, "workflow_runs": [FakeApproval.run(id=101, event="push")]}
+        raise AssertionError(f"unexpected page {page}")
+
+    fake.inventory = inventory
+    runs = wa._runs(fake.api(), REPO, HEAD)
+    assert [run["id"] for run in runs] == [*range(1, 101), 101]
+    assert fake.actions_pages == [1, 2, 1, 2]
     assert fake.posts == []
 
 
@@ -1086,7 +1114,51 @@ def test_empty_followup_page_ends_the_list() -> None:
     )
 
 
-def test_runs_helper_rejects_count_change_and_duplicates() -> None:
+def test_empty_first_page_with_nonzero_total_count_returns_no_runs() -> None:
+    fake = FakeApproval()
+    fake.inventory = {"total_count": 15, "workflow_runs": []}
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == []
+    assert result.workflow_approvals == []
+    assert fake.actions_pages == [1] * 8
+
+
+def test_total_count_above_the_cap_with_a_short_page_approves() -> None:
+    fake = FakeApproval()
+    fake.inventory = {"total_count": 1857, "workflow_runs": [fake.run()]}
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert fake.actions_pages == [1] * 16
+    assert 2 not in fake.actions_pages
+    assert any(
+        item["run_id"] == 101 and item["status"] == "approved"
+        for item in result.workflow_approvals
+    )
+
+
+def test_ten_full_pages_exceed_the_pagination_bound() -> None:
+    fake = FakeApproval()
+
+    def inventory(page: int) -> dict:
+        if page > 10:
+            raise AssertionError(f"unexpected page {page}")
+        start = (page - 1) * 100
+        return {
+            "total_count": 1000,
+            "workflow_runs": [
+                FakeApproval.run(id=start + offset, event="push")
+                for offset in range(1, 101)
+            ],
+        }
+
+    fake.inventory = inventory
+    with pytest.raises(GuardError, match="pagination bound exceeded"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == []
+    assert fake.actions_pages == list(range(1, 11))
+
+
+def test_runs_helper_accepts_count_change_and_rejects_duplicates() -> None:
     class Scripted:
         def get_json(self, path: str) -> dict:
             page = int((parse_qs(urlparse(path).query).get("page") or ["1"])[0])
@@ -1097,8 +1169,9 @@ def test_runs_helper_rejects_count_change_and_duplicates() -> None:
                 }
             return {"total_count": 102, "workflow_runs": [FakeApproval.run(id=101, event="push")]}
 
-    with pytest.raises(GuardError, match="changed or exceeds"):
-        wa._runs(Scripted(), REPO, HEAD)
+    runs = wa._runs(Scripted(), REPO, HEAD)
+    assert len(runs) == 101
+    assert [run["id"] for run in runs] == [*range(1, 101), 101]
 
     class Dupes:
         def get_json(self, path: str) -> dict:
