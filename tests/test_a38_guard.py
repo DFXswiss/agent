@@ -23,7 +23,7 @@ except ImportError:
     pass
 
 
-from agent_cli import a38_guard  # noqa: E402
+from agent_cli import a38_guard, held_run_drain  # noqa: E402
 from agent_cli.a38 import (  # noqa: E402
     inventory_omit_reason,
     report_outcome_lines,
@@ -2910,6 +2910,77 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
             )
         )
         self.assertFalse(any(w.startswith("comment:") for w in fake2.writes))
+
+    def test_all_open_drains_after_pull_reconciliation_and_reports_result(self) -> None:
+        fake = FakeAPI()
+        fake.open_pulls = [1, 2]
+        calls: list[int | str] = []
+        drain_result = {
+            "enabled": True,
+            "candidates": 2,
+            "deleted": [101],
+            "planned": [],
+            "aborted": None,
+        }
+
+        def fake_reconcile(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            calls.append(number)
+            return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+        def fake_drain(
+            api: Any, repo: str, *, dry_run: bool
+        ) -> dict[str, object]:
+            calls.append("drain")
+            return drain_result
+
+        buf = io.StringIO()
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", side_effect=fake_drain
+        ), mock.patch("sys.stdout", buf):
+            code = main(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                env={"GH_TOKEN": "fake"},
+                api=fake.api(),
+            )
+
+        self.assertEqual(calls, [1, 2, "drain"])
+        self.assertEqual(json.loads(buf.getvalue())["held_run_drain"], drain_result)
+        self.assertEqual(code, 0)
+
+    def test_all_open_drain_error_is_reported_without_changing_exit_code(self) -> None:
+        fake = FakeAPI()
+        fake.open_pulls = [1, 2]
+
+        def fake_reconcile(
+            api: Any, repo: str, number: int, **kwargs: Any
+        ) -> Assessment:
+            return Assessment(ok=True, status="pass", repo=repo, pr=number)
+
+        buf = io.StringIO()
+        err = io.StringIO()
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=fake_reconcile
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=GuardError("delete failed"),
+        ), mock.patch("sys.stdout", buf), mock.patch("sys.stderr", err):
+            code = main(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                env={"GH_TOKEN": "fake"},
+                api=fake.api(),
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(buf.getvalue())["held_run_drain"],
+            {"error": "delete failed"},
+        )
+        self.assertIn("a38-guard: held run drain: delete failed", err.getvalue())
 
     def test_not_applicable_status_is_deduplicated(self) -> None:
         fake = FakeAPI()

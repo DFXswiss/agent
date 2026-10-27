@@ -3743,7 +3743,21 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                         continue
                     results.append(assessment.to_json())
                     exit_codes.append(_assessment_exit_code(assessment))
-                print(json.dumps({"results": results}, indent=2, sort_keys=True))
+                from .held_run_drain import drain_held_runs
+                # A maintenance pass that cannot delete must not turn the guard
+                # red for every pull request in the sweep.
+                try:
+                    drain = drain_held_runs(
+                        client, _validate_repo(args.repo), dry_run=dry
+                    )
+                except GuardError as exc:
+                    print(
+                        f"a38-guard: held run drain: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    drain = {"error": str(exc)}
+                print(json.dumps({"results": results, "held_run_drain": drain}, indent=2, sort_keys=True))
                 # Fail the process if any enforce assessment failed.
                 return 1 if any(exit_codes) else 0
 

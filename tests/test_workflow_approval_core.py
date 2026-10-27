@@ -245,8 +245,7 @@ def test_private_fork_diverged_base_still_approves():
     assert fake.posts == [101]
 
 
-@pytest.mark.parametrize("inventory", [{"total_count": 1000, "workflow_runs": []},
-    {"total_count": 2, "workflow_runs": []}, {"total_count": True, "workflow_runs": []},
+@pytest.mark.parametrize("inventory", [{"total_count": True, "workflow_runs": []},
     {"total_count": 1, "workflow_runs": [{}]},
     {"total_count": 2, "workflow_runs": [ApprovalAPI.run(), ApprovalAPI.run()]}])
 def test_partial_or_malformed_inventory_cannot_authorize(inventory):
@@ -255,6 +254,14 @@ def test_partial_or_malformed_inventory_cannot_authorize(inventory):
     with pytest.raises(GuardError):
         reconcile_pull(fake.api(), REPO, 1)
     assert not fake.posts
+
+
+def test_empty_inventory_with_nonzero_total_count_authorizes_nothing():
+    fake = ApprovalAPI()
+    fake.inventory = {"total_count": 15, "workflow_runs": []}
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert not fake.posts
+    assert result.workflow_approvals == []
 
 
 @pytest.mark.parametrize("approval", [None, {}, {"enabled": "true", "workflows": [PATH]},

@@ -695,7 +695,9 @@ def test_empty_all_open_cli_exits_successfully(capsys) -> None:
     fake.open_pulls = []
     code = guard.main(["--repo", REPO, "--all-open"], env={}, api=fake.api())
     assert code == 0
-    assert json.loads(capsys.readouterr().out) == {"results": []}
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results"] == []
+    assert "held_run_drain" in payload
     assert fake.writes == []
 
 
