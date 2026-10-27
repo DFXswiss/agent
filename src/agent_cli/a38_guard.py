@@ -3756,7 +3756,7 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                         file=sys.stderr,
                         flush=True,
                     )
-                    drain = {"enabled": True, "error": str(exc)}
+                    drain = {"error": str(exc)}
                 print(json.dumps({"results": results, "held_run_drain": drain}, indent=2, sort_keys=True))
                 # Fail the process if any enforce assessment failed.
                 return 1 if any(exit_codes) else 0

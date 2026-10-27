@@ -93,7 +93,11 @@ def drain_held_runs(
         if not isinstance(head_repository, Mapping):
             continue
         head_repo = head_repository.get("full_name")
-        if not isinstance(head_repo, str) or head_repo == "" or head_repo == repo:
+        if (
+            not isinstance(head_repo, str)
+            or head_repo == ""
+            or head_repo.lower() == repo.lower()
+        ):
             continue
         if _timestamp(run.get("created_at")) >= cutoff:
             continue
@@ -116,8 +120,21 @@ def drain_held_runs(
         if len(completed) >= MAX_DELETIONS:
             break
         run_id = candidate["id"]
-        current = api.get_json(f"/repos/{repo}/actions/runs/{run_id}")
+        reread_path = f"/repos/{repo}/actions/runs/{run_id}"
+        reread_status, current = api.get_optional(reread_path)
+        if reread_status == 404:
+            continue
+        if reread_status != 200:
+            raise GuardError(f"GitHub API HTTP {reread_status} for {reread_path}")
         current_sha = current.get("head_sha") if isinstance(current, Mapping) else None
+        current_head_repository = (
+            current.get("head_repository") if isinstance(current, Mapping) else None
+        )
+        current_head_repo = (
+            current_head_repository.get("full_name")
+            if isinstance(current_head_repository, Mapping)
+            else None
+        )
         if (
             not isinstance(current, Mapping)
             or current.get("id") != run_id
@@ -125,6 +142,9 @@ def drain_held_runs(
             or not isinstance(current_sha, str)
             or current_sha == ""
             or current_sha in protected
+            or not isinstance(current_head_repo, str)
+            or current_head_repo == ""
+            or current_head_repo.lower() == repo.lower()
         ):
             continue
         if dry_run:

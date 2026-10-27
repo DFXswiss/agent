@@ -2978,7 +2978,7 @@ class A38PrGuardConfigScopeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             json.loads(buf.getvalue())["held_run_drain"],
-            {"enabled": True, "error": "delete failed"},
+            {"error": "delete failed"},
         )
         self.assertIn("a38-guard: held run drain: delete failed", err.getvalue())
 

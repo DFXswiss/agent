@@ -32,6 +32,7 @@ class FakeDrain(FakeAPI):
         self.open_pull_items: list[dict] = []
         self.jobs_by_run: dict[int, list[dict]] = {}
         self.run_overrides: dict[int, dict] = {}
+        self.missing_on_reread: set[int] = set()
         self.delete_responses: dict[int, tuple[int, object, dict]] = {}
         self.listing_calls: list[str] = []
         self.jobs_gets: list[int] = []
@@ -82,6 +83,8 @@ class FakeDrain(FakeAPI):
                     "jobs": copy.deepcopy(jobs),
                 }, {}
             if method == "GET" and "/" not in remainder:
+                if ident in self.missing_on_reread:
+                    return 404, {"message": "missing"}, {}
                 run = self.run_overrides.get(ident)
                 if run is None:
                     run = next(item for item in self.runs if item["id"] == ident)
@@ -109,6 +112,15 @@ def test_explicitly_disabled_does_not_list_or_delete() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["enabled"] is False
     assert fake.listing_calls == []
+    assert fake.deletes == []
+
+
+def test_fork_proof_is_case_insensitive_and_skips_same_repository_runs() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(head_repository={"full_name": REPO.upper()})]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == []
+    assert result["candidates"] == 0
     assert fake.deletes == []
 
 
@@ -231,6 +243,15 @@ def test_rate_limited_delete_aborts_the_pass() -> None:
     assert fake.deletes == [101]
 
 
+def test_missing_reread_is_tolerated_and_the_next_candidate_is_deleted() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(id=101), fake.run(id=102)]
+    fake.missing_on_reread.add(101)
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [102]
+    assert fake.deletes == [102]
+
+
 def test_missing_delete_is_tolerated_and_the_next_candidate_is_deleted() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run(id=101), fake.run(id=102)]
@@ -331,7 +352,6 @@ def test_all_open_sweep_runs_drain_last_and_drain_error_does_not_change_exit(
     captured = capsys.readouterr()
     assert code == 0
     assert json.loads(captured.out)["held_run_drain"] == {
-        "enabled": True,
         "error": "delete denied",
     }
     assert "a38-guard: held run drain: delete denied" in captured.err
