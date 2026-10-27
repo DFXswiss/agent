@@ -126,7 +126,7 @@ def test_many_profiles_and_roles_load_without_fixed_count(tmp_path: Path) -> Non
     assert loaded.accounts["codex-primary"].config_dir == "/operator/path/codex-primary"
     assert loaded.roles["builder"].access == "workspace-write"
     assert loaded.roles["reader"].account is loaded.accounts["grok-primary"]
-    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex"})
+    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
     assert ACCESS_VALUES == frozenset({"read-only", "workspace-write"})
 
 
@@ -295,7 +295,7 @@ def test_malformed_configuration_is_rejected(tmp_path: Path, change: str) -> Non
     elif change == "missing-access":
         del data["roles"]["builder"]["access"]
     elif change == "unsupported-provider":
-        data["accounts"]["grok-primary"]["provider"] = "claude"
+        data["accounts"]["grok-primary"]["provider"] = "gemini"
     elif change == "invalid-access":
         data["roles"]["builder"]["access"] = "full"
     elif change == "relative-config-dir":

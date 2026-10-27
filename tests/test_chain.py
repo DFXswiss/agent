@@ -301,18 +301,18 @@ class TestCloseAllowed(unittest.TestCase):
 
     def test_handoff_unpinned_implementer_names_either_vendor(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
-        self.assertIsNone(impl.vendor)
+        self.assertIsNone(impl.slot)
         text = handoff_prompt(impl, task_id="31", session_id="sess")
         self.assertIn("grok|codex", text)
         self.assertIn("who=grok|codex implementer", text)
         conflicts = next(
             s for s in steps_for("resolve-conflicts") if s.key == "conflicts_resolved"
         )
-        self.assertIsNone(conflicts.vendor)
+        self.assertIsNone(conflicts.slot)
         conflicts_text = handoff_prompt(conflicts, task_id="31", session_id="sess")
         self.assertIn("who=grok|codex implementer", conflicts_text)
         reviewer = next(s for s in steps_for("implement") if s.key == "reviewer_approved")
-        self.assertEqual(reviewer.vendor, "grok")
+        self.assertEqual(reviewer.slot, "first")
         reviewer_text = handoff_prompt(reviewer, task_id="31", session_id="sess")
         self.assertIn("who=grok reviewer", reviewer_text)
         script = next(s for s in steps_for("implement") if s.key == "session_registered")

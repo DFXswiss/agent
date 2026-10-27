@@ -45,7 +45,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 | Outside facts | Scripts notice GitHub (and other outside) state. The agent is not told by a human and does not poll GitHub. Example: a recorded PR merges → script writes `pr.merged` on that session and knocks. |
 | AI vs scripts | The AI inserts local intent. Scripts perform every side effect that leaves the machine. Model text is never a state transition. |
 | Checks and gates | A **check** records a fact (`agent check record`). A **gate** is a policy verdict over evidence (`agent gate record`). A model claim is neither. Confidence is not proof. |
-| Ready for review | Draft publication is immediate after the first signed task commit ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). A draft plus local tests is not done. CONTRIBUTING.md is the contract for this repository. When spine and pr-review are attached, grok then Codex are the gates for this head. A review stays valid when its head is this head or a commit after the pull request base that this head still contains, and CI stays bound to this head. `agent allow --action pr-ready` only checks task state. Leave-draft is Ready for review, not completion. A human merges; claim completion only after that merge is verified. |
+| Ready for review | Draft publication is immediate after the first signed task commit ([docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md)). A draft plus local tests is not done. CONTRIBUTING.md is the contract for this repository. When spine and pr-review are attached, model slot `first` then model slot `second` are the gates for this head; the provider behind each slot is device configuration ([docs/ai-accounts.md](docs/ai-accounts.md)). A review stays valid when its head is this head or a commit after the pull request base that this head still contains, and CI stays bound to this head. `agent allow --action pr-ready` only checks task state. Leave-draft is Ready for review, not completion. A human merges; claim completion only after that merge is verified. |
 | Local CI report | The markers stay `<!-- DFX-LOCAL-CI:v1 -->`. Schema `dfx-local-ci/v1` in [docs/local-ci-v1.md](docs/local-ci-v1.md) stays valid as JSON; a comment the guard accepts still needs the outcome lines in [docs/a38.md](docs/a38.md). A newly written A38 report is `dfx-local-ci/v2` inside those markers. `agent local-ci verify` parses the block and computes pass/fail. Private product repositories attach the block to the ready comment. This public client still uses GitHub Actions for its own PRs. |
 | A38 | The complete central process is [docs/a38.md](docs/a38.md) plus [docs/a38-guard.md](docs/a38-guard.md). An adopter keeps only `.github/a38.json`, its integration, and a contributing pointer; plugins use short central pointers. `agent a38` runs and validates the existing report format, while `agent pr-guard` checks live author evidence without executing PR code. Private trusted-base opt-in may provide local code-gate equivalence; public/default GitHub CI, independent required GitHub-only checks, review gates, technical merge restrictions, and human merge remain unchanged. |
 | Merge | The client never merges. A human merges. |
@@ -107,7 +107,7 @@ A task exists only when the spine skill is attached. The durable unit is the ses
 Production-error ingestion is not the product core and not a default skill. The `error.*` spellings in §14 belong to the opt-in **error-fix** skill (§21). A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
 
 **Worker capability ontology / scheduler.**  
-Vendors remain `grok` | `codex`. Scripts are not store workers. Do not add capability tables until two real workflows share them.
+Providers remain the fixed adapter set `grok` | `codex` | `claude`; which one fills model slot `first` or `second` is device configuration, not a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
 
 **A second event envelope beside `activity`.**  
 Outside facts enter as scripts writing catalog rows. Do not add a parallel `external_events` store.
@@ -486,7 +486,7 @@ Provider credential environment variables are cleared in the child process,
 and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot
 be combined; `--model`, when supplied, must match the configured role.
 
-**Vendors remain `grok` | `codex`.** A process running inside a tmux pane is not a store vendor. There is no `vendor=claude` and no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
+**Lane providers are the fixed adapter set `grok` | `codex` | `claude`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; a `claude` lane is the headless `claude --print` adapter, not this tmux pane. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
 Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub.
 
@@ -526,7 +526,7 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 | Execute tests, builds, and checks, including local tests | Static script on the execution device | Script-produced results supplied to the lanes |
 | Monitor or wait for CI, reviews, merges, and other external events; notify a lane when there is useful work | Static script on the execution device | Script-observed facts, not a waiting or polling model |
 | Spine task state | Spine CLI + local constraints | `task` state, checklist keys, `close-step` / `run` |
-| Whether a head is reviewed | Gate after the two vendor stages | `agent gate record` |
+| Whether a head is reviewed | Gate after the two model-slot stages | `agent gate record` |
 | Whether a command ran and what it returned | The process that ran it | `agent check record` (name, command, `pass`/`fail`/`skip`, output) |
 | Merge | Human | Never a client command |
 
@@ -595,7 +595,7 @@ Write owner, hub role, opt-in skills, required session row, and the generic `act
 
 Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md): open the draft as soon as the first signed task commit exists; full tests and reviews are Ready-for-review gates, not draft gates. A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft (Ready for review) needs two review runs. Each names this head, or a commit after the pull request base that this head still contains. CI on this head must be green. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences; ledger `task-done` is not pull-request completion.
 
-Quality and logic of one vendor stage run together. Vendors are `grok`, then `codex`. Codex runs only after both grok dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex` or `claude`) fills a slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later check for that task uses the pinned value; the only provider order in code is the historical default `grok`, then `codex`, applied to tasks and devices without `models` so that existing ledger rows stay readable; the stored stage names `grok-pr` / `codex-pr` and the checklist keys `grok_pr_*` / `codex_pr_*` are the historical identifiers of the two slots. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the newest author report that meets the requirements and was created after the head commit, falling back to an older qualifying report when a newer one does not meet them. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. One comment whose lanes are the first review run, and a later comment whose lanes are the second review run. The first comment stays valid when a later commit still contains that head and that head is after the pull request base. Then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
 
@@ -686,9 +686,14 @@ device's hub identity or transfer ownership of store rows.
 [AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
 profiles and roles, explicit models/access and session-to-role bindings. It is
 used by lane launches, interactive Grok starts and optional Grok usage reads.
-Absent configuration authorizes no AI launch. Fixed workflow kinds and the
-Grok/Codex provider adapters are protocol capabilities, not installed account
-or role selections. A38 visibility lookup uses an explicitly bound GitHub
+Its `models` block names the provider of model slot `first` and `second`;
+device-wide `lanes` bind slots for every session. An unset `models` block
+pins the historical order `grok`, then `codex` on new tasks and is how tasks
+without a pin are read; it authorizes no launch, because lane bindings stay
+required. Task creation and `agent models` read the `models` block.
+Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude
+provider adapters are protocol capabilities, not installed account or role
+selections. A38 visibility lookup uses an explicitly bound GitHub
 session, or operator-supplied visibility without a GitHub lookup.
 
 The standalone PR guard retains its explicit workflow-token configuration.
@@ -708,7 +713,7 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 | Hub assigns, leases, and reassigns work | Hub is replica + fan-out, not author. A disappeared laptop is restore or unread, not a lease expiry that moves authorship. |
 | Formal `CREATED` → `READY_FOR_PR` machine as platform | Spine already has a local task machine. A second hub machine would be a second truth. |
 | Normalized `external_events` table + fingerprint service | Outside facts are script-written `activity` rows (`pr.merged`, …). |
-| Worker capability ontology and scheduler | Vendors are `grok` \| `codex`. Scripts are not store workers. |
+| Worker capability ontology and scheduler | Providers are the fixed adapter set `grok` \| `codex` \| `claude`; slots are device configuration. Scripts are not store workers. |
 | Policy language (allowed repos, forbidden paths, cost budgets) as core | Team-specific rules stay outside this public client (§2 Runtime). |
 | Website as an operations console for leases, token cost, stuck coding tasks | Website is the visibility replica (§7). |
 | Autonomous merge | Already forbidden. Stays forbidden. |

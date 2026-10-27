@@ -31,7 +31,7 @@ the current result or blocker to the script; it observes events and informs a
 lane when further work is useful.
 
 `agent next`, `agent close-step`, and `agent run` are the spine. Do not skip
-keys. Quality and logic of the same vendor stage may be open together.
+keys. Quality and logic of the same model-slot stage may be open together.
 `close-step` applies chain guards, then writes via `checklist set`.
 
 ```bash

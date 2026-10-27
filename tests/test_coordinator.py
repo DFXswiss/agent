@@ -2202,6 +2202,9 @@ def _seed_ready_side_task(
     codex_gates: tuple[str, ...] = (),
     seed_formal_review: bool = False,
     extra_evidence: dict[str, Any] | None = None,
+    models: dict[str, str] | None = None,
+    first_vendor: str = "grok",
+    second_vendor: str = "codex",
 ) -> dict[str, Any]:
     from agent_cli.allow import CHECKLIST_KEYS
 
@@ -2251,6 +2254,7 @@ def _seed_ready_side_task(
             "updated_at": "2026-01-01T00:00:00Z",
             "change_summary_en": "Implemented example/project#7.",
             "change_summary_de": "Umsetzung von example/project#7.",
+            **({"models": models} if models is not None else {}),
         },
     )
     for key in CHECKLIST_KEYS["implement"]:
@@ -2284,9 +2288,9 @@ def _seed_ready_side_task(
         )
     gates: list[tuple[str, str, str]] = []
     for dim in grok_gates:
-        gates.append(("grok-pr", dim, "grok"))
+        gates.append(("grok-pr", dim, first_vendor))
     for dim in codex_gates:
-        gates.append(("codex-pr", dim, "codex"))
+        gates.append(("codex-pr", dim, second_vendor))
     for stage, dim, vendor in gates:
         gid = f"{tid}-g-{stage}-{dim}"
         store.write(
@@ -3008,3 +3012,230 @@ def test_pr_review_scope_keeps_the_compliance_reminder_and_states_a_missing_issu
     assert "and the linked issue" in logic
     assert "Quality:" in quality
     assert "Logic:" in logic
+
+
+def test_execution_binding_unchanged_without_models_block(tmp_path: Path) -> None:
+    """A device without a models block keeps the hash of tasks accepted before model slots."""
+    from agent_cli.coordinator_runtime import execution_binding
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    before = execution_binding(store, worker, repo)
+    # The hash a task accepted before model slots carries: literal six-slot tuple, no models key.
+    import hashlib
+    from dataclasses import asdict
+
+    from agent_cli.ai_accounts import load_ai_accounts
+    from agent_cli.coordinator_runtime import repo_cfg
+    from agent_cli.github_accounts import load_accounts
+
+    legacy_slots = (
+        "grok:implementer",
+        "grok:reviewer",
+        "grok:pr-reviewer-quality",
+        "grok:pr-reviewer-logic",
+        "codex:pr-reviewer-quality",
+        "codex:pr-reviewer-logic",
+    )
+    ai = load_ai_accounts(store.home)
+    github = load_accounts(store.home)
+    legacy = {
+        "repository": asdict(repo_cfg(worker, repo)), "workspace": str(worker.workspace_root),
+        "worker_session": worker.session_id, "review_session": worker.review_session,
+        "reply_logins": worker.reply_logins,
+        "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
+        "lanes": [asdict(ai.for_lane(worker.session_id, s.split(":", 1)[1], s.split(":", 1)[0])) for s in legacy_slots],
+    }
+    assert before == hashlib.sha256(
+        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": "codex"}
+    path.write_text(json.dumps(data))
+    assert execution_binding(store, worker, repo) == before  # default written out
+    data["models"] = {"first": "grok", "second": "claude"}
+    data["accounts"]["claude-w"] = {"provider": "claude", "config_dir": "/test/claude"}
+    data["roles"]["claude-reader"] = {"account": "claude-w", "model": "m", "access": "read-only"}
+    data["lanes"] = {"claude:pr-reviewer-quality": "claude-reader", "claude:pr-reviewer-logic": "claude-reader"}
+    path.write_text(json.dumps(data))
+    assert execution_binding(store, worker, repo) != before
+    data.pop("models")
+    path.write_text(json.dumps(data))
+    assert execution_binding(store, worker, repo) == before
+
+
+def test_preflight_refuses_codex_as_first_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "codex", "second": "grok"}
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    with pytest.raises(CoordinatorError, match="models.first = codex"):
+        preflight_worker(store, worker, fake)
+
+
+
+def _claude_first_manifest(home: Path) -> None:
+    path = home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "claude", "second": "codex"}
+    data["accounts"]["claude-w"] = {"provider": "claude", "config_dir": "/test/claude"}
+    data["roles"]["claude-builder"] = {"account": "claude-w", "model": "claude-model", "access": "workspace-write"}
+    data["roles"]["claude-reader"] = {"account": "claude-w", "model": "claude-model", "access": "read-only"}
+    data["lanes"] = {
+        "claude:implementer": "claude-builder",
+        "claude:reviewer": "claude-reader",
+        "claude:pr-reviewer-quality": "claude-reader",
+        "claude:pr-reviewer-logic": "claude-reader",
+    }
+    path.write_text(json.dumps(data))
+
+
+def test_preflight_accepts_claude_first_with_device_lanes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    preflight_worker(store, worker, fake)
+
+
+def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
+    from agent_cli.coordinator_lanes import _prepare_pr_review_agent
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    task = {
+        "id": "t-claude",
+        "session_id": "worker-session",
+        "models": {"first": "claude", "second": "codex"},
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    prep = _prepare_pr_review_agent(
+        store, worker, task, role="pr-reviewer-quality", vendor="claude", head="a" * 40,
+        spec_body="Review this.",
+    )
+    argv = prep["argv"]
+    assert "claude" in argv and "--print" in argv
+    assert "--setting-sources" in argv and "Bash" in argv[argv.index("--disallowedTools") + 1 :]
+    assert "Review this." in (prep.get("stdin_text") or "")
+
+
+
+def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    patch_run_bounded(monkeypatch, fake)
+    tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+    tasks = store.rows("task")
+    assert tasks and all(t.get("models") == {"first": "claude", "second": "codex"} for t in tasks)
+
+    # A later device change does not move what the accepted task runs on.
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import _first_slot_vendor
+
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": "codex"}
+    path.write_text(json.dumps(data))
+    task = dict(tasks[0])
+    assert _first_slot_vendor(task) == "claude"
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "phase_pr_gates",
+        lambda *a, vendor, stage, **k: seen.append((vendor, stage)) or [],
+    )
+    coordinator_lanes.phase_pr_gates_grok(store, worker, task, fake, None)
+    coordinator_lanes.phase_pr_gates_codex(store, worker, task, fake, None)
+    assert seen == [("claude", "grok-pr"), ("codex", "codex-pr")]
+
+
+
+def test_readiness_uses_the_providers_pinned_on_the_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """phase_readiness compares gate vendors with the task pin, not the device or fixed names."""
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    pinned = {"first": "claude", "second": "codex"}
+    task = _seed_ready_side_task(
+        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000c1", phase="readiness",
+        checklist_codex={}, codex_gates=("quality", "logic"), models=pinned, first_vendor="claude",
+    )
+    lines = phase_readiness(store, worker, task, fake)
+    assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
+
+    task = _seed_ready_side_task(
+        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000c2", phase="readiness",
+        checklist_codex={}, codex_gates=("quality", "logic"), models=pinned, first_vendor="grok",
+    )
+    with pytest.raises(CoordinatorError, match="missing approved gate grok-pr/"):
+        phase_readiness(store, worker, task, fake)
+
+
+
+
+def test_first_slot_vendor_refuses_a_codex_pin() -> None:
+    from agent_cli.coordinator_runtime import _first_slot_vendor
+
+    with pytest.raises(CoordinatorError, match="models.first = codex"):
+        _first_slot_vendor({"models": {"first": "codex", "second": "grok"}})
+    assert _first_slot_vendor({}) == "grok"
+
+
+
+def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wrong-provider gate neither unlocks slot second nor counts as cached."""
+    from agent_cli import coordinator_lanes
+
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(coordinator_lanes, "verify_checkout_identity", lambda *a, **k: None)
+    monkeypatch.setattr(coordinator_lanes, "verify_signed_clean_head", lambda *a, **k: fake.head)
+    pinned = {"first": "claude", "second": "codex"}
+    task = _seed_ready_side_task(
+        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d1", phase="pr_gates_codex",
+        checklist_codex={}, models=pinned, first_vendor="grok",
+    )
+    with pytest.raises(CoordinatorError, match="codex-pr requires approved grok-pr/"):
+        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="codex", stage="codex-pr")
+
+    task = _seed_ready_side_task(
+        store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d2", phase="pr_gates_grok",
+        checklist_codex={}, models=pinned, first_vendor="grok",
+    )
+    launched: list[str] = []
+    diff = tmp_path / "review.diff"
+    diff.write_text("diff\n", encoding="utf-8")
+    monkeypatch.setattr(coordinator_lanes, "write_review_diff", lambda *a, **k: diff)
+    monkeypatch.setattr(coordinator_lanes, "write_review_context", lambda *a, **k: "")
+    monkeypatch.setattr(
+        coordinator_lanes, "_prepare_pr_review_agent",
+        lambda *a, **k: launched.append(k["role"]) or (_ for _ in ()).throw(CoordinatorError("stop")),
+    )
+    with pytest.raises(CoordinatorError, match="stop"):
+        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="claude", stage="grok-pr")
+    assert launched  # grok gates on a claude-pinned task are not taken as cached

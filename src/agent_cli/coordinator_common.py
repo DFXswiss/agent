@@ -9,6 +9,7 @@ from typing import Any
 
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .github_accounts import Account, AccountError, load_accounts
+from .model_slots import DEFAULT_MODEL_SLOTS, SLOT_KEY_PREFIXES, STAGE_SLOTS, ModelSlots
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
@@ -17,14 +18,30 @@ LaneRunner = Callable[[list[str], str | None], Any]
 
 REQUIRED_WORKER_SKILLS = ("spine", "review-loop", "pr-review")
 REQUIRED_REVIEW_SKILLS = ("pr-review",)
-REQUIRED_LANE_SLOTS = (
-    "grok:implementer",
-    "grok:reviewer",
-    "grok:pr-reviewer-quality",
-    "grok:pr-reviewer-logic",
-    "codex:pr-reviewer-quality",
-    "codex:pr-reviewer-logic",
-)
+# Workflow kinds per model slot. Slot ``first`` implements, reviews the inner
+# loop and runs the first PR pair; slot ``second`` runs the second PR pair.
+SLOT_LANE_KINDS = {
+    "first": ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic"),
+    "second": ("pr-reviewer-quality", "pr-reviewer-logic"),
+}
+
+
+def required_lane_slots(models: ModelSlots) -> tuple[str, ...]:
+    """Lane slots (``vendor:kind``) a worker must bind for its configured models."""
+    slots: list[str] = []
+    for slot, kinds in SLOT_LANE_KINDS.items():
+        vendor = models.for_slot(slot)
+        slots.extend(f"{vendor}:{kind}" for kind in kinds)
+    return tuple(slots)
+
+
+def checklist_key_for_stage(stage: str, dimension: str) -> str:
+    """Checklist key of a PR gate: historical slot prefix plus dimension."""
+    return f"{SLOT_KEY_PREFIXES[STAGE_SLOTS[stage]]}{dimension}"
+
+
+# Historical default binding (models unset: grok first, codex second).
+REQUIRED_LANE_SLOTS = required_lane_slots(DEFAULT_MODEL_SLOTS)
 PROTECTED_BRANCHES = frozenset({"develop", "main", "master"})
 ACCEPT_MARKER_PREFIX = "<!-- agent-coordinator:accept:v1:"
 ACCEPT_BODY = (

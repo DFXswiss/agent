@@ -22,9 +22,11 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
+from .ai_accounts import load_model_slots
 from .allow import (
     ACTIONS,
     CODEX_SECOND_REVIEW_KEYS,
+    GATE_PAIRS,
     GATE_UNAVAILABLE_KEYS,
     SECOND_REVIEW_NOT_POSTED,
     TERMINAL_STATES,
@@ -41,6 +43,7 @@ from .chain import (
     handoff_prompt,
     next_steps,
     required_source,
+    step_vendor_label,
     to_json as step_to_json,
 )
 from .github_act import _repo_ok
@@ -49,6 +52,7 @@ from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
+from .model_slots import PROVIDER_CHOICES, STAGE_CHOICES, ModelSlots, ModelSlotsError, models_from_snapshot
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .runtime import (
@@ -177,7 +181,8 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
     }
 )
 AGENT_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
-VENDORS = ("grok", "codex")
+# Supported provider adapters. Which one runs a slot is device configuration.
+VENDORS = LANE_VENDORS
 N_A_ALLOWED = frozenset(
     {
         "coverage_ok",
@@ -187,12 +192,6 @@ N_A_ALLOWED = frozenset(
         "deviation_declared",
         "deviation_granted",
     }
-)
-GATE_PAIRS = (
-    ("grok-pr", "quality", "grok"),
-    ("grok-pr", "logic", "grok"),
-    ("codex-pr", "quality", "codex"),
-    ("codex-pr", "logic", "codex"),
 )
 STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 
@@ -208,6 +207,12 @@ def default_home() -> Path:
 def _same_home(a: Path, b: Path) -> bool:
     """True when both paths name the same directory after ~ expansion and symlink resolution."""
     return a.expanduser().resolve() == b.expanduser().resolve()
+
+
+def _store_models(store: Any) -> ModelSlots:
+    """Model slots of the device that owns this store (its home, else the CLI home)."""
+    store_home = getattr(store, "home", None)
+    return load_model_slots(store_home if isinstance(store_home, Path) else home())
 
 
 def home() -> Path:
@@ -673,6 +678,7 @@ def cmd_task(args: list[str]) -> None:
                     "ref": flag(rest, "--ref"),
                     "state": "open",
                     "current_round": 0,
+                    "models": _store_models(store).as_dict(),
                     "created_at": utcnow(),
                     "updated_at": utcnow(),
                     "change_summary_en": None,
@@ -918,14 +924,22 @@ def cmd_agent(args: list[str]) -> None:
             if role not in AGENT_ROLES:
                 die(f"role must be {'|'.join(AGENT_ROLES)}")
             if vendor not in VENDORS:
-                die("vendor must be grok|codex")
+                die(f"vendor must be {PROVIDER_CHOICES}")
             round_raw = flag(rest, "--round")
             round_num: int | None = None
             if role in ("implementer", "reviewer"):
                 if round_raw is None or round_raw == "":
                     die(f"{role} requires --round")
-                if role == "reviewer" and vendor != "grok":
-                    die("reviewer requires --vendor grok")
+            # The task's pin; an unknown task is reported below by _need, and
+            # until then the historical order applies (never the device setting).
+            models = models_from_snapshot(store.row("task", tid))
+            if role == "reviewer" and vendor != models.first:
+                die(f"reviewer requires --vendor {models.first} (configured model slot first)")
+            if role == "implementer" and models.slot_of(vendor) is None:
+                die(
+                    f"implementer requires --vendor {models.first}|{models.second} "
+                    "(configured model slots)"
+                )
             if round_raw is not None and round_raw != "":
                 if not round_raw.isdigit():
                     die("--round must be an integer")
@@ -1293,8 +1307,8 @@ def _queue_gate_findings(
 def cmd_gate(args: list[str]) -> None:
     if not args or args[0] != "record":
         die(
-            "Usage: agent gate record --task UUID --stage grok-pr|codex-pr "
-            "--dimension quality|logic --vendor grok|codex --verdict approved|rejected|unavailable "
+            f"Usage: agent gate record --task UUID --stage {STAGE_CHOICES} "
+            f"--dimension quality|logic --vendor {PROVIDER_CHOICES} --verdict approved|rejected|unavailable "
             "--head SHA --agent UUID [--evidence TEXT; required when rejected or unavailable]"
         )
     rest = args[1:]
@@ -1307,14 +1321,11 @@ def cmd_gate(args: list[str]) -> None:
     agent_id = require_flag(rest, "--agent")
     evidence = flag(rest, "--evidence")
     if stage not in ("grok-pr", "codex-pr"):
-        die("stage must be grok-pr|codex-pr")
+        die(f"stage must be {STAGE_CHOICES}")
     if dimension not in ("quality", "logic"):
         die("dimension must be quality|logic")
     if vendor not in VENDORS:
-        die("vendor must be grok|codex")
-    expected_vendor = "grok" if stage == "grok-pr" else "codex"
-    if vendor != expected_vendor:
-        die(f"stage {stage} requires vendor {expected_vendor}")
+        die(f"vendor must be {PROVIDER_CHOICES}")
     if verdict not in ("approved", "rejected", "unavailable"):
         die("verdict must be approved|rejected|unavailable")
     if verdict == "rejected" and not (evidence or "").strip():
@@ -1326,6 +1337,10 @@ def cmd_gate(args: list[str]) -> None:
     store = open_store()
     try:
         task = _need(store, "task", tid)
+        models = models_from_snapshot(task)
+        expected_vendor = models.for_stage(stage)
+        if vendor != expected_vendor:
+            die(f"stage {stage} requires vendor {expected_vendor} (model slot pinned on the task)")
         session = _need(store, "session", task["session_id"])
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
@@ -1339,7 +1354,7 @@ def cmd_gate(args: list[str]) -> None:
             for label, g in (("quality", gq), ("logic", gl)):
                 if g is None:
                     die(f"codex-pr requires approved grok-pr/{label} at the same head")
-                if g.get("vendor") != "grok" or g.get("verdict") != "approved":
+                if g.get("vendor") != models.first or g.get("verdict") != "approved":
                     die(f"codex-pr requires approved grok-pr/{label} at the same head")
                 if g.get("head_sha") != head:
                     die(f"codex-pr requires approved grok-pr/{label} at the same head")
@@ -1384,7 +1399,7 @@ def cmd_gate(args: list[str]) -> None:
                 task["updated_at"] = utcnow()
                 store.write("task", "update", tid, _strip(task))
         elif verdict == "approved" and task.get("state") == "gate-blocked":
-            if _all_gate_pairs_approved_same_head(_latest_gates(store, tid)):
+            if _all_gate_pairs_approved_same_head(_latest_gates(store, tid), models):
                 task["state"] = "pr-review"
                 task["updated_at"] = utcnow()
                 store.write("task", "update", tid, _strip(task))
@@ -2297,13 +2312,15 @@ def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
     return latest
 
 
-def _all_gate_pairs_approved_same_head(latest: dict[tuple[str, str], dict]) -> bool:
+def _all_gate_pairs_approved_same_head(
+    latest: dict[tuple[str, str], dict], models: ModelSlots
+) -> bool:
     heads: set[str] = set()
-    for stage, dim, vendor in GATE_PAIRS:
+    for stage, dim, slot in GATE_PAIRS:
         got = latest.get((stage, dim))
         if got is None:
             return False
-        if got.get("vendor") != vendor or got.get("verdict") != "approved":
+        if got.get("vendor") != models.for_slot(slot) or got.get("verdict") != "approved":
             return False
         head = str(got.get("head_sha") or "")
         if not head:
@@ -2376,6 +2393,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         "local_checks": local_checks,
         "pull_opener": "",
         "trusted_pr_guard": None,
+        "models": models_from_snapshot(task).as_dict(),
     }
 
 
@@ -2413,6 +2431,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
     return {
         "session_active": bool(session is not None and session.get("status") == "active"),
         "agents": agents,
+        "models": task.get("models") or models_from_snapshot(None).as_dict(),
         "gates": task.get("gates") or [],
         "local_checks": task.get("local_checks") or [],
         "head_sha": head,
@@ -2622,6 +2641,7 @@ def cmd_next(args: list[str]) -> None:
         _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid)
         wf = str(snap["workflow"])
+        models = models_from_snapshot(snap)
         ready = next_steps(wf, snap["checklist"], spine_only=True)
         if as_json:
             print(
@@ -2629,12 +2649,13 @@ def cmd_next(args: list[str]) -> None:
                     {
                         "task": tid,
                         "workflow": wf,
-                        "next": [step_to_json(s) for s in ready],
+                        "next": [step_to_json(s, models) for s in ready],
                         "handoff": (
                             handoff_prompt(
                                 ready[0],
                                 task_id=str(tid),
                                 session_id=str(snap.get("session_id")),
+                                models=models,
                             )
                             if len(ready) == 1 and ready[0].kind == "agent"
                             else None
@@ -2652,7 +2673,7 @@ def cmd_next(args: list[str]) -> None:
                 f"next task={tid} {s.key} kind={s.kind} source={required_source(s)}"
             )
             if s.role:
-                line += f" role={s.role} vendor={'grok|codex' if s.vendor is None else s.vendor}"
+                line += f" role={s.role} vendor={step_vendor_label(s, models)}"
             print(line)
         if len(ready) == 1 and ready[0].kind == "agent":
             sys.stdout.write(
@@ -2660,6 +2681,7 @@ def cmd_next(args: list[str]) -> None:
                     ready[0],
                     task_id=str(tid),
                     session_id=str(snap.get("session_id")),
+                    models=models,
                 )
             )
     finally:
@@ -2886,8 +2908,8 @@ def _find_working_agent(
     return None
 
 
-def _agent_handoff_exit(step, tid: str, session_id: str | None) -> None:
-    sys.stdout.write(handoff_prompt(step, task_id=str(tid), session_id=session_id))
+def _agent_handoff_exit(step, tid: str, session_id: str | None, models: ModelSlots | None = None) -> None:
+    sys.stdout.write(handoff_prompt(step, task_id=str(tid), session_id=session_id, models=models))
     print(
         f"agent: agent step. After the lane: close-step --task {tid} "
         f"--key {step.key} --source script --evidence …",
@@ -2927,7 +2949,10 @@ def cmd_run(args: list[str]) -> None:
             if step.kind == "agent":
                 sys.stdout.write(
                     handoff_prompt(
-                        step, task_id=str(tid), session_id=str(snap.get("session_id"))
+                        step,
+                        task_id=str(tid),
+                        session_id=str(snap.get("session_id")),
+                        models=models_from_snapshot(snap),
                     )
                 )
             return
@@ -3049,7 +3074,8 @@ def cmd_run(args: list[str]) -> None:
                 cwd = _resolve_run_cwd(args)
                 tmux = "--no-tmux" not in args
                 role = str(step.role or "")
-                vendor = str(step.vendor or ("grok" if role == "implementer" else ""))
+                models = models_from_snapshot(snap)
+                vendor = models.for_slot(str(step.slot)) if step.slot else models.first
                 session_id = str(snap.get("session_id") or "")
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
@@ -3108,9 +3134,13 @@ def cmd_run(args: list[str]) -> None:
                     snap = _chain_snapshot(store, tid, extra_head=head)
                     task = _need(store, "task", tid)
                 else:
-                    _agent_handoff_exit(step, tid, str(snap.get("session_id")))
+                    _agent_handoff_exit(
+                        step, tid, str(snap.get("session_id")), models_from_snapshot(snap)
+                    )
             else:
-                _agent_handoff_exit(step, tid, str(snap.get("session_id")))
+                _agent_handoff_exit(
+                    step, tid, str(snap.get("session_id")), models_from_snapshot(snap)
+                )
         if close_key is None:
             close_ev = (
                 evidence
@@ -3295,10 +3325,49 @@ def _print_lane_result(result: LaneResult) -> None:
     )
 
 
+def cmd_models(args: list[str]) -> None:
+    """Print model slots: the device's, or with ``--task`` the ones pinned on that task.
+
+    ``agent models [first|second] [--task UUID] [--json]``
+    """
+    usage = "Usage: agent models [first|second] [--task UUID] [--json]"
+    as_json = "--json" in args
+    tid = flag(args, "--task")
+    rest = [a for a in args if a != "--json"]
+    if tid is not None:
+        i = rest.index("--task")
+        rest = rest[:i] + rest[i + 2 :]
+    positional = [a for a in rest if not a.startswith("--")]
+    if len(positional) > 1 or any(a.startswith("--") for a in rest) or tid == "":
+        die(usage)
+    if tid is None:
+        models = load_model_slots(home())
+    else:
+        store = open_store()
+        try:
+            models = models_from_snapshot(_need(store, "task", tid))
+        finally:
+            store.close()
+    if positional:
+        slot = positional[0]
+        if slot not in ("first", "second"):
+            die(usage)
+        if as_json:
+            print(json.dumps({slot: models.for_slot(slot)}, sort_keys=True))
+        else:
+            print(models.for_slot(slot))
+        return
+    if as_json:
+        print(json.dumps(models.as_dict(), sort_keys=True))
+        return
+    for slot, vendor in models.as_dict().items():
+        print(f"{slot}={vendor}")
+
+
 def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
-            "Usage: agent lane run --role ROLE --vendor grok|codex "
+            f"Usage: agent lane run --role ROLE --vendor {PROVIDER_CHOICES} "
             "--session ID --spec-file PATH [--cwd PATH] [--dry-run] [--no-tmux]"
         )
     rest = args[1:]
@@ -3306,13 +3375,13 @@ def cmd_lane(args: list[str]) -> None:
     vendor = require_flag(rest, "--vendor")
     session_id = require_flag(rest, "--session")
     spec_file = require_flag(rest, "--spec-file")
-    cwd = flag(rest, "--cwd") or os.getcwd()
+    cwd = _resolve_run_cwd(rest)
     dry_run = "--dry-run" in rest
     tmux = "--no-tmux" not in rest
     if role not in LANE_ROLES:
         die(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
-        die("vendor must be grok|codex")
+        die(f"vendor must be {PROVIDER_CHOICES}")
     result = launch(
         role=role,
         vendor=vendor,
@@ -3803,6 +3872,7 @@ COMMANDS = {
     "pg": cmd_pg,
     "knock": cmd_knock,
     "lane": cmd_lane,
+    "models": cmd_models,
     "watch": cmd_watch,
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
@@ -3818,7 +3888,7 @@ def main(argv: list[str] | None = None) -> None:
     if not args or args[0] in ("-h", "--help"):
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
-            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|watch|"
+            "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
             "github|query|subscribe|mail|supervise|coordinate> …"
         )
     cmd = args[0]
@@ -3828,6 +3898,8 @@ def main(argv: list[str] | None = None) -> None:
         COMMANDS[cmd](args[1:])
     except (StoreError, HubError) as exc:
         die(str(exc))
+    except ModelSlotsError as exc:
+        die(f"invalid models pinned on the task: {exc}")
 
 
 if __name__ == "__main__":

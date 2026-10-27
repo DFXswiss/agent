@@ -31,7 +31,9 @@ from .coordinator_common import (
 from .coordinator_config import WorkerConfig
 from .coordinator_exec import run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
-from .lane import LaneResult, codex_argv, grok_argv
+from .coordinator_common import checklist_key_for_stage
+from .lane import OUTPUT_FILE_VENDORS, SPEC_VIA_STDIN, LaneResult, provider_argv
+from .model_slots import SLOT_STAGES, ModelSlots, ModelSlotsError, models_from_snapshot
 from .store import Store, utcnow
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
@@ -180,24 +182,23 @@ def launch_lane(
     write = selected.access == "workspace-write"
     codex_output: str | None = None
     try:
-        if vendor == "grok":
-            argv = [*selected.env_prefix(), *grok_argv(spec_file=str(spec_path), cwd=worktree, write=write, model=selected.model)]
-            if role == "implementer":
-                argv = harden_grok_write_argv(argv)
-            stdin_text = None
-        else:
-            fd, codex_output = tempfile.mkstemp(prefix="agent-coord-codex-", suffix=".txt")
+        if vendor in OUTPUT_FILE_VENDORS:
+            fd, codex_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
             os.close(fd)
-            argv = [
-                *selected.env_prefix(),
-                *codex_argv(
-                    cwd=worktree,
-                    write=write,
-                    output_file=codex_output,
-                    model=selected.model,
-                ),
-            ]
-            stdin_text = spec_text
+        argv = [
+            *selected.env_prefix(),
+            *provider_argv(
+                vendor,
+                spec_file=str(spec_path),
+                cwd=worktree,
+                write=write,
+                model=selected.model,
+                output_file=codex_output,
+            ),
+        ]
+        if vendor == "grok" and role == "implementer":
+            argv = harden_grok_write_argv(argv)
+        stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
 
         def _run(argv_local: list[str], stdin_local: str | None) -> Any:
             if lane_runner is not None:
@@ -397,6 +398,7 @@ def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
         "checklist": checklist,
         "agents": agents,
         "gates": gates,
+        "models": _task_models(task).as_dict(),
         "local_checks": local_checks,
         "implementer_verdict": implementer_verdict,
         "reviewer_verdict": reviewer_verdict,
@@ -692,17 +694,21 @@ def _prepare_pr_review_agent(
     )
     write = selected.access == "workspace-write"
     codex_output: str | None = None
-    if vendor == "grok":
-        argv = [*selected.env_prefix(), *grok_argv(spec_file=str(spec_path), cwd=worktree, write=write, model=selected.model)]
-        stdin_text = None
-    else:
-        fd, codex_output = tempfile.mkstemp(prefix="agent-coord-codex-", suffix=".txt")
+    if vendor in OUTPUT_FILE_VENDORS:
+        fd, codex_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
         os.close(fd)
-        argv = [
-            *selected.env_prefix(),
-            *codex_argv(cwd=worktree, write=write, output_file=codex_output, model=selected.model),
-        ]
-        stdin_text = spec_text
+    argv = [
+        *selected.env_prefix(),
+        *provider_argv(
+            vendor,
+            spec_file=str(spec_path),
+            cwd=worktree,
+            write=write,
+            model=selected.model,
+            output_file=codex_output,
+        ),
+    ]
+    stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
     return {
         "agent_id": aid,
         "role": role,
@@ -798,7 +804,7 @@ def _promote_posted_codex_checklist(
     does not turn an unfinished step into a blocker. The lane start is not
     skipped: this runs only for a gate that is already approved.
     """
-    key = f"codex_pr_{dimension}"
+    key = checklist_key_for_stage(stage, dimension)
     snap = checklist_snapshot(store, task)
     current = (snap.get("checklist") or {}).get(key)
     if current != "n_a":
@@ -823,7 +829,9 @@ def phase_pr_gates(
     vendor: str,
     stage: str,
 ) -> list[str]:
-    """Run quality+logic in parallel for one vendor stage on the current head.
+    """Run quality+logic in parallel for one model-slot stage on the current head.
+
+    ``vendor`` is the provider configured for ``stage`` on this device.
 
     Agent rows are prepared and persisted on the main thread. Subprocess work
     runs in threads (no Store calls). Results are persisted on the main thread.
@@ -852,23 +860,30 @@ def phase_pr_gates(
         )
         raise CoordinatorError("uncertain prior lane outcome for vendor stage")
     latest = latest_gates(store, task["id"])
-    if vendor == "codex":
+    second_stage = stage == SLOT_STAGES["second"]
+    next_phase = "ci" if second_stage else "pr_gates_codex"
+    first_vendor = _task_models(task).first
+
+    def _approved(gate: dict[str, Any] | None, want_vendor: str) -> bool:
+        # A gate counts only from the provider pinned on the task for that slot.
+        return (
+            gate is not None
+            and gate.get("verdict") == "approved"
+            and gate.get("head_sha") == head
+            and gate.get("vendor") == want_vendor
+        )
+
+    if second_stage:
         for dim in ("quality", "logic"):
-            g = latest.get(("grok-pr", dim))
-            if g is None or g.get("verdict") != "approved" or g.get("head_sha") != head:
+            if not _approved(latest.get(("grok-pr", dim)), first_vendor):
                 raise CoordinatorError(f"codex-pr requires approved grok-pr/{dim} on {head[:7]}")
-    if all(
-        (g := latest.get((stage, dim))) is not None
-        and g.get("verdict") == "approved"
-        and g.get("head_sha") == head
-        for dim in ("quality", "logic")
-    ):
-        if vendor == "codex":
+    if all(_approved(latest.get((stage, dim)), vendor) for dim in ("quality", "logic")):
+        if second_stage:
             for dim in ("quality", "logic"):
                 _promote_posted_codex_checklist(
                     store, task, stage=stage, head=head, dimension=dim
                 )
-        c["phase"] = "pr_gates_codex" if vendor == "grok" else "ci"
+        c["phase"] = next_phase
         save_task(store, task)
         return [f"{stage} already complete on {head[:7]}"]
 
@@ -876,12 +891,8 @@ def phase_pr_gates(
     lines: list[str] = []
     for dimension, role in (("quality", "pr-reviewer-quality"), ("logic", "pr-reviewer-logic")):
         existing = latest.get((stage, dimension))
-        if (
-            existing is not None
-            and existing.get("verdict") == "approved"
-            and existing.get("head_sha") == head
-        ):
-            if vendor == "codex":
+        if _approved(existing, vendor):
+            if second_stage:
                 _promote_posted_codex_checklist(
                     store, task, stage=stage, head=head, dimension=dimension
                 )
@@ -890,7 +901,7 @@ def phase_pr_gates(
         needed.append((dimension, role))
 
     if not needed:
-        c["phase"] = "pr_gates_codex" if vendor == "grok" else "ci"
+        c["phase"] = next_phase
         save_task(store, task)
         return lines
 
@@ -1012,7 +1023,7 @@ def phase_pr_gates(
         ):
             # Incomplete/invalid reviewer RESULT (including ask/blocked): stop.
             # Not a code rejection and not an implementer fix loop.
-            resume = "pr_gates_grok" if vendor == "grok" else "pr_gates_codex"
+            resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
             c["phase"] = "blocked"
             c["resume_phase"] = resume
             c["blocker"] = (
@@ -1080,7 +1091,7 @@ def phase_pr_gates(
         set_checklist(
             store,
             task,
-            f"{vendor}_pr_{dimension}",
+            checklist_key_for_stage(stage, dimension),
             "ja",
             f"{stage}/{dimension} on {head}",
             source="script",
@@ -1094,9 +1105,37 @@ def phase_pr_gates(
     gates = evidence_map.setdefault("gates", {})
     gates[stage] = {"quality": "approved", "logic": "approved", "head": head}
     evidence_map["gates_head"] = head
-    c["phase"] = "pr_gates_codex" if vendor == "grok" else "ci"
+    c["phase"] = next_phase
     save_task(store, task)
     return lines
+
+
+def _task_models(task: dict[str, Any]) -> ModelSlots:
+    """Model slots pinned on the task (historical order for tasks without a pin)."""
+    try:
+        return models_from_snapshot(task)
+    except ModelSlotsError as exc:
+        raise CoordinatorError(str(exc)) from exc
+
+
+def _phase_pr_gates_slot(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    lane_runner: LaneRunner | None,
+    slot: str,
+) -> list[str]:
+    models = _task_models(task)
+    return phase_pr_gates(
+        store,
+        worker,
+        task,
+        runner,
+        lane_runner,
+        vendor=models.for_slot(slot),
+        stage=SLOT_STAGES[slot],
+    )
 
 
 def phase_pr_gates_grok(
@@ -1106,7 +1145,8 @@ def phase_pr_gates_grok(
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> list[str]:
-    return phase_pr_gates(store, worker, task, runner, lane_runner, vendor="grok", stage="grok-pr")
+    """First PR pair (historical phase name; the provider is model slot ``first``)."""
+    return _phase_pr_gates_slot(store, worker, task, runner, lane_runner, "first")
 
 
 def phase_pr_gates_codex(
@@ -1116,4 +1156,5 @@ def phase_pr_gates_codex(
     runner: Runner,
     lane_runner: LaneRunner | None,
 ) -> list[str]:
-    return phase_pr_gates(store, worker, task, runner, lane_runner, vendor="codex", stage="codex-pr")
+    """Second PR pair (historical phase name; the provider is model slot ``second``)."""
+    return _phase_pr_gates_slot(store, worker, task, runner, lane_runner, "second")

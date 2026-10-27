@@ -14,7 +14,7 @@ and bounded model lanes on the execution device. It never merges.
 | CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Legacy assignment dispatch and `supervise` refuse these sessions. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
-| Universal sandbox / forced model isolation | **Not claimed.** Grok implementer argv denies Bash/subagents/web-search; that is process argv hardening only. |
+| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude allows only read and edit tools, disallows Bash, Agent, Task and the web, and runs with `--setting-sources user` and `--strict-mcp-config`; Codex is refused as slot `first`. That is process argv hardening only. |
 
 Distinguish a requirement (DESIGN §19.7), an implemented module, and a verified
 deployment. This document does not invent evidence that a device is running the
@@ -100,9 +100,14 @@ for worker in workers.values():
   authenticated, and bound to **different** logins; worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
   provider.
-- Required AI slots: `grok:implementer`, `grok:reviewer`,
-  `grok:pr-reviewer-quality`, `grok:pr-reviewer-logic`,
-  `codex:pr-reviewer-quality`, `codex:pr-reviewer-logic`.
+- Required AI slots, with `<first>` / `<second>` the providers of the device's
+  model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
+  `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,
+  `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic`. The coordinator
+  pins `models` on each task it accepts and refuses `models.first = codex`,
+  because a codex implementer can run commands. A non-default `models` block
+  is part of the execution binding, so changing it stops accepted tasks with
+  "task execution configuration changed" until it is restored.
 - Checkpoints live in `task.payload['coordinator']` and activity `result`
   fields. There is **no** second hub state machine and **no** new store table.
 - `runner` executes `gh`/`git` trusted calls and returns
@@ -111,9 +116,12 @@ for worker in workers.values():
 - `lane_runner(argv, stdin)` is optional. When omitted, lanes and trusted
   argv lists run via a Python bounded subprocess (process-group kill on
   timeout), preserving stdin and cwd. External `timeout(1)` is **not** used
-  (absent on stock macOS). Tests inject fakes. Grok implementer argv is
-  hardened with `--deny Bash`, `--no-subagents`, and `--disable-web-search`.
-  This is process argv hardening, **not** universal sandbox enforcement.
+  (absent on stock macOS). Tests inject fakes. The implementer argv
+  is hardened per first-slot provider: Grok with `--deny Bash`,
+  `--no-subagents`, and `--disable-web-search`; Claude with read and edit tools
+  only, Bash, Agent, Task and the web disallowed, `--setting-sources user` and
+  `--strict-mcp-config`; Codex is refused as slot `first`. This is process argv
+  hardening, **not** universal sandbox enforcement.
 - Environment context for trusted `check_argv` / `readiness_argv` (set in the
   child environment, with cwd = worktree):
   `AGENT_COORDINATOR_HEAD`, `AGENT_COORDINATOR_BASE`, `AGENT_COORDINATOR_REPO`,
@@ -190,19 +198,21 @@ for worker in workers.values():
 6. **Tests** run only via script `check_argv` on the exact clean signed head
    (cwd = worktree). Failure routes bounded output to the implementer. Stale
    passes from another head are not reused.
-7. **PR gates**: Grok quality+logic in **parallel** (fresh independent
-   invocations; agent rows prepared on the main thread, subprocesses in
-   threads, results persisted on the main thread), then Codex quality+logic the
-   same way only after both Grok dimensions are approved on that head. Author
+7. **PR gates**: model slot `first` quality+logic in **parallel** (fresh
+   independent invocations; agent rows prepared on the main thread, subprocesses
+   in threads, results persisted on the main thread), then model slot `second`
+   quality+logic the same way only after both first-slot dimensions are approved
+   on that head. The phase and stage names `pr_gates_grok` / `grok-pr` and
+   `pr_gates_codex` / `codex-pr` are the historical identifiers of the two slots. Author
    session does not sit those reviews. Incomplete/unavailable vendor output is a
    GitHub-visible blocker with `resume_phase` of `pr_gates_grok` /
    `pr_gates_codex` and a pinned `question_activity_id` — not a rejected
    complete gate and not an implementer fix loop. Rejections publish
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
-   head-specific evidence. A successful Codex lane still starts when the
+   head-specific evidence. A successful second-slot lane still starts when the
    checklist keys are `n_a`. It replaces `n_a` with `ja` for
    `codex_pr_quality` and `codex_pr_logic`, including on a later tick whose
-   gate is already approved. After `ja`, both Codex gates are required again.
+   gate is already approved. After `ja`, both second-slot gates are required again.
    `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
@@ -238,7 +248,7 @@ for worker in workers.values():
    **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
    head, author/base/mergeability, tests, and all four same-head gates. The two
    `codex-pr` gates are omitted on readiness, formal approve, and leave-draft
-   only when both Codex checklist keys are already `n_a`, the evidence is
+   only when both `codex_pr_*` checklist keys (historical names of slot `second`) are already `n_a`, the evidence is
    exactly `second review not posted`, and the opener is listed in
    one_review_authors in the trusted .github/pr-guard.json on the default
    branch. A missing file, a missing key, or an empty list keeps all four
@@ -281,7 +291,7 @@ for worker in workers.values():
    set Ready. If the opener is no longer listed, it posts a new comment that
    Ready was not set and does not call `gh pr ready`. The same correction is
    posted on a later leave-draft when that one-review evidence comment is
-   already done, both Codex keys are still `n_a` with evidence exactly
+   already done, both `codex_pr_*` checklist keys (slot `second`) are still `n_a` with evidence exactly
    `second review not posted`, and the live list no longer grants the
    exception, before the gate check can hide it. A transport failure on that
    later read retries and does not set Ready. A later leave-draft that

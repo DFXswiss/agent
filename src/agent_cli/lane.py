@@ -13,10 +13,28 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .model_slots import PROVIDER_CHOICES, SUPPORTED_PROVIDERS
+
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
-LANE_VENDORS = ("grok", "codex")
+LANE_VENDORS = tuple(sorted(SUPPORTED_PROVIDERS))
+# Providers that read the spec from stdin instead of a --prompt-file argument.
+SPEC_VIA_STDIN = frozenset({"codex", "claude"})
+# Providers whose final message is collected from an output file.
+OUTPUT_FILE_VENDORS = frozenset({"codex"})
 NPROC_CAP = 800
-GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
+# Stripped from every lane: a lane runs on its own provider login, never on the
+# orchestrator's ambient API key or Claude Code session markers.
+GROK_STRIP_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+)
+_CLAUDE_READ_TOOLS = ("Read", "Grep", "Glob")
+_CLAUDE_WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
+# Never for a lane: executing software, spawning subagents, reaching the web.
+_CLAUDE_FORBIDDEN_TOOLS = ("Bash", "Agent", "Task", "WebSearch", "WebFetch")
 STATUS_VALUES = ("complete", "partial", "timeout", "unavailable")
 
 _STATUS_RE = re.compile(
@@ -114,6 +132,63 @@ def codex_argv(*, cwd: str, write: bool, output_file: str, model: str) -> list[s
     return argv
 
 
+def claude_argv(*, cwd: str, write: bool, model: str) -> list[str]:
+    """Headless Claude Code lane: ``claude --print`` with the spec on stdin."""
+    argv = _env_strip_prefix()
+    argv.extend(
+        [
+            "claude",
+            "--print",
+            "--model",
+            model,
+            "--output-format",
+            "text",
+            "--add-dir",
+            cwd,
+            # Only the user's own settings: a worktree's .claude/settings.json
+            # (hooks run shell commands) and .mcp.json must not reach a lane.
+            "--setting-sources",
+            "user",
+            "--strict-mcp-config",
+        ]
+    )
+    if write:
+        argv.extend(["--permission-mode", "acceptEdits"])
+        argv.extend(["--allowedTools", *_CLAUDE_READ_TOOLS, *_CLAUDE_WRITE_TOOLS])
+        argv.extend(["--disallowedTools", *_CLAUDE_FORBIDDEN_TOOLS])
+    else:
+        # Explicit mode: a user-level permissions.defaultMode (e.g. bypassPermissions)
+        # must not reach a read-only lane.
+        argv.extend(["--permission-mode", "default"])
+        argv.extend(["--allowedTools", *_CLAUDE_READ_TOOLS])
+        argv.extend(["--disallowedTools", *_CLAUDE_WRITE_TOOLS, *_CLAUDE_FORBIDDEN_TOOLS])
+    return argv
+
+
+def provider_argv(
+    vendor: str,
+    *,
+    spec_file: str,
+    cwd: str,
+    write: bool,
+    model: str,
+    output_file: str | None = None,
+) -> list[str]:
+    """Build the lane argv for one supported provider.
+
+    ``output_file`` is required for providers in ``OUTPUT_FILE_VENDORS``.
+    """
+    if vendor == "grok":
+        return grok_argv(spec_file=spec_file, cwd=cwd, write=write, model=model)
+    if vendor == "codex":
+        if not output_file:
+            raise SystemExit("codex lane requires an output file")
+        return codex_argv(cwd=cwd, write=write, output_file=output_file, model=model)
+    if vendor == "claude":
+        return claude_argv(cwd=cwd, write=write, model=model)
+    raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
+
+
 def lane_tmux_name(*, vendor: str, role: str, unique: str = "") -> str:
     base = f"agent-lane-{vendor}-{role}"
     if unique:
@@ -139,7 +214,9 @@ def parse_status(output: str, returncode: int) -> str:
     return "partial"
 
 
-def _default_runner(argv: list[str], stdin_text: str | None) -> subprocess.CompletedProcess[str]:
+def _default_runner(
+    argv: list[str], stdin_text: str | None, cwd: str | None = None
+) -> subprocess.CompletedProcess[str]:
     def _preexec() -> None:
         try:
             resource.setrlimit(resource.RLIMIT_NPROC, (NPROC_CAP, NPROC_CAP))
@@ -152,6 +229,7 @@ def _default_runner(argv: list[str], stdin_text: str | None) -> subprocess.Compl
         capture_output=True,
         text=True,
         check=False,
+        cwd=cwd,
         preexec_fn=_preexec,
     )
 
@@ -227,7 +305,7 @@ def launch(
     if role not in LANE_ROLES:
         raise SystemExit(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
-        raise SystemExit("vendor must be grok|codex")
+        raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
     from .ai_accounts import load_ai_accounts
     if not session_id or config_home is None:
         raise SystemExit("lane requires an explicit session and AI configuration home")
@@ -244,32 +322,40 @@ def launch(
 
     write = selected.access == "workspace-write"
     codex_output_file: str | None = None
-    if vendor == "grok":
-        argv = grok_argv(spec_file=spec_file, cwd=cwd, write=write, model=selected.model)
-    else:
+    output_file: str | None = None
+    if vendor in OUTPUT_FILE_VENDORS:
         if dry_run:
-            argv = codex_argv(
-                cwd=cwd,
-                write=write,
-                output_file="/tmp/agent-lane-codex-dry-run.txt",
-                model=selected.model,
-            )
+            output_file = f"/tmp/agent-lane-{vendor}-dry-run.txt"
         else:
             fd, codex_output_file = tempfile.mkstemp(
-                prefix="agent-lane-codex-",
+                prefix=f"agent-lane-{vendor}-",
                 suffix=".txt",
             )
             os.close(fd)
-            argv = codex_argv(cwd=cwd, write=write, output_file=codex_output_file, model=selected.model)
+            output_file = codex_output_file
+    argv = provider_argv(
+        vendor,
+        spec_file=spec_file,
+        cwd=cwd,
+        write=write,
+        model=selected.model,
+        output_file=output_file,
+    )
 
     # Apply the selected provider home inside the tmux child too. The builders'
     # credential-clearing prefix is nested, never a process-global mutation.
     argv = [*selected.env_prefix(), *argv]
 
     tmux_session: str | None = None
+    claude_redirect = False
     if tmux:
         unique = "" if dry_run else uuid.uuid4().hex[:8]
         tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
+        if vendor == "claude":
+            # claude --print reads the prompt from stdin only when stdin is not a
+            # TTY; in a tmux pane it is. Redirect the spec file instead of typing it.
+            argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
+            claude_redirect = True
         argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
 
     if dry_run:
@@ -284,7 +370,9 @@ def launch(
             tmux_session=tmux_session,
         )
 
-    stdin_text: str | None = spec_text if vendor == "codex" else None
+    stdin_text: str | None = spec_text if vendor in SPEC_VIA_STDIN else None
+    if claude_redirect:
+        stdin_text = None
     try:
         if runner is not None:
             completed = runner(argv, None if tmux else stdin_text)
@@ -298,7 +386,7 @@ def launch(
                 inner, name=tmux_session, cwd=cwd, stdin_text=stdin_text
             )
         else:
-            completed = _default_runner(argv, stdin_text)
+            completed = _default_runner(argv, stdin_text, cwd)
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")

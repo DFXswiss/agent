@@ -7,7 +7,7 @@ description: >-
 
 # Review loop
 
-Requires **spine**. Roles: `implementer`, `reviewer`. Reviewer vendor: `grok`. Implementer vendor: `grok|codex`.
+Requires **spine**. Roles: `implementer`, `reviewer`. The reviewer runs on model slot `first`; the implementer may run on either slot. `--vendor` is a provider pinned on the task when it was created: `agent models first --task <uuid>` for the reviewer, `agent models first|second --task <uuid>` for the implementer. `agent models` without `--task` shows the device setting, which applies to new tasks only.
 
 Without this skill, implementer and reviewer `agent agent` commands refuse.
 
@@ -28,9 +28,9 @@ No round cap. Repeat until the reviewer sets `approved` or the implementer is
 
 ```bash
 agent round start --task <uuid>
-agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok|codex --round N
+agent agent start --session <session-id> --task <uuid> --role implementer --vendor <models.first|models.second> --round N
 agent agent finish --id <implementer-uuid> --verdict done
-agent agent start --session <session-id> --task <uuid> --role reviewer --vendor grok --round N
+agent agent start --session <session-id> --task <uuid> --role reviewer --vendor <models.first> --round N
 agent agent finish --id <reviewer-uuid> --verdict approved|rejected
 ```
 

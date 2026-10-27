@@ -804,3 +804,51 @@ def test_run_mergeable_after_gates(
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
     assert _checklist(tmp_path, tid)["mergeable"] == "ja"
+
+
+
+def test_run_launches_the_provider_pinned_on_the_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json as _json
+
+    from test_model_slots import write_claude_first
+
+    write_claude_first(tmp_path)
+    tid = _bootstrap_implement(tmp_path, capsys)
+    # The device switches to grok first after the task was created.
+    path = tmp_path / "ai-accounts.json"
+    data = _json.loads(path.read_text(encoding="utf-8"))
+    data["models"] = {"first": "grok", "second": "codex"}
+    path.write_text(_json.dumps(data), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    seen: dict = {}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return LaneResult(
+            role="implementer", vendor=kwargs["vendor"], status="complete", argv=["claude"],
+            returncode=0, stdout="done\nSTATUS: complete\n", stderr="",
+        )
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    run(tmp_path, ["run", "--task", tid, "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path)])
+    assert seen.get("vendor") == "claude"
+
+
+def test_invalid_pinned_models_end_in_a_clean_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    tid = _bootstrap_implement(tmp_path, capsys)
+    store = open_store()
+    try:
+        row = {k: v for k, v in store.row("task", tid).items() if not k.startswith("_")}
+        row["models"] = {"first": "gemini", "second": "codex"}
+        store.write("task", "update", tid, row)
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="invalid models pinned on the task"):
+        run(tmp_path, ["next", "--task", tid])
