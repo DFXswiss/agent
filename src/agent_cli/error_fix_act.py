@@ -15,6 +15,14 @@ from .store import Store, StoreError, utcnow
 Runner = Callable[[list[str]], Completed]
 
 
+def _device_models(store: Store) -> dict[str, str]:
+    """Pin the device's model slots on a new task (historical order when unset)."""
+    from .ai_accounts import load_model_slots
+
+    return load_model_slots(store.home).as_dict()
+
+
+
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
@@ -226,6 +234,7 @@ def _find_or_create_implement_task(
             "payload": {"error_id": error_id, "repo": repo},
             "state": "open",
             "current_round": 0,
+            "models": _device_models(store),
             "created_at": utcnow(),
             "updated_at": utcnow(),
             "change_summary_en": None,

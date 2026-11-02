@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .model_slots import models_from_snapshot
 from .pr_guard_config import one_review_for
 
 ACTIONS = ("claim-done", "pr-ready", "pr-create", "task-done")
@@ -72,11 +73,14 @@ N_A_ALLOWED = frozenset(
 CODEX_SECOND_REVIEW_KEYS = frozenset({"codex_pr_quality", "codex_pr_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
 
+# (stage, dimension, model slot). The stage names are the historical ledger
+# identifiers of slot ``first`` and ``second``; the provider comes from the
+# device's ``models`` configuration (see model_slots).
 GATE_PAIRS = (
-    ("grok-pr", "quality", "grok"),
-    ("grok-pr", "logic", "grok"),
-    ("codex-pr", "quality", "codex"),
-    ("codex-pr", "logic", "codex"),
+    ("grok-pr", "quality", "first"),
+    ("grok-pr", "logic", "first"),
+    ("codex-pr", "quality", "second"),
+    ("codex-pr", "logic", "second"),
 )
 
 GATE_UNAVAILABLE_KEYS = frozenset(
@@ -222,9 +226,11 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
             blocking.append(f"{tid}:local_check_pass=ja_without_pass_skip")
 
     latest = _latest_gates(list(task.get("gates") or []))
+    models = models_from_snapshot(task)
     heads: set[str] = set()
     all_gates_ok = True
-    for stage, dim, vendor in GATE_PAIRS:
+    for stage, dim, slot in GATE_PAIRS:
+        vendor = models.for_slot(slot)
         if skip_codex_gates and stage == "codex-pr":
             continue
         got = latest.get((stage, dim))

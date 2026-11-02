@@ -18,6 +18,7 @@ from .allow import (
     SECOND_REVIEW_NOT_POSTED,
     codex_second_review_na,
 )
+from .model_slots import DEFAULT_MODEL_SLOTS, SLOT_STAGES, ModelSlots, models_from_snapshot
 from .pr_guard_config import one_review_for
 
 KINDS = ("script", "agent", "human")
@@ -49,7 +50,9 @@ class Step:
     needs: tuple[str, ...]
     kind: str  # script | agent | human
     role: str | None = None
-    vendor: str | None = None
+    # Model slot (first|second) that runs this agent step. The provider is the
+    # device's configuration, never a name in this chain.
+    slot: str | None = None
     spine: bool = True
 
 
@@ -59,12 +62,14 @@ def _step(
     kind: str,
     *,
     role: str | None = None,
-    vendor: str | None = None,
+    slot: str | None = None,
     spine: bool = True,
 ) -> Step:
     if kind not in KINDS:
         raise ValueError(f"kind {kind}")
-    return Step(key=key, needs=needs, kind=kind, role=role, vendor=vendor, spine=spine)
+    if slot is not None and slot not in SLOT_STAGES:
+        raise ValueError(f"slot {slot}")
+    return Step(key=key, needs=needs, kind=kind, role=role, slot=slot, spine=spine)
 
 
 # One source. Order = preferred walk; parallel steps share needs and sit adjacent.
@@ -77,13 +82,14 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("spec_written",),
             "agent",
             role="implementer",
+            slot="first",
         ),
         _step(
             "reviewer_approved",
             ("implementer_done",),
             "agent",
             role="reviewer",
-            vendor="grok",
+            slot="first",
         ),
         _step("local_check_pass", ("reviewer_approved",), "script"),
         _step("pushed", ("local_check_pass",), "script"),
@@ -92,28 +98,28 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("pushed",),
             "agent",
             role="pr-reviewer-quality",
-            vendor="grok",
+            slot="first",
         ),
         _step(
             "grok_pr_logic",
             ("pushed",),
             "agent",
             role="pr-reviewer-logic",
-            vendor="grok",
+            slot="first",
         ),
         _step(
             "codex_pr_quality",
             ("grok_pr_quality", "grok_pr_logic"),
             "agent",
             role="pr-reviewer-quality",
-            vendor="codex",
+            slot="second",
         ),
         _step(
             "codex_pr_logic",
             ("grok_pr_quality", "grok_pr_logic"),
             "agent",
             role="pr-reviewer-logic",
-            vendor="codex",
+            slot="second",
         ),
         _step(
             "contributing_ok",
@@ -131,28 +137,28 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("contributing_read",),
             "agent",
             role="pr-reviewer-quality",
-            vendor="grok",
+            slot="first",
         ),
         _step(
             "grok_pr_logic",
             ("contributing_read",),
             "agent",
             role="pr-reviewer-logic",
-            vendor="grok",
+            slot="first",
         ),
         _step(
             "codex_pr_quality",
             ("grok_pr_quality", "grok_pr_logic"),
             "agent",
             role="pr-reviewer-quality",
-            vendor="codex",
+            slot="second",
         ),
         _step(
             "codex_pr_logic",
             ("grok_pr_quality", "grok_pr_logic"),
             "agent",
             role="pr-reviewer-logic",
-            vendor="codex",
+            slot="second",
         ),
         _step("coverage_ok", ("codex_pr_quality", "codex_pr_logic"), "script"),
         _step("handbook_ok", ("coverage_ok",), "script"),
@@ -167,13 +173,14 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("session_registered",),
             "agent",
             role="implementer",
+            slot="first",
         ),
         _step(
             "reviewer_approved",
             ("conflicts_resolved",),
             "agent",
             role="reviewer",
-            vendor="grok",
+            slot="first",
         ),
         _step("local_check_pass", ("reviewer_approved",), "script"),
         _step("pushed", ("local_check_pass",), "script"),
@@ -182,28 +189,28 @@ CHAINS: dict[str, tuple[Step, ...]] = {
             ("pushed",),
             "agent",
             role="pr-reviewer-quality",
-            vendor="grok",
+            slot="first",
         ),
         _step(
             "grok_pr_logic",
             ("pushed",),
             "agent",
             role="pr-reviewer-logic",
-            vendor="grok",
+            slot="first",
         ),
         _step(
             "codex_pr_quality",
             ("grok_pr_quality", "grok_pr_logic"),
             "agent",
             role="pr-reviewer-quality",
-            vendor="codex",
+            slot="second",
         ),
         _step(
             "codex_pr_logic",
             ("grok_pr_quality", "grok_pr_logic"),
             "agent",
             role="pr-reviewer-logic",
-            vendor="codex",
+            slot="second",
         ),
         _step("mergeable", ("codex_pr_quality", "codex_pr_logic"), "script"),
     ),
@@ -365,14 +372,18 @@ def _unavailable_gate_ok(step: Step, snapshot: dict[str, Any]) -> str:
     if step.role not in ("pr-reviewer-quality", "pr-reviewer-logic"):
         return f"unavailable is not allowed for {step.key}"
     dim = "quality" if step.role.endswith("quality") else "logic"
-    stage = "grok-pr" if step.vendor == "grok" else "codex-pr"
+    stage = SLOT_STAGES.get(str(step.slot))
+    if stage is None:
+        return f"{step.key} has no model slot"
     g = _latest_gate(snapshot, stage, dim)
     if not g or g.get("verdict") != "unavailable":
         return f"gate {stage}/{dim} is not unavailable"
     return ""
 
 
-def _latest_agent(snapshot: dict[str, Any], role: str, vendor: str | None) -> dict[str, Any] | None:
+def _latest_agent(snapshot: dict[str, Any], role: str, slot: str | None) -> dict[str, Any] | None:
+    """Newest agent row for this role, restricted to the slot's configured provider."""
+    vendor = models_from_snapshot(snapshot).for_slot(slot) if slot else None
     agents = list(snapshot.get("agents") or [])
     hit = None
     for a in agents:
@@ -403,7 +414,18 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
             return "session is not active"
         return ""
     if step.role == "implementer":
-        ag = _latest_agent(snapshot, "implementer", step.vendor)
+        # A pinned task closes only with its slot-first provider, like the start
+        # check. A task created before model slots carries no pin and may hold a
+        # codex implementer row; it closes with a row of either slot's provider.
+        models = models_from_snapshot(snapshot)
+        pinned = snapshot.get("models_pinned", True)
+        ag = None
+        for a in snapshot.get("agents") or []:
+            vendor = str(a.get("vendor") or "")
+            if a.get("role") != "implementer":
+                continue
+            if vendor == models.first or (not pinned and models.slot_of(vendor)):
+                ag = a
         if not ag or ag.get("status") != "done":
             return "no finished implementer agent"
         verd = str(snapshot.get("implementer_verdict") or "")
@@ -413,7 +435,7 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
             return f"implementer_verdict={verd or 'missing'}"
         return ""
     if step.role == "reviewer":
-        ag = _latest_agent(snapshot, "reviewer", step.vendor)
+        ag = _latest_agent(snapshot, "reviewer", step.slot)
         if not ag or ag.get("status") != "done":
             return "no finished reviewer agent"
         verd = str(snapshot.get("reviewer_verdict") or "")
@@ -422,7 +444,9 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
         return ""
     if step.role in ("pr-reviewer-quality", "pr-reviewer-logic"):
         dim = "quality" if step.role.endswith("quality") else "logic"
-        stage = "grok-pr" if step.vendor == "grok" else "codex-pr"
+        stage = SLOT_STAGES.get(str(step.slot))
+        if stage is None:
+            return f"{step.key} has no model slot"
         g = _latest_gate(snapshot, stage, dim)
         if not g or g.get("verdict") != "approved":
             return f"gate {stage}/{dim} is not approved"
@@ -451,9 +475,29 @@ NO_AUTO_CLOSE = frozenset(
 )
 
 
-def handoff_prompt(step: Step, *, task_id: str, session_id: str | None) -> str:
+def step_vendor(step: Step, models: ModelSlots | None) -> str | None:
+    """Provider that runs this pinned step on this device; None when unpinned or not an agent."""
+    if step.slot is None:
+        return None
+    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
+
+
+def step_vendor_label(step: Step, models: ModelSlots | None) -> str:
+    """Provider name for a pinned agent step, ``-`` otherwise."""
+    if step.kind != "agent" or step.slot is None:
+        return "-"
+    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
+
+
+def handoff_prompt(
+    step: Step,
+    *,
+    task_id: str,
+    session_id: str | None,
+    models: ModelSlots | None = None,
+) -> str:
     """Single-step brief. The agent sees only THIS step."""
-    who = f"{'grok|codex' if step.kind == 'agent' and step.vendor is None else (step.vendor or '-')} {step.role or step.kind}"
+    who = f"{step_vendor_label(step, models)} {step.role or step.kind}"
     return (
         f"Only this step. Nothing else. Do not claim done.\n"
         f"task={task_id} session={session_id or '-'} key={step.key} who={who}\n"
@@ -461,13 +505,14 @@ def handoff_prompt(step: Step, *, task_id: str, session_id: str | None) -> str:
     )
 
 
-def to_json(step: Step) -> dict[str, Any]:
+def to_json(step: Step, models: ModelSlots | None = None) -> dict[str, Any]:
     return {
         "key": step.key,
         "needs": list(step.needs),
         "kind": step.kind,
         "role": step.role,
-        "vendor": step.vendor,
+        "slot": step.slot,
+        "vendor": step_vendor(step, models),
         "source": required_source(step),
         "spine": step.spine,
     }

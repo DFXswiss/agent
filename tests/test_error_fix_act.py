@@ -470,3 +470,19 @@ def test_scan_inactive_session_after_clone_stays_pending(tmp_path: Path) -> None
     assert row["execution_status"] == "pending"
     assert store.rows("task") == []
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
+
+
+
+def test_find_or_create_pins_the_device_models(tmp_path: Path) -> None:
+    import json as _json
+
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    (store.home / "ai-accounts.json").write_text(
+        _json.dumps({"models": {"first": "claude", "second": "codex"}}), encoding="utf-8"
+    )
+    find_or_create_implement_task(store, "runner-1", "error-seen-12345678", "Fix observed error")
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    assert tasks[0]["models"] == {"first": "claude", "second": "codex"}

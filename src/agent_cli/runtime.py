@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .grok_pane import grok_pane_is_working
+from .lane import LANE_STRIP_ENV
 from .store import StoreError
 
 TARGETS_FILE = "runtime-targets.json"
 
-GROK_STRIP_ENV = ("ANTHROPIC_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
@@ -69,7 +69,7 @@ def grok_launch_argv(*, existing: str, model: str, new_id: str) -> list[str]:
 def grok_tmux_command_argv(*, existing: str, model: str, new_id: str) -> list[str]:
     """Prefix that drops Claude credentials from the pane environment."""
     argv: list[str] = ["env"]
-    for key in GROK_STRIP_ENV:
+    for key in LANE_STRIP_ENV:
         argv.extend(["-u", key])
     argv.extend(grok_launch_argv(existing=existing, model=model, new_id=new_id))
     return argv

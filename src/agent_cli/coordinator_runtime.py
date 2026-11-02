@@ -18,11 +18,13 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
-from .ai_accounts import load_ai_accounts
+from .ai_accounts import AIAccounts, load_ai_accounts
+from .model_slots import DEFAULT_MODEL_SLOTS, ModelSlotsError, models_from_snapshot
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
     REQUIRED_LANE_SLOTS,
     REQUIRED_REVIEW_SKILLS,
+    required_lane_slots,
     REQUIRED_WORKER_SKILLS,
     CiObservedFailureError,
     CoordinatorError,
@@ -126,10 +128,11 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         raise CoordinatorError(str(exc)) from exc
     try:
         ai = load_ai_accounts(store.home)
-        for slot in REQUIRED_LANE_SLOTS:
+        _refuse_codex_first(ai.models.first)
+        for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(worker.session_id, role, vendor)
-            if slot == "grok:implementer" and selected.access != "workspace-write":
+            if role == "implementer" and selected.access != "workspace-write":
                 raise CoordinatorError("implementer lane requires workspace-write access")
             if role != "implementer" and selected.access != "read-only":
                 raise CoordinatorError(f"{slot} requires read-only access")
@@ -141,20 +144,51 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         raise CoordinatorError("workspace_root must be absolute")
 
 
-def execution_binding(store: Store, worker: WorkerConfig, repo: str) -> str:
-    """Pin selected execution metadata, never credential contents or unrelated profiles."""
+def execution_binding(
+    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts | None = None
+) -> str:
+    """Pin selected execution metadata, never credential contents or unrelated profiles.
+
+    ``ai`` lets a caller hash the same manifest read it pins ``models`` from.
+    """
     cfg = repo_cfg(worker, repo)
     github = load_accounts(store.home)
-    ai = load_ai_accounts(store.home)
+    ai = ai if ai is not None else load_ai_accounts(store.home)
     selected = {
         "repository": asdict(cfg), "workspace": str(worker.workspace_root),
         "worker_session": worker.session_id, "review_session": worker.review_session,
         "reply_logins": worker.reply_logins,
         "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
+        # Only a non-default models block enters the hash, so a device without one,
+        # or with the default written out, keeps the hash of earlier tasks.
+        **({"models": ai.models.as_dict()} if ai.models != DEFAULT_MODEL_SLOTS else {}),
         "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
-                  for slot in REQUIRED_LANE_SLOTS],
+                  for slot in required_lane_slots(ai.models)],
     }
     return hashlib.sha256(json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+CODEX_FIRST_REFUSED = (
+    "models.first = codex is not supported by the coordinator: the codex "
+    "implementer lane cannot be restricted from running commands"
+)
+
+
+def _refuse_codex_first(first: str) -> None:
+    """codex exec --sandbox workspace-write can run shell commands; the coordinator's
+    implementer must not execute software. Used by preflight, task creation and launch."""
+    if first == "codex":
+        raise CoordinatorError(CODEX_FIRST_REFUSED)
+
+
+def _first_slot_vendor(task: dict[str, Any]) -> str:
+    """Provider of model slot ``first``, pinned on the task when it was created."""
+    try:
+        first = models_from_snapshot(task).first
+    except ModelSlotsError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    _refuse_codex_first(first)
+    return first
 
 
 def _terminal(task: dict[str, Any]) -> bool:
@@ -240,6 +274,12 @@ def _create_implement_task(
     """Insert task under device-wide source admission lock. None if another owner won."""
     session = owned_session(store, worker.session_id)
     tid = str(uuid.uuid4())
+    # One manifest read for both the binding hash and the models pin.
+    try:
+        ai = load_ai_accounts(store.home)
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
+    _refuse_codex_first(ai.models.first)
     c = {
         "phase": "accept",
         "source": {
@@ -252,7 +292,7 @@ def _create_implement_task(
             "body": redact(body, limit=2000),
         },
         "branch": f"task-{tid[:8]}",
-        "execution_binding": execution_binding(store, worker, repo),
+        "execution_binding": execution_binding(store, worker, repo, ai),
         "worker_session": worker.session_id,
         "worker_login": account_for(store, worker.session_id).login.casefold(),
     }
@@ -279,6 +319,7 @@ def _create_implement_task(
             "payload": {"coordinator": c, "source_issue": {"repo": repo, "number": number}},
             "state": "open",
             "current_round": 0,
+            "models": ai.models.as_dict(),
             "created_at": utcnow(),
             "updated_at": utcnow(),
             "change_summary_en": None,
@@ -909,12 +950,13 @@ def phase_implement(
             draft_lines=[],
         )
 
+    first_vendor = _first_slot_vendor(task)
     agent, result = launch_lane(
         store,
         worker,
         task,
         role="implementer",
-        vendor="grok",
+        vendor=first_vendor,
         round_num=round_num,
         spec_body=_spec_context(c, _implementer_instruction(store, worker, task, runner)),
         runner=runner,
@@ -927,7 +969,7 @@ def phase_implement(
     # A crash before this save resumes by launching the implementer again.
     c["lane_outcome"] = {
         "role": "implementer",
-        "vendor": "grok",
+        "vendor": first_vendor,
         "round": round_num,
         "agent_id": agent["id"],
         "status": status,
@@ -1072,7 +1114,7 @@ def phase_inner_review(
         worker,
         task,
         role="reviewer",
-        vendor="grok",
+        vendor=_first_slot_vendor(task),
         round_num=round_num,
         spec_body=_spec_context(
             c,

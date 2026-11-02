@@ -28,6 +28,7 @@ _STORE_COMMANDS = frozenset(
         "allow",
         "next",
         "close-step",
+        "models",
         "status",
         "skills",
     }

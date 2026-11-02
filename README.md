@@ -78,6 +78,8 @@ agent session stop --id <session-id>
 agent activity add --session <session-id> --type message --payload-file ./mail.json
 agent task create --session <session-id> --workflow implement --title "…"
 agent round start --task <uuid>
+# --vendor is the provider of the model slot, pinned on the task from ai-accounts.json → models;
+# the examples assume models.first = grok. Stage grok-pr is slot first, codex-pr slot second.
 agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok --round 1
 agent agent finish --id <implementer-uuid> --verdict done
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
@@ -88,6 +90,7 @@ agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor gro
 agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>
 agent work list --session <session-id>
+agent models [first|second] [--task <uuid>] [--json]   # provider of each model slot: device setting, or the pin of a task
 agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>

@@ -11,7 +11,7 @@ import pytest
 
 from agent_cli.ai_accounts import AccountError
 from agent_cli.lane import (
-    GROK_STRIP_ENV,
+    LANE_STRIP_ENV,
     LaneResult,
     _run_in_tmux,
     codex_argv,
@@ -150,7 +150,7 @@ def test_grok_implementer_argv_requires_explicit_model() -> None:
     assert "grok-4.5" not in argv
     assert "grok-4.6" not in argv
     assert argv[0] == "env"
-    for key in GROK_STRIP_ENV:
+    for key in LANE_STRIP_ENV:
         assert "-u" in argv
         assert key in argv
     assert argv[argv.index("grok") :] == [
@@ -170,7 +170,7 @@ def test_grok_implementer_argv_requires_explicit_model() -> None:
         "--cwd",
         "/work",
     ]
-    strip_idx = [argv.index(k) for k in GROK_STRIP_ENV]
+    strip_idx = [argv.index(k) for k in LANE_STRIP_ENV]
     assert strip_idx == sorted(strip_idx)
 
 
@@ -244,7 +244,7 @@ def test_codex_implementer_argv_requires_explicit_model() -> None:
     assert "reasoning-effort" not in argv
     assert argv[-1] == "-"
     assert argv[0] == "env"
-    for key in GROK_STRIP_ENV:
+    for key in LANE_STRIP_ENV:
         assert key in argv
     assert argv[argv.index("--model") + 1] == "explicit-codex-model"
 

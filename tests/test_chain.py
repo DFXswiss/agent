@@ -7,7 +7,10 @@ import unittest
 from agent_cli.allow import CHECKLIST_KEYS
 from agent_cli.chain import (
     CHAINS,
+    Step,
+    _artifact_ok,
     _satisfied,
+    _unavailable_gate_ok,
     close_allowed,
     handoff_prompt,
     next_steps,
@@ -299,20 +302,20 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("close-step", text)
         self.assertNotIn("grok_pr_quality", text)
 
-    def test_handoff_unpinned_implementer_names_either_vendor(self) -> None:
+    def test_handoff_implementer_names_the_first_slot(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
-        self.assertIsNone(impl.vendor)
+        self.assertEqual(impl.slot, "first")
         text = handoff_prompt(impl, task_id="31", session_id="sess")
-        self.assertIn("grok|codex", text)
-        self.assertIn("who=grok|codex implementer", text)
+        self.assertIn("who=grok implementer", text)
+        self.assertNotIn("grok|codex", text)
         conflicts = next(
             s for s in steps_for("resolve-conflicts") if s.key == "conflicts_resolved"
         )
-        self.assertIsNone(conflicts.vendor)
+        self.assertEqual(conflicts.slot, "first")
         conflicts_text = handoff_prompt(conflicts, task_id="31", session_id="sess")
-        self.assertIn("who=grok|codex implementer", conflicts_text)
+        self.assertIn("who=grok implementer", conflicts_text)
         reviewer = next(s for s in steps_for("implement") if s.key == "reviewer_approved")
-        self.assertEqual(reviewer.vendor, "grok")
+        self.assertEqual(reviewer.slot, "first")
         reviewer_text = handoff_prompt(reviewer, task_id="31", session_id="sess")
         self.assertIn("who=grok reviewer", reviewer_text)
         script = next(s for s in steps_for("implement") if s.key == "session_registered")
@@ -651,6 +654,55 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertFalse(denied.allowed)
         self.assertIn("not the next step", denied.reason)
+
+
+
+class TestImplementerRowFromBeforeTheSlotBinding(unittest.TestCase):
+    def test_an_unpinned_task_closes_with_a_second_slot_row(self) -> None:
+        impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
+        snapshot = {
+            "agents": [{"role": "implementer", "vendor": "codex", "status": "done"}],
+            "implementer_verdict": "done",
+            "models_pinned": False,
+        }
+        self.assertEqual(_artifact_ok(impl, snapshot), "")
+        conflicts = next(
+            s for s in steps_for("resolve-conflicts") if s.key == "conflicts_resolved"
+        )
+        self.assertEqual(_artifact_ok(conflicts, snapshot), "")
+
+    def test_a_pinned_task_needs_the_slot_first_row(self) -> None:
+        impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
+        snapshot = {
+            "agents": [
+                {"role": "implementer", "vendor": "grok", "status": "working"},
+                {"role": "implementer", "vendor": "codex", "status": "done"},
+            ],
+            "implementer_verdict": "done",
+            "models": {"first": "grok", "second": "codex"},
+            "models_pinned": True,
+        }
+        self.assertEqual(_artifact_ok(impl, snapshot), "no finished implementer agent")
+        snapshot["agents"].append({"role": "implementer", "vendor": "grok", "status": "done"})
+        self.assertEqual(_artifact_ok(impl, snapshot), "")
+
+    def test_a_row_outside_the_slots_does_not_close_the_step(self) -> None:
+        impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
+        snapshot = {
+            "agents": [{"role": "implementer", "vendor": "claude", "status": "done"}],
+            "implementer_verdict": "done",
+            "models_pinned": False,
+        }
+        self.assertEqual(_artifact_ok(impl, snapshot), "no finished implementer agent")
+
+
+class TestPrReviewerWithoutSlot(unittest.TestCase):
+    def test_pr_reviewer_step_without_slot_reports_instead_of_raising(self) -> None:
+        step = Step(key="future_pr_logic", needs=(), kind="agent", role="pr-reviewer-logic")
+        self.assertEqual(_artifact_ok(step, {"gates": []}), "future_pr_logic has no model slot")
+        self.assertEqual(
+            _unavailable_gate_ok(step, {"gates": []}), "future_pr_logic has no model slot"
+        )
 
 
 if __name__ == "__main__":

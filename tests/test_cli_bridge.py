@@ -21,6 +21,7 @@ def test_allowed_store_and_spine() -> None:
     assert allowed(["skills", "path"]) is True
     assert allowed(["status"]) is True
     assert allowed(["gate", "record"]) is True
+    assert allowed(["models", "first", "--task", "t1"]) is True
 
 
 @pytest.mark.no_pg
