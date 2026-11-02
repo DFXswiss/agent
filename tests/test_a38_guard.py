@@ -69,6 +69,9 @@ REPO = "example/public-app"
 AUTHOR_ID = 1001
 BOT_ID = GITHUB_ACTIONS_BOT_ID
 OUTSIDER_ID = 2002
+APP_BOT_ID = 51515151
+APP_SLUG = "example-app"
+APP_LOGIN = "example-app[bot]"
 AI_COMMIT_MESSAGE = (
     "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n"
     "Claude-Session: https://claude.ai/code/session_01ELTd6i5zDSC7RzsVV8DsxK"
@@ -245,6 +248,11 @@ class FakeAPI:
         self.writes: list[str] = []
         self.user: dict[str, Any] | None = {"id": BOT_ID, "login": "github-actions[bot]"}
         self.user_endpoint_denied = False
+        self.users_by_login: dict[str, dict[str, Any]] = {}
+        # None keeps the official Actions bot record on the hardcoded user route.
+        self.actions_bot_user: dict[str, Any] | None = None
+        # None keeps the created comment authored by the Actions bot id.
+        self.created_comment_author_id: int | None = None
         self.denied_prefixes: list[str] = []
         self._comment_seq = 10
         self._status_seq = 50
@@ -347,9 +355,20 @@ class FakeAPI:
             return 200, self.user, {}
 
         if method_u == "GET" and path_only == "/users/github-actions%5Bbot%5D":
+            if self.actions_bot_user is not None:
+                return 200, self.actions_bot_user, {}
             return 200, {"id": BOT_ID, "login": "github-actions[bot]"}, {}
         if method_u == "GET" and path_only == "/users/github-actions[bot]":
+            if self.actions_bot_user is not None:
+                return 200, self.actions_bot_user, {}
             return 200, {"id": BOT_ID, "login": "github-actions[bot]"}, {}
+        if method_u == "GET" and path_only.startswith("/users/"):
+            from urllib.parse import unquote
+
+            login = unquote(path_only[len("/users/") :])
+            record = self.users_by_login.get(login)
+            if record is not None:
+                return 200, record, {}
 
         if method_u == "GET" and path_only == f"/repos/{REPO}/pulls/1":
             return 200, self.pull, {}
@@ -597,10 +616,15 @@ class FakeAPI:
                 pass
             payload = json.loads(body.decode()) if body else {}
             self._comment_seq += 1
+            author_id = (
+                BOT_ID
+                if self.created_comment_author_id is None
+                else self.created_comment_author_id
+            )
             comment = {
                 "id": self._comment_seq,
                 "body": payload.get("body"),
-                "user": {"id": BOT_ID, "login": "github-actions[bot]"},
+                "user": {"id": author_id, "login": "github-actions[bot]"},
                 "updated_at": f"2026-09-05T13:00:{self._comment_seq:02d}Z",
                 "created_at": f"2026-09-05T13:00:{self._comment_seq:02d}Z",
             }
@@ -2300,6 +2324,32 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(out["status"], "ignored")
         self.assertEqual(fake.writes, [])
 
+    def test_own_sender_pull_request_target_ignored(self) -> None:
+        payload = {
+            "action": "ready_for_review",
+            "sender": {"id": APP_BOT_ID, "login": APP_LOGIN},
+            "pull_request": {"number": 1},
+            "repository": {"full_name": REPO},
+        }
+        reason = event_should_ignore(
+            "pull_request_target", payload, own_id=APP_BOT_ID
+        )
+        self.assertEqual(
+            reason, "ignored own bot pull-request event (loop prevention)"
+        )
+
+    def test_foreign_sender_pull_request_target_not_ignored(self) -> None:
+        payload = {
+            "action": "ready_for_review",
+            "sender": {"id": AUTHOR_ID, "login": "author"},
+            "pull_request": {"number": 1},
+            "repository": {"full_name": REPO},
+        }
+        reason = event_should_ignore(
+            "pull_request_target", payload, own_id=APP_BOT_ID
+        )
+        self.assertIsNone(reason)
+
     def test_issue_only_event_ignored(self) -> None:
         payload = {
             "action": "created",
@@ -2365,6 +2415,133 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(login, "github-actions[bot]")
         result = reconcile_pull(api, REPO, 1, publish=True)
         self.assertTrue(result.ok)
+
+    def _app_bot_record(self, **changes: Any) -> dict[str, Any]:
+        record = {"id": APP_BOT_ID, "login": APP_LOGIN, "type": "Bot"}
+        record.update(changes)
+        return record
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "false"},
+    )
+    def test_actor_app_slug_resolves_app_bot_when_user_denied(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record()
+        own_id, login = fake.api().resolve_own_user()
+        self.assertEqual(own_id, APP_BOT_ID)
+        self.assertEqual(login, APP_LOGIN)
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": f"  {APP_SLUG}  ", "GITHUB_ACTIONS": "false"},
+    )
+    def test_actor_app_slug_strips_and_uses_user_endpoint_as_is(self) -> None:
+        fake = FakeAPI()
+        fake.user = {"id": 717171, "login": "pat-user"}
+        own_id, login = fake.api().resolve_own_user()
+        self.assertEqual(own_id, 717171)
+        self.assertEqual(login, "pat-user")
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_login_mismatch_raises(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record(login="other-app[bot]")
+        with self.assertRaisesRegex(GuardError, "login mismatch"):
+            fake.api().resolve_own_user()
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_non_bot_type_raises(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record(type="User")
+        with self.assertRaisesRegex(GuardError, "must be Bot"):
+            fake.api().resolve_own_user()
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": "not a slug", "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_invalid_raises(self) -> None:
+        fake = FakeAPI()
+        with self.assertRaisesRegex(GuardError, "not a GitHub app slug"):
+            fake.api().resolve_own_user()
+
+    def test_actor_app_slug_unset_resolves_as_before(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}, clear=False):
+            os.environ.pop("A38_ACTOR_APP_SLUG", None)
+            fake = FakeAPI()
+            own_id, login = fake.api().resolve_own_user()
+            self.assertEqual(own_id, BOT_ID)
+            self.assertEqual(login, "github-actions[bot]")
+
+        with mock.patch.dict(
+            os.environ,
+            {"A38_ACTOR_APP_SLUG": "   ", "GITHUB_ACTIONS": "true"},
+            clear=False,
+        ):
+            fake = FakeAPI()
+            fake.user_endpoint_denied = True
+            own_id, login = fake.api().resolve_own_user()
+            self.assertEqual(own_id, BOT_ID)
+            self.assertEqual(login, "github-actions[bot]")
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_does_not_use_actions_bot(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        with self.assertRaisesRegex(GuardError, "cannot resolve acting app bot"):
+            fake.api().resolve_own_user()
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_boolean_id_raises(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record(id=True)
+        api = fake.api()
+        with self.assertRaisesRegex(GuardError, "cannot resolve acting app bot"):
+            api.resolve_own_user()
+        self.assertIsNone(api._own_id)
+
+    def test_actor_app_slug_unset_boolean_id_raises(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False):
+            os.environ.pop("A38_ACTOR_APP_SLUG", None)
+            fake = FakeAPI()
+            fake.user_endpoint_denied = True
+            fake.actions_bot_user = {"id": True, "login": "github-actions[bot]"}
+            api = fake.api()
+            with self.assertRaisesRegex(
+                GuardError,
+                "cannot resolve official GitHub Actions bot identity",
+            ):
+                api.resolve_own_user()
+            self.assertIsNone(api._own_id)
+
+    def test_created_comment_author_id_mismatch_raises(self) -> None:
+        fake = FakeAPI()
+        fake.created_comment_author_id = 424242
+        fake.add_author_report(
+            _report_comment(), updated_at="2026-09-05T12:00:00Z", cid=93
+        )
+        with self.assertRaisesRegex(
+            GuardError,
+            rf"created comment author id 424242 does not match acting user {BOT_ID}",
+        ):
+            reconcile_pull(fake.api(), REPO, 1, publish=True)
 
     def test_cli_dry_run(self) -> None:
         fake = FakeAPI()
