@@ -8,7 +8,7 @@ inputs:
     description: GitHub token (contents write for markPullRequestReadyForReview, issues write, pull-requests write, statuses write; actions/checks read for lifecycle, actions write for workflow approval and environment deployment approval)
     required: true
   actor_app_slug:
-    description: GitHub App slug whose installation token is passed as token; empty means the Actions GITHUB_TOKEN identity
+    description: GitHub App slug whose installation token is passed as token; empty keeps the previous resolver, GET /user first and the official Actions bot only when that call returns 401, 403 or 404 and GITHUB_ACTIONS is true, so a user token with no slug resolves to that user
     required: false
     default: ""
   repository:

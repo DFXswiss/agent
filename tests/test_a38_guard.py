@@ -2324,32 +2324,6 @@ class A38GuardE2ETests(unittest.TestCase):
         self.assertEqual(out["status"], "ignored")
         self.assertEqual(fake.writes, [])
 
-    def test_own_sender_pull_request_target_ignored(self) -> None:
-        payload = {
-            "action": "ready_for_review",
-            "sender": {"id": APP_BOT_ID, "login": APP_LOGIN},
-            "pull_request": {"number": 1},
-            "repository": {"full_name": REPO},
-        }
-        reason = event_should_ignore(
-            "pull_request_target", payload, own_id=APP_BOT_ID
-        )
-        self.assertEqual(
-            reason, "ignored own bot pull-request event (loop prevention)"
-        )
-
-    def test_foreign_sender_pull_request_target_not_ignored(self) -> None:
-        payload = {
-            "action": "ready_for_review",
-            "sender": {"id": AUTHOR_ID, "login": "author"},
-            "pull_request": {"number": 1},
-            "repository": {"full_name": REPO},
-        }
-        reason = event_should_ignore(
-            "pull_request_target", payload, own_id=APP_BOT_ID
-        )
-        self.assertIsNone(reason)
-
     def test_issue_only_event_ignored(self) -> None:
         payload = {
             "action": "created",
@@ -2528,6 +2502,16 @@ class A38GuardE2ETests(unittest.TestCase):
                 GuardError,
                 "cannot resolve official GitHub Actions bot identity",
             ):
+                api.resolve_own_user()
+            self.assertIsNone(api._own_id)
+
+    def test_actor_app_slug_unset_user_boolean_id_raises(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}, clear=False):
+            os.environ.pop("A38_ACTOR_APP_SLUG", None)
+            fake = FakeAPI()
+            fake.user = {"id": True, "login": "pat-user"}
+            api = fake.api()
+            with self.assertRaisesRegex(GuardError, "cannot resolve acting user"):
                 api.resolve_own_user()
             self.assertIsNone(api._own_id)
 

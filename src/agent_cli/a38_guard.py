@@ -1030,7 +1030,10 @@ class GitHubApi:
                 f"A38_ACTOR_APP_SLUG is not a GitHub app slug: {slug!r}"
             )
         status, data, _ = self.request("GET", "/user")
-        if status == 200 and isinstance(data, dict) and isinstance(data.get("id"), int):
+        user_id = data.get("id") if isinstance(data, dict) else None
+        # `bool` subclasses `int`, so `isinstance` would accept a JSON `true` here and
+        # `True == 1` would make user id 1 the acting user.
+        if status == 200 and isinstance(data, dict) and type(user_id) is int and user_id > 0:
             login = data.get("login")
             if not isinstance(login, str) or not login:
                 raise GuardError("/user returned no login")
@@ -3139,10 +3142,14 @@ def publish_assessment(
         if status < 200 or status >= 300:
             raise GuardError(f"comment create HTTP {status}")
         new_id = data.get("id") if isinstance(data, dict) else None
-        # GET /user answers 403 for an App installation token and for the
-        # Actions GITHUB_TOKEN, because both are installation tokens. The
-        # configured slug alone cannot prove the token belongs to that app.
-        # The author id echoed by this first own write is the only proof.
+        # First-write fail-fast, not proof that the token belongs to the
+        # configured app. It catches a slug that does not match the token's
+        # app on first contact and fails closed when it does. It is not a
+        # guarantee: no single write happens on every run, so a run that only
+        # updates or leaves a comment unchanged never reaches it, and a
+        # PATCH response echoes the comment's original author, not the account
+        # that performed the edit, so the same check on an update path would
+        # detect nothing.
         created_user = data.get("user") if isinstance(data, dict) else None
         created_id = (
             created_user.get("id") if isinstance(created_user, Mapping) else None
@@ -3345,16 +3352,6 @@ def event_should_ignore(
     if event_name == "pull_request_target" or event_name == "pull_request":
         if action not in PR_TARGET_ACTIONS:
             return f"ignored pull_request action {action!r}"
-        # An App installation token starts new workflow runs. The Actions
-        # GITHUB_TOKEN does not. After an adopter switches tokens, the guard's
-        # own ready-for-review write would re-enter the guard.
-        sender = payload.get("sender") or {}
-        if (
-            isinstance(sender, Mapping)
-            and own_id is not None
-            and sender.get("id") == own_id
-        ):
-            return "ignored own bot pull-request event (loop prevention)"
         return None
     if event_name == "issue_comment":
         if action not in ISSUE_COMMENT_ACTIONS:
