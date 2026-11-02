@@ -2515,6 +2515,42 @@ class A38GuardE2ETests(unittest.TestCase):
                 api.resolve_own_user()
             self.assertIsNone(api._own_id)
 
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_zero_id_raises(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record(id=0)
+        api = fake.api()
+        with self.assertRaisesRegex(GuardError, "cannot resolve acting app bot"):
+            api.resolve_own_user()
+        self.assertIsNone(api._own_id)
+
+    @mock.patch.dict(
+        os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_negative_id_raises(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record(id=-1)
+        api = fake.api()
+        with self.assertRaisesRegex(GuardError, "cannot resolve acting app bot"):
+            api.resolve_own_user()
+        self.assertIsNone(api._own_id)
+
+    def test_actor_app_slug_unset_user_zero_id_raises(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}, clear=False):
+            os.environ.pop("A38_ACTOR_APP_SLUG", None)
+            fake = FakeAPI()
+            fake.user = {"id": 0, "login": "pat-user"}
+            api = fake.api()
+            with self.assertRaisesRegex(GuardError, "cannot resolve acting user"):
+                api.resolve_own_user()
+            self.assertIsNone(api._own_id)
+
     def test_created_comment_author_id_mismatch_raises(self) -> None:
         fake = FakeAPI()
         fake.created_comment_author_id = 424242

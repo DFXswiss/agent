@@ -997,9 +997,11 @@ class GitHubApi:
         status, data = self.get_optional(
             f"/users/{urllib.parse.quote(expected_login)}"
         )
+        user_id = data.get("id") if isinstance(data, dict) else None
         # `bool` subclasses `int`, so `isinstance` would accept a JSON `true`. The app-slug
-        # path has no fixed id to cross-check against, so that would become the acting id.
-        if status == 200 and isinstance(data, dict) and type(data.get("id")) is int:
+        # path has no fixed id to cross-check against, so that would become the acting id,
+        # and the id must also be positive as on the `/user` path.
+        if status == 200 and isinstance(data, dict) and type(user_id) is int and user_id > 0:
             login = data.get("login")
             if expected_id is None:
                 if login != expected_login:
