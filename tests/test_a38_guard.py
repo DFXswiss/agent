@@ -2409,6 +2409,33 @@ class A38GuardE2ETests(unittest.TestCase):
 
     @mock.patch.dict(
         os.environ,
+        {"A38_ACTOR_APP_SLUG": APP_SLUG, "GITHUB_ACTIONS": "true"},
+    )
+    def test_actor_app_slug_own_ready_for_review_is_reconciled(self) -> None:
+        fake = FakeAPI()
+        fake.user_endpoint_denied = True
+        fake.users_by_login[APP_LOGIN] = self._app_bot_record()
+        payload = {
+            "action": "ready_for_review",
+            "sender": {"id": APP_BOT_ID, "login": APP_LOGIN, "type": "Bot"},
+            "pull_request": {"number": 1},
+            "repository": {"full_name": REPO},
+        }
+        calls: list[tuple[str, int]] = []
+        with mock.patch.object(
+            a38_guard, "reconcile_pull", side_effect=_stub_reconcile(calls)
+        ):
+            reconcile_event(
+                fake.api(),
+                event_name="pull_request_target",
+                payload=payload,
+                dry_run=False,
+                publish=True,
+            )
+        self.assertEqual(calls, [(REPO, 1)])
+
+    @mock.patch.dict(
+        os.environ,
         {"A38_ACTOR_APP_SLUG": f"  {APP_SLUG}  ", "GITHUB_ACTIONS": "false"},
     )
     def test_actor_app_slug_strips_and_uses_user_endpoint_as_is(self) -> None:
@@ -2546,6 +2573,16 @@ class A38GuardE2ETests(unittest.TestCase):
             os.environ.pop("A38_ACTOR_APP_SLUG", None)
             fake = FakeAPI()
             fake.user = {"id": 0, "login": "pat-user"}
+            api = fake.api()
+            with self.assertRaisesRegex(GuardError, "cannot resolve acting user"):
+                api.resolve_own_user()
+            self.assertIsNone(api._own_id)
+
+    def test_actor_app_slug_unset_user_negative_id_raises(self) -> None:
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}, clear=False):
+            os.environ.pop("A38_ACTOR_APP_SLUG", None)
+            fake = FakeAPI()
+            fake.user = {"id": -1, "login": "pat-user"}
             api = fake.api()
             with self.assertRaisesRegex(GuardError, "cannot resolve acting user"):
                 api.resolve_own_user()
