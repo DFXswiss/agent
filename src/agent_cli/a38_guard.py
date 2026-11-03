@@ -31,6 +31,7 @@ from typing import Any, Callable, Iterator, Mapping, MutableMapping, Sequence
 from .a38 import load_policy, report_fact_reasons, verify_report
 from .local_ci import LocalCiError, parse_comment
 from .pr_guard_config import (
+    _LOGIN_RE,
     CONFIG_PATH as PR_GUARD_CONFIG_PATH,
     PrGuardConfigError,
     evaluate_a38_scope,
@@ -984,28 +985,73 @@ class GitHubApi:
                 break
             current = _ensure_api_url(prev_raw)
 
+    def _resolve_bot_login(
+        self, expected_login: str, *, expected_id: int | None = None
+    ) -> tuple[int, str]:
+        """Resolve one bot login to its numeric id and verify that record.
+
+        ``expected_id`` is the official Actions bot's public id. A configured
+        app has no fixed id: the login must match and ``type`` must be Bot.
+        The accepted result is still exactly one acting id.
+        """
+        status, data = self.get_optional(
+            f"/users/{urllib.parse.quote(expected_login)}"
+        )
+        user_id = data.get("id") if isinstance(data, dict) else None
+        # `bool` subclasses `int`, so `isinstance` would accept a JSON `true`. The app-slug
+        # path has no fixed id to cross-check against, so that would become the acting id,
+        # and the id must also be positive as on the `/user` path.
+        if status == 200 and isinstance(data, dict) and type(user_id) is int and user_id > 0:
+            login = data.get("login")
+            if expected_id is None:
+                if login != expected_login:
+                    raise GuardError(
+                        "acting app login mismatch: "
+                        f"expected {expected_login!r}, got {login!r}"
+                    )
+                if data.get("type") != "Bot":
+                    raise GuardError(
+                        "acting app user type must be Bot, "
+                        f"got {data.get('type')!r}"
+                    )
+            elif login != expected_login or data["id"] != expected_id:
+                raise GuardError("github-actions[bot] login mismatch")
+            self._own_id = int(data["id"])
+            self._own_login = expected_login
+            return self._own_id, self._own_login
+        if expected_id is None:
+            raise GuardError(f"cannot resolve acting app bot {expected_login}")
+        raise GuardError("cannot resolve official GitHub Actions bot identity")
+
     def resolve_own_user(self) -> tuple[int, str]:
         if self._own_id is not None and self._own_login is not None:
             return self._own_id, self._own_login
+        slug = os.environ.get("A38_ACTOR_APP_SLUG", "").strip()
+        if slug and _LOGIN_RE.fullmatch(slug) is None:
+            raise GuardError(
+                f"A38_ACTOR_APP_SLUG is not a GitHub app slug: {slug!r}"
+            )
         status, data, _ = self.request("GET", "/user")
-        if status == 200 and isinstance(data, dict) and isinstance(data.get("id"), int):
+        user_id = data.get("id") if isinstance(data, dict) else None
+        # `bool` subclasses `int`, so `isinstance` would accept a JSON `true` here and
+        # `True == 1` would make user id 1 the acting user.
+        if status == 200 and isinstance(data, dict) and type(user_id) is int and user_id > 0:
             login = data.get("login")
             if not isinstance(login, str) or not login:
                 raise GuardError("/user returned no login")
             self._own_id = data["id"]
             self._own_login = login
             return self._own_id, self._own_login
+        # Not gated on GITHUB_ACTIONS: the same reconciler runs on a trusted
+        # external host outside Actions. A configured app is not the Actions bot.
+        if slug and status in {401, 403, 404}:
+            return self._resolve_bot_login(f"{slug}[bot]")
         # GitHub Actions GITHUB_TOKEN often cannot call /user.
         if status in {401, 403, 404} and os.environ.get("GITHUB_ACTIONS") == "true":
-            status2, data2 = self.get_optional(f"/users/{urllib.parse.quote(GITHUB_ACTIONS_BOT_LOGIN)}")
-            if status2 == 200 and isinstance(data2, dict) and isinstance(data2.get("id"), int):
-                login = data2.get("login")
-                if login != GITHUB_ACTIONS_BOT_LOGIN or data2["id"] != GITHUB_ACTIONS_BOT_ID:
-                    raise GuardError("github-actions[bot] login mismatch")
-                self._own_id = int(data2["id"])
-                self._own_login = GITHUB_ACTIONS_BOT_LOGIN
-                return self._own_id, self._own_login
-            raise GuardError("cannot resolve official GitHub Actions bot identity")
+            return self._resolve_bot_login(
+                GITHUB_ACTIONS_BOT_LOGIN,
+                expected_id=GITHUB_ACTIONS_BOT_ID,
+            )
         raise GuardError(f"cannot resolve acting user (HTTP {status})")
 
 
@@ -3098,6 +3144,23 @@ def publish_assessment(
         if status < 200 or status >= 300:
             raise GuardError(f"comment create HTTP {status}")
         new_id = data.get("id") if isinstance(data, dict) else None
+        # First-write fail-fast, not proof that the token belongs to the
+        # configured app. It catches a slug that does not match the token's
+        # app on first contact and fails closed when it does. It is not a
+        # guarantee: no single write happens on every run, so a run that only
+        # updates or leaves a comment unchanged never reaches it, and a
+        # PATCH response echoes the comment's original author, not the account
+        # that performed the edit, so the same check on an update path would
+        # detect nothing.
+        created_user = data.get("user") if isinstance(data, dict) else None
+        created_id = (
+            created_user.get("id") if isinstance(created_user, Mapping) else None
+        )
+        if type(created_id) is not int or created_id != own_id:
+            raise GuardError(
+                f"created comment author id {created_id} does not match "
+                f"acting user {own_id}"
+            )
         assessment.writes.append(f"comment:create:{new_id}")
 
     _sync_approval_comment(api, assessment, comments, own_id)

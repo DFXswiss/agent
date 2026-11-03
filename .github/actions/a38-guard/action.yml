@@ -7,6 +7,10 @@ inputs:
   token:
     description: GitHub token (contents write for markPullRequestReadyForReview, issues write, pull-requests write, statuses write; actions/checks read for lifecycle, actions write for workflow approval and environment deployment approval)
     required: true
+  actor_app_slug:
+    description: GitHub App slug whose installation token is passed as token; empty keeps the previous resolver, GET /user first and the official Actions bot only when that call returns 401, 403 or 404 and GITHUB_ACTIONS is true, so a user token with no slug resolves to that user
+    required: false
+    default: ""
   repository:
     description: owner/name override (workflow_dispatch / standalone)
     required: false
@@ -68,6 +72,7 @@ runs:
         A38_DRY_RUN: ${{ inputs.dry_run }}
         A38_EVENT_FILE: ${{ inputs.event_file }}
         A38_EVENT_NAME: ${{ inputs.event_name }}
+        A38_ACTOR_APP_SLUG: ${{ inputs.actor_app_slug }}
         # Composite actions must pass action_ref through env; it identifies the
         # trusted action revision, while github.sha belongs to the consumer.
         A38_RUNTIME_REVISION: ${{ github.action_ref }}
