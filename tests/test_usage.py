@@ -371,6 +371,47 @@ def test_last_usage_snapshot_via_last_own_activity_insert(tmp_path: Path) -> Non
     assert last_usage_snapshot(store, vendor="other") is None
 
 
+def test_unchanged_grok_snapshot_ignores_newer_openrouter_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    session_id = _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    first = scan_usage(
+        store,
+        fetch=lambda token: (_credits(), SETTINGS),
+        auth_path=auth,
+        now=lambda: "2026-08-20T12:00:00Z",
+    )
+    assert isinstance(first, str)
+    store.write(
+        "activity",
+        "insert",
+        "00000000-0000-4000-8000-000000000001",
+        {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "session_id": session_id,
+            "type": "usage.snapshot",
+            "payload": {"vendor": "openrouter", "account": "router-a"},
+            "execution_status": "done",
+        },
+    )
+    assert scan_usage(
+        store,
+        fetch=lambda token: (_credits(), SETTINGS),
+        auth_path=auth,
+        now=lambda: "2026-08-20T12:01:00Z",
+    ) is None
+    grok_rows = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "usage.snapshot"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("vendor") == "grok"
+    ]
+    assert len(grok_rows) == 1
+
+
 def test_scan_usage_missing_auth_file(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_grok_session(store)

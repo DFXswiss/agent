@@ -258,7 +258,13 @@ def launch_lane(
                 output_file_text = Path(lane_output).read_text(encoding="utf-8")
             except OSError:
                 output_file_text = ""
-        finalized = finalize_lane_output(vendor, stdout, output_file_text)
+        finalized = finalize_lane_output(
+            vendor,
+            stdout,
+            output_file_text,
+            cwd=worktree,
+            stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+        )
         result = LaneResult(
             role=role,
             vendor=vendor,
@@ -825,7 +831,13 @@ def _run_prepared(
             os.unlink(str(output_file))
         except OSError:
             pass
-    finalized = finalize_lane_output(str(prepared["vendor"]), stdout, output_file_text)
+    finalized = finalize_lane_output(
+        str(prepared["vendor"]),
+        stdout,
+        output_file_text,
+        cwd=str(worktree),
+        stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
+    )
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),
         vendor=str(prepared["vendor"]),

@@ -320,7 +320,29 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def finalize_lane_output(vendor: str, stdout: str, output_file_text: str) -> LaneOutput:
+def _tool_target(target: object, cwd: str) -> str:
+    """Keep worktree paths useful while retaining redaction outside it."""
+    from .coordinator_common import redact
+
+    raw = str(target)
+    try:
+        root = Path(cwd).expanduser().resolve()
+        path = Path(raw).expanduser()
+        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+        raw = str(resolved.relative_to(root))
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return redact(raw[:300], limit=300)
+
+
+def finalize_lane_output(
+    vendor: str,
+    stdout: str,
+    output_file_text: str,
+    *,
+    cwd: str,
+    stream_from_output_file: bool = False,
+) -> LaneOutput:
     """Normalize final text, reported usage, and the bounded tool transcript."""
     if vendor == "grok":
         return LaneOutput(stdout, None, (), False)
@@ -329,7 +351,11 @@ def finalize_lane_output(vendor: str, stdout: str, output_file_text: str) -> Lan
     if vendor not in ("claude", "openrouter"):
         return LaneOutput("", None, (), False)
 
-    stream = stdout if vendor == "claude" else output_file_text
+    stream = (
+        output_file_text
+        if vendor == "openrouter" or stream_from_output_file
+        else stdout
+    )
     events: list[dict] = []
     for line in stream.splitlines():
         try:
@@ -343,8 +369,6 @@ def finalize_lane_output(vendor: str, stdout: str, output_file_text: str) -> Lan
     init_model: str | None = None
     tool_rows: list[tuple[str | None, dict]] = []
     tool_errors: dict[str, bool] = {}
-    from .coordinator_common import redact
-
     for event in events:
         if event.get("type") == "system" and event.get("subtype") == "init":
             model = event.get("model")
@@ -372,7 +396,7 @@ def finalize_lane_output(vendor: str, stdout: str, output_file_text: str) -> Lan
                             break
                 row = {
                     "tool": str(name) if name is not None else "",
-                    "target": redact(str(target)[:300], limit=300),
+                    "target": _tool_target(target, cwd),
                     "error": False,
                 }
                 use_id = block.get("id")
@@ -604,7 +628,7 @@ def launch(
             raise SystemExit(overlap)
     lane_output_file: str | None = None
     output_file: str | None = None
-    if vendor in OUTPUT_FILE_VENDORS:
+    if vendor in OUTPUT_FILE_VENDORS or (vendor == "claude" and tmux):
         if dry_run:
             output_file = f"/tmp/agent-lane-{vendor}-dry-run.txt"
         else:
@@ -633,9 +657,25 @@ def launch(
     if tmux:
         unique = "" if dry_run else uuid.uuid4().hex[:8]
         tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
-        if vendor in ("claude", "openrouter"):
+        if vendor == "claude":
+            # Claude's stream-json lines can exceed a tmux pane width and its
+            # history. Keep the stream in a file and use pane capture only as
+            # process diagnostics, never as the parser input.
+            if output_file is None:
+                raise SystemExit("claude tmux lane requires an output file")
+            argv = [
+                "sh",
+                "-c",
+                'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
+                "sh",
+                spec_file,
+                output_file,
+                *argv,
+            ]
+            claude_redirect = True
+        elif vendor == "openrouter":
             # Claude Code reads the prompt from stdin only when stdin is not a
-            # TTY; in a tmux pane it is. Redirect the spec file for both adapters.
+            # TTY; in a tmux pane it is. Redirect this adapter's spec file.
             argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
             claude_redirect = True
         argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
@@ -680,7 +720,15 @@ def launch(
             except OSError:
                 output_file_text = ""
 
-        finalized = finalize_lane_output(vendor, stdout, output_file_text)
+        finalized = finalize_lane_output(
+            vendor,
+            stdout,
+            output_file_text,
+            cwd=cwd,
+            stream_from_output_file=(
+                vendor in OUTPUT_FILE_VENDORS or (vendor == "claude" and tmux)
+            ),
+        )
         status = parse_status(finalized.text, returncode)
         return LaneResult(
             role=role,

@@ -34,6 +34,8 @@ OPERATOR_GROK_MODEL = "operator-lane-grok-model"
 OPERATOR_CODEX_MODEL = "operator-lane-codex-model"
 OPERATOR_GROK_HOME = "/operator/path/grok-lane-a"
 OPERATOR_CODEX_HOME = "/operator/path/codex-lane-a"
+OPERATOR_CLAUDE_HOME = "/operator/path/claude-lane-a"
+OPERATOR_CLAUDE_MODEL = "operator-lane-claude-model"
 OPERATOR_OPENROUTER_HOME = "/operator/path/openrouter-lane-a"
 OPERATOR_OPENROUTER_MODEL = "deepseek/example"
 OPERATOR_GROK_HOME_B = "/operator/path/grok-lane-b"
@@ -56,6 +58,7 @@ def write_operator_ai_accounts(
         "accounts": {
             "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
             "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
+            "claude-a": {"provider": "claude", "config_dir": OPERATOR_CLAUDE_HOME},
             "grok-b": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME_B},
             "openrouter-a": {
                 "provider": "openrouter", "config_dir": OPERATOR_OPENROUTER_HOME
@@ -80,6 +83,16 @@ def write_operator_ai_accounts(
             "codex-reader": {
                 "account": "codex-a",
                 "model": OPERATOR_CODEX_MODEL,
+                "access": "read-only",
+            },
+            "claude-builder": {
+                "account": "claude-a",
+                "model": OPERATOR_CLAUDE_MODEL,
+                "access": "workspace-write",
+            },
+            "claude-reader": {
+                "account": "claude-a",
+                "model": OPERATOR_CLAUDE_MODEL,
                 "access": "read-only",
             },
             "lane-builder-b": {
@@ -111,6 +124,10 @@ def write_operator_ai_accounts(
                     "codex:reviewer": "codex-reader",
                     "codex:pr-reviewer-quality": "codex-reader",
                     "codex:pr-reviewer-logic": "codex-reader",
+                    "claude:implementer": "claude-builder",
+                    "claude:reviewer": "claude-reader",
+                    "claude:pr-reviewer-quality": "claude-reader",
+                    "claude:pr-reviewer-logic": "claude-reader",
                     "openrouter:implementer": "openrouter-builder",
                     "openrouter:reviewer": "openrouter-reader",
                     "openrouter:pr-reviewer-quality": "openrouter-reader",
@@ -393,14 +410,14 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
          "modelUsage": {"vendor/model": {}}},
     ]
     stream = "\n".join(json.dumps(event) for event in events)
-    out = finalize_lane_output("claude", stream, "")
+    out = finalize_lane_output("claude", stream, "", cwd="/work")
     assert out.text == "done\nSTATUS: complete"
     assert out.usage is not None
     assert out.usage.model == "vendor/model"
     assert out.usage.input_tokens == 10
     assert out.usage.num_turns == 3
     assert out.tools == (
-        {"tool": "Read", "target": "/work/a.py", "error": False},
+        {"tool": "Read", "target": "a.py", "error": False},
         {"tool": "Grep", "target": "[redacted]", "error": True},
     )
     assert out.tools_truncated is False
@@ -408,8 +425,8 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
 
 def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     no_result = json.dumps({"type": "assistant", "message": {"content": []}})
-    assert finalize_lane_output("claude", no_result, "").text == ""
-    assert finalize_lane_output("claude", "not json", "").usage is None
+    assert finalize_lane_output("claude", no_result, "", cwd="/work").text == ""
+    assert finalize_lane_output("claude", "not json", "", cwd="/work").usage is None
     blocks = [
         {"type": "tool_use", "id": f"t-{i}", "name": "Read", "input": {"path": "x" * 500}}
         for i in range(201)
@@ -422,13 +439,54 @@ def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
                         "modelUsage": {"a": {}, "b": {}}}),
         ]
     )
-    out = finalize_lane_output("openrouter", "pane noise", stream)
+    out = finalize_lane_output(
+        "openrouter", "pane noise", stream, cwd="/work", stream_from_output_file=True
+    )
     assert len(out.tools) == 200
     assert out.tools_truncated is True
     assert len(out.tools[0]["target"]) <= 300
     assert out.usage is not None and out.usage.model == "fallback"
-    assert finalize_lane_output("codex", "stdout", "file").text == "file"
-    assert finalize_lane_output("grok", "stdout", "file").text == "stdout"
+    assert finalize_lane_output("codex", "stdout", "file", cwd="/work").text == "file"
+    assert finalize_lane_output("grok", "stdout", "file", cwd="/work").text == "stdout"
+
+
+def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    inside = worktree / "src" / "module.py"
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "inside",
+                        "name": "Read",
+                        "input": {"file_path": str(inside)},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "outside",
+                        "name": "Read",
+                        "input": {"file_path": "/Users/someone/private.py"},
+                    },
+                ]
+            },
+        },
+        {"type": "result", "result": "STATUS: complete", "usage": {}},
+    ]
+    out = finalize_lane_output(
+        "claude",
+        "\n".join(json.dumps(event) for event in events),
+        "",
+        cwd=str(worktree),
+    )
+    assert out.tools == (
+        {"tool": "Read", "target": "src/module.py", "error": False},
+        {"tool": "Read", "target": "[redacted]", "error": False},
+    )
 
 
 @pytest.mark.parametrize("config_inside_worktree", [False, True])
@@ -831,6 +889,35 @@ def test_launch_fake_runner_codex_stdin(tmp_path: Path) -> None:
     assert not Path(output_paths[0]).exists()
 
 
+def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    contents = "claude please review\n"
+    spec.write_text(contents, encoding="utf-8")
+    stream = json.dumps(
+        {"type": "result", "result": "reviewed\nSTATUS: complete", "usage": {}}
+    )
+    seen_stdin: list[str | None] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        seen_stdin.append(stdin_text)
+        return SimpleNamespace(returncode=0, stdout=stream, stderr="")
+
+    result = launch(
+        role="reviewer",
+        vendor="claude",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert seen_stdin == [contents]
+    assert result.status == "complete"
+    assert result.stdout == "reviewed\nSTATUS: complete"
+
+
 def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
@@ -1007,6 +1094,55 @@ def test_run_in_tmux_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "STATUS: complete" in result.stdout
     assert calls[0][:3] == ["tmux", "new-session", "-d"]
     assert any("kill-session" in c for c in calls)
+
+
+@pytest.mark.parametrize("vendor", ["claude", "openrouter"])
+def test_launch_tmux_stream_json_uses_output_file_not_pane_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    long_result = "x" * 2500 + "\nSTATUS: complete"
+    stream = json.dumps({"type": "result", "result": long_result, "usage": {}})
+    pane_result = json.dumps(
+        {"type": "result", "result": "pane text\nSTATUS: partial", "usage": {}}
+    )
+
+    def handler(argv: list[str], _calls: list[list[str]]) -> CompletedProcess[str]:
+        if argv[:2] == ["tmux", "new-session"]:
+            output_path = next(
+                Path(value)
+                for value in argv
+                if value.endswith(".txt")
+                and Path(value).name.startswith(f"agent-lane-{vendor}-")
+            )
+            output_path.write_text(stream, encoding="utf-8")
+            return CompletedProcess(argv, 0, "", "")
+        if "remain-on-exit" in argv:
+            return CompletedProcess(argv, 0, "", "")
+        if argv[-1] == "#{pane_dead}":
+            return CompletedProcess(argv, 0, "1\n", "")
+        if argv[-1] == "#{pane_dead_status}":
+            return CompletedProcess(argv, 0, "0\n", "")
+        if "capture-pane" in argv:
+            return CompletedProcess(argv, 0, pane_result, "")
+        return CompletedProcess(argv, 0, "", "")
+
+    fake, calls = _tmux_script(handler)
+    monkeypatch.setattr("agent_cli.lane._tmux_call", fake)
+    result = launch(
+        role="reviewer",
+        vendor=vendor,
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.status == "complete"
+    assert result.stdout == long_result
+    assert "pane text" not in result.stdout
+    assert any("capture-pane" in call for call in calls)
 
 
 def test_run_in_tmux_pane_dead_status_is_returncode(monkeypatch: pytest.MonkeyPatch) -> None:
