@@ -181,12 +181,12 @@ never weakens protection.
 
 The examined window of at most 40 candidates advances each half-hour slot, so
 candidates that cannot be deleted do not block the rest while jobs reads stay
-bounded. Each pass is capped at 250 API requests, excluding the client's own
-GET retries, and the cap is enforced before each pagination page. When the cap
-is reached the pass ends with `aborted: "budget"`, keeps any deletions already
-made, and never deletes a run whose fresh check did not complete. The result
-reports `requests`. After all protection reads, the pass re-reads the run and
-its jobs a final time. It deletes, or plans in a dry run, only when the run is
+bounded. Each pass is capped at 250 API requests after the three configuration
+reads, excluding the client's own GET retries, and the cap is enforced before
+each request and each pagination page. When the cap is reached the pass ends
+with `aborted: "budget"`, keeps any deletions already made, and never deletes a
+run whose fresh check did not complete. The result reports `requests`. After
+all protection reads, the pass re-reads the run and its jobs a final time. It deletes, or plans in a dry run, only when the run is
 still held, unchanged in SHA and branch, still belongs to a fork, and still has
 no jobs. A run or jobs 404 is skipped; any other jobs failure aborts the pass.
 It deletes or plans at most 20 runs per sweep. A denied or rate-limited delete

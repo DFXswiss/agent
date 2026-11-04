@@ -19,6 +19,9 @@ from .workflow_approval import (
 MAX_DELETIONS = 20
 MAX_EXAMINED = 2 * MAX_DELETIONS
 # Two sweeps per hour stay under about half the shared hourly request budget.
+# Each pass is capped at 250 API requests after the three configuration reads,
+# excluding the client's own GET retries, and the cap is enforced before each
+# request and each pagination page.
 MAX_REQUESTS = 250
 MIN_AGE_S = 3600
 ROTATION_PERIOD_S = 1800
@@ -76,10 +79,6 @@ class _BudgetedApi:
         # Reuse workflow_approval's size for GitHubApi.paginate's 100-item pages.
         self.used += max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
         return items
-
-
-# Counts exclude client GET retries. The remaining cap is enforced before each
-# pagination page, so a successful call cannot overshoot it.
 
 
 def _open_pull_protection(
@@ -268,6 +267,26 @@ def _drain_enabled(
         _validate_sha,
     )
 
+    def _detail_shas(
+        detail: Mapping[str, Any], detail_head: Mapping[str, Any]
+    ) -> tuple[str, str | None]:
+        detail_head_sha = detail_head.get("sha")
+        try:
+            detail_head_sha = _validate_sha(
+                detail_head_sha, "open pull request head sha"
+            )
+        except GuardError as exc:
+            raise GuardError("open pull request head sha missing") from exc
+        detail_merge_sha = detail.get("merge_commit_sha")
+        if detail_merge_sha is not None:
+            try:
+                detail_merge_sha = _validate_sha(
+                    detail_merge_sha, "open pull request merge sha"
+                )
+            except GuardError as exc:
+                raise GuardError("open pull request merge sha invalid") from exc
+        return detail_head_sha, detail_merge_sha
+
     if now is None:
         now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=MIN_AGE_S)
@@ -402,51 +421,48 @@ def _drain_enabled(
                 if not isinstance(detail, Mapping):
                     raise GuardError("open pull request head sha missing")
                 detail_head = detail.get("head")
-                detail_head_repository = (
-                    detail_head.get("repo")
-                    if isinstance(detail_head, Mapping)
-                    else None
-                )
-                detail_head_repo = (
-                    detail_head_repository.get("full_name")
-                    if isinstance(detail_head_repository, Mapping)
-                    else None
-                )
-                detail_head_branch = (
-                    detail_head.get("ref")
-                    if isinstance(detail_head, Mapping)
-                    else None
-                )
+                if not isinstance(detail_head, Mapping):
+                    raise GuardError("open pull request head sha missing")
+                detail_head_repository = detail_head.get("repo")
+                detail_head_repo = None
+                if detail_head_repository is not None:
+                    if not isinstance(detail_head_repository, Mapping):
+                        raise GuardError(
+                            "open pull request head repository invalid"
+                        )
+                    detail_head_repo = detail_head_repository.get("full_name")
+                    if (
+                        not isinstance(detail_head_repo, str)
+                        or detail_head_repo == ""
+                    ):
+                        raise GuardError(
+                            "open pull request head repository invalid"
+                        )
+                detail_head_branch = detail_head.get("ref")
                 if (
-                    not isinstance(detail_head_repo, str)
-                    or detail_head_repo.lower() != current_head_repo.lower()
-                    or not isinstance(detail_head_branch, str)
+                    not isinstance(detail_head_branch, str)
+                    or detail_head_branch == ""
+                ):
+                    raise GuardError("open pull request head ref missing")
+                if detail_head_repo is None:
+                    detail_head_sha, detail_merge_sha = _detail_shas(
+                        detail, detail_head
+                    )
+                    if (
+                        detail_head_sha == current_sha.lower()
+                        or detail_merge_sha == current_sha.lower()
+                    ):
+                        detail_protected = True
+                        break
+                    continue
+                if (
+                    detail_head_repo.lower() != current_head_repo.lower()
                     or detail_head_branch != current_head_branch
                 ):
                     continue
-                detail_head_sha = (
-                    detail_head.get("sha")
-                    if isinstance(detail_head, Mapping)
-                    else None
+                detail_head_sha, detail_merge_sha = _detail_shas(
+                    detail, detail_head
                 )
-                try:
-                    detail_head_sha = _validate_sha(
-                        detail_head_sha, "open pull request head sha"
-                    )
-                except GuardError as exc:
-                    raise GuardError(
-                        "open pull request head sha missing"
-                    ) from exc
-                detail_merge_sha = detail.get("merge_commit_sha")
-                if detail_merge_sha is not None:
-                    try:
-                        detail_merge_sha = _validate_sha(
-                            detail_merge_sha, "open pull request merge sha"
-                        )
-                    except GuardError as exc:
-                        raise GuardError(
-                            "open pull request merge sha invalid"
-                        ) from exc
                 try:
                     detail_commits = {
                         sha.lower() for sha in _commit_shas(api, repo, number)

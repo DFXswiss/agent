@@ -519,6 +519,63 @@ def test_recheck_ignores_detail_for_another_head(detail_head: dict) -> None:
     assert fake.deletes == [101]
 
 
+@pytest.mark.parametrize(
+    ("detail_head", "message"),
+    [
+        (None, "open pull request head sha missing"),
+        (
+            {"sha": "a" * 40, "repo": "invalid", "ref": "feature"},
+            "open pull request head repository invalid",
+        ),
+        (
+            {
+                "sha": "a" * 40,
+                "repo": {"full_name": ""},
+                "ref": "feature",
+            },
+            "open pull request head repository invalid",
+        ),
+        (
+            {"sha": "a" * 40, "repo": {"full_name": FORK}},
+            "open pull request head ref missing",
+        ),
+    ],
+)
+def test_recheck_malformed_matching_detail_fails_closed(
+    detail_head: object, message: str
+) -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40, "b" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.pull_overrides[1] = {**listed, "head": detail_head}
+
+    with pytest.raises(GuardError, match=message):
+        drain_held_runs(fake.api(), REPO)
+
+    assert fake.deletes == []
+
+
+def test_recheck_deleted_fork_head_sha_protects_candidate() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40, "b" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.commits_reads[1] = [["c" * 40], ["d" * 40]]
+    fake.pull_overrides[1] = {
+        **listed,
+        "head": {**listed["head"], "sha": run["head_sha"], "repo": None},
+    }
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["deleted"] == []
+    assert fake.commit_read_counts == {1: 1}
+    assert fake.deletes == []
+
+
 def test_last_single_pull_read_protects_changed_merge_sha() -> None:
     fake = FakeDrain()
     run = fake.run()
