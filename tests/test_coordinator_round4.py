@@ -185,7 +185,9 @@ class QueryHub:
     def query(self, match):
         assert match == {
             "type": "assignment.created",
-            "payload.repo": {"in": ["Example/project", "example/project"]},
+            "payload.issue_key": {
+                "in": ["Example/project#7", "example/project#7"],
+            },
         }
         if self.error is not None:
             raise self.error
@@ -262,7 +264,7 @@ def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
     )
     assert seen == [{
         "type": "assignment.created",
-        "payload.repo": {"in": ["example/project"]},
+        "payload.issue_key": {"in": ["example/project#7"]},
     }]
 
 
@@ -391,7 +393,13 @@ def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path)
 
 @pytest.mark.parametrize(
     "reason",
-    ["device is not paired with a hub", "hub POST /sync/query → HTTP 401: no", "HTTP 403"],
+    [
+        "device is not paired with a hub",
+        "hub POST /sync/query → HTTP 400: bad matcher",
+        "hub POST /sync/query → HTTP 401: no",
+        "HTTP 403",
+        "hub assignment query truncated",
+    ],
 )
 def test_hub_configuration_errors_block_with_reply_checkpoint(monkeypatch, tmp_path, reason):
     _patch_accept_prerequisites(monkeypatch)
@@ -413,9 +421,15 @@ def test_hub_configuration_errors_block_with_reply_checkpoint(monkeypatch, tmp_p
     assert published == [{"kind": "configuration-binding", "reply_checkpoint": True}]
 
 
-def test_runtime_configuration_error_blocks_once_with_reply_checkpoint(monkeypatch, tmp_path):
+def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, tmp_path):
     task = _accept_task()
-    task["payload"]["coordinator"]["phase"] = "checkout"
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint.update(
+        phase="ask",
+        resume_phase="implement",
+        question_activity_id="question-checkpoint",
+        replies_consumed_through=41,
+    )
     monkeypatch.setattr("agent_cli.coordinator_runtime._open_tasks", lambda *_a, **_k: [task])
     monkeypatch.setattr(
         "agent_cli.coordinator_runtime.repo_cfg",
@@ -430,11 +444,62 @@ def test_runtime_configuration_error_blocks_once_with_reply_checkpoint(monkeypat
     assert advance_one(
         object(), make_worker(tmp_path), runner=object(), lane_runner=None
     ) == ["published"]
-    checkpoint = task["payload"]["coordinator"]
-    assert checkpoint["phase"] == "blocked"
-    assert checkpoint["resume_phase"] == "checkout"
+    assert checkpoint["phase"] == "ask"
+    assert checkpoint["resume_phase"] == "implement"
+    assert checkpoint["question_activity_id"] == "question-checkpoint"
+    assert checkpoint["replies_consumed_through"] == 41
     assert checkpoint["blocker_publish_once"] is True
-    assert published == [{"kind": "configuration-binding", "reply_checkpoint": True}]
+    assert published == [
+        {"kind": "configuration-binding", "preserve_reply_checkpoint": True}
+    ]
+
+
+def test_runtime_configuration_error_in_ci_resumes_when_binding_is_restored(
+    monkeypatch, tmp_path
+):
+    task = _accept_task()
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint.update(phase="ci", execution_binding="pinned-binding")
+    broken = {"value": True}
+
+    def repo_config(*_args, **_kwargs):
+        if broken["value"]:
+            raise CoordinatorError("configuration changed")
+        return object()
+
+    monkeypatch.setattr("agent_cli.coordinator_runtime._open_tasks", lambda *_a, **_k: [task])
+    monkeypatch.setattr("agent_cli.coordinator_runtime.repo_cfg", repo_config)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.execution_binding",
+        lambda *_a, **_k: "pinned-binding",
+    )
+    monkeypatch.setattr("agent_cli.coordinator_runtime.save_task", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.publish_blocker",
+        lambda *_a, **_k: ["published"],
+    )
+    monkeypatch.setattr("agent_cli.coordinator_runtime.scoped", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.account_for",
+        lambda *_a, **_k: SimpleNamespace(login="worker-bot"),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.verify_issue_assigned", lambda *_a, **_k: {}
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.phase_ci", lambda *_a, **_k: ["CI resumed"]
+    )
+
+    assert advance_one(
+        object(), make_worker(tmp_path), runner=object(), lane_runner=None
+    ) == ["published"]
+    assert checkpoint["phase"] == "ci"
+    broken["value"] = False
+    assert advance_one(
+        object(), make_worker(tmp_path), runner=object(), lane_runner=None
+    ) == ["CI resumed"]
+    assert checkpoint["phase"] == "ci"
+    assert "blocker_publish_once" not in checkpoint
 
 
 def test_published_configuration_blocker_is_not_republished(monkeypatch, tmp_path):
@@ -447,6 +512,7 @@ def test_published_configuration_blocker_is_not_republished(monkeypatch, tmp_pat
         blocker_publish_once=True,
         blocker_publish_kind="configuration-binding",
         question_activity_id="published-checkpoint",
+        blocker_activity_id="published-blocker",
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_github.phase_read_replies",
@@ -459,6 +525,45 @@ def test_published_configuration_blocker_is_not_republished(monkeypatch, tmp_pat
     assert phase_blocked(
         object(), make_worker(tmp_path), task, object()
     ) == ["waiting for authorized reply"]
+
+
+def test_failed_configuration_blocker_post_is_retried(monkeypatch, tmp_path):
+    task = _accept_task()
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint.update(
+        phase="blocked",
+        resume_phase="accept",
+        blocker="device is not paired with a hub",
+        blocker_publish_once=True,
+        blocker_publish_kind="configuration-binding",
+        question_activity_id="older-question",
+        replies_consumed_through=41,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.phase_read_replies",
+        lambda *_a, **_k: ["waiting for authorized reply"],
+    )
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", lambda *_a, **_k: None)
+    attempts = []
+
+    def post(*_args, **_kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise CoordinatorError("post failed")
+        return "published-blocker"
+
+    monkeypatch.setattr("agent_cli.coordinator_github.post_issue_comment", post)
+    worker = make_worker(tmp_path)
+    first = phase_blocked(object(), worker, task, object())
+    assert "blocker publish failed" in first[-1]
+    assert "blocker_activity_id" not in checkpoint
+    phase_blocked(object(), worker, task, object())
+    assert checkpoint["blocker_activity_id"] == "published-blocker"
+    assert checkpoint["question_activity_id"] == "published-blocker"
+    assert checkpoint["replies_consumed_through"] is None
+    assert len(attempts) == 2
+    phase_blocked(object(), worker, task, object())
+    assert len(attempts) == 2
 
 
 def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_path):

@@ -1425,17 +1425,20 @@ def advance_one(
         refresh_execution_binding(store, worker, task)
     except (CoordinatorError, StoreError) as exc:
         message = str(exc)
-        checkpoint = c.get("question_activity_id")
+        blocker_activity_id = c.get("blocker_activity_id")
         if (
             c.get("blocker_publish_once")
+            and c.get("blocker_publish_kind") == "configuration-binding"
             and c.get("blocker") == message
-            and isinstance(checkpoint, str)
-            and checkpoint
+            and isinstance(blocker_activity_id, str)
+            and blocker_activity_id
         ):
             return [f"blocked: {redact(message)}"]
-        if not c.get("resume_phase") and phase not in ("blocked", "ask", "done"):
-            c["resume_phase"] = phase
-        c["phase"] = "blocked"
+        if (
+            c.get("blocker") != message
+            or c.get("blocker_publish_kind") != "configuration-binding"
+        ):
+            c.pop("blocker_activity_id", None)
         c["blocker"] = message
         c["blocker_publish_once"] = True
         c["blocker_publish_kind"] = "configuration-binding"
@@ -1447,8 +1450,14 @@ def advance_one(
             runner,
             message,
             kind="configuration-binding",
-            reply_checkpoint=True,
+            preserve_reply_checkpoint=True,
         )
+    if c.get("blocker_publish_kind") == "configuration-binding" and phase != "blocked":
+        c.pop("blocker", None)
+        c.pop("blocker_publish_once", None)
+        c.pop("blocker_publish_kind", None)
+        c.pop("blocker_activity_id", None)
+        save_task(store, task)
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
     if phase not in ("await_merge", "done", "blocked", "ask"):

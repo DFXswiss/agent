@@ -633,18 +633,23 @@ hostnames belong in the deployment configuration, not this public repository.
    the default branch and a direct-push or verified fork publication route at
    acceptance. When configured to require a hub mandate, it accepts only a
    matching `assignment.created` query row. It queries the repository spelling
-   from the assignment and its case-folded form, then compares repositories
-   case-insensitively. The row must have envelope `github_login` equal to the
+   plus issue number as `payload.issue_key` and its case-folded form, then
+   compares repositories case-insensitively. The compatible hub adds the
+   canonical `<owner>/<name>#<number>` issue key to every `assignment.created`
+   payload. The row must have envelope `github_login` equal to the
    GitHub assignment-event actor and an authorized reply login,
    `origin_device_id` exactly equal to `web:<envelope github_login>`, and inner
    payload `actor` case-insensitively equal to that envelope login. A matching
-   device-origin row is not a mandate. A definite no-match retries for 120
+   device-origin row is not a mandate. This property requires a hub that refuses
+   device ids and pushed origins beginning with `web:`; only the hub may create
+   that named website origin. A definite no-match retries for 120
    seconds from `assignment_at`, and a 500-row capped query is a truncated retry,
-   not a no-match. Unpaired and hub HTTP 401/403 results are recoverable
-   configuration blockers with a reply checkpoint; other hub failures retry and
-   publish at most one blocker per hour. The script then confirms acceptance in the
-   GitHub issue. This acceptance and confirmation are script work, never model
-   work, and happen before the script starts the implementation lane.
+   not a no-match. Unpaired devices, hub HTTP 400/401/403 results, and a truncated
+   query are recoverable configuration blockers with a reply checkpoint; other
+   hub failures retry and publish at most one blocker per hour. The script then
+   confirms acceptance in the GitHub issue. This acceptance and confirmation
+   are script work, never model work, and happen before the script starts the
+   implementation lane.
 2. The script starts the implementation lane with the assigned work. The model
    implements the change and returns its result to the script.
 3. The script starts the review lane. When improvements are needed, the script
