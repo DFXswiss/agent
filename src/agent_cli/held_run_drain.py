@@ -418,19 +418,21 @@ def _drain_enabled(
                             "open pull request head repository invalid"
                         )
                     detail_head_repo = detail_head_repository.get("full_name")
-                    if (
-                        not isinstance(detail_head_repo, str)
-                        or detail_head_repo == ""
-                    ):
+                    try:
+                        detail_head_repo = _validate_repo(detail_head_repo)
+                    except GuardError as exc:
                         raise GuardError(
                             "open pull request head repository invalid"
-                        )
+                        ) from exc
                 detail_head_branch = detail_head.get("ref")
-                if (
-                    not isinstance(detail_head_branch, str)
-                    or detail_head_branch == ""
-                ):
-                    raise GuardError("open pull request head ref missing")
+                try:
+                    detail_head_branch = _validate_head_branch(
+                        detail_head_branch
+                    )
+                except GuardError as exc:
+                    raise GuardError(
+                        "open pull request head ref missing"
+                    ) from exc
                 if detail_head_repo is None:
                     detail_head_sha, detail_merge_sha = _detail_shas(
                         detail, detail_head

@@ -588,7 +588,23 @@ def test_recheck_ignores_detail_for_another_head(detail_head: dict) -> None:
             "open pull request head repository invalid",
         ),
         (
+            {
+                "sha": "a" * 40,
+                "repo": {"full_name": "invalid"},
+                "ref": "feature",
+            },
+            "open pull request head repository invalid",
+        ),
+        (
             {"sha": "a" * 40, "repo": {"full_name": FORK}},
+            "open pull request head ref missing",
+        ),
+        (
+            {
+                "sha": "a" * 40,
+                "repo": {"full_name": FORK},
+                "ref": "feature\x01",
+            },
             "open pull request head ref missing",
         ),
     ],
