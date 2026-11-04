@@ -644,7 +644,19 @@ def test_claude_lane_in_tmux_redirects_the_spec_file(tmp_path: Path) -> None:
 
     def runner(argv: list[str], stdin_text: str | None):
         seen["argv"], seen["stdin"] = argv, stdin_text
-        return type("Done", (), {"returncode": 0, "stdout": "STATUS: complete\n", "stderr": ""})()
+        inner = argv[argv.index("--") + 1 :]
+        Path(inner[5]).write_text(
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": "output file\nSTATUS: complete",
+                    "usage": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return type("Done", (), {"returncode": 0, "stdout": "runner stdout", "stderr": ""})()
 
     for dry in (True, False):
         result = launch(
@@ -654,8 +666,18 @@ def test_claude_lane_in_tmux_redirects_the_spec_file(tmp_path: Path) -> None:
         )
         argv = result.argv
         inner = argv[argv.index("--") + 1 :]
-        assert inner[:5] == ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", str(spec.resolve())]
+        assert inner[:5] == [
+            "sh",
+            "-c",
+            'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
+            "sh",
+            str(spec.resolve()),
+        ]
+        assert inner[5]
         assert "claude" in inner and "--print" in inner
+        if not dry:
+            assert seen["stdin"] is None
+            assert result.stdout == "output file\nSTATUS: complete"
     # Without an injected runner the tmux holder must not type the spec into the pane.
     import agent_cli.lane as lane_mod
 
