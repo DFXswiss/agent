@@ -8,6 +8,7 @@ from agent_cli.a38_review import COMPLIANCE_PROMPT, validate_declaration, valida
 from agent_cli.coordinator_a38 import (
     _render_review_comment,
     _run_cli,
+    _second_review_request_note,
     validate_second_review_payload,
 )
 from agent_cli.coordinator_common import CoordinatorError
@@ -124,3 +125,24 @@ def test_a38_cli_uses_worker_check_timeout(
     result = _run_cli(["policy", "--file", "policy.json"], worker=worker, cwd=tmp_path)
     assert result.returncode == 0
     assert captured["timeout"] == worker.check_timeout
+
+
+def test_second_review_request_note_is_bounded_for_long_repo_and_session() -> None:
+    repo = "o/" + "r" * 98
+    session_id = "s" * 64
+    url = f"https://github.com/{repo}/pull/123"
+    note = _second_review_request_note(url=url, session_id=session_id)
+    assert len(repo) == 100
+    assert len(session_id) == 64
+    assert len(note) <= 1000
+    assert url in note
+    assert session_id in note
+    assert "docs/issue-coordinator.md" in note
+
+    oversized_url = url + "?context=" + "x" * 1200
+    truncated = _second_review_request_note(url=oversized_url, session_id=session_id)
+    assert len(truncated) == 1000
+    assert oversized_url not in truncated
+    assert "…" in truncated
+    assert session_id in truncated
+    assert "docs/issue-coordinator.md" in truncated

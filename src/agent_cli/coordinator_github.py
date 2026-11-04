@@ -1182,6 +1182,31 @@ def _apply_readiness_checklist(
             raise CoordinatorError(
                 "owner A38 readiness requires approved grok-pr/quality gate on current head"
             )
+        source_raw = coord(task).get("source")
+        source = source_raw if isinstance(source_raw, dict) else {}
+        assignment_actor_raw = text(source.get("assignment_actor"))
+        assignment_actor = assignment_actor_raw.strip() if assignment_actor_raw else None
+        assignment_event_id = source.get("assignment_event_id")
+        if (
+            assignment_actor is None
+            or not isinstance(assignment_event_id, int)
+            or isinstance(assignment_event_id, bool)
+            or assignment_event_id <= 0
+        ):
+            raise CoordinatorError(
+                "owner A38 default requires a verified assignment actor and event; "
+                "configure owner_readiness_argv"
+            )
+        mandate_evidence = (
+            "verified human GitHub assignment mandate: "
+            f"actor={assignment_actor}; event_id={assignment_event_id}"
+        )
+        hub_assignment_row_id_raw = text(source.get("hub_assignment_row_id"))
+        hub_assignment_row_id = (
+            hub_assignment_row_id_raw.strip() if hub_assignment_row_id_raw else None
+        )
+        if hub_assignment_row_id:
+            mandate_evidence += f"; hub_assignment_row_id={hub_assignment_row_id}"
         set_checklist(
             store,
             task,
@@ -1195,16 +1220,16 @@ def _apply_readiness_checklist(
             task,
             "deviation_declared",
             "n_a",
-            "no deviation declared",
-            source="script",
+            f"{mandate_evidence}; no deviation declared",
+            source="human",
         )
         set_checklist(
             store,
             task,
             "deviation_granted",
             "n_a",
-            "no deviation declared",
-            source="script",
+            f"{mandate_evidence}; no deviation declared; not claiming a grant",
+            source="human",
         )
         return
     set_checklist(
