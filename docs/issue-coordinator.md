@@ -27,8 +27,9 @@ null/empty `workers` enables no worker. Operator-supplied worker keys are
 existing session IDs, bound explicitly in `github-accounts.json` and
 `ai-accounts.json`; the coordinator does not select accounts or roles for them.
 
-Each configured worker explicitly names `workspace_root`, `repositories`,
-`reply_logins`, `poll_seconds`, `lane_timeout`, and `check_timeout`.
+Each configured worker explicitly names `workspace_root`, `reply_logins`,
+`poll_seconds`, `lane_timeout`, and `check_timeout`, plus at least one of
+`repositories` or `repository_owners`.
 Non-A38 workers also name `review_session`; A38 workers use the external-review
 configuration below. Each repository entry names its `base`, `publication_repo`,
 `check_argv`, and `readiness_argv`. The two argv arrays belong to trusted
@@ -37,6 +38,28 @@ repository's required tests and additional readiness validation;
 repository-specific policy stays outside the core. The publication repository
 can equal the target repository; a different repository requires operator
 authorization for that publication route.
+
+`repository_owners` is a distinct, case-insensitive list of GitHub organization
+or user logins. One paginated GitHub issue search per tick discovers assigned
+open issues under those owners. An explicit `repositories` entry wins for the
+same repository. At acceptance, an owner-scoped task pins the repository's
+current default branch and its publication route: direct push when the worker
+has push permission, otherwise `<worker-login>/<repository-name>`. A missing
+fork is created once and checked for at most ten attempts, five seconds apart;
+an existing fork with another parent is refused. `owner_check_argv` defaults to
+`[]`. `owner_readiness_argv` is required outside A38 mode. In A38 mode, an
+absent owner readiness argv uses the verified A38 first-slot quality result for
+`contributing_ok` and records that no deviation was declared.
+
+`require_hub_assignment` defaults to `false`. When true, acceptance also makes
+one device-authenticated `/sync/query` for `assignment.created` and accepts only
+a row for the issue and agent whose top-level query-row `github_login` equals
+the GitHub assignment-event actor and is listed in `reply_logins`. The hub's
+`replica_out` query shape exposes `github_login` at the row top level; it does
+not use the `_github_login` copy produced by other hub state endpoints. A
+definite mismatch publishes `assignment was not issued through the hub` and
+pins the issue reply checkpoint without failing the task or starting a model.
+A hub transport failure keeps phase `accept` for retry.
 
 Example device configuration (illustrative values, **not installation defaults**):
 
@@ -54,6 +77,10 @@ Example device configuration (illustrative values, **not installation defaults**
           "readiness_argv": ["/absolute/operator/readiness"]
         }
       },
+      "repository_owners": ["example"],
+      "owner_check_argv": [],
+      "owner_readiness_argv": ["/absolute/operator/owner-readiness"],
+      "require_hub_assignment": true,
       "reply_logins": ["AuthorizedHuman"],
       "poll_seconds": 30,
       "lane_timeout": 1800,
@@ -157,8 +184,10 @@ for worker in workers.values():
 
 ## Workflow (script-owned)
 
-1. **Discover** configured repositories for open issues assigned to the
-   configured GitHub login (`gh api --paginate --slurp`). Initial scan includes
+1. **Discover** explicit repositories and approved owners for open issues assigned to the
+   configured GitHub login (`gh api --paginate --slurp`). Owner discovery uses
+   `search/issues?q=is:issue+is:open+assignee:<login>+archived:false&per_page=100`
+   once per tick and filters `repository_url` by owner. Initial scan includes
    current assignments (no silent first-run ignore). Idempotent source key:
    `repo + issue number` device-wide — first session owns; one task/PR until
    terminal. Failed tasks are **not** auto-reopened merely because the issue is
@@ -167,7 +196,10 @@ for worker in workers.values():
    verified on GitHub; forged model activity payloads are not trusted. Issue
    bodies are redacted/bounded before persistence. `updated_at` is not treated
    as `assigned_at`.
-2. **Accept** with a deterministic issue comment (fixed wording + idempotency
+2. **Accept** only after verifying the GitHub assignment event and, when
+   `require_hub_assignment=true`, the matching hub-created mandate. Resolve and
+   pin an owner-scoped repository's default branch, checks, readiness command,
+   and direct-push/fork route at this point. Then publish a deterministic issue comment (fixed wording + idempotency
    marker) via `comment.post` / `scan_github` **before** any model start. A
    failed comment never starts a model. Effects are discovered on retry.
 3. **Checkout** under `workspace_root/<task-id>` with named remotes `origin` /
@@ -436,7 +468,8 @@ audit row is an observation and does not rewrite the lane verdict.
 | `coordinator_github.py` | Comments, CI, readiness, formal approve, Ready, merge, replies |
 | `coordinator_exec.py` | Bounded subprocess helper |
 | `coordinator_common.py` | Shared helpers / constants |
-| `coordinator_config.py` | Parent-owned configuration loaders |
+| `coordinator_config.py` | Parent-owned explicit-repository and owner-scoped configuration loaders |
+| `hub_assign.py` | Paired-device client for operator assignment creation |
 | `coordinator_a38.py` | A38 suite, author review comments, external review mail, guard Ready observation |
 
 ## A38 mode

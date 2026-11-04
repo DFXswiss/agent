@@ -30,13 +30,35 @@ from .runtime import Completed
 from .store import Store
 
 
-def repo_cfg(worker: WorkerConfig, repo: str) -> RepositoryConfig:
+def repo_cfg(
+    worker: WorkerConfig,
+    repo: str,
+    task: dict[str, Any] | None = None,
+) -> RepositoryConfig:
     cfg = worker.repositories.get(repo)
     if cfg is not None:
         return cfg
     for key, value in worker.repositories.items():
         if key.casefold() == repo.casefold():
             return value
+    if task is not None:
+        source = coord(task).get("source")
+        pinned = source.get("repository_config") if isinstance(source, dict) else None
+        if isinstance(pinned, dict) and pinned.get("repo") == repo:
+            try:
+                check_argv = tuple(pinned["check_argv"])
+                readiness_argv = tuple(pinned["readiness_argv"])
+                if not all(isinstance(part, str) for part in check_argv + readiness_argv):
+                    raise TypeError
+                return RepositoryConfig(
+                    repo=repo,
+                    base=str(pinned["base"]),
+                    publication_repo=str(pinned["publication_repo"]),
+                    check_argv=check_argv,
+                    readiness_argv=readiness_argv,
+                )
+            except (KeyError, TypeError):
+                raise CoordinatorError(f"repository {repo} has invalid pinned configuration") from None
     raise CoordinatorError(f"repository {repo} is not configured")
 
 
@@ -207,7 +229,7 @@ def verify_checkout_identity(store: Store, worker: WorkerConfig, runner: Runner,
     for key in ('base_sha', 'branch', 'worktree'):
         if checkpoint.get(key) is not None and checkpoint[key] != marker.get(key):
             raise CoordinatorError('checkout task checkpoint changed')
-    cfg = repo_cfg(worker, str(marker.get("target_repo") or ""))
+    cfg = repo_cfg(worker, str(marker.get("target_repo") or ""), task)
     account = account_for(store, worker.session_id)
     if (marker.get("base") != cfg.base or marker.get("publication_repo") != cfg.publication_repo
             or marker.get("worker_login") != account.login.casefold()):
@@ -236,7 +258,7 @@ def verify_checkout_identity(store: Store, worker: WorkerConfig, runner: Runner,
 def phase_checkout(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     publication = str(source.get("publication_repo") or cfg.publication_repo)
     if publication != cfg.publication_repo or source.get("base", cfg.base) != cfg.base:
         raise CoordinatorError("checkout route changed after assignment")
@@ -444,7 +466,7 @@ def ensure_draft(
     worktree = str(c.get("worktree") or "")
     branch = str(c.get("branch") or "")
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     target = target_repo(task)
     publication = publication_repo(task, cfg)
     base_sha = str(c.get("base_sha") or "")

@@ -495,6 +495,12 @@ Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_devic
 
 The knock in §10 uses the **registered pane**, not `tmux_session` derived from the session id. `agent session input` remains argv-only (`send-keys -l` then a separate Enter).
 
+An operator or another paired device may issue work with `agent assign`. The
+client sends the paired device bearer only to the configured hub's
+`POST /api/assignments`; the hub authorizes the human owner, creates and verifies
+the GitHub issue assignment, and records `assignment.created`. The client does
+not print or persist the bearer anywhere new.
+
 ## 18. What “done” for the product still needs (operators)
 
 These are not silent defaults in code; they are human steps after merge:
@@ -503,7 +509,7 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, the local dashboard, and cli-bridge; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, the local dashboard, and cli-bridge; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing. On a headless host where the agent user never has a GUI login, use `agent init --no-service` and put the printed daemon argv and environment under an operator-provided system supervisor (for example a launchd LaunchDaemon with `UserName`).
 
 Later product work (not required to operate v1 after merge):
 
@@ -609,7 +615,12 @@ agent account, and receives a pull request ready for human review and merge on
 GitHub. The static script runs on the configured execution device. Deployment
 hostnames belong in the deployment configuration, not this public repository.
 
-1. The script detects and accepts the assignment and confirms acceptance in the
+1. The script detects assignments in explicit repositories or repositories of
+   explicitly approved GitHub owners. For an owner-scoped repository it pins
+   the default branch and a direct-push or verified fork publication route at
+   acceptance. When configured to require a hub mandate, it accepts only a
+   matching `assignment.created` query row whose hub actor is the GitHub
+   assignment-event actor and an authorized reply login. The script then confirms acceptance in the
    GitHub issue. This acceptance and confirmation are script work, never model
    work, and happen before the script starts the implementation lane.
 2. The script starts the implementation lane with the assigned work. The model
@@ -652,6 +663,10 @@ the workflow is enabled on a deployment:
   --session ID` performs a bounded advancement; `--follow` is the script's loop.
   No worker, account or role is installed by default.
 
+- [`hub_assign.py`](src/agent_cli/hub_assign.py) implements the paired-device
+  `agent assign` request to the hub. The hub, not a model lane, owns GitHub issue
+  creation and the `assignment.created` web event.
+
 - [`watch.py`](src/agent_cli/watch.py) implements assignment scanning, a queue,
   workspace files, and session dispatch. `dispatch_assigned` does not publish an
   acceptance comment before starting the session.
@@ -660,6 +675,9 @@ the workflow is enabled on a deployment:
   the daemon's worker set require a daemon restart. It does not start the legacy
   `agent watch assigned --follow`. Legacy dispatch and `supervise` refuse
   sessions selected for the coordinator.
+- `agent init --no-service` creates the same local store and identity without
+  installing a user service, so a headless host's system supervisor can run the
+  unchanged `agent daemon` process with the printed argv and environment.
 - The shipped `ask=False` path in
   [`supervise.py`](src/agent_cli/supervise.py) does not acknowledge completion of
   an assignment from verified PR results. Its optional closed-question path is
@@ -671,8 +689,9 @@ the workflow is enabled on a deployment:
   boundary with a different readiness owner: the script runs and verifies the
   repository A38 suite, publishes the author report and two validated author
   review comments, and relays an allowlisted external second-review result from
-  session mail. The hub remains only the sanctioned person-ping/session-mail
-  relay. No second-slot model is launched. The coordinator never posts a formal
+  session mail. For that review path the hub remains the sanctioned
+  person-ping/session-mail relay; a required assignment mandate is separately
+  verified from its `assignment.created` web event. No second-slot model is launched. The coordinator never posts a formal
   approval and never marks the pull request Ready; it observes the PR guard
   making the unchanged head Ready, then waits for the verified human merge. Non-A38
   workers retain the formal-review and leave-draft path described above.

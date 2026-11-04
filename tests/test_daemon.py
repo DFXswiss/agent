@@ -670,6 +670,20 @@ def test_init_writes_daemon_service_under_pytest(
     assert (tmp_path / "daemon.service").is_file()
 
 
+def test_init_no_service_prints_supervisor_contract_without_writing_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AGENT_PG_BIN", "/opt/postgres/bin")
+    run(tmp_path, ["init", "--no-service"])
+    captured = capsys.readouterr()
+    assert "daemon=not-installed" in captured.out
+    assert "daemon argv:" in captured.out
+    assert " daemon" in captured.out
+    assert f"AGENT_HOME={tmp_path}" in captured.out
+    assert "AGENT_PG_BIN=/opt/postgres/bin" in captured.out
+    assert not (tmp_path / "daemon.service").exists()
+
+
 def test_knock_daemon_tick_skips_pr_merged_without_die(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

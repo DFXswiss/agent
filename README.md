@@ -46,18 +46,29 @@ agent init
 
 `agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock, the local dashboard, and cli-bridge immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Commands that open the store start it again if it is stopped and fail with `run agent init` when it does not exist; they never run `initdb`. `agent pg status` reports the cluster without starting it, `agent pg stop` stops it (refused while a device daemon installed for this `AGENT_HOME` exists, because that daemon would start it again), and `agent daemon --uninstall` stops it together with the user service. `agent daemon --uninstall` refuses to run under a different `AGENT_HOME` than the one the service was installed for. Both commands stop with an error when a service unit exists but cannot be read or records no `AGENT_HOME`. When `AGENT_PG_DSN` is set, `agent init` writes it into the user service so the daemon uses the same server.
 
+On a headless host managed by an operator-provided system supervisor, use
+`agent init --no-service`. It creates the same store and device identity but
+writes and starts no user service. Its output gives the exact `agent daemon`
+argv and required `AGENT_HOME`, plus `AGENT_PG_BIN` or `AGENT_PG_DSN` when
+configured, for a system service such as a launchd LaunchDaemon with `UserName`.
+
 ## Pair and sync
 
 ```bash
 agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
+agent assign --agent LOGIN --repo OWNER/NAME --title TEXT --body TEXT
 agent sync --follow   # foreground WebSocket; reconnects with backoff on a dropped connection (cap 30s, logs to stderr; not a silent poll; process stays up)
 agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is present
 # other commands refuse until you move ledger.sqlite aside
 ```
 
 `AGENT_HUB` may replace `--hub`. There is no default hub URL. After `agent pair`, once `device.json` has token and hub URL, the user-service daemon starts `sync --follow`; a one-shot `agent sync` after pairing is enough for catch-up.
+`agent assign` uses the paired device credential to ask the hub to create and
+verify an agent-assigned GitHub issue. Use `--body-file PATH` instead of
+`--body TEXT` for longer mandates. The hub authorizes the human owner and
+records `assignment.created`; the client never prints the device token.
 
 ## Record work
 
@@ -143,6 +154,9 @@ configured worker sessions, GitHub and AI accounts, checks, and workspace roots.
 Installation starts with no configured worker. `agent coordinate --session ID`
 advances one worker; `--follow` lets the script observe later events. The daemon
 starts configured workers on startup; changing its worker set requires a restart.
+Workers may select explicit repositories, approved GitHub owners, or both;
+explicit entries win. They may require matching hub-issued assignments before
+acceptance.
 Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.

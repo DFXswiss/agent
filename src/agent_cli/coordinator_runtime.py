@@ -34,6 +34,7 @@ from .coordinator_common import (
     as_int,
     coord,
     coordinator_env,
+    gh_json,
     gh_list,
     harden_grok_write_argv,
     owned_session,
@@ -46,7 +47,7 @@ from .coordinator_common import (
     source_key,
     strip_row,
 )
-from .coordinator_config import WorkerConfig
+from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
     phase_await_ready as phase_a38_await_ready,
     phase_await_second_review,
@@ -155,20 +156,28 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
                 raise CoordinatorError(f"{slot} requires read-only access")
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if not worker.repositories:
+    if not worker.repositories and not worker.repository_owners:
         raise CoordinatorError("worker has no repositories configured")
     if not worker.workspace_root.is_absolute():
         raise CoordinatorError("workspace_root must be absolute")
 
 
 def execution_binding(
-    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts | None = None
+    store: Store,
+    worker: WorkerConfig,
+    repo: str,
+    ai: AIAccounts | None = None,
+    repository_config: RepositoryConfig | None = None,
+    owner_scoped: bool = False,
 ) -> str:
     """Pin selected execution metadata, never credential contents or unrelated profiles.
 
     ``ai`` lets a caller hash the same manifest read it pins ``models`` from.
     """
-    cfg = repo_cfg(worker, repo)
+    cfg = repository_config or repo_cfg(worker, repo)
+    owner = repo.split("/", 1)[0].casefold() if "/" in repo else ""
+    if owner_scoped and owner not in worker.repository_owners:
+        raise CoordinatorError(f"repository owner {owner or '?'} is no longer configured")
     github = load_accounts(store.home)
     ai = ai if ai is not None else load_ai_accounts(store.home)
     if worker.a38:
@@ -176,6 +185,8 @@ def execution_binding(
             "repository": asdict(cfg), "workspace": str(worker.workspace_root),
             "worker_session": worker.session_id,
             "reply_logins": worker.reply_logins,
+            **({"repository_owner": owner} if owner_scoped else {}),
+            **({"require_hub_assignment": True} if worker.require_hub_assignment else {}),
             "github": [asdict(github.for_session(worker.session_id))],
             "models": ai.models.as_dict(),
             "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
@@ -193,6 +204,8 @@ def execution_binding(
             "repository": asdict(cfg), "workspace": str(worker.workspace_root),
             "worker_session": worker.session_id, "review_session": worker.review_session,
             "reply_logins": worker.reply_logins,
+            **({"repository_owner": owner} if owner_scoped else {}),
+            **({"require_hub_assignment": True} if worker.require_hub_assignment else {}),
             "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
             # Only a non-default models block enters the hash, so a device without one,
             # or with the default written out, keeps the hash of earlier tasks.
@@ -302,8 +315,7 @@ def _create_implement_task(
     number: int,
     title: str,
     assigned_id: str,
-    publication_repo: str,
-    base: str,
+    repository_config: RepositoryConfig | None,
     body: str,
 ) -> dict[str, Any] | None:
     """Insert task under device-wide source admission lock. None if another owner won."""
@@ -315,19 +327,28 @@ def _create_implement_task(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(ai.models.first)
+    source = {
+        "repo": repo,
+        "number": number,
+        "assigned_id": assigned_id,
+        "title": title,
+        "body": redact(body, limit=2000),
+    }
+    if repository_config is not None:
+        source.update(
+            publication_repo=repository_config.publication_repo,
+            base=repository_config.base,
+        )
+    else:
+        source["owner_scoped"] = True
+        source["require_hub_assignment"] = worker.require_hub_assignment
     c = {
         "phase": "accept",
-        "source": {
-            "repo": repo,
-            "number": number,
-            "assigned_id": assigned_id,
-            "publication_repo": publication_repo,
-            "base": base,
-            "title": title,
-            "body": redact(body, limit=2000),
-        },
+        "source": source,
         "branch": f"task-{tid[:8]}",
-        "execution_binding": execution_binding(store, worker, repo, ai),
+        **({"execution_binding": execution_binding(
+            store, worker, repo, ai, repository_config
+        )} if repository_config is not None else {}),
         "worker_session": worker.session_id,
         "worker_login": account_for(store, worker.session_id).login.casefold(),
         **({"a38": {"enabled": True}} if worker.a38 else {}),
@@ -433,6 +454,8 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
     login = account.login
+    candidates: list[tuple[str, dict[str, Any], RepositoryConfig | None]] = []
+    explicit_names = {repo.casefold() for repo in worker.repositories}
     for repo, repo_cfg_item in worker.repositories.items():
         try:
             issues = gh_list(
@@ -448,77 +471,123 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
         except CoordinatorError as exc:
             lines.append(f"discover {repo}: {redact(str(exc))}")
             continue
-        for issue in issues:
-            if not isinstance(issue, dict):
-                continue
-            if issue.get("pull_request") is not None:
-                continue
-            number = as_int(issue.get("number"))
-            if number is None or number <= 0:
-                continue
-            # Device-wide admission: first session ownership wins.
-            existing = _find_task_for_issue_device_wide(store, repo, number)
-            if existing is not None:
-                if existing.get("session_id") != worker.session_id:
-                    lines.append(
-                        f"source owned by session {existing.get('session_id')} for {repo}#{number}"
-                    )
-                    continue
-                if not _terminal(existing):
-                    continue
-                if existing.get("state") == "done":
-                    lines.append(f"already completed {repo}#{number}")
-                    continue
-                if existing.get("state") == "failed":
-                    lines.append(
-                        f"failed task remains for {repo}#{number}; awaiting authorized recovery"
-                    )
-                    continue
-            try:
-                verified = verify_issue_assigned(scoped_runner, repo, number, login)
-            except CoordinatorError as exc:
-                lines.append(f"skip {repo}#{number}: {redact(str(exc))}")
-                continue
-            title = verified.get("title") if isinstance(verified.get("title"), str) else ""
-            body = verified.get("body") if isinstance(verified.get("body"), str) else ""
-            url = verified.get("html_url") if isinstance(verified.get("html_url"), str) else ""
-            # updated_at is not assigned_at — record observation honestly.
-            observed = utcnow()
-            assigned_id = _insert_assigned_activity(
-                store,
-                worker,
-                repo=repo,
-                number=number,
-                title=title or "",
-                body=body or "",
-                url=url or "",
-                assignee=login.casefold(),
-                assigned_at=observed,
+        candidates.extend((repo, issue, repo_cfg_item) for issue in issues if isinstance(issue, dict))
+    if worker.repository_owners:
+        try:
+            search_result = gh_json(
+                scoped_runner,
+                [
+                    "gh", "api", "--paginate", "--slurp",
+                    f"search/issues?q=is:issue+is:open+assignee:{login}+archived:false&per_page=100",
+                ],
             )
-            task = _create_implement_task(
-                store,
-                worker,
-                repo=repo,
-                number=number,
-                title=title or f"Issue {number}",
-                assigned_id=assigned_id,
-                publication_repo=repo_cfg_item.publication_repo,
-                base=repo_cfg_item.base,
-                body=body or "",
-            )
-            if task is None:
-                other = _find_task_for_issue_device_wide(store, repo, number)
-                if other is not None and other.get("session_id") != worker.session_id:
-                    lines.append(
-                        f"source owned by session {other.get('session_id')} for {repo}#{number}"
-                    )
+            if isinstance(search_result, dict):
+                found = search_result.get("items")
+            elif isinstance(search_result, list) and all(
+                isinstance(page, dict) for page in search_result
+            ):
+                found = []
+                for page in search_result:
+                    items = page.get("items")
+                    if not isinstance(items, list):
+                        raise CoordinatorError("owner issue search page has no items array")
+                    found.extend(items)
+            else:
+                found = search_result
+            if not isinstance(found, list):
+                raise CoordinatorError("owner issue search returned no items array")
+        except CoordinatorError as exc:
+            lines.append(f"discover owners: {redact(str(exc))}")
+            found = []
+        for issue in found:
+            if not isinstance(issue, dict) or str(issue.get("state") or "").casefold() != "open":
                 continue
-            if task.get("session_id") != worker.session_id:
+            repository = issue.get("repository")
+            if isinstance(repository, dict) and repository.get("archived") is True:
+                continue
+            repository_url = issue.get("repository_url")
+            match = re.fullmatch(r"https://api\.github\.com/repos/([^/]+)/([^/]+)", str(repository_url or ""))
+            if match is None:
+                continue
+            repo = f"{match.group(1)}/{match.group(2)}"
+            if repo.casefold() in explicit_names:
+                continue
+            if match.group(1).casefold() not in worker.repository_owners:
+                continue
+            candidates.append((repo, issue, None))
+    seen: set[str] = set()
+    for repo, issue, repo_cfg_item in candidates:
+        source_id = f"{repo.casefold()}#{issue.get('number')}"
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        if issue.get("pull_request") is not None:
+            continue
+        number = as_int(issue.get("number"))
+        if number is None or number <= 0:
+            continue
+        # Device-wide admission: first session ownership wins.
+        existing = _find_task_for_issue_device_wide(store, repo, number)
+        if existing is not None:
+            if existing.get("session_id") != worker.session_id:
                 lines.append(
-                    f"source owned by session {task.get('session_id')} for {repo}#{number}"
+                    f"source owned by session {existing.get('session_id')} for {repo}#{number}"
                 )
                 continue
-            lines.append(f"accepted source {repo}#{number} task={task['id']}")
+            if not _terminal(existing):
+                continue
+            if existing.get("state") == "done":
+                lines.append(f"already completed {repo}#{number}")
+                continue
+            if existing.get("state") == "failed":
+                lines.append(
+                    f"failed task remains for {repo}#{number}; awaiting authorized recovery"
+                )
+                continue
+        try:
+            verified = verify_issue_assigned(scoped_runner, repo, number, login)
+        except CoordinatorError as exc:
+            lines.append(f"skip {repo}#{number}: {redact(str(exc))}")
+            continue
+        title = verified.get("title") if isinstance(verified.get("title"), str) else ""
+        body = verified.get("body") if isinstance(verified.get("body"), str) else ""
+        url = verified.get("html_url") if isinstance(verified.get("html_url"), str) else ""
+        # updated_at is not assigned_at — record observation honestly.
+        observed = utcnow()
+        assigned_id = _insert_assigned_activity(
+            store,
+            worker,
+            repo=repo,
+            number=number,
+            title=title or "",
+            body=body or "",
+            url=url or "",
+            assignee=login.casefold(),
+            assigned_at=observed,
+        )
+        task = _create_implement_task(
+            store,
+            worker,
+            repo=repo,
+            number=number,
+            title=title or f"Issue {number}",
+            assigned_id=assigned_id,
+            repository_config=repo_cfg_item,
+            body=body or "",
+        )
+        if task is None:
+            other = _find_task_for_issue_device_wide(store, repo, number)
+            if other is not None and other.get("session_id") != worker.session_id:
+                lines.append(
+                    f"source owned by session {other.get('session_id')} for {repo}#{number}"
+                )
+            continue
+        if task.get("session_id") != worker.session_id:
+            lines.append(
+                f"source owned by session {task.get('session_id')} for {repo}#{number}"
+            )
+            continue
+        lines.append(f"accepted source {repo}#{number} task={task['id']}")
     return lines
 
 
@@ -1206,7 +1275,7 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
         return phase_a38_tests(store, worker, task, runner)
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     worktree = str(c["worktree"])
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head
@@ -1320,9 +1389,25 @@ def advance_one(
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
     try:
-        binding = execution_binding(store, worker, str(source.get("repo") or ""))
-        if c.get("execution_binding") != binding:
-            raise CoordinatorError("task execution configuration changed or is unpinned")
+        if (
+            source.get("owner_scoped")
+            and phase == "accept"
+            and not c.get("execution_binding")
+        ):
+            if source.get("require_hub_assignment") is not worker.require_hub_assignment:
+                raise CoordinatorError("task hub-assignment requirement changed before acceptance")
+            binding = None
+        else:
+            cfg = repo_cfg(worker, str(source.get("repo") or ""), task)
+            binding = execution_binding(
+                store,
+                worker,
+                str(source.get("repo") or ""),
+                repository_config=cfg,
+                owner_scoped=bool(source.get("owner_scoped")),
+            )
+            if c.get("execution_binding") != binding:
+                raise CoordinatorError("task execution configuration changed or is unpinned")
     except (CoordinatorError, StoreError) as exc:
         return publish_blocker(store, worker, task, runner, str(exc), kind="configuration-binding")
     # Stop new effects when assignment is revoked. await_merge may continue
