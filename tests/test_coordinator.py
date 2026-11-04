@@ -3378,7 +3378,8 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
 
     saved = store.row("task", tid)
-    invalidate_head_evidence(saved["payload"]["coordinator"], "")
+    invalidate_head_evidence(saved["payload"]["coordinator"], fake.head)
+    assert saved["payload"]["coordinator"]["a38"]["report"]["head"] == fake.head
     store.write(
         "task",
         "update",
