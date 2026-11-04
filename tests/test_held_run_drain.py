@@ -30,7 +30,13 @@ class FakeDrain(FakeAPI):
         self.set_pr_guard_config(config)
         self.runs: list[dict] = []
         self.open_pull_items: list[dict] = []
+        self.open_pull_lists: list[list[dict]] = []
+        self.open_pull_gets = 0
+        self.current_open_pull_items: list[dict] = []
+        self.pull_overrides: dict[int, dict] = {}
+        self.commits_by_pull: dict[int, list[str]] = {}
         self.jobs_by_run: dict[int, list[dict]] = {}
+        self.jobs_404: set[int] = set()
         self.run_overrides: dict[int, dict] = {}
         self.missing_on_reread: set[int] = set()
         self.delete_responses: dict[int, tuple[int, object, dict]] = {}
@@ -45,6 +51,7 @@ class FakeDrain(FakeAPI):
             "event": "pull_request",
             "head_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
             "head_repository": {"full_name": FORK},
+            "head_branch": "feature",
             "status": "completed",
             "conclusion": "action_required",
             "run_attempt": 1,
@@ -61,7 +68,30 @@ class FakeDrain(FakeAPI):
         if method == "GET" and path == root:
             return 200, {"default_branch": "develop"}, {}
         if method == "GET" and path == f"{root}/pulls":
-            return 200, copy.deepcopy(self.open_pull_items), {}
+            if self.open_pull_lists:
+                index = min(self.open_pull_gets, len(self.open_pull_lists) - 1)
+                items = self.open_pull_lists[index]
+            else:
+                items = self.open_pull_items
+            self.open_pull_gets += 1
+            self.current_open_pull_items = copy.deepcopy(items)
+            return 200, copy.deepcopy(items), {}
+        if method == "GET" and path.startswith(f"{root}/pulls/"):
+            remainder = path.split("/pulls/", 1)[1]
+            number = int(remainder.split("/", 1)[0])
+            if remainder.endswith("/commits"):
+                return 200, [
+                    {"sha": sha} for sha in self.commits_by_pull.get(number, [])
+                ], {}
+            if "/" not in remainder:
+                pull = self.pull_overrides.get(number)
+                if pull is None:
+                    pull = next(
+                        item
+                        for item in self.current_open_pull_items
+                        if item.get("number") == number
+                    )
+                return 200, copy.deepcopy(pull), {}
         if method == "GET" and path == f"{root}/actions/runs":
             self.listing_calls.append(url)
             page = int((query.get("page") or ["1"])[0])
@@ -77,6 +107,8 @@ class FakeDrain(FakeAPI):
             ident = int(remainder.split("/", 1)[0])
             if method == "GET" and remainder.endswith("/jobs"):
                 self.jobs_gets.append(ident)
+                if ident in self.jobs_404:
+                    return 404, {"message": "missing"}, {}
                 jobs = self.jobs_by_run.get(ident, [])
                 return 200, {
                     "total_count": len(jobs),
@@ -95,8 +127,20 @@ class FakeDrain(FakeAPI):
         return super().request_fn(method, url, body)
 
 
-def _open_pull(head: str, merge: str | None = None) -> dict:
-    return {"head": {"sha": head}, "merge_commit_sha": merge}
+def _open_pull(
+    head: str,
+    merge: str | None = None,
+    *,
+    number: int = 1,
+    head_repo: str | None = FORK,
+    head_ref: str = "feature",
+) -> dict:
+    repo = None if head_repo is None else {"full_name": head_repo}
+    return {
+        "number": number,
+        "head": {"sha": head, "repo": repo, "ref": head_ref},
+        "merge_commit_sha": merge,
+    }
 
 
 def test_disabled_by_omission_does_not_list_or_delete() -> None:
@@ -151,6 +195,68 @@ def test_open_pull_merge_commit_is_protected() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["protected"] == 2
     assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_open_pull_older_commit_is_protected() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    fake.runs = [run]
+    fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
+    fake.commits_by_pull[1] = [run["head_sha"]]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_branch_without_an_open_pull_is_deleted() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [101]
+    assert fake.deletes == [101]
+
+
+def test_force_push_orphan_on_open_pull_branch_is_deleted() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
+    fake.commits_by_pull[1] = ["c" * 40]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [101]
+    assert fake.deletes == [101]
+
+
+def test_fresh_open_pull_recheck_protects_candidate_before_delete() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    fake.runs = [run]
+    fake.open_pull_lists = [[], [_open_pull(run["head_sha"])]]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["candidates"] == 1
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_null_list_merge_sha_is_resolved_by_single_pull_read() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.pull_overrides[1] = {**listed, "merge_commit_sha": run["head_sha"]}
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["protected"] == 2
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_malformed_open_pull_head_sha_fails_closed() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    fake.open_pull_items = [_open_pull("not-a-sha")]
+    with pytest.raises(GuardError, match="open pull request head sha missing"):
+        drain_held_runs(fake.api(), REPO)
     assert fake.deletes == []
 
 
@@ -221,6 +327,26 @@ def test_deletion_is_bounded_and_oldest_runs_are_deleted_first() -> None:
     assert result["candidates"] == MAX_DELETIONS + 2
     assert result["deleted"] == list(range(1, MAX_DELETIONS + 1))
     assert fake.deletes == list(range(1, MAX_DELETIONS + 1))
+
+
+def test_ten_full_listing_pages_are_processed_as_a_window() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(id=ident) for ident in range(1, 1001)]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["scanned"] == 1000
+    assert result["candidates"] == 1000
+    assert result["deleted"] == list(range(1, MAX_DELETIONS + 1))
+    assert fake.deletes == list(range(1, MAX_DELETIONS + 1))
+
+
+def test_missing_jobs_inventory_skips_run_and_deletes_next_candidate() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(id=101), fake.run(id=102)]
+    fake.jobs_404.add(101)
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [102]
+    assert fake.jobs_gets == [101, 102]
+    assert fake.deletes == [102]
 
 
 def test_forbidden_delete_aborts_after_one_attempt() -> None:

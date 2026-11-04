@@ -49,12 +49,21 @@ def _timestamp(value: Any) -> datetime:
     return result.astimezone(timezone.utc)
 
 
-def _list_runs(api: Any, repo: str, params: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def _list_runs(
+    api: Any,
+    repo: str,
+    params: Mapping[str, Any],
+    *,
+    allow_truncated: bool = False,
+) -> list[Mapping[str, Any]]:
     from .a38_guard import GuardError
 
+    shift_cause: list[str | None] = [None]
+
     def once() -> list[Mapping[str, Any]] | None:
-        # None means a duplicate id: the list shifted, so this pass is discarded.
+        # None means the list shifted (a duplicate id or a changed total_count).
         items: list[Mapping[str, Any]] = []
+        total_count: int | None = None
         for page in range(1, MAX_RUNS // PAGE_SIZE + 1):
             query = urlencode({**params, "per_page": PAGE_SIZE, "page": page})
             data = api.get_json(f"/repos/{repo}/actions/runs?{query}")
@@ -63,6 +72,11 @@ def _list_runs(api: Any, repo: str, params: Mapping[str, Any]) -> list[Mapping[s
             # total_count is a response-shape check. It does not end the list.
             if data["total_count"] < 0:
                 raise GuardError("workflow run inventory missing total_count")
+            if total_count is None:
+                total_count = data["total_count"]
+            elif data["total_count"] != total_count:
+                shift_cause[0] = "count"
+                return None
             batch = data.get("workflow_runs")
             if not isinstance(batch, list) or any(not isinstance(r, Mapping) for r in batch):
                 raise GuardError("workflow run inventory invalid")
@@ -74,15 +88,23 @@ def _list_runs(api: Any, repo: str, params: Mapping[str, Any]) -> list[Mapping[s
             if any(type(i) is not int or i <= 0 for i in ids):
                 raise GuardError("workflow run inventory has invalid or duplicate IDs")
             if len(set(ids)) != len(ids):
+                shift_cause[0] = "duplicate"
                 return None
             if len(batch) < PAGE_SIZE:
                 return items
+        if allow_truncated:
+            # The drain can use a capped window; approval requires completeness.
+            return items
         raise GuardError("workflow run pagination bound exceeded")
 
     listed = once()
     if listed is None:
+        # A count change is the only signal that a departed row shifted the
+        # offset and would otherwise make one run disappear between pages.
         listed = once()
     if listed is None:
+        if shift_cause[0] == "count":
+            raise GuardError("workflow run inventory changed or exceeds bound")
         raise GuardError("workflow run inventory has invalid or duplicate IDs")
     return listed
 

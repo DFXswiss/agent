@@ -156,14 +156,17 @@ trusted default-branch `.github/pr-guard.json`; omission disables the pass. It
 runs only after the per-pull-request work in the repository-wide scheduled
 sweep. A candidate is a `pull_request` run with `run_attempt: 1` still in
 `completed` / `action_required`, whose nonempty head SHA is neither the current
-head nor the merge commit of any open pull request, whose
-`head_repository.full_name` is a nonempty name different from the base
-repository, whose creation time is at least one hour old, and whose jobs
-inventory proves that no job ever started.
+head, the merge commit, nor any commit of an open pull request whose head branch
+and fork match the run's, whose `head_repository.full_name` is a nonempty name
+different from the base repository, whose creation time is at least one hour
+old, and whose jobs inventory proves that no job ever started.
 The reported candidate count is the full superseded set found during the pass,
 while actual deletions, or planned deletions in a dry run, remain bounded per sweep.
-The protected-SHA snapshot is collected before the held-run listing, and a
-missing open-pull head SHA fails the pass closed.
+Open pulls are read before the held-run listing and again immediately before
+each delete. A null merge SHA in the list is resolved with one single-pull read,
+and an unreadable or malformed open-pull head SHA fails the pass closed. At the
+1000-run listing cap, the pass processes that capped window; it may omit
+candidates, but never weakens protection.
 
 The pass re-reads each candidate immediately before deleting it and deletes at
 most 50 runs per sweep, oldest first. A denied or rate-limited delete aborts the
