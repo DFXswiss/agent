@@ -681,6 +681,8 @@ def test_init_no_service_prints_supervisor_contract_without_writing_unit(
     assert " daemon" in captured.out
     assert f"AGENT_HOME={tmp_path}" in captured.out
     assert "AGENT_PG_BIN=/opt/postgres/bin" in captured.out
+    assert "AGENT_PG_DSN (set; keep the current value)" in captured.out
+    assert os.environ["AGENT_PG_DSN"] not in captured.out
     assert not (tmp_path / "daemon.service").exists()
 
 

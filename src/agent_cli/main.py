@@ -455,7 +455,7 @@ def cmd_init(args: list[str]) -> None:
             if pg_bin:
                 print(f"environment: AGENT_PG_BIN={shlex.quote(pg_bin)}")
             if external:
-                print(f"environment: AGENT_PG_DSN={shlex.quote(external)}")
+                print("environment: AGENT_PG_DSN (set; keep the current value)")
         else:
             install_and_start_service(home=store.home, program=program)
             daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"

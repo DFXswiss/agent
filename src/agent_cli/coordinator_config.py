@@ -172,7 +172,11 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
             raise StoreError('repository_owners must be distinct')
         if not repos and not owners:
             raise StoreError('worker requires repositories or repository_owners')
-        owner_checks = _argv(item.get('owner_check_argv', []), 'owner_check_argv', allow_empty=True)
+        owner_checks = _argv(
+            item.get('owner_check_argv', []),
+            'owner_check_argv',
+            allow_empty=a38 if owners else True,
+        )
         readiness_raw = item.get('owner_readiness_argv')
         owner_readiness = (
             _argv(readiness_raw, 'owner_readiness_argv')

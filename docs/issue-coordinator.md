@@ -46,20 +46,39 @@ same repository. At acceptance, an owner-scoped task pins the repository's
 current default branch and its publication route: direct push when the worker
 has push permission, otherwise `<worker-login>/<repository-name>`. A missing
 fork is created once and checked for at most ten attempts, five seconds apart;
-an existing fork with another parent is refused. `owner_check_argv` defaults to
-`[]`. `owner_readiness_argv` is required outside A38 mode. In A38 mode, an
-absent owner readiness argv uses the verified A38 first-slot quality result for
-`contributing_ok` and records that no deviation was declared.
+an existing fork with another parent is refused. Outside A38 mode,
+`owner_check_argv` is required and nonempty for owner-scoped repositories; A38
+mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
+In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
+the latest recorded first-slot quality gate (`grok-pr` / `quality`) is approved
+on the exact current head; it then records `conformity-a approved at <head>` and
+that no deviation was declared.
 
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
-one device-authenticated `/sync/query` for `assignment.created` and accepts only
-a row for the issue and agent whose top-level query-row `github_login` equals
-the GitHub assignment-event actor and is listed in `reply_logins`. The hub's
-`replica_out` query shape exposes `github_login` at the row top level; it does
-not use the `_github_login` copy produced by other hub state endpoints. A
-definite mismatch publishes `assignment was not issued through the hub` and
-pins the issue reply checkpoint without failing the task or starting a model.
-A hub transport failure keeps phase `accept` for retry.
+one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
+sends the repository spelling exactly as supplied, while the hub canonicalizes
+it; the coordinator therefore queries both that spelling and its case-folded
+form (deduplicated when equal), then compares the returned repository
+case-insensitively. It accepts only a row for the issue and agent with all of
+these properties: the top-level query-row `github_login` equals the GitHub
+assignment-event actor and is listed in `reply_logins`; `origin_device_id` is
+exactly `web:<that envelope github_login>`; and the inner assignment payload's
+`actor` is case-insensitively equal to that envelope login. Thus a device-origin
+row is rejected even if the rest of its payload matches. The hub's
+`replica_out` query shape exposes `github_login` and `origin_device_id` at the
+row top level; it does not use the `_github_login` copy produced by other hub
+state endpoints.
+
+A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
+is younger than 120 seconds. After that grace period it publishes `assignment
+was not issued through the hub`, blocks acceptance, and pins the issue reply
+checkpoint without failing the task or starting a model. An unpaired device or
+hub HTTP 401/403 is likewise a configuration blocker with a single published
+checkpoint. Other hub transport/protocol failures keep phase `accept`, retry,
+and publish a blocker at most once per hour according to
+`hub_assignment_retry_published_at`. The hub query response is capped at 500
+rows; a response with 500 or more rows is treated as the retry reason `hub
+assignment query truncated`, never as a definite mismatch.
 
 Example device configuration (illustrative values, **not installation defaults**):
 
@@ -78,7 +97,7 @@ Example device configuration (illustrative values, **not installation defaults**
         }
       },
       "repository_owners": ["example"],
-      "owner_check_argv": [],
+      "owner_check_argv": ["/absolute/operator/owner-checks"],
       "owner_readiness_argv": ["/absolute/operator/owner-readiness"],
       "require_hub_assignment": true,
       "reply_logins": ["AuthorizedHuman"],

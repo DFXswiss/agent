@@ -503,8 +503,9 @@ The knock in §10 uses the **registered pane**, not `tmux_session` derived from 
 An operator or another paired device may issue work with `agent assign`. The
 client sends the paired device bearer only to the configured hub's
 `POST /api/assignments`; the hub authorizes the human owner, creates and verifies
-the GitHub issue assignment, and records `assignment.created`. The client does
-not print or persist the bearer anywhere new.
+the GitHub issue assignment, and records `assignment.created`. The client sends
+the repository exactly as supplied; the hub canonicalizes its repository
+spelling. The client does not print or persist the bearer anywhere new.
 
 ## 18. What “done” for the product still needs (operators)
 
@@ -631,8 +632,17 @@ hostnames belong in the deployment configuration, not this public repository.
    explicitly approved GitHub owners. For an owner-scoped repository it pins
    the default branch and a direct-push or verified fork publication route at
    acceptance. When configured to require a hub mandate, it accepts only a
-   matching `assignment.created` query row whose hub actor is the GitHub
-   assignment-event actor and an authorized reply login. The script then confirms acceptance in the
+   matching `assignment.created` query row. It queries the repository spelling
+   from the assignment and its case-folded form, then compares repositories
+   case-insensitively. The row must have envelope `github_login` equal to the
+   GitHub assignment-event actor and an authorized reply login,
+   `origin_device_id` exactly equal to `web:<envelope github_login>`, and inner
+   payload `actor` case-insensitively equal to that envelope login. A matching
+   device-origin row is not a mandate. A definite no-match retries for 120
+   seconds from `assignment_at`, and a 500-row capped query is a truncated retry,
+   not a no-match. Unpaired and hub HTTP 401/403 results are recoverable
+   configuration blockers with a reply checkpoint; other hub failures retry and
+   publish at most one blocker per hour. The script then confirms acceptance in the
    GitHub issue. This acceptance and confirmation are script work, never model
    work, and happen before the script starts the implementation lane.
 2. The script starts the implementation lane with the assigned work. The model
@@ -703,7 +713,11 @@ the workflow is enabled on a deployment:
   review comments, and relays an allowlisted external second-review result from
   session mail. For that review path the hub remains the sanctioned
   person-ping/session-mail relay; a required assignment mandate is separately
-  verified from its `assignment.created` web event. No second-slot model is launched. The coordinator never posts a formal
+  verified from its website-origin `assignment.created` event with the envelope,
+  `web:<login>` origin, and inner actor all bound to the same login. Before the
+  owner-scoped A38 default writes `contributing_ok=ja` with `conformity-a
+  approved at <head>`, it requires the recorded `grok-pr` quality gate to be
+  approved on that exact head. No second-slot model is launched. The coordinator never posts a formal
   approval and never marks the pull request Ready; it observes the PR guard
   making the unchanged head Ready, then waits for the verified human merge. Non-A38
   workers retain the formal-review and leave-draft path described above.
