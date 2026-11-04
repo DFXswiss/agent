@@ -58,54 +58,97 @@ def _list_runs(
 ) -> list[Mapping[str, Any]]:
     from .a38_guard import GuardError
 
-    shift_cause: list[str | None] = [None]
+    rendered_params = ", ".join(
+        f"{key}={str(value).replace(chr(10), ' ')[:80]}"
+        for key, value in sorted(params.items())
+    )[:500]
 
-    def once() -> list[Mapping[str, Any]] | None:
-        # None means the list shifted (a duplicate id or a changed total_count).
+    def fail(message: str, total: int | None, rows: int) -> GuardError:
+        observed = total if type(total) is int else "unknown"
+        return GuardError(
+            f"{message} (params: {rendered_params}; "
+            f"total_count={observed}; rows={rows})"
+        )
+
+    def once() -> tuple[list[Mapping[str, Any]], str | None, int | None]:
         items: list[Mapping[str, Any]] = []
+        seen_ids: set[int] = set()
         total_count: int | None = None
         for page in range(1, MAX_RUNS // PAGE_SIZE + 1):
             query = urlencode({**params, "per_page": PAGE_SIZE, "page": page})
             data = api.get_json(f"/repos/{repo}/actions/runs?{query}")
             if not isinstance(data, Mapping) or type(data.get("total_count")) is not int:
-                raise GuardError("workflow run inventory missing total_count")
+                raise fail(
+                    "workflow run inventory missing total_count", None, len(items)
+                )
             # total_count is a response-shape check. It does not end the list.
             if data["total_count"] < 0:
-                raise GuardError("workflow run inventory missing total_count")
+                raise fail(
+                    "workflow run inventory missing total_count",
+                    data["total_count"],
+                    len(items),
+                )
             if total_count is None:
                 total_count = data["total_count"]
             elif data["total_count"] != total_count:
-                shift_cause[0] = "count"
-                return None
+                return items, "count", data["total_count"]
             batch = data.get("workflow_runs")
             if not isinstance(batch, list) or any(not isinstance(r, Mapping) for r in batch):
-                raise GuardError("workflow run inventory invalid")
+                raise fail("workflow run inventory invalid", total_count, len(items))
             if not batch:
-                # An empty page is the end, including when total_count is stale.
-                return items
+                if page == 1 and total_count > 0:
+                    if allow_truncated:
+                        return [], None, total_count
+                    raise fail(
+                        "workflow run inventory incomplete", total_count, len(items)
+                    )
+                return items, None, total_count
+            batch_ids = [r.get("id") for r in batch]
+            if any(type(ident) is not int or ident <= 0 for ident in batch_ids):
+                raise fail(
+                    "workflow run inventory has invalid or duplicate IDs",
+                    total_count,
+                    len(items),
+                )
+            if (
+                len(set(batch_ids)) != len(batch_ids)
+                or any(ident in seen_ids for ident in batch_ids)
+            ):
+                return items, "duplicate", total_count
             items.extend(batch)
-            ids = [r.get("id") for r in items]
-            if any(type(i) is not int or i <= 0 for i in ids):
-                raise GuardError("workflow run inventory has invalid or duplicate IDs")
-            if len(set(ids)) != len(ids):
-                shift_cause[0] = "duplicate"
-                return None
+            seen_ids.update(batch_ids)
             if len(batch) < PAGE_SIZE:
-                return items
+                return items, None, total_count
         if allow_truncated:
-            # The drain can use a capped window; approval requires completeness.
-            return items
-        raise GuardError("workflow run pagination bound exceeded")
+            # Drain protection is refreshed before each delete. A partial list
+            # can therefore only omit candidates, not weaken protection.
+            return items, None, total_count
+        raise fail(
+            "workflow run pagination bound exceeded", total_count, len(items)
+        )
 
-    listed = once()
-    if listed is None:
-        # A count change is the only signal that a departed row shifted the
-        # offset and would otherwise make one run disappear between pages.
-        listed = once()
-    if listed is None:
-        if shift_cause[0] == "count":
-            raise GuardError("workflow run inventory changed or exceeds bound")
-        raise GuardError("workflow run inventory has invalid or duplicate IDs")
+    listed, shift_cause, observed_total = once()
+    if shift_cause is not None:
+        # A changed count and a duplicate id are the detectable signs that the
+        # paged inventory shifted. A departing row replaced by an entering row
+        # is not detectable here. That can only defer an action_required
+        # approval, while the in-flight listings that guard against cancellation
+        # are single short pages per branch.
+        listed, shift_cause, observed_total = once()
+    if shift_cause is not None:
+        if allow_truncated:
+            return listed
+        if shift_cause == "count":
+            raise fail(
+                "workflow run inventory changed or exceeds bound",
+                observed_total,
+                len(listed),
+            )
+        raise fail(
+            "workflow run inventory has invalid or duplicate IDs",
+            observed_total,
+            len(listed),
+        )
     return listed
 
 

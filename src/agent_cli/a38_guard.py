@@ -103,6 +103,10 @@ class GuardError(RuntimeError):
     """Loud failure of the guard (API, config, bounds). Not a soft report miss."""
 
 
+class PullCommitsTruncatedError(GuardError):
+    """A pull commit list reached GitHub's fixed API cap."""
+
+
 def _is_guard_error(exc: BaseException) -> bool:
     return isinstance(exc, GuardError) or (
         isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
@@ -1091,7 +1095,7 @@ def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str,
     repo = _validate_repo(repo)
     items = api.paginate(f"/repos/{repo}/pulls/{number}/commits")
     if len(items) >= PULL_COMMITS_API_CAP:
-        raise GuardError(
+        raise PullCommitsTruncatedError(
             "pull commit list truncated at GitHub 250-commit cap; refusing partial scan"
         )
     commits: list[dict[str, Any]] = []

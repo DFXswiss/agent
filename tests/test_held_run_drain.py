@@ -11,7 +11,11 @@ import pytest
 
 from agent_cli import a38_guard, held_run_drain
 from agent_cli.a38_guard import GuardError
-from agent_cli.held_run_drain import MAX_DELETIONS, drain_held_runs
+from agent_cli.held_run_drain import (
+    MAX_DELETIONS,
+    MAX_EXAMINED,
+    drain_held_runs,
+)
 from test_a38_guard import REPO, FakeAPI, _pr_guard_config
 
 pytestmark = pytest.mark.no_pg
@@ -35,6 +39,8 @@ class FakeDrain(FakeAPI):
         self.current_open_pull_items: list[dict] = []
         self.pull_overrides: dict[int, dict] = {}
         self.commits_by_pull: dict[int, list[str]] = {}
+        self.commits_reads: dict[int, list[list[str]]] = {}
+        self.commit_read_counts: dict[int, int] = {}
         self.jobs_by_run: dict[int, list[dict]] = {}
         self.jobs_404: set[int] = set()
         self.run_overrides: dict[int, dict] = {}
@@ -80,8 +86,15 @@ class FakeDrain(FakeAPI):
             remainder = path.split("/pulls/", 1)[1]
             number = int(remainder.split("/", 1)[0])
             if remainder.endswith("/commits"):
+                reads = self.commits_reads.get(number)
+                if reads:
+                    read_count = self.commit_read_counts.get(number, 0)
+                    shas = reads[min(read_count, len(reads) - 1)]
+                    self.commit_read_counts[number] = read_count + 1
+                else:
+                    shas = self.commits_by_pull.get(number, [])
                 return 200, [
-                    {"sha": sha} for sha in self.commits_by_pull.get(number, [])
+                    {"sha": sha} for sha in shas
                 ], {}
             if "/" not in remainder:
                 pull = self.pull_overrides.get(number)
@@ -238,6 +251,31 @@ def test_fresh_open_pull_recheck_protects_candidate_before_delete() -> None:
     assert fake.deletes == []
 
 
+def test_fresh_commit_list_recheck_protects_a_newly_pushed_candidate() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    fake.runs = [run]
+    fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
+    fake.commits_reads[1] = [["c" * 40], [run["head_sha"]]]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["candidates"] == 1
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_last_single_pull_read_protects_changed_merge_sha() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40, "b" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.pull_overrides[1] = {**listed, "merge_commit_sha": run["head_sha"]}
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["candidates"] == 1
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
 def test_null_list_merge_sha_is_resolved_by_single_pull_read() -> None:
     fake = FakeDrain()
     run = fake.run()
@@ -260,11 +298,33 @@ def test_malformed_open_pull_head_sha_fails_closed() -> None:
     assert fake.deletes == []
 
 
+@pytest.mark.parametrize("head_repo", ["invalid", {"full_name": ""}])
+def test_malformed_open_pull_head_repository_fails_closed(head_repo: object) -> None:
+    fake = FakeDrain()
+    pull = _open_pull("a" * 40)
+    pull["head"]["repo"] = head_repo
+    fake.runs = [fake.run()]
+    fake.open_pull_items = [pull]
+    with pytest.raises(GuardError, match="open pull request head repository invalid"):
+        drain_held_runs(fake.api(), REPO)
+    assert fake.deletes == []
+
+
+def test_deleted_fork_pull_does_not_block_an_unrelated_candidate() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    fake.open_pull_items = [_open_pull("a" * 40, "b" * 40, head_repo=None)]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [101]
+    assert fake.deletes == [101]
+
+
 def test_hold_with_a_started_job_is_not_deleted() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run()]
     fake.jobs_by_run[101] = [{"id": 1}]
     result = drain_held_runs(fake.api(), REPO)
+    assert result["candidates"] == 1
     assert result["deleted"] == []
     assert fake.jobs_gets == [101]
     assert fake.deletes == []
@@ -290,6 +350,27 @@ def test_base_repository_and_missing_head_repository_are_not_deleted() -> None:
     assert result["deleted"] == []
     assert fake.jobs_gets == []
     assert fake.deletes == []
+
+
+def test_empty_run_head_branch_is_not_deleted() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(head_branch="")]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_truncated_pull_commit_list_protects_only_its_branch() -> None:
+    fake = FakeDrain()
+    fake.runs = [
+        fake.run(id=101, head_branch="feature"),
+        fake.run(id=102, head_branch="other-feature"),
+    ]
+    fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
+    fake.commits_by_pull[1] = [f"{ident:040x}" for ident in range(250)]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [102]
+    assert fake.deletes == [102]
 
 
 def test_later_run_attempt_is_not_deleted() -> None:
@@ -326,7 +407,36 @@ def test_deletion_is_bounded_and_oldest_runs_are_deleted_first() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["candidates"] == MAX_DELETIONS + 2
     assert result["deleted"] == list(range(1, MAX_DELETIONS + 1))
+    assert fake.jobs_gets == list(range(1, MAX_DELETIONS + 1))
     assert fake.deletes == list(range(1, MAX_DELETIONS + 1))
+
+
+def test_started_job_does_not_consume_the_deletion_bound() -> None:
+    fake = FakeDrain()
+    fake.runs = [
+        fake.run(id=ident)
+        for ident in range(1, MAX_DELETIONS + 2)
+    ]
+    fake.jobs_by_run[1] = [{"id": 1}]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["candidates"] == MAX_DELETIONS + 1
+    assert result["deleted"] == list(range(2, MAX_DELETIONS + 2))
+    assert fake.jobs_gets == list(range(1, MAX_DELETIONS + 2))
+    assert fake.deletes == list(range(2, MAX_DELETIONS + 2))
+
+
+def test_examination_bound_stops_jobs_reads_before_later_candidates() -> None:
+    fake = FakeDrain()
+    total = MAX_EXAMINED + 6
+    fake.runs = [fake.run(id=ident) for ident in range(1, total + 1)]
+    for ident in range(1, total):
+        fake.jobs_by_run[ident] = [{"id": ident}]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["candidates"] == MAX_EXAMINED + 6
+    assert result["deleted"] == []
+    assert fake.jobs_gets == list(range(1, MAX_EXAMINED + 1))
+    assert not set(range(MAX_EXAMINED + 1, total + 1)) & set(fake.jobs_gets)
+    assert fake.deletes == []
 
 
 def test_ten_full_listing_pages_are_processed_as_a_window() -> None:
@@ -336,6 +446,7 @@ def test_ten_full_listing_pages_are_processed_as_a_window() -> None:
     assert result["scanned"] == 1000
     assert result["candidates"] == 1000
     assert result["deleted"] == list(range(1, MAX_DELETIONS + 1))
+    assert fake.jobs_gets == list(range(1, MAX_DELETIONS + 1))
     assert fake.deletes == list(range(1, MAX_DELETIONS + 1))
 
 

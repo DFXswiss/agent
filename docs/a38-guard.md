@@ -159,18 +159,26 @@ sweep. A candidate is a `pull_request` run with `run_attempt: 1` still in
 head, the merge commit, nor any commit of an open pull request whose head branch
 and fork match the run's, whose `head_repository.full_name` is a nonempty name
 different from the base repository, whose creation time is at least one hour
-old, and whose jobs inventory proves that no job ever started.
-The reported candidate count is the full superseded set found during the pass,
-while actual deletions, or planned deletions in a dry run, remain bounded per sweep.
+old, and which is not protected at scan time. The reported candidate count is
+this full superseded set before the never-started proof, including candidates
+that the examined bound leaves unchecked.
 Open pulls are read before the held-run listing and again immediately before
-each delete. A null merge SHA in the list is resolved with one single-pull read,
-and an unreadable or malformed open-pull head SHA fails the pass closed. At the
-1000-run listing cap, the pass processes that capped window; it may omit
+each delete. That final check uses a fresh commit list and a last single-pull
+read of every open pull on the candidate's fork branch. A null merge SHA in the
+list is resolved with one single-pull read, protecting both the listed and
+re-read head SHAs. An unreadable or malformed open-pull head SHA, or a malformed
+head repository, fails the pass closed; a deleted fork simply has no branch to
+match. A run with an empty head branch is never deleted. A pull request at
+GitHub's 250-commit cap protects runs on its branch instead of aborting the pass.
+At the 1000-run listing cap, the pass processes that capped window; it may omit
 candidates, but never weakens protection.
 
-The pass re-reads each candidate immediately before deleting it and deletes at
-most 50 runs per sweep, oldest first. A denied or rate-limited delete aborts the
-pass, while a drain failure never changes the guard's exit code. Deleting a
+The pass examines at most 40 candidates per sweep, oldest first, which bounds
+the jobs reads. It proves that a candidate never started immediately before
+re-reading that run; candidates with jobs or an unreadable jobs inventory are
+skipped without consuming the deletion bound. It deletes, or plans in a dry
+run, at most 20 runs per sweep. A denied or rate-limited delete aborts the pass,
+while a drain failure never changes the guard's exit code. Deleting a
 never-started hold is a distinct write class, not an exception to the rule that
 the guard never cancels: cancel cannot clear `action_required` on a run that is
 already `completed`, so only deletion shrinks the held-run listing. The pass

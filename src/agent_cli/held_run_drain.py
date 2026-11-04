@@ -10,14 +10,14 @@ from typing import Any, Mapping
 from .pr_lifecycle import _workflow_run_never_started
 from .workflow_approval import _commit_shas, _list_runs, _pending, _timestamp
 
-MAX_DELETIONS = 50
+MAX_DELETIONS = 20
+MAX_EXAMINED = 2 * MAX_DELETIONS
 MIN_AGE_S = 3600
 
 
 def _open_pull_protection(
     api: Any,
     repo: str,
-    commit_cache: dict[int, set[str]],
 ) -> tuple[set[str], dict[tuple[str, str], list[int]]]:
     from .a38_guard import GuardError, _validate_sha
 
@@ -36,11 +36,38 @@ def _open_pull_protection(
         if type(number) is not int or number <= 0:
             raise GuardError("open pull request number missing")
 
+        head_repo = head.get("repo")
+        if head_repo is not None:
+            if not isinstance(head_repo, Mapping):
+                raise GuardError("open pull request head repository invalid")
+            full_name = head_repo.get("full_name")
+            if not isinstance(full_name, str) or full_name == "":
+                raise GuardError("open pull request head repository invalid")
+            head_ref = head.get("ref")
+            if not isinstance(head_ref, str) or head_ref == "":
+                raise GuardError("open pull request head ref missing")
+            pulls_by_branch.setdefault(
+                (full_name.lower(), head_ref), []
+            ).append(number)
+
         merge_sha = pull.get("merge_commit_sha")
         if merge_sha is None:
             detail = api.get_json(f"/repos/{repo}/pulls/{number}")
             if not isinstance(detail, Mapping):
                 raise GuardError("open pull request merge sha invalid")
+            detail_head = detail.get("head")
+            detail_head_sha = (
+                detail_head.get("sha")
+                if isinstance(detail_head, Mapping)
+                else None
+            )
+            try:
+                detail_head_sha = _validate_sha(
+                    detail_head_sha, "open pull request head sha"
+                )
+            except GuardError as exc:
+                raise GuardError("open pull request head sha missing") from exc
+            protected.add(detail_head_sha)
             merge_sha = detail.get("merge_commit_sha")
         if merge_sha is not None:
             try:
@@ -51,20 +78,6 @@ def _open_pull_protection(
                 raise GuardError("open pull request merge sha invalid") from exc
             protected.add(merge_sha)
 
-        head_repo = head.get("repo")
-        if head_repo is not None:
-            head_ref = head.get("ref")
-            if not isinstance(head_ref, str) or head_ref == "":
-                raise GuardError("open pull request head ref missing")
-            full_name = (
-                head_repo.get("full_name")
-                if isinstance(head_repo, Mapping)
-                else None
-            )
-            if isinstance(full_name, str) and full_name != "":
-                pulls_by_branch.setdefault(
-                    (full_name.lower(), head_ref), []
-                ).append(number)
     return protected, pulls_by_branch
 
 
@@ -73,8 +86,10 @@ def _run_is_protected(
     repo: str,
     run: Mapping[str, Any],
     protection: tuple[set[str], dict[tuple[str, str], list[int]]],
-    commit_cache: dict[int, set[str]],
+    commit_cache: dict[int, set[str] | None],
 ) -> bool:
+    from .a38_guard import PullCommitsTruncatedError
+
     protected, pulls_by_branch = protection
     head_sha = run.get("head_sha")
     if not isinstance(head_sha, str):
@@ -93,10 +108,14 @@ def _run_is_protected(
         return False
     for number in pulls_by_branch.get((head_repo.lower(), head_branch), []):
         if number not in commit_cache:
-            commit_cache[number] = {
-                sha.lower() for sha in _commit_shas(api, repo, number)
-            }
-        if head_sha in commit_cache[number]:
+            try:
+                commit_cache[number] = {
+                    sha.lower() for sha in _commit_shas(api, repo, number)
+                }
+            except PullCommitsTruncatedError:
+                commit_cache[number] = None
+        commits = commit_cache[number]
+        if commits is None or head_sha in commits:
             return True
     return False
 
@@ -151,8 +170,8 @@ def drain_held_runs(
 
     result["enabled"] = True
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=MIN_AGE_S)
-    commit_cache: dict[int, set[str]] = {}
-    protection = _open_pull_protection(api, repo, commit_cache)
+    commit_cache: dict[int, set[str] | None] = {}
+    protection = _open_pull_protection(api, repo)
     protected = protection[0]
     result["protected"] = len(protected)
 
@@ -179,34 +198,51 @@ def drain_held_runs(
         if not isinstance(head_repository, Mapping):
             continue
         head_repo = head_repository.get("full_name")
+        head_branch = run.get("head_branch")
         if (
             not isinstance(head_repo, str)
             or head_repo == ""
             or head_repo.lower() == repo.lower()
+            or not isinstance(head_branch, str)
+            or head_branch == ""
         ):
             continue
         if _timestamp(run.get("created_at")) >= cutoff:
             continue
         if _run_is_protected(api, repo, run, protection, commit_cache):
             continue
-        if not _workflow_run_never_started(api, repo, run, missing_ok=True):
-            continue
         candidates.append(run)
 
     candidates.sort(
         key=lambda run: (_timestamp(run.get("created_at")), run["id"])
     )
-    # Report the full backlog for observability; deleted and planned remain
-    # bounded because they represent the per-sweep write budget.
+    # Report the full backlog before the never-started proof; deleted and
+    # planned remain bounded because they represent the per-sweep write budget.
     result["candidates"] = len(candidates)
-    # Each deletion costs a re-read plus the delete, and each candidate costs a
-    # jobs read. Fifty deletions bound a pass at roughly 160 requests, allowing
-    # two sweeps an hour to drain up to 100 holds while preserving the shared
-    # installation budget for workflow approval.
+    # Request bound: 3 gate reads (repository, default-branch commit, config),
+    # at most 10 run-list pages twice after a shift, scan-time P0 open-pull
+    # reads, and up to 3M commit pages for M distinct branch-matching pulls.
+    # For E examined and proven subset K:
+    # 23 + P0 + 3M + E + sum(i in K)(2 + Pi + 4mi).
+    # P is pull pages plus null-merge GETs; mi is matching pulls, each costing
+    # one detail GET and up to 3 commit pages. With P=1, M=m=1, E=K=40:
+    # 23+1+3+40+40*(2+1+4)=347 requests in the all-proven worst case; a run
+    # on a branch with no open pull (m=0) costs 4, about 190 for a full pass.
+    # Two sweeps an hour stay well inside the budget approval shares, and 40
+    # examined runs an hour outpace a backlog that grows a few runs an hour.
+    # MAX_EXAMINED bounds jobs reads and rechecks even if every examined run skips.
+    examined = 0
     for candidate in candidates:
         completed = result["planned"] if dry_run else result["deleted"]
         if len(completed) >= MAX_DELETIONS:
             break
+        if examined >= MAX_EXAMINED:
+            break
+        examined += 1
+        if not _workflow_run_never_started(
+            api, repo, candidate, missing_ok=True
+        ):
+            continue
         run_id = candidate["id"]
         reread_path = f"/repos/{repo}/actions/runs/{run_id}"
         reread_status, current = api.get_optional(reread_path)
@@ -223,6 +259,11 @@ def drain_held_runs(
             if isinstance(current_head_repository, Mapping)
             else None
         )
+        current_head_branch = (
+            current.get("head_branch")
+            if isinstance(current, Mapping)
+            else None
+        )
         if (
             not isinstance(current, Mapping)
             or current.get("id") != run_id
@@ -232,12 +273,38 @@ def drain_held_runs(
             or not isinstance(current_head_repo, str)
             or current_head_repo == ""
             or current_head_repo.lower() == repo.lower()
+            or not isinstance(current_head_branch, str)
+            or current_head_branch == ""
         ):
             continue
-        current_protection = _open_pull_protection(api, repo, commit_cache)
-        if _run_is_protected(
-            api, repo, current, current_protection, commit_cache
-        ):
+        current_protection = _open_pull_protection(api, repo)
+        branch_key = (current_head_repo.lower(), current_head_branch)
+        detail_protected = False
+        for number in current_protection[1].get(branch_key, []):
+            detail = api.get_json(f"/repos/{repo}/pulls/{number}")
+            detail_head = detail.get("head") if isinstance(detail, Mapping) else None
+            detail_head_sha = (
+                detail_head.get("sha")
+                if isinstance(detail_head, Mapping)
+                else None
+            )
+            detail_merge_sha = (
+                detail.get("merge_commit_sha")
+                if isinstance(detail, Mapping)
+                else None
+            )
+            if (
+                isinstance(detail_head_sha, str)
+                and detail_head_sha.lower() == current_sha.lower()
+            ) or (
+                isinstance(detail_merge_sha, str)
+                and detail_merge_sha.lower() == current_sha.lower()
+            ):
+                detail_protected = True
+                break
+        if detail_protected:
+            continue
+        if _run_is_protected(api, repo, current, current_protection, {}):
             continue
         if dry_run:
             result["planned"].append(run_id)

@@ -1137,13 +1137,13 @@ def test_empty_followup_page_ends_the_list() -> None:
     )
 
 
-def test_empty_first_page_with_nonzero_total_count_returns_no_runs() -> None:
+def test_empty_first_page_with_nonzero_total_count_is_incomplete() -> None:
     fake = FakeApproval()
     fake.inventory = {"total_count": 15, "workflow_runs": []}
-    result = reconcile_pull(fake.api(), REPO, 1)
+    with pytest.raises(GuardError, match="incomplete"):
+        reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == []
-    assert result.workflow_approvals == []
-    assert fake.actions_pages == [1] * 8
+    assert fake.actions_pages == [1]
 
 
 def test_total_count_above_the_cap_with_a_short_page_approves() -> None:
@@ -1201,6 +1201,64 @@ def test_runs_helper_rejects_count_change_and_duplicates() -> None:
 
     with pytest.raises(GuardError, match="duplicate"):
         wa._runs(Dupes(), REPO, HEAD)
+
+
+def test_runs_error_includes_bounded_inventory_diagnostics() -> None:
+    class Scripted:
+        def get_json(self, path: str) -> dict:
+            return {"total_count": 7, "workflow_runs": []}
+
+    with pytest.raises(GuardError, match="incomplete") as exc_info:
+        wa._runs(Scripted(), REPO, HEAD)
+    message = str(exc_info.value)
+    assert "params: event=pull_request, head_sha=" in message
+    assert "total_count=7" in message
+    assert "rows=0" in message
+
+
+def test_truncated_listing_returns_last_attempt_rows_on_persistent_shift() -> None:
+    class Scripted:
+        def __init__(self) -> None:
+            self.page_one_reads = 0
+
+        def get_json(self, path: str) -> dict:
+            page = int((parse_qs(urlparse(path).query).get("page") or ["1"])[0])
+            if page == 1:
+                self.page_one_reads += 1
+                return {
+                    "total_count": 100 + self.page_one_reads * 2 - 1,
+                    "workflow_runs": [
+                        FakeApproval.run(id=ident, event="push")
+                        for ident in range(1, 101)
+                    ],
+                }
+            return {
+                "total_count": 100 + self.page_one_reads * 2,
+                "workflow_runs": [FakeApproval.run(id=101, event="push")],
+            }
+
+    scripted = Scripted()
+    runs = wa._list_runs(
+        scripted,
+        REPO,
+        {"event": "pull_request", "status": "action_required"},
+        allow_truncated=True,
+    )
+    assert [run["id"] for run in runs] == list(range(1, 101))
+    assert scripted.page_one_reads == 2
+
+
+def test_truncated_listing_accepts_empty_first_page_with_nonzero_total() -> None:
+    class Scripted:
+        def get_json(self, path: str) -> dict:
+            return {"total_count": 7, "workflow_runs": []}
+
+    assert wa._list_runs(
+        Scripted(),
+        REPO,
+        {"event": "pull_request", "status": "action_required"},
+        allow_truncated=True,
+    ) == []
 
 
 # --- 403 / mutation / association failures ----------------------------------
@@ -2009,4 +2067,3 @@ def test_new_auth_set_posts_second_result_after_new_run_finishes() -> None:
     assert posted.ci_results[0]["status"] == "posted"
     auths = _marker_comments(fake, AUTH_MARKER)
     assert len(auths) == 2
-
