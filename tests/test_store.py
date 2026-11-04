@@ -189,7 +189,7 @@ def test_replica_mail_preserves_only_relay_authenticated_github_login(tmp_path: 
             "table": "activity",
             "row_id": "mail",
             "origin_device_id": "reviewer-device",
-            "_github_login": "Allowed-Reviewer",
+            "github_login": "Allowed-Reviewer",
             "payload": {
                 "id": "mail",
                 "type": "message",
@@ -197,11 +197,14 @@ def test_replica_mail_preserves_only_relay_authenticated_github_login(tmp_path: 
                 "payload": {"to_session": "worker", "payload": {"kind": "test"}},
                 "execution_status": "pending",
                 "_github_login": "spoofed",
+                "github_login": "also-spoofed",
             },
             "updated_at": "2026-08-13T12:00:01Z",
         }
     )
-    assert store.row("activity", "mail")["_github_login"] == "allowed-reviewer"
+    saved = store.row("activity", "mail")
+    assert saved["_github_login"] == "allowed-reviewer"
+    assert "github_login" not in saved
 
 
 def test_apply_replica_row_compares_updated_at_as_timestamptz(tmp_path: Path) -> None:

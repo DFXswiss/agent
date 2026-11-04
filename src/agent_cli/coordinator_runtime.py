@@ -330,6 +330,7 @@ def _create_implement_task(
         "execution_binding": execution_binding(store, worker, repo, ai),
         "worker_session": worker.session_id,
         "worker_login": account_for(store, worker.session_id).login.casefold(),
+        **({"a38": {"enabled": True}} if worker.a38 else {}),
     }
     held: dict[str, Any] = {"existing": None}
 

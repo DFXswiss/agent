@@ -97,8 +97,10 @@ for worker in workers.values():
 - Before accepting work, `tick` preflights: worker session locally
   owned/active with skills `spine`, `review-loop`, `pr-review`; formal
   `review_session` owned/active with `pr-review` for non-A38 workers; all required AI lane slots
-  present for the worker session; worker and review GitHub accounts configured,
-  authenticated, and bound to **different** logins; worker account has git
+  present for the worker session. Non-A38 workers require configured,
+  authenticated worker and review GitHub accounts bound to **different** logins.
+  A38 workers require the worker account plus `second_reviewers` that exclude
+  its login. The worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
   provider.
 - Required AI slots, with `<first>` / `<second>` the providers of the device's
@@ -111,7 +113,9 @@ for worker in workers.values():
   is part of the execution binding, so changing it stops accepted tasks with
   "task execution configuration changed" until it is restored.
 - Checkpoints live in `task.payload['coordinator']` and activity `result`
-  fields. There is **no** second hub state machine and **no** new store table.
+  fields. An accepted A38 task records `coordinator.a38.enabled=true`; external
+  second-review evidence is refused without that marker. There is **no** second
+  hub state machine and **no** new store table.
 - `runner` executes `gh`/`git` trusted calls and returns
   `Completed(returncode, stdout, stderr)`. GitHub-scoped calls go through
   `Account.runner` (explicit `GH_CONFIG_DIR`), never an ambient login.

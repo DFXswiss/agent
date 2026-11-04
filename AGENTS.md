@@ -32,7 +32,9 @@ Draft publication is immediate after the first signed task commit; see the
 lifecycle. A draft plus local tests is not done. Ready for review is signed
 commits on a branch in this repository, model slot `first` quality and logic
 then model slot `second` quality and logic (providers pinned on the task from `ai-accounts.json`) with zero findings on a head that is the current head, or a commit after the pull request base that the current head still contains, CI green on this head, then
-leave-draft. Ready for review is still not merge and not completion. The
+leave-draft. In explicit coordinator A38 mode, the guard alone owns Ready and
+the second review comes from configured team members through the hub instead
+of model slot `second`. Ready for review is still not merge and not completion. The
 authoring session does not sit those PR reviews. A human merges; claim
 completion only after that merge is verified. The local-CI comment schema for
 private product repositories is `docs/local-ci-v1.md`.

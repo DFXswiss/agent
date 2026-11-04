@@ -402,6 +402,7 @@ def test_external_second_review_satisfies_done_gate_without_second_gate_rows() -
         "id": "task",
         "workflow": "review",
         "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"a38": {"enabled": True}}},
         "checklist": checklist,
         "checklist_evidence": {
             "codex_pr_quality": prefix + "https://example.invalid/comment",
@@ -415,6 +416,20 @@ def test_external_second_review_satisfies_done_gate_without_second_gate_rows() -
         "summaries": {"en": "Done.", "de": "Erledigt."},
     }
     assert ready_for_done_blocking(task) == []
+    task["checklist_evidence"]["codex_pr_logic"] = (
+        f"external second review by reviewer at {'b' * 40}: https://example.invalid/comment"
+    )
+    assert any(
+        "codex-pr/logic=external_review_missing" in item
+        for item in ready_for_done_blocking(task)
+    )
+    task["checklist_evidence"]["codex_pr_logic"] = prefix + "https://example.invalid/comment"
+    task.pop("payload")
+    assert any(
+        "codex-pr/quality=external_review_missing" in item
+        for item in ready_for_done_blocking(task)
+    )
+    task["payload"] = {"coordinator": {"a38": {"enabled": True}}}
     task["checklist_evidence"]["codex_pr_logic"] = "ordinary evidence"
     assert any("codex-pr/logic=external_review_missing" in item for item in ready_for_done_blocking(task))
 
@@ -433,24 +448,18 @@ def test_models_cli_prints_external_for_null_second(
     assert json.loads(capsys.readouterr().out) == {"second": None}
 
 
-def test_gate_record_refuses_external_second_slot(
+def test_task_create_refuses_external_second_slot_outside_coordinator(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "ai-accounts.json").write_text(
         json.dumps({"models": {"first": "grok", "second": None}}),
         encoding="utf-8",
     )
-    tid = _task(tmp_path, capsys)
-    with pytest.raises(SystemExit, match="second review is external"):
-        _run(
-            tmp_path,
-            [
-                "gate", "record", "--task", tid,
-                "--stage", "codex-pr", "--dimension", "quality",
-                "--vendor", "codex", "--verdict", "approved",
-                "--head", "a" * 40, "--agent", "22222222-2222-4222-8222-222222222222",
-            ],
-        )
+    with pytest.raises(
+        SystemExit,
+        match="models.second = null is allowed only for coordinator A38 task creation",
+    ):
+        _task(tmp_path, capsys)
 
 
 # --- CLI with configured slots ----------------------------------------------

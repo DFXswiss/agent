@@ -2204,7 +2204,7 @@ def _seed_ready_side_task(
     codex_gates: tuple[str, ...] = (),
     seed_formal_review: bool = False,
     extra_evidence: dict[str, Any] | None = None,
-    models: dict[str, str] | None = None,
+    models: dict[str, str | None] | None = None,
     first_vendor: str = "grok",
     second_vendor: str = "codex",
 ) -> dict[str, Any]:
@@ -2248,6 +2248,7 @@ def _seed_ready_side_task(
                     "base_sha": fake.base,
                     "head_sha": fake.head,
                     "evidence": evidence,
+                    **({"a38": {"enabled": True}} if worker.a38 else {}),
                 }
             },
             "state": "pr-review",
@@ -3262,6 +3263,7 @@ def test_a38_ci_and_readiness_route_to_guard_ready_wait(
             store.write("checklist_item", "update", row["id"], updated)
     current = store.row("task", tid)
     current["payload"]["coordinator"]["a38"] = {
+        "enabled": True,
         "report": {"head": fake.head},
         "first_comment": {"head": fake.head},
         "second_review": {"head": fake.head, "status": "posted"},
@@ -3287,6 +3289,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
 
     from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
     from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
+    from agent_cli.coordinator_lanes import invalidate_head_evidence
 
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -3328,14 +3331,9 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
                 "pr_url": "https://github.com/example/project/pull/42",
                 "source": {"repo": "example/project", "number": 7},
                 "a38": {
+                    "enabled": True,
                     "report": {"head": fake.head, "activity_id": "report"},
                     "first_review_passes": 1,
-                    "gate_prompts": {
-                        fake.head: {
-                            "quality": {"prompt": COMPLIANCE_PROMPT + " Check quality.", "model": "grok-model", "provider": "grok"},
-                            "logic": {"prompt": COMPLIANCE_PROMPT + " Check logic.", "model": "grok-model", "provider": "grok"},
-                        }
-                    },
                 },
             }
         },
@@ -3343,11 +3341,30 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     store.write("task", "insert", tid, task)
     for dimension in ("quality", "logic"):
         gid = f"grok-{dimension}"
+        aid = f"grok-{dimension}-agent"
+        store.write(
+            "agent",
+            "insert",
+            aid,
+            {
+                "id": aid,
+                "session_id": worker.session_id,
+                "task_id": tid,
+                "role": f"pr-reviewer-{dimension}",
+                "vendor": "grok",
+                "provider": "grok",
+                "model": "grok-model",
+                "prompt": COMPLIANCE_PROMPT + f" Check {dimension}.",
+                "head_sha": fake.head,
+                "dimension": dimension,
+                "status": "done",
+            },
+        )
         store.write(
             "review_gate",
             "insert",
             gid,
-            {"id": gid, "task_id": tid, "stage": "grok-pr", "dimension": dimension, "vendor": "grok", "verdict": "approved", "head_sha": fake.head, "recorded_at": "2026-01-01T00:00:00Z"},
+            {"id": gid, "task_id": tid, "stage": "grok-pr", "dimension": dimension, "vendor": "grok", "verdict": "approved", "head_sha": fake.head, "agent_id": aid, "recorded_at": "2026-01-01T00:00:00Z"},
         )
     checklist = {
         "session_registered": "ja", "spec_written": "ja", "implementer_done": "ja",
@@ -3360,6 +3377,14 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         cid = f"check-{key}"
         store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
 
+    saved = store.row("task", tid)
+    invalidate_head_evidence(saved["payload"]["coordinator"], "")
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
     saved = store.row("task", tid)
     assert "first A38 review comment posted" in phase_first_comment(store, worker, saved, fake)[0]
     comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
@@ -3382,7 +3407,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
 
     def mail(row_id: str, login: str, payload: object) -> None:
         store.apply_replica_row(
-            {"table": "activity", "row_id": row_id, "origin_device_id": f"{row_id}-device", "_github_login": login, "payload": {"id": row_id, "session_id": "reviewer-session", "type": "message", "payload": {"to_session": worker.session_id, "payload": payload}, "execution_status": "pending"}, "updated_at": "2026-01-01T00:00:01Z"}
+            {"table": "activity", "row_id": row_id, "origin_device_id": f"{row_id}-device", "github_login": login, "payload": {"id": row_id, "session_id": "reviewer-session", "type": "message", "payload": {"to_session": worker.session_id, "payload": payload}, "execution_status": "pending"}, "updated_at": "2026-01-01T00:00:01Z"}
         )
 
     mail("unauthorized-mail", "not-allowed", second)
@@ -3444,6 +3469,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
                 "pr_number": 42,
                 "source": {"repo": "example/project", "number": 7},
                 "a38": {
+                    "enabled": True,
                     "second_review": {
                         "head": fake.head,
                         "status": "requested",
@@ -3499,7 +3525,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
         "id": tid, "session_id": worker.session_id, "workflow": "implement",
         "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
         "models": {"first": "grok", "second": None},
-        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}}},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
     }
     store.write("task", "insert", tid, task)
     checklist = {

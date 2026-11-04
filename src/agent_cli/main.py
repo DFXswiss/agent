@@ -52,7 +52,15 @@ from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch, record_lane_run
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
-from .model_slots import DEFAULT_MODEL_SLOTS, PROVIDER_CHOICES, STAGE_CHOICES, ModelSlots, ModelSlotsError, models_from_snapshot
+from .model_slots import (
+    DEFAULT_MODEL_SLOTS,
+    EXTERNAL_SECOND_TASK_CREATION_ERROR,
+    PROVIDER_CHOICES,
+    STAGE_CHOICES,
+    ModelSlots,
+    ModelSlotsError,
+    models_from_snapshot,
+)
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .runtime import (
@@ -672,6 +680,9 @@ def cmd_task(args: list[str]) -> None:
                 )
                 print(f"task {tid}")
                 return
+            models = _store_models(store)
+            if models.second is None:
+                die(EXTERNAL_SECOND_TASK_CREATION_ERROR)
             tid = str(uuid.uuid4())
             store.write(
                 "task",
@@ -686,7 +697,7 @@ def cmd_task(args: list[str]) -> None:
                     "ref": flag(rest, "--ref"),
                     "state": "open",
                     "current_round": 0,
-                    "models": _store_models(store).as_dict(),
+                    "models": models.as_dict(),
                     "created_at": utcnow(),
                     "updated_at": utcnow(),
                     "change_summary_en": None,
@@ -2395,6 +2406,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "checklist": checklist,
         "checklist_evidence": checklist_evidence,
         "summaries": {

@@ -320,18 +320,21 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _tool_target(target: object, cwd: str) -> str:
+def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
     """Keep worktree paths useful while retaining redaction outside it."""
     from .coordinator_common import redact
 
     raw = str(target)
-    try:
-        root = Path(cwd).expanduser().resolve()
-        path = Path(raw).expanduser()
-        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
-        raw = str(resolved.relative_to(root))
-    except (OSError, RuntimeError, ValueError):
-        pass
+    if raw == "":
+        return ""
+    if kind in ("file_path", "path"):
+        try:
+            root = Path(cwd).expanduser().resolve()
+            path = Path(raw).expanduser()
+            resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+            raw = str(resolved.relative_to(root))
+        except (OSError, RuntimeError, ValueError):
+            pass
     return redact(raw[:300], limit=300)
 
 
@@ -389,14 +392,16 @@ def finalize_lane_output(
                 name = block.get("name")
                 inputs = block.get("input")
                 target: object = ""
+                target_kind = ""
                 if isinstance(inputs, dict):
                     for key in ("file_path", "path", "pattern"):
                         if key in inputs:
                             target = inputs[key]
+                            target_kind = key
                             break
                 row = {
                     "tool": str(name) if name is not None else "",
-                    "target": _tool_target(target, cwd),
+                    "target": _tool_target(target, cwd, target_kind),
                     "error": False,
                 }
                 use_id = block.get("id")

@@ -538,6 +538,60 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertFalse(grok_denied.allowed)
 
+    def test_external_second_review_requires_a38_marker_and_first_gate_head(self) -> None:
+        head = "a" * 40
+        cl = _pending("review")
+        for key in (
+            "session_registered",
+            "contributing_read",
+            "grok_pr_quality",
+            "grok_pr_logic",
+        ):
+            cl[key] = "ja"
+        evidence = f"external second review by reviewer at {head}: https://example.invalid/review"
+        snapshot = {
+            "models": {"first": "grok", "second": None},
+            "payload": {"coordinator": {"a38": {"enabled": True}}},
+            "gates": [
+                {
+                    "stage": "grok-pr",
+                    "dimension": dimension,
+                    "vendor": "grok",
+                    "verdict": "approved",
+                    "head_sha": head,
+                }
+                for dimension in ("quality", "logic")
+            ],
+        }
+        allowed = close_allowed(
+            "review",
+            "codex_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            snapshot=snapshot,
+        )
+        self.assertTrue(allowed.allowed, allowed.reason)
+        stale = close_allowed(
+            "review",
+            "codex_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence=f"external second review by reviewer at {'b' * 40}: https://example.invalid/review",
+            snapshot=snapshot,
+        )
+        self.assertFalse(stale.allowed)
+        without_marker = {**snapshot, "payload": {}}
+        denied = close_allowed(
+            "review",
+            "codex_pr_quality",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            snapshot=without_marker,
+        )
+        self.assertFalse(denied.allowed)
+
     def test_codex_n_a_satisfies_mergeable_need(self) -> None:
         cl = _pending("resolve-conflicts")
         for key in (
