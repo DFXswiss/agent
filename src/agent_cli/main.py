@@ -673,6 +673,20 @@ def cmd_activity(args: list[str]) -> None:
             die(f"session {sid} is not active")
         if typ in SCRIPT_ONLY_ACTIVITY:
             die(f"{typ} is written by a script, not agent activity add")
+        inner = raw.get("payload")
+        if isinstance(inner, dict) and inner.get("kind") == "a38.second-review/v1":
+            from .coordinator_a38 import validate_second_review_payload
+            from .coordinator_common import CoordinatorError
+
+            if typ != "message":
+                die("a38.second-review/v1 must use activity type message")
+            to_session = raw.get("to_session")
+            if not isinstance(to_session, str) or not to_session:
+                die("a38.second-review/v1 requires payload.to_session")
+            try:
+                raw["payload"] = validate_second_review_payload(inner)
+            except CoordinatorError as exc:
+                die(str(exc))
         if typ in ("error.skip", "error.fix"):
             from .error_fix_act import validate_conclusion
 
@@ -3884,68 +3898,6 @@ def cmd_models(args: list[str]) -> None:
         print(f"{slot}={vendor or 'external'}")
 
 
-def cmd_review(args: list[str]) -> None:
-    """Send a strictly validated external A38 second-review result as session mail."""
-    if len(args) < 2 or args[:2] != ["second", "send"]:
-        die(
-            "Usage: agent review second send --to-session SID --task UUID "
-            "--head SHA --file PATH [--session OWN_SID]"
-        )
-    rest = args[2:]
-    to_session = require_flag(rest, "--to-session")
-    task_id = require_flag(rest, "--task")
-    head_sha = require_flag(rest, "--head").lower()
-    path = Path(require_flag(rest, "--file"))
-    own_session = flag(rest, "--session")
-    if not path.is_file():
-        die(f"second review file not found: {path}")
-    from .a38_review import ReviewError, loads_strict
-    from .coordinator_a38 import validate_second_review_payload
-    from .coordinator_common import CoordinatorError
-
-    try:
-        payload = loads_strict(path.read_text(encoding="utf-8"))
-        validated = validate_second_review_payload(payload)
-    except (OSError, UnicodeError, ReviewError, CoordinatorError) as exc:
-        die(str(exc))
-    if validated["task_id"] != task_id:
-        die("second review task_id does not match --task")
-    if validated["head"] != head_sha:
-        die("second review head does not match --head")
-    store = open_store()
-    try:
-        if own_session is None:
-            active = [
-                str(row.get("id") or "")
-                for row in store.rows("session")
-                if row.get("_origin_device_id") == store.device_id()
-                and row.get("status") == "active"
-            ]
-            if len(active) != 1:
-                die("--session is required unless exactly one active owned session exists")
-            own_session = active[0]
-        session = _need(store, "session", own_session)
-        _require_owned(store, session, "session")
-        if session.get("status") != "active":
-            die(f"session {own_session} is not active")
-        activity_id = str(uuid.uuid4())
-        store.write(
-            "activity",
-            "insert",
-            activity_id,
-            {
-                "id": activity_id,
-                "session_id": own_session,
-                "type": "message",
-                "payload": {"to_session": to_session, "payload": validated},
-                "execution_status": "pending",
-            },
-        )
-        print(activity_id)
-    finally:
-        store.close()
-
-
 def cmd_lane(args: list[str]) -> None:
     if not args or args[0] != "run":
         die(
@@ -4520,7 +4472,6 @@ COMMANDS = {
     "knock": cmd_knock,
     "lane": cmd_lane,
     "models": cmd_models,
-    "review": cmd_review,
     "watch": cmd_watch,
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
@@ -4538,7 +4489,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|assign|subscribe|mail|review|supervise|coordinate> …"
+            "github|query|assign|subscribe|mail|supervise|coordinate> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

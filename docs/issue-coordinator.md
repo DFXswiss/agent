@@ -545,8 +545,45 @@ The coordinator does not launch model slot `second`. It sends one
 `review-request` person ping to every configured reviewer. A reviewer returns a
 strict result through session mail without calling GitHub:
 
+```json
+{
+  "to_session": "worker-session",
+  "payload": {
+    "kind": "a38.second-review/v1",
+    "task_id": "11111111-1111-4111-8111-111111111111",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "defects": 0,
+    "blocks_merge": false,
+    "findings": "",
+    "lanes": [
+      {
+        "id": "conformity-b",
+        "provider": "OpenAI",
+        "model": "Reviewer Model 2",
+        "model_number": "reviewer-model-2",
+        "prompt": "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.",
+        "status": "complete",
+        "result": "pass"
+      },
+      {
+        "id": "logic-b",
+        "provider": "OpenAI",
+        "model": "Reviewer Model 2",
+        "model_number": "reviewer-model-2",
+        "prompt": "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.",
+        "status": "complete",
+        "result": "pass"
+      }
+    ]
+  }
+}
+```
+
+Save that shape with the task, head, model, prompts, and result from the actual
+review, then send it through the existing activity interface:
+
 ```text
-agent review second send --to-session SID --task UUID --head SHA --file result.json [--session OWN_SID]
+agent activity add --session OWN_SID --type message --payload-file result-mail.json
 ```
 
 The relay-authenticated sender login must be allowlisted. The worker validates

@@ -675,10 +675,44 @@ def send_second_review_requests(
     if number is None:
         raise CoordinatorError("second review request requires pull request number")
     url = str(c.get("pr_url") or f"https://github.com/{target_repo(task)}/pull/{number}")
+    sample = {
+        "to_session": worker.session_id,
+        "payload": {
+            "kind": SECOND_REVIEW_KIND,
+            "task_id": task["id"],
+            "head": head,
+            "defects": 0,
+            "blocks_merge": False,
+            "findings": "",
+            "lanes": [
+                {
+                    "id": "conformity-b",
+                    "provider": "<provider>",
+                    "model": "<model>",
+                    "model_number": "<model number>",
+                    "prompt": "<actual conformity review prompt>",
+                    "status": "complete",
+                    "result": "pass",
+                },
+                {
+                    "id": "logic-b",
+                    "provider": "<provider>",
+                    "model": "<model>",
+                    "model_number": "<model number>",
+                    "prompt": "<actual logic review prompt>",
+                    "status": "complete",
+                    "result": "pass",
+                },
+            ],
+        },
+    }
     note = (
         f"Second review requested for {target_repo(task)}#{number} at head {head}. "
-        f"Reply with `agent review second send --to-session {worker.session_id} "
-        f"--task {task['id']} --head {head} --file <result.json>`. {url}"
+        f"Replace the `<...>` values in `{json.dumps(sample, separators=(',', ':'))}`, "
+        "save it as `<mail.json>`, then run "
+        "`agent activity add --session <OWN_SID> --type message "
+        "--payload-file <mail.json>`. "
+        f"{url}"
     )
     if len(note) > 1000:
         raise CoordinatorError("second review request exceeds 1000 characters")

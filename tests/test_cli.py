@@ -5198,7 +5198,7 @@ def test_implementer_done_n_a_still_refused(
         )
 
 
-def test_review_second_send_validates_and_writes_session_mail(
+def test_activity_add_validates_and_writes_second_review_session_mail(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
@@ -5218,27 +5218,37 @@ def test_review_second_send_validates_and_writes_session_mail(
             {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
         ],
     }
-    path = tmp_path / "second-review.json"
-    path.write_text(json.dumps(result), encoding="utf-8")
+    mail = {"to_session": "worker", "payload": result}
+    path = tmp_path / "second-review-mail.json"
+    path.write_text(json.dumps(mail), encoding="utf-8")
     run(
         tmp_path,
-        ["review", "second", "send", "--to-session", "worker", "--task", task_id, "--head", head, "--file", str(path)],
+        ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
     )
-    activity_id = capsys.readouterr().out.strip()
+    activity_id = capsys.readouterr().out.split()[1]
     store = Store(tmp_path)
     try:
         row = store.row("activity", activity_id)
         assert row["session_id"] == "reviewer"
         assert row["type"] == "message"
         assert row["execution_status"] == "pending"
-        assert row["payload"] == {"to_session": "worker", "payload": result}
+        assert row["payload"] == mail
     finally:
         store.close()
 
     result["unknown"] = True
-    path.write_text(json.dumps(result), encoding="utf-8")
+    path.write_text(json.dumps(mail), encoding="utf-8")
     with pytest.raises(SystemExit, match="documented keys"):
         run(
             tmp_path,
-            ["review", "second", "send", "--to-session", "worker", "--task", task_id, "--head", head, "--file", str(path)],
+            ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
+        )
+
+    result.pop("unknown")
+    mail.pop("to_session")
+    path.write_text(json.dumps(mail), encoding="utf-8")
+    with pytest.raises(SystemExit, match="payload.to_session"):
+        run(
+            tmp_path,
+            ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
         )
