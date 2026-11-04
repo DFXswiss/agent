@@ -583,8 +583,12 @@ class Store:
         payload["_origin_device_id"] = found["origin_device_id"]
         return payload
 
-    def last_own_activity_insert(self, activity_type: str) -> dict[str, Any] | None:
-        """Newest own ledger insert of this activity type (origin_seq DESC). Full activity row dict or None."""
+    def last_own_activity_insert(
+        self,
+        activity_type: str,
+        predicate: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> dict[str, Any] | None:
+        """Newest own ledger insert matching this activity type and optional predicate."""
         with self._lock:
             found = self.conn.execute(
                 "SELECT payload FROM ledger_event WHERE origin_device_id = %s AND table_name = %s AND op = %s "
@@ -595,7 +599,9 @@ class Store:
             event = loads(row["payload"])
             if not isinstance(event, dict):
                 continue
-            if event.get("type") == activity_type:
+            if event.get("type") == activity_type and (
+                predicate is None or predicate(event)
+            ):
                 return event
         return None
 

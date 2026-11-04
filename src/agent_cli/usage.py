@@ -313,14 +313,15 @@ def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -
 
 def last_usage_snapshot(store: Store, vendor: str = VENDOR) -> dict[str, Any] | None:
     """Newest owned activity with type=='usage.snapshot' and payload.vendor==vendor; return its payload dict or None."""
-    origin = store.device_id()
-    for event in store.rows("activity"):
-        if event.get("_origin_device_id") != origin or event.get("type") != "usage.snapshot":
-            continue
-        payload = event.get("payload")
-        if isinstance(payload, dict) and payload.get("vendor") == vendor:
-            return payload
-    return None
+    event = store.last_own_activity_insert(
+        "usage.snapshot",
+        predicate=lambda row: isinstance(row.get("payload"), dict)
+        and row["payload"].get("vendor") == vendor,
+    )
+    if event is None:
+        return None
+    payload = event.get("payload")
+    return payload if isinstance(payload, dict) else None
 
 
 def scan_usage(
@@ -443,18 +444,16 @@ def _openrouter_snapshot(
 
 
 def _last_openrouter_snapshot(store: Store, account: str) -> dict[str, Any] | None:
-    origin = store.device_id()
-    for row in store.rows("activity"):
-        if row.get("_origin_device_id") != origin or row.get("type") != "usage.snapshot":
-            continue
-        payload = row.get("payload")
-        if (
-            isinstance(payload, dict)
-            and payload.get("vendor") == OPENROUTER_VENDOR
-            and payload.get("account") == account
-        ):
-            return payload
-    return None
+    event = store.last_own_activity_insert(
+        "usage.snapshot",
+        predicate=lambda row: isinstance(row.get("payload"), dict)
+        and row["payload"].get("vendor") == OPENROUTER_VENDOR
+        and row["payload"].get("account") == account,
+    )
+    if event is None:
+        return None
+    payload = event.get("payload")
+    return payload if isinstance(payload, dict) else None
 
 
 def _openrouter_unchanged(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:

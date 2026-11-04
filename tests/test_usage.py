@@ -156,6 +156,44 @@ def test_scan_openrouter_usage_snapshot_and_dedup(tmp_path: Path) -> None:
     ) == []
 
 
+def test_scan_openrouter_usage_dedups_latest_snapshot_in_same_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    _openrouter_config(store, config_dir)
+    monkeypatch.setattr("agent_cli.store.utcnow", lambda: "2026-11-04T10:00:00Z")
+    usage = {"value": 1.25}
+
+    def fetch(_token: str) -> dict[str, Any]:
+        return _openrouter_body(usage=usage["value"])
+
+    first = scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    )
+    usage["value"] = 2.5
+    second = scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    )
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    ) == []
+    snapshots = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "usage.snapshot"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("vendor") == "openrouter"
+    ]
+    assert len(snapshots) == 2
+
+
 def test_scan_openrouter_usage_missing_key_and_malformed_data(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_grok_session(store)

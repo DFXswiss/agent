@@ -45,6 +45,67 @@ def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
     assert pending[0]["origin_seq"] == 1
 
 
+def test_last_own_activity_insert_applies_predicate_in_origin_seq_order(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "activity",
+        "insert",
+        "grok-snapshot",
+        {
+            "id": "grok-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "grok"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "openrouter-snapshot",
+        {
+            "id": "openrouter-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "openrouter"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "newer-grok-snapshot",
+        {
+            "id": "newer-grok-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "grok"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "newest-openrouter-snapshot",
+        {
+            "id": "newest-openrouter-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "openrouter"},
+        },
+    )
+
+    event = store.last_own_activity_insert(
+        "usage.snapshot",
+        predicate=lambda row: row.get("payload", {}).get("vendor") == "grok",
+    )
+
+    assert event is not None
+    assert event["id"] == "newer-grok-snapshot"
+    assert (
+        store.last_own_activity_insert(
+            "usage.snapshot",
+            predicate=lambda row: row.get("payload", {}).get("vendor") == "other",
+        )
+        is None
+    )
+
+
 def test_remote_gap_fail_closed(tmp_path: Path) -> None:
     store = Store(tmp_path)
     with pytest.raises(StoreError, match="gap"):
