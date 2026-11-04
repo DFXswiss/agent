@@ -136,6 +136,15 @@ def test_owner_repository_route_creates_and_verifies_fork(tmp_path):
         raise AssertionError(argv)
 
     cfg = _owner_repository_config(worker, runner, repo="Example/project", login="worker-bot")
+    assert cfg is None
+    cfg = _owner_repository_config(
+        worker,
+        runner,
+        repo="Example/project",
+        login="worker-bot",
+        fork_already_requested=True,
+    )
+    assert cfg is not None
     assert cfg.publication_repo == "worker-bot/project"
     assert posts == 1
     assert lookups == 2
@@ -148,31 +157,32 @@ def test_wrong_parent_fork_is_blocked():
     with pytest.raises(CoordinatorError, match="different parent"):
         _fork_repository(
             runner, repo="Example/project", publication_repo="worker-bot/project",
-            sleep_fn=lambda _seconds: None,
         )
 
 
-def test_fork_creation_wait_is_bounded_to_ten_lookups():
+def test_fork_creation_does_not_wait_or_repeat_request():
     lookups = 0
-    sleeps = 0
+    posts = 0
 
     def runner(argv: list[str]) -> Completed:
-        nonlocal lookups
+        nonlocal lookups, posts
         if "-X" in argv:
+            posts += 1
             return Completed(0, "{}", "")
         lookups += 1
-        return Completed(1, "", "not found" if lookups == 1 else "not ready")
+        return Completed(1, "", "not found")
 
-    def sleep(_seconds: float) -> None:
-        nonlocal sleeps
-        sleeps += 1
-
-    with pytest.raises(CoordinatorError, match="10 tries"):
-        _fork_repository(
-            runner, repo="Example/project", publication_repo="worker-bot/project", sleep_fn=sleep
-        )
-    assert lookups == 11  # one existence check, then ten bounded readiness checks
-    assert sleeps == 9
+    assert not _fork_repository(
+        runner, repo="Example/project", publication_repo="worker-bot/project"
+    )
+    assert not _fork_repository(
+        runner,
+        repo="Example/project",
+        publication_repo="worker-bot/project",
+        create_if_missing=False,
+    )
+    assert lookups == 2
+    assert posts == 1
 
 
 class QueryHub:
@@ -411,6 +421,61 @@ def test_recent_missing_hub_assignment_retries_accept_during_grace(monkeypatch, 
     lines = phase_accept(object(), _accept_worker(tmp_path), task, object())
     assert task["payload"]["coordinator"]["phase"] == "accept"
     assert lines == ["hub assignment event not yet visible; retrying accept"]
+
+
+def test_phase_accept_retries_fork_visibility_then_publishes_blocker(
+    monkeypatch, tmp_path
+):
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row",
+        lambda *_a, **_k: ("assignment-row", None),
+    )
+    requested: list[bool] = []
+
+    def pending_fork(*_args, **kwargs):
+        requested.append(kwargs["fork_already_requested"])
+        return None
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._owner_repository_config", pending_fork
+    )
+    published: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_a, **kwargs: published.append(kwargs) or ["published"],
+    )
+    clock = {"now": "2026-01-01T00:00:00Z"}
+    monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: clock["now"])
+    task = _accept_task()
+    task["payload"]["coordinator"]["source"]["owner_scoped"] = True
+    worker = _accept_worker(tmp_path)
+
+    assert phase_accept(object(), worker, task, object()) == [
+        "publication fork not yet visible; retrying accept"
+    ]
+    source = task["payload"]["coordinator"]["source"]
+    assert source["fork_requested_at"] == "2026-01-01T00:00:00Z"
+    assert task["payload"]["coordinator"]["phase"] == "accept"
+    assert requested == [False]
+
+    clock["now"] = "2026-01-01T00:04:59Z"
+    assert phase_accept(object(), worker, task, object()) == [
+        "publication fork not yet visible; retrying accept"
+    ]
+    assert requested == [False, True]
+    assert published == []
+
+    clock["now"] = "2026-01-01T00:05:00Z"
+    assert phase_accept(object(), worker, task, object()) == ["published"]
+    checkpoint = task["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "accept"
+    assert checkpoint["blocker"] == (
+        "publication fork did not become visible within 300 seconds"
+    )
+    assert requested == [False, True, True]
+    assert published == [{"kind": "publication-fork", "reply_checkpoint": True}]
 
 
 def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path):

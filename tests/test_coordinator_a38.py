@@ -7,11 +7,13 @@ import pytest
 from agent_cli.a38_review import COMPLIANCE_PROMPT, validate_declaration, validate_review_record, validate_visible
 from agent_cli.coordinator_a38 import (
     _render_review_comment,
+    _run_cli,
     validate_second_review_payload,
 )
 from agent_cli.coordinator_common import CoordinatorError
 from agent_cli.coordinator_config import WorkerConfig
 from agent_cli.coordinator_github import phase_formal_approve, phase_leave_draft
+from agent_cli.runtime import Completed
 
 pytestmark = pytest.mark.no_pg
 
@@ -105,3 +107,20 @@ def test_a38_worker_refuses_formal_approve_and_leave_draft(tmp_path: Path) -> No
         phase_formal_approve(None, worker, {}, None)  # type: ignore[arg-type]
     with pytest.raises(CoordinatorError, match="never leaves draft"):
         phase_leave_draft(None, worker, {}, None)  # type: ignore[arg-type]
+
+
+def test_a38_cli_uses_worker_check_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):  # noqa: ANN001
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_run)
+    worker = a38_worker(tmp_path)
+    result = _run_cli(["policy", "--file", "policy.json"], worker=worker, cwd=tmp_path)
+    assert result.returncode == 0
+    assert captured["timeout"] == worker.check_timeout

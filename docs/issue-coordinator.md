@@ -39,14 +39,20 @@ repository-specific policy stays outside the core. The publication repository
 can equal the target repository; a different repository requires operator
 authorization for that publication route.
 
+For an A38 worker, `check_timeout` must be long enough for the complete A38
+suite. The same existing worker timeout bounds the optional trusted precheck
+and each bounded A38 command; there is no separate A38 timeout setting.
+
 `repository_owners` is a distinct, case-insensitive list of GitHub organization
 or user logins. One paginated GitHub issue search per tick discovers assigned
 open issues under those owners. An explicit `repositories` entry wins for the
 same repository. At acceptance, an owner-scoped task pins the repository's
 current default branch and its publication route: direct push when the worker
 has push permission, otherwise `<worker-login>/<repository-name>`. A missing
-fork is created once and checked for at most ten attempts, five seconds apart;
-an existing fork with another parent is refused. Outside A38 mode,
+fork is requested once. If it is not yet visible, acceptance stays in the same
+phase and the worker's `poll_seconds` loop retries; after 300 seconds the
+coordinator publishes a blocker. An existing fork with another parent is
+refused. Outside A38 mode,
 `owner_check_argv` is required and nonempty for owner-scoped repositories; A38
 mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
 In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
@@ -516,8 +522,8 @@ audit row is an observation and does not rewrite the lane verdict.
 A worker opts in explicitly with `"a38": true`. This is never an installation
 default. The worker then requires a nonempty, distinct, lowercased
 `second_reviewers` list that excludes its own configured GitHub login. Optional
-`second_review_timeout_seconds` (default `86400`) and `a38_timeout_seconds`
-(default `7200`) must be at least 600. `review_session` is unused and optional;
+`second_review_timeout_seconds` (default `86400`) must be at least 600.
+`review_session` is unused and optional;
 `check_argv` may be empty, while `readiness_argv` remains required. The device's
 models must pin a non-Codex first provider and `"second": null`. A null second
 slot is refused for every non-A38 worker.
@@ -528,8 +534,7 @@ Illustrative worker fragment:
 {
   "a38": true,
   "second_reviewers": ["reviewer-one", "reviewer-two"],
-  "second_review_timeout_seconds": 86400,
-  "a38_timeout_seconds": 7200
+  "second_review_timeout_seconds": 86400
 }
 ```
 

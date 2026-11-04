@@ -221,7 +221,7 @@ def _a38_failure_summary(report_path: Path, logs_dir: Path, fallback: str) -> st
 def _run_cli(argv: list[str], *, worker: WorkerConfig, cwd: Path) -> Any:
     return run_bounded(
         [sys.executable, "-m", "agent_cli.main", "a38", *argv],
-        timeout=worker.a38_timeout_seconds,
+        timeout=worker.check_timeout,
         cwd=str(cwd),
         clear_ambient_github=True,
     )
@@ -889,7 +889,6 @@ def phase_await_second_review(
             uuid5(NAMESPACE_URL, f"coordinator-a38-second:{task['id']}:{current}:{message_id}")
         )
         result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
-        _mark_message_read(store, worker, message_id)
         a38 = _a38_state(c)
         state = a38.get("second_review")
         if not isinstance(state, dict) or state.get("head") != current:
@@ -910,6 +909,7 @@ def phase_await_second_review(
             c["phase"] = "implement"
             task["state"] = "implementing"
             save_task(store, task)
+            _mark_message_read(store, worker, message_id)
             return [f"blocking external second review by @{login}; routing to implementer"]
         evidence = (
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
@@ -919,6 +919,7 @@ def phase_await_second_review(
         set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
         c["phase"] = "ci"
         save_task(store, task)
+        _mark_message_read(store, worker, message_id)
         return [f"external second review by @{login} posted on {current[:7]}"]
 
     a38 = _a38_state(c)

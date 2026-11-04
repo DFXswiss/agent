@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,19 +22,6 @@ USAGE_POLL_SECONDS = 60
 VENDOR = "grok"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 OPENROUTER_VENDOR = "openrouter"
-_OPENROUTER_COMPARE_KEYS = (
-    "vendor",
-    "provider",
-    "account",
-    "usage_usd",
-    "usage_daily_usd",
-    "usage_weekly_usd",
-    "usage_monthly_usd",
-    "limit_usd",
-    "limit_remaining_usd",
-    "limit_reset",
-)
-
 _COMPARE_KEYS = (
     "vendor",
     "provider",
@@ -301,22 +288,36 @@ def pick_session_id(store: Store) -> str:
     raise StoreError("no owned session to record grok usage")
 
 
-def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
-    """Compare vendor, provider, account_email, tier, used_percent, period_type, period_start, period_end, products, prepaid_val, on_demand_cap_val, on_demand_used_val. Ignore fetched_at and any other keys."""
+def usage_unchanged(
+    previous: dict[str, Any] | None,
+    snapshot: dict[str, Any],
+    compare_keys: Collection[str] = _COMPARE_KEYS,
+) -> bool:
+    """Compare only ``compare_keys``; ignore fetched_at and any other keys."""
     if previous is None:
         return False
-    for key in _COMPARE_KEYS:
+    for key in compare_keys:
         if previous.get(key) != snapshot.get(key):
             return False
     return True
 
 
-def last_usage_snapshot(store: Store, vendor: str = VENDOR) -> dict[str, Any] | None:
-    """Newest owned activity with type=='usage.snapshot' and payload.vendor==vendor; return its payload dict or None."""
+def last_usage_snapshot(
+    store: Store,
+    match: Callable[[dict[str, Any]], bool] | None = None,
+    *,
+    vendor: str = VENDOR,
+) -> dict[str, Any] | None:
+    """Return the newest owned usage payload accepted by ``match``."""
+    if match is None:
+        def matches(payload: dict[str, Any]) -> bool:
+            return payload.get("vendor") == vendor
+    else:
+        matches = match
     event = store.last_own_activity_insert(
         "usage.snapshot",
         predicate=lambda row: isinstance(row.get("payload"), dict)
-        and row["payload"].get("vendor") == vendor,
+        and matches(row["payload"]),
     )
     if event is None:
         return None
@@ -443,25 +444,6 @@ def _openrouter_snapshot(
     }
 
 
-def _last_openrouter_snapshot(store: Store, account: str) -> dict[str, Any] | None:
-    event = store.last_own_activity_insert(
-        "usage.snapshot",
-        predicate=lambda row: isinstance(row.get("payload"), dict)
-        and row["payload"].get("vendor") == OPENROUTER_VENDOR
-        and row["payload"].get("account") == account,
-    )
-    if event is None:
-        return None
-    payload = event.get("payload")
-    return payload if isinstance(payload, dict) else None
-
-
-def _openrouter_unchanged(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
-    return previous is not None and all(
-        previous.get(key) == current.get(key) for key in _OPENROUTER_COMPARE_KEYS
-    )
-
-
 def scan_openrouter_usage(
     store: Store,
     *,
@@ -490,8 +472,16 @@ def scan_openrouter_usage(
             snapshot = _openrouter_snapshot(
                 account_name, body, (now or utcnow)()
             )
-            if _openrouter_unchanged(
-                _last_openrouter_snapshot(store, account_name), snapshot
+            compare_keys = tuple(key for key in snapshot if key != "fetched_at")
+
+            def match(payload: dict[str, Any], name: str = account_name) -> bool:
+                return (
+                    payload.get("vendor") == OPENROUTER_VENDOR
+                    and payload.get("account") == name
+                )
+
+            if usage_unchanged(
+                last_usage_snapshot(store, match), snapshot, compare_keys
             ):
                 continue
             session_id = pick_session_id(store)
@@ -508,8 +498,8 @@ def scan_openrouter_usage(
                     "execution_status": "done",
                 },
                 lock_key=f"usage.snapshot:openrouter:{account_name}",
-                skip=lambda name=account_name, snap=snapshot: _openrouter_unchanged(
-                    _last_openrouter_snapshot(store, name), snap
+                skip=lambda matcher=match, snap=snapshot, keys=compare_keys: (
+                    usage_unchanged(last_usage_snapshot(store, matcher), snap, keys)
                 ),
             )
             if event is not None:

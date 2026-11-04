@@ -17,6 +17,7 @@ from agent_cli.usage import (
     last_usage_snapshot,
     scan_openrouter_usage,
     scan_usage,
+    usage_unchanged,
     usage_poll_due,
 )
 
@@ -406,7 +407,47 @@ def test_last_usage_snapshot_via_last_own_activity_insert(tmp_path: Path) -> Non
     assert snapshot is not None
     assert snapshot["vendor"] == "grok"
     assert snapshot["used_percent"] == 11.0
-    assert last_usage_snapshot(store, vendor="other") is None
+    assert last_usage_snapshot(
+        store, lambda payload: payload.get("vendor") == "other"
+    ) is None
+
+
+def test_usage_helpers_accept_compare_keys_and_payload_match(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    session_id = _owned_grok_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "00000000-0000-4000-8000-000000000002",
+        {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "session_id": session_id,
+            "type": "usage.snapshot",
+            "payload": {
+                "vendor": "openrouter",
+                "account": "router-a",
+                "usage_usd": 1.25,
+                "fetched_at": "2026-11-04T10:00:00Z",
+            },
+            "execution_status": "done",
+        },
+    )
+    snapshot = last_usage_snapshot(
+        store,
+        lambda payload: payload.get("vendor") == "openrouter"
+        and payload.get("account") == "router-a",
+    )
+    assert snapshot is not None
+    assert usage_unchanged(
+        snapshot,
+        {**snapshot, "fetched_at": "2026-11-04T10:01:00Z"},
+        ("vendor", "account", "usage_usd"),
+    )
+    assert not usage_unchanged(
+        snapshot,
+        {**snapshot, "usage_usd": 2.5},
+        ("vendor", "account", "usage_usd"),
+    )
 
 
 def test_unchanged_grok_snapshot_ignores_newer_openrouter_snapshot(

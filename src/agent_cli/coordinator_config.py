@@ -35,7 +35,6 @@ class WorkerConfig:
     a38: bool = False
     second_reviewers: tuple[str, ...] = ()
     second_review_timeout_seconds: int = 86400
-    a38_timeout_seconds: int = 7200
 
 
 def _text(value: object, label: str) -> str:
@@ -114,7 +113,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
         optional = {'review_session', 'repositories', 'repository_owners',
                     'owner_check_argv', 'owner_readiness_argv',
                     'require_hub_assignment', 'a38', 'second_reviewers',
-                    'second_review_timeout_seconds', 'a38_timeout_seconds'}
+                    'second_review_timeout_seconds'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
@@ -198,7 +197,5 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    a38,
                                    reviewers,
                                    _at_least(item.get('second_review_timeout_seconds', 86400),
-                                             'second_review_timeout_seconds', 600),
-                                   _at_least(item.get('a38_timeout_seconds', 7200),
-                                             'a38_timeout_seconds', 600))
+                                             'second_review_timeout_seconds', 600))
     return result
