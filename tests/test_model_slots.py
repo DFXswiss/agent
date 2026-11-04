@@ -462,6 +462,73 @@ def test_task_create_refuses_external_second_slot_outside_coordinator(
         _task(tmp_path, capsys)
 
 
+def test_gate_record_refuses_external_second_slot_on_direct_task_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    _run(tmp_path, ["init"])
+    _run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    capsys.readouterr()
+    tid = "11111111-1111-4111-8111-111111111111"
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "task",
+            "insert",
+            tid,
+            {
+                "id": tid,
+                "session_id": "s",
+                "workflow": "implement",
+                "state": "pr-review",
+                "title": "External second review",
+                "models": {"first": "grok", "second": None},
+                "payload": {"coordinator": {"a38": {"enabled": True}}},
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="the second review is external"):
+        _run(
+            tmp_path,
+            [
+                "gate",
+                "record",
+                "--task",
+                tid,
+                "--stage",
+                "codex-pr",
+                "--dimension",
+                "quality",
+                "--vendor",
+                "codex",
+                "--verdict",
+                "approved",
+                "--head",
+                "abcdef0",
+                "--agent",
+                "missing-agent",
+            ],
+        )
+
+
 # --- CLI with configured slots ----------------------------------------------
 
 

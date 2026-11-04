@@ -3500,6 +3500,133 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert "second_review" not in blocked["payload"]["coordinator"]["a38"]
 
 
+@pytest.mark.parametrize("missing_evidence", ["agent_id", "prompt"])
+def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_evidence: str,
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    suffix = "1" if missing_evidence == "prompt" else "0"
+    tid = f"44444444-4444-4444-8444-44444444444{suffix}"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "review",
+        "state": "pr-review",
+        "title": "A38 prompt provenance",
+        "repo": "example/project",
+        "models": {"first": "grok", "second": None},
+        "payload": {
+            "coordinator": {
+                "phase": "a38_first_comment",
+                "head_sha": _POSTED_HEAD,
+                "worktree": str(worktree),
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {"enabled": True, "first_review_passes": 1},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for dimension in ("quality", "logic"):
+        cid = f"{tid}-check-{dimension}"
+        store.write(
+            "checklist_item",
+            "insert",
+            cid,
+            {
+                "id": cid,
+                "task_id": tid,
+                "key": f"grok_pr_{dimension}",
+                "status": "ja",
+                "evidence": "seed",
+                "source": "script",
+            },
+        )
+        aid = f"{tid}-agent-{dimension}"
+        if dimension == "logic" or missing_evidence == "prompt":
+            agent = {
+                "id": aid,
+                "session_id": worker.session_id,
+                "task_id": tid,
+                "role": f"pr-reviewer-{dimension}",
+                "vendor": "grok",
+                "provider": "grok",
+                "model": "grok-model",
+                "head_sha": _POSTED_HEAD,
+                "dimension": dimension,
+                "status": "done",
+            }
+            if dimension == "logic":
+                agent["prompt"] = "Review the logic."
+            store.write("agent", "insert", aid, agent)
+        gid = f"{tid}-gate-{dimension}"
+        gate = {
+            "id": gid,
+            "task_id": tid,
+            "stage": "grok-pr",
+            "dimension": dimension,
+            "vendor": "grok",
+            "verdict": "approved",
+            "head_sha": _POSTED_HEAD,
+            "recorded_at": "2026-01-01T00:00:00Z",
+        }
+        if dimension == "logic" or missing_evidence == "prompt":
+            gate["agent_id"] = aid
+        store.write("review_gate", "insert", gid, gate)
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.verify_signed_clean_head",
+        lambda *args: _POSTED_HEAD,
+    )
+    lines = phase_first_comment(
+        store,
+        worker,
+        store.row("task", tid),
+        lambda argv: Completed(0, "", ""),
+    )
+    assert lines == ["first review quality prompt evidence missing; re-running gate"]
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    launched: list[str] = []
+
+    def run(argv, stdin=None):  # noqa: ANN001
+        text = " ".join(str(part) for part in argv) + "\n" + (stdin or "")
+        if "pr-reviewer-quality" in text or "Quality:" in text:
+            launched.append("quality")
+        elif "pr-reviewer-logic" in text or "Logic:" in text:
+            launched.append("logic")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    phase_pr_gates(
+        store,
+        worker,
+        saved,
+        lambda argv: Completed(0, "", ""),
+        run,
+        vendor="grok",
+        stage="grok-pr",
+    )
+    assert launched == ["quality"]
+
+
 def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
