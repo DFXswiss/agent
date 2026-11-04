@@ -1618,6 +1618,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "checklist": checklist,
         "checklist_evidence": checklist_evidence,
         "summaries": {

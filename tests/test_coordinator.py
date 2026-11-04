@@ -3289,6 +3289,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
 
     from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
     from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
+    from agent_cli.coordinator_github import phase_await_merge
     from agent_cli.coordinator_lanes import invalidate_head_evidence
 
     store = Store(tmp_path)
@@ -3329,7 +3330,11 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
                 "worktree": str(worker.workspace_root / tid),
                 "pr_number": 42,
                 "pr_url": "https://github.com/example/project/pull/42",
-                "source": {"repo": "example/project", "number": 7},
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "assigned_id": "assigned-a38",
+                },
                 "a38": {
                     "enabled": True,
                     "report": {"head": fake.head, "activity_id": "report"},
@@ -3371,11 +3376,26 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         "reviewer_approved": "ja", "local_check_pass": "ja", "pushed": "ja",
         "grok_pr_quality": "ja", "grok_pr_logic": "ja",
         "codex_pr_quality": "pending", "codex_pr_logic": "pending",
-        "contributing_ok": "pending", "deviation_declared": "pending", "deviation_granted": "pending",
+        "contributing_ok": "ja", "deviation_declared": "n_a", "deviation_granted": "n_a",
     }
     for key, status in checklist.items():
         cid = f"check-{key}"
         store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
+    store.write(
+        "local_check",
+        "insert",
+        "a38-local-check",
+        {
+            "id": "a38-local-check",
+            "task_id": tid,
+            "name": "a38",
+            "command": "/operator/a38",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": fake.head,
+        },
+    )
 
     saved = store.row("task", tid)
     invalidate_head_evidence(saved["payload"]["coordinator"], fake.head)
@@ -3394,6 +3414,10 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert {lane["id"] for lane in first_declaration["lanes"]} == {"conformity-a", "logic-a"}
     assert validate_visible(first_body, 1) == []
     assert len(store.rows("ping")) == 1
+    ping_body = store.rows("ping")[0]["body"]
+    assert "agent activity add --session <OWN_SID> --type message" in ping_body
+    assert '"to_session":"worker-session"' in ping_body
+    assert "agent review second send" not in ping_body
     phase_first_comment(store, worker, store.row("task", tid), fake)
     assert len(store.rows("ping")) == 1
 
@@ -3456,6 +3480,18 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     fake.pr["isDraft"] = False
     assert "awaiting human merge" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
     assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+    fake.pr["mergeCommit"] = {"oid": "dddddddddddddddddddddddddddddddddddddddd"}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    lines = phase_await_merge(store, worker, store.row("task", tid), fake)
+    assert lines == ["human merge verified example/project#42; task done"]
+    assert store.row("task", tid)["state"] == "done"
+    acknowledgements = [
+        row for row in store.rows("activity") if row.get("type") == "issue.assigned.ack"
+    ]
+    assert len(acknowledgements) == 1
+    assert acknowledgements[0]["payload"]["assigned_id"] == "assigned-a38"
 
     blocking_tid = "22222222-2222-4222-8222-222222222222"
     blocking_task = {
