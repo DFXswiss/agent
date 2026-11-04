@@ -3415,9 +3415,11 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert validate_visible(first_body, 1) == []
     assert len(store.rows("ping")) == 1
     ping_body = store.rows("ping")[0]["body"]
-    assert "agent activity add --session <OWN_SID> --type message" in ping_body
-    assert '"to_session":"worker-session"' in ping_body
-    assert "agent review second send" not in ping_body
+    assert len(ping_body) <= 1000
+    assert "worker-session" in ping_body
+    assert "docs/issue-coordinator.md" in ping_body
+    assert "https://github.com/example/project/pull/42" in ping_body
+    assert '"to_session"' not in ping_body
     phase_first_comment(store, worker, store.row("task", tid), fake)
     assert len(store.rows("ping")) == 1
 

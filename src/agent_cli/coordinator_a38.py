@@ -68,6 +68,7 @@ PROVIDER_DISPLAY = {
     "openrouter": "OpenRouter",
 }
 SECOND_REVIEW_KIND = "a38.second-review/v1"
+SECOND_REVIEW_NOTE_LIMIT = 1000
 _SECOND_KEYS = frozenset(
     {"kind", "task_id", "head", "defects", "blocks_merge", "findings", "lanes"}
 )
@@ -657,6 +658,21 @@ def _ping_id(task_id: str, head: str, login: str, occurrence: int) -> str:
     return str(uuid5(NAMESPACE_URL, f"coordinator-a38-review-request:{task_id}:{head}:{login}:{occurrence}"))
 
 
+def _second_review_request_note(*, url: str, session_id: str) -> str:
+    prefix = "Second A38 review requested. PR: "
+    suffix = (
+        f". Return the result by session mail to worker session `{session_id}`; "
+        "use the payload documented in `docs/issue-coordinator.md`."
+    )
+    available = SECOND_REVIEW_NOTE_LIMIT - len(prefix) - len(suffix)
+    if available < 1:
+        raise CoordinatorError("second review request template exceeds 1000 characters")
+    rendered_url = url
+    if len(rendered_url) > available:
+        rendered_url = rendered_url[: max(0, available - 1)] + "…"
+    return prefix + rendered_url + suffix
+
+
 def send_second_review_requests(
     store: Store, worker: WorkerConfig, task: dict[str, Any], *, force: bool = False
 ) -> bool:
@@ -675,47 +691,7 @@ def send_second_review_requests(
     if number is None:
         raise CoordinatorError("second review request requires pull request number")
     url = str(c.get("pr_url") or f"https://github.com/{target_repo(task)}/pull/{number}")
-    sample = {
-        "to_session": worker.session_id,
-        "payload": {
-            "kind": SECOND_REVIEW_KIND,
-            "task_id": task["id"],
-            "head": head,
-            "defects": 0,
-            "blocks_merge": False,
-            "findings": "",
-            "lanes": [
-                {
-                    "id": "conformity-b",
-                    "provider": "<provider>",
-                    "model": "<model>",
-                    "model_number": "<model number>",
-                    "prompt": "<actual conformity review prompt>",
-                    "status": "complete",
-                    "result": "pass",
-                },
-                {
-                    "id": "logic-b",
-                    "provider": "<provider>",
-                    "model": "<model>",
-                    "model_number": "<model number>",
-                    "prompt": "<actual logic review prompt>",
-                    "status": "complete",
-                    "result": "pass",
-                },
-            ],
-        },
-    }
-    note = (
-        f"Second review requested for {target_repo(task)}#{number} at head {head}. "
-        f"Replace the `<...>` values in `{json.dumps(sample, separators=(',', ':'))}`, "
-        "save it as `<mail.json>`, then run "
-        "`agent activity add --session <OWN_SID> --type message "
-        "--payload-file <mail.json>`. "
-        f"{url}"
-    )
-    if len(note) > 1000:
-        raise CoordinatorError("second review request exceeds 1000 characters")
+    note = _second_review_request_note(url=url, session_id=worker.session_id)
     sender = store.meta("github_login")
     if not isinstance(sender, str) or not sender:
         raise CoordinatorError("device must be paired before sending second-review pings")

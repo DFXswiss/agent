@@ -14,6 +14,7 @@ from agent_cli.coordinator_github import (
     _owner_repository_config,
     phase_accept,
     phase_blocked,
+    phase_readiness,
 )
 from agent_cli.coordinator_config import RepositoryConfig
 from agent_cli.coordinator_common import CoordinatorError
@@ -791,35 +792,165 @@ def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_
     assert "acceptance published" in lines[0]
 
 
-def test_owner_a38_default_readiness_uses_conformity_evidence(monkeypatch, tmp_path):
-    calls = []
+def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
+    monkeypatch, tmp_path
+):
+    from agent_cli.allow import CHECKLIST_KEYS
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    head = "a" * 40
+    base = "b" * 40
+    task_id = "11111111-1111-4111-8111-111111111111"
+    task = {
+        "id": task_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "pr-review",
+        "repo": "Example/owned",
+        "ref": "42",
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {
+            "phase": "readiness",
+            "head_sha": head,
+            "base_sha": base,
+            "worktree": str(worker.workspace_root / task_id),
+            "pr_number": 42,
+            "evidence": {"tests_pass": True, "tests_head": head},
+            "source": {
+                "repo": "Example/owned",
+                "number": 7,
+                "owner_scoped": True,
+                "assignment_actor": "human-owner",
+                "assignment_event_id": 70,
+                "hub_assignment_row_id": "assignment-row",
+                "repository_config": {
+                    "repo": "Example/owned",
+                    "base": "main",
+                    "publication_repo": "worker-bot/owned",
+                    "check_argv": [],
+                    "readiness_argv": [],
+                },
+            },
+            "a38": {"enabled": True},
+        }},
+    }
+    store.write("task", "insert", task_id, task)
+    for key in CHECKLIST_KEYS["implement"]:
+        status = "pending" if key in {
+            "contributing_ok", "deviation_declared", "deviation_granted",
+        } else "ja"
+        store.write(
+            "checklist_item",
+            "insert",
+            f"{task_id}-{key}",
+            {
+                "id": f"{task_id}-{key}",
+                "task_id": task_id,
+                "key": key,
+                "status": status,
+                "evidence": "seed" if status == "ja" else None,
+                "source": "human" if key == "spec_written" else "script",
+            },
+        )
+    for dimension in ("quality", "logic"):
+        store.write(
+            "review_gate",
+            "insert",
+            f"{task_id}-{dimension}",
+            {
+                "id": f"{task_id}-{dimension}",
+                "task_id": task_id,
+                "stage": "grok-pr",
+                "dimension": dimension,
+                "vendor": "grok",
+                "verdict": "approved",
+                "head_sha": head,
+                "recorded_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.verify_signed_clean_head",
+        lambda *_args: head,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._fetch_pr_json",
+        lambda *_args: {
+            "headRefOid": head,
+            "baseRefName": "main",
+            "author": {"login": "worker-bot"},
+            "isDraft": True,
+            "state": "OPEN",
+            "mergeable": "MERGEABLE",
+        },
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.account_for",
+        lambda *_args: SimpleNamespace(login="worker-bot"),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._fresh_ci_still_green",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.require_ready_evidence",
+        lambda *_args: None,
+    )
+
+    lines = phase_readiness(store, worker, store.row("task", task_id), object())
+    assert "readiness ok" in lines[0]
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "await_ready"
+    checklist = {
+        row["key"]: row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    assert checklist["contributing_ok"]["source"] == "script"
+    for key in ("deviation_declared", "deviation_granted"):
+        assert checklist[key]["status"] == "n_a"
+        assert checklist[key]["source"] == "human"
+        assert "actor=human-owner" in checklist[key]["evidence"]
+        assert "event_id=70" in checklist[key]["evidence"]
+        assert "hub_assignment_row_id=assignment-row" in checklist[key]["evidence"]
+
+
+def test_owner_a38_default_readiness_without_verified_actor_requires_configuration(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(
         "agent_cli.coordinator_github.set_checklist",
-        lambda _store, _task, key, status, evidence, **kwargs:
-            calls.append((key, status, evidence, kwargs["source"])),
+        lambda *_args, **_kwargs: pytest.fail("checklist must remain unchanged"),
     )
-    task = _accept_task()
+
     class GateStore:
         def rows(self, table):
             assert table == "review_gate"
             return [{
-                "task_id": "task-1", "stage": "grok-pr", "dimension": "quality",
-                "verdict": "approved", "head_sha": "a" * 40,
+                "task_id": "task-1",
+                "stage": "grok-pr",
+                "dimension": "quality",
+                "verdict": "approved",
+                "head_sha": "a" * 40,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
 
-    _apply_readiness_checklist(
-        GateStore(),
-        replace(make_worker(tmp_path), a38=True, review_session=None),
-        task,
-        {"owner_a38_default": True, "deviation": {"declared": False}},
-        head="a" * 40,
-    )
-    assert calls == [
-        ("contributing_ok", "ja", f"conformity-a approved at {'a' * 40}", "script"),
-        ("deviation_declared", "n_a", "no deviation declared", "script"),
-        ("deviation_granted", "n_a", "no deviation declared", "script"),
-    ]
+    with pytest.raises(CoordinatorError, match="configure owner_readiness_argv"):
+        _apply_readiness_checklist(
+            GateStore(),
+            replace(make_worker(tmp_path), a38=True, review_session=None),
+            _accept_task(),
+            {"owner_a38_default": True, "deviation": {"declared": False}},
+            head="a" * 40,
+        )
 
 
 @pytest.mark.parametrize("verdict,head", [("rejected", "a" * 40), ("approved", "b" * 40)])
