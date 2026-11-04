@@ -547,7 +547,7 @@ def test_failed_configuration_blocker_post_is_retried(monkeypatch, tmp_path):
     attempts = []
 
     def post(*_args, **_kwargs):
-        attempts.append(kwargs)
+        attempts.append(_kwargs)
         if len(attempts) == 1:
             raise CoordinatorError("post failed")
         return "published-blocker"
