@@ -55,15 +55,31 @@ class _BudgetedApi:
         return self._api.get_optional(*args, **kwargs)
 
     def paginate(self, path: str, **kwargs: Any) -> Any:
-        self._check()
-        items = self._api.paginate(path, **kwargs)
+        from .a38_guard import GuardError, MAX_COMMENT_PAGES_ITEMS
+
+        remaining = MAX_REQUESTS - self.used
+        if remaining <= 0:
+            raise _BudgetExhausted
+        caller_limit = kwargs.get("hard_limit", MAX_COMMENT_PAGES_ITEMS)
+        budget_limit = remaining * PAGE_SIZE - 1
+        kwargs["hard_limit"] = min(caller_limit, budget_limit)
+        try:
+            items = self._api.paginate(path, **kwargs)
+        except GuardError as exc:
+            if (
+                str(exc).startswith("pagination exceeded bound")
+                and budget_limit < caller_limit
+            ):
+                self.used = MAX_REQUESTS
+                raise _BudgetExhausted from exc
+            raise
         # Reuse workflow_approval's size for GitHubApi.paginate's 100-item pages.
         self.used += max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
         return items
 
 
-# Counts exclude client GET retries. Pagination is charged after it finishes,
-# so one paginate call may overshoot the cap by its page count.
+# Counts exclude client GET retries. The remaining cap is enforced before each
+# pagination page, so a successful call cannot overshoot it.
 
 
 def _open_pull_protection(
@@ -242,13 +258,22 @@ def _drain_enabled(
     dry_run: bool,
     now: datetime | None,
 ) -> dict[str, Any]:
-    from .a38_guard import GuardError, _is_rate_limit_response, _validate_sha
+    from .a38_guard import (
+        GuardError,
+        PullCommitsTruncatedError,
+        _is_rate_limit_response,
+        _open_pull_numbers_for_head,
+        _validate_head_branch,
+        _validate_repo,
+        _validate_sha,
+    )
 
     if now is None:
         now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=MIN_AGE_S)
     slot = int(now.timestamp()) // ROTATION_PERIOD_S
     commit_cache: dict[int, set[str] | None] = {}
+    # Keep the scan-time check broader as a cheap conservative first filter.
     protection = _open_pull_protection(api, repo)
     protected = protection[0]
     result["protected"] = len(protected)
@@ -361,14 +386,44 @@ def _drain_enabled(
                 or current_head_branch == ""
             ):
                 continue
-            current_protection = _open_pull_protection(api, repo)
-            branch_key = (current_head_repo.lower(), current_head_branch)
+            try:
+                _validate_repo(current_head_repo)
+                _validate_head_branch(current_head_branch)
+            except GuardError:
+                continue
+
+            # Approval can release only a run whose fork and branch match the
+            # pull, so only pulls from this candidate's head can protect here.
             detail_protected = False
-            for number in current_protection[1].get(branch_key, []):
+            for number in _open_pull_numbers_for_head(
+                api, repo, current_head_repo, current_head_branch
+            ):
                 detail = api.get_json(f"/repos/{repo}/pulls/{number}")
                 if not isinstance(detail, Mapping):
                     raise GuardError("open pull request head sha missing")
                 detail_head = detail.get("head")
+                detail_head_repository = (
+                    detail_head.get("repo")
+                    if isinstance(detail_head, Mapping)
+                    else None
+                )
+                detail_head_repo = (
+                    detail_head_repository.get("full_name")
+                    if isinstance(detail_head_repository, Mapping)
+                    else None
+                )
+                detail_head_branch = (
+                    detail_head.get("ref")
+                    if isinstance(detail_head, Mapping)
+                    else None
+                )
+                if (
+                    not isinstance(detail_head_repo, str)
+                    or detail_head_repo.lower() != current_head_repo.lower()
+                    or not isinstance(detail_head_branch, str)
+                    or detail_head_branch != current_head_branch
+                ):
+                    continue
                 detail_head_sha = (
                     detail_head.get("sha")
                     if isinstance(detail_head, Mapping)
@@ -392,15 +447,62 @@ def _drain_enabled(
                         raise GuardError(
                             "open pull request merge sha invalid"
                         ) from exc
-                if detail_head_sha == current_sha.lower() or (
-                    detail_merge_sha is not None
-                    and detail_merge_sha == current_sha.lower()
+                try:
+                    detail_commits = {
+                        sha.lower() for sha in _commit_shas(api, repo, number)
+                    }
+                except PullCommitsTruncatedError:
+                    detail_protected = True
+                    break
+                if (
+                    detail_head_sha == current_sha.lower()
+                    or detail_merge_sha == current_sha.lower()
+                    or current_sha.lower() in detail_commits
                 ):
                     detail_protected = True
                     break
             if detail_protected:
                 continue
-            if _run_is_protected(api, repo, current, current_protection, {}):
+
+            final_status, final = api.get_optional(reread_path)
+            if final_status == 404:
+                continue
+            if final_status != 200:
+                raise GuardError(
+                    f"GitHub API HTTP {final_status} for {reread_path}"
+                )
+            final_sha = (
+                final.get("head_sha") if isinstance(final, Mapping) else None
+            )
+            final_head_repository = (
+                final.get("head_repository")
+                if isinstance(final, Mapping)
+                else None
+            )
+            final_head_repo = (
+                final_head_repository.get("full_name")
+                if isinstance(final_head_repository, Mapping)
+                else None
+            )
+            final_head_branch = (
+                final.get("head_branch")
+                if isinstance(final, Mapping)
+                else None
+            )
+            final_never_started = _workflow_run_never_started(
+                api, repo, candidate, missing_ok=True
+            )
+            if (
+                not isinstance(final, Mapping)
+                or final.get("id") != run_id
+                or not _pending(final)
+                or final_sha != current_sha
+                or not isinstance(final_head_repo, str)
+                or final_head_repo == ""
+                or final_head_repo.lower() == repo.lower()
+                or final_head_branch != current_head_branch
+                or not final_never_started
+            ):
                 continue
             if dry_run:
                 result["planned"].append(run_id)

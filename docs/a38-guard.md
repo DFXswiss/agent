@@ -164,34 +164,39 @@ different from the base repository, whose creation time is at least one hour
 old, and which is not protected at scan time. The reported candidate count is
 this full superseded set before the never-started proof, including candidates
 that the examined bound leaves unchecked.
-Open pulls are read before the held-run listing and again immediately before
-each delete. That final check uses a fresh commit list and a last single-pull
-read of every open pull on the candidate's fork branch. A null merge SHA in the
-list is resolved with one single-pull read, protecting both the listed and
-re-read head SHAs. An unreadable or malformed open-pull head SHA, or a malformed
-head repository, fails the pass closed; a deleted fork simply has no branch to
-match. A run with an empty head branch is never deleted. A pull request at
-GitHub's 250-commit cap protects runs on its branch instead of aborting the pass.
-At the 1000-run listing cap, the pass processes that capped window; it may omit
-candidates, but never weakens protection.
+The scan-time check reads all open pulls before the held-run listing and stays
+the broader, conservative first filter. The final protection check validates
+the candidate fork and branch, then uses a head-filtered query for only the open
+pulls on that fork and branch: those are the pulls whose approval could release
+the run. Each result is re-read in full and, when its detail still names that
+fork and branch, checked against a fresh commit list. A detail naming another
+head is ignored. A candidate with an invalid fork or branch name is never
+deleted, and neither is a run with an empty head branch. In the scan-time
+check, a null merge SHA in the list is resolved with one single-pull read,
+protecting both the listed and re-read head SHAs. An unreadable or malformed matching open-pull head SHA fails the pass
+closed; a deleted fork simply has no branch to match. A pull request at GitHub's
+250-commit cap protects the run instead of aborting the pass. At the 1000-run
+listing cap, the pass processes that capped window; it may omit candidates, but
+never weakens protection.
 
 The examined window of at most 40 candidates advances each half-hour slot, so
 candidates that cannot be deleted do not block the rest while jobs reads stay
 bounded. Each pass is capped at 250 API requests, excluding the client's own
-retries. When the cap is reached the pass ends with `aborted: "budget"`, keeps
-any deletions already made, and never deletes a run whose fresh check did not
-complete. The result reports `requests`. The pass proves that a candidate
-never started immediately before re-reading that run;
-candidates with jobs are skipped without consuming the deletion bound. Only a
-404 on the jobs read is likewise skipped; any other jobs failure aborts the
-pass. It deletes, or plans in a dry run, at most 20 runs per sweep. A denied or
-rate-limited delete aborts the pass, while a drain failure never changes the
-guard's exit code. Once a run has been deleted, a later failure ends the pass
-with `aborted: "error"` and an `error` message while retaining the deleted ids;
-a failure before the first deletion still fails the pass. Deleting a never-started
-hold is a distinct write class, not an exception to the rule that the guard
-never cancels: cancel cannot clear `action_required` on a run that is already
-`completed`, so only deletion shrinks the held-run listing. The pass
+GET retries, and the cap is enforced before each pagination page. When the cap
+is reached the pass ends with `aborted: "budget"`, keeps any deletions already
+made, and never deletes a run whose fresh check did not complete. The result
+reports `requests`. After all protection reads, the pass re-reads the run and
+its jobs a final time. It deletes, or plans in a dry run, only when the run is
+still held, unchanged in SHA and branch, still belongs to a fork, and still has
+no jobs. A run or jobs 404 is skipped; any other jobs failure aborts the pass.
+It deletes or plans at most 20 runs per sweep. A denied or rate-limited delete
+aborts the pass, while a drain failure never changes the guard's exit code.
+Once a run has been deleted, a later failure ends the pass with
+`aborted: "error"` and an `error` message while retaining the deleted ids; a
+failure before the first deletion still fails the pass. Deleting a
+never-started hold is a distinct write class, not an exception to the rule that
+the guard never cancels: cancel cannot clear `action_required` on a run that is
+already `completed`, so only deletion shrinks the held-run listing. The pass
 never approves, cancels, reruns or dispatches a workflow.
 
 ## Optional environment deployment approval
