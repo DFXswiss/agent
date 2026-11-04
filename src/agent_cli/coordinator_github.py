@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -71,6 +72,10 @@ READINESS_CONTRACT = (
     "|{\"declared\":true,\"granted\":true,\"granted_by\":\"<reply_login>\","
     '"evidence":"<human grant provenance>"}}'
 )
+
+HUB_ASSIGNMENT_GRACE_SECONDS = 120
+HUB_ASSIGNMENT_QUERY_CAP = 500
+HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS = 3600
 
 
 def _task_models(task: dict[str, Any]) -> ModelSlots:
@@ -159,6 +164,7 @@ def publish_blocker(
     *,
     kind: str = "blocker",
     reply_checkpoint: bool = False,
+    occurrence: str | None = None,
 ) -> list[str]:
     """Publish a source-issue blocker.
 
@@ -179,11 +185,13 @@ def publish_blocker(
     # Explicit request (re)pins when eligible; otherwise auto-pin only when a
     # recoverable resume_phase is set and no checkpoint exists yet.
     should_pin = eligible and (reply_checkpoint or not has_prior)
-    occurrence = ""
-    if should_pin and c.get("resume_phase") == "formal_approve":
+    resolved_occurrence = occurrence or ""
+    if occurrence is None and should_pin and c.get("resume_phase") == "formal_approve":
         # Every invalidated approval needs a reply after its own blocker, even
         # when a later dismissal has the same wording as an earlier one.
-        occurrence = f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
+        resolved_occurrence = (
+            f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
+        )
     try:
         activity_id = post_issue_comment(
             store,
@@ -193,7 +201,7 @@ def publish_blocker(
             number=int(source["number"]),
             body=f"Blocked: {redact(message)}",
             kind=kind,
-            occurrence=occurrence,
+            occurrence=resolved_occurrence,
         )
         if should_pin:
             prior = c.get("question_activity_id")
@@ -325,10 +333,13 @@ def _hub_assignment_row(
     token = store.meta("device_token")
     if not hub_url or not token:
         return None, "device is not paired with a hub"
+    repos = list(dict.fromkeys((repo, repo.casefold())))
     hub = Hub(hub_url, token)
     try:
         try:
-            result = hub.query({"type": "assignment.created", "payload.repo": repo})
+            result = hub.query(
+                {"type": "assignment.created", "payload.repo": {"in": repos}}
+            )
         except HubError as exc:
             return None, redact(str(exc))
         except Exception as exc:  # malformed/transport client responses retry acceptance
@@ -338,6 +349,8 @@ def _hub_assignment_row(
     rows = result.get("rows") if isinstance(result, dict) else None
     if not isinstance(rows, list):
         return None, "hub assignment query returned an invalid response"
+    if len(rows) >= HUB_ASSIGNMENT_QUERY_CAP:
+        return None, "hub assignment query truncated"
     allowed = {login.casefold() for login in reply_logins}
     for row in rows:
         if not isinstance(row, dict):
@@ -345,12 +358,17 @@ def _hub_assignment_row(
         payload = row.get("payload")
         inner = payload.get("payload") if isinstance(payload, dict) else None
         envelope_login = row.get("github_login")
+        origin_device_id = row.get("origin_device_id")
+        inner_actor = inner.get("actor") if isinstance(inner, dict) else None
         if not isinstance(inner, dict) or not isinstance(envelope_login, str):
             continue
         if (
             str(inner.get("repo") or "").casefold() == repo.casefold()
             and as_int(inner.get("number")) == number
             and str(inner.get("agent") or "").casefold() == agent.casefold()
+            and origin_device_id == f"web:{envelope_login}"
+            and isinstance(inner_actor, str)
+            and inner_actor.casefold() == envelope_login.casefold()
             and envelope_login.casefold() == assignment_actor.casefold()
             and envelope_login.casefold() in allowed
         ):
@@ -358,6 +376,35 @@ def _hub_assignment_row(
             if isinstance(row_id, str) and row_id:
                 return row_id, None
     return None, None
+
+
+def _parse_coordinator_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _seconds_since(value: object) -> float | None:
+    then = _parse_coordinator_time(value)
+    now = _parse_coordinator_time(utcnow())
+    if then is None or now is None:
+        return None
+    return (now - then).total_seconds()
+
+
+def _hub_assignment_configuration_error(reason: str) -> bool:
+    folded = reason.casefold()
+    return (
+        reason == "device is not paired with a hub"
+        or "http 401" in folded
+        or "http 403" in folded
+    )
 
 
 def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
@@ -399,13 +446,55 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             reply_logins=worker.reply_logins,
         )
         if retry is not None:
+            if _hub_assignment_configuration_error(retry):
+                c["phase"] = "blocked"
+                c["resume_phase"] = "accept"
+                c["blocker"] = retry
+                c["blocker_publish_once"] = True
+                c["blocker_publish_kind"] = "configuration-binding"
+                save_task(store, task)
+                return publish_blocker(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    retry,
+                    kind="configuration-binding",
+                    reply_checkpoint=True,
+                )
             c["hub_assignment_retry"] = retry
+            elapsed = _seconds_since(c.get("hub_assignment_retry_published_at"))
+            line = f"hub assignment query unavailable; retrying accept: {retry}"
+            if elapsed is None or elapsed >= HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS:
+                published_at = utcnow()
+                c["hub_assignment_retry_published_at"] = published_at
+                save_task(store, task)
+                return [
+                    line,
+                    *publish_blocker(
+                        store,
+                        worker,
+                        task,
+                        runner,
+                        f"Hub assignment verification is temporarily unavailable: {retry}",
+                        kind="hub-assignment-retry",
+                        occurrence=published_at,
+                    ),
+                ]
             save_task(store, task)
-            return [f"hub assignment query unavailable; retrying accept: {retry}"]
+            return [line]
         if row_id is None:
+            age = _seconds_since(source.get("assignment_at"))
+            if age is not None and age < HUB_ASSIGNMENT_GRACE_SECONDS:
+                c["hub_assignment_retry"] = "hub assignment event not yet visible"
+                save_task(store, task)
+                return ["hub assignment event not yet visible; retrying accept"]
             message = "assignment was not issued through the hub"
             c["blocker"] = message
             c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "hub-assignment"
             save_task(store, task)
             return publish_blocker(
                 store,
@@ -418,7 +507,10 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             )
         source["hub_assignment_row_id"] = row_id
         c.pop("hub_assignment_retry", None)
+        c.pop("hub_assignment_retry_published_at", None)
         c.pop("blocker", None)
+        c.pop("blocker_publish_once", None)
+        c.pop("blocker_publish_kind", None)
         clear_reply_recovery(c)
     if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
         cfg = _owner_repository_config(
@@ -965,6 +1057,15 @@ def _apply_readiness_checklist(
 ) -> None:
     """Close contributing/deviation from trusted readiness before Ready. No inferred grants."""
     if readiness.get("owner_a38_default") is True:
+        gate = latest_gates(store, task["id"]).get(("grok-pr", "quality"))
+        if (
+            gate is None
+            or gate.get("verdict") != "approved"
+            or gate.get("head_sha") != head
+        ):
+            raise CoordinatorError(
+                "owner A38 readiness requires approved grok-pr/quality gate on current head"
+            )
         set_checklist(
             store,
             task,
@@ -2181,6 +2282,8 @@ def phase_read_replies(
     resume = str(c.get("resume_phase") or "")
     c["phase"] = resume
     c.pop("resume_phase", None)
+    c.pop("blocker_publish_once", None)
+    c.pop("blocker_publish_kind", None)
     if resume == "implement":
         task["state"] = "implementing"
     save_task(store, task)
@@ -2211,4 +2314,17 @@ def phase_blocked(
     if resumed not in ("ask", "blocked", prior_phase) and resumed:
         return lines
     blocker = redact(str(c.get("blocker") or "blocked"))
+    if c.get("blocker_publish_once"):
+        checkpoint = c.get("question_activity_id")
+        if isinstance(checkpoint, str) and checkpoint:
+            return lines
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            blocker,
+            kind=str(c.get("blocker_publish_kind") or "blocker"),
+            reply_checkpoint=True,
+        )
     return publish_blocker(store, worker, task, runner, blocker, kind="status")

@@ -142,17 +142,18 @@ def test_a38_worker_refuses_short_or_non_integer_timeouts(tmp_path, key, value):
         load_coordinator_config(tmp_path)
 
 
-def test_owner_scoped_worker_normalizes_distinct_owners_and_defaults_checks(tmp_path):
+def test_owner_scoped_worker_normalizes_distinct_owners_and_requires_checks(tmp_path):
     data = config(tmp_path)
     worker = data['workers']['selected-session']
     worker['repositories'] = {}
     worker['repository_owners'] = ['Example-Org', 'AnotherUser']
+    worker['owner_check_argv'] = ['/operator/owner-checks']
     worker['owner_readiness_argv'] = ['/operator/owner-readiness']
     worker['require_hub_assignment'] = True
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     loaded = load_coordinator_config(tmp_path)['selected-session']
     assert loaded.repository_owners == ('example-org', 'anotheruser')
-    assert loaded.owner_check_argv == ()
+    assert loaded.owner_check_argv == ('/operator/owner-checks',)
     assert loaded.owner_readiness_argv == ('/operator/owner-readiness',)
     assert loaded.require_hub_assignment is True
 
@@ -180,6 +181,7 @@ def test_worker_requires_repositories_or_repository_owners(tmp_path):
 def test_non_a38_owner_scope_requires_readiness_argv(tmp_path):
     data = config(tmp_path)
     data['workers']['selected-session']['repository_owners'] = ['example']
+    data['workers']['selected-session']['owner_check_argv'] = ['/operator/checks']
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='owner_readiness_argv'):
         load_coordinator_config(tmp_path)
@@ -196,3 +198,18 @@ def test_a38_owner_scope_allows_absent_readiness_argv(tmp_path):
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     loaded = load_coordinator_config(tmp_path)['selected-session']
     assert loaded.owner_readiness_argv is None
+    assert loaded.owner_check_argv == ()
+
+
+@pytest.mark.parametrize('owner_check_argv', [None, []])
+def test_non_a38_owner_scope_requires_nonempty_owner_check_argv(tmp_path, owner_check_argv):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['repositories'] = {}
+    worker['repository_owners'] = ['example']
+    worker['owner_readiness_argv'] = ['/operator/owner-readiness']
+    if owner_check_argv is not None:
+        worker['owner_check_argv'] = owner_check_argv
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='owner_check_argv'):
+        load_coordinator_config(tmp_path)

@@ -1391,7 +1391,10 @@ def advance_one(
     try:
         if (
             source.get("owner_scoped")
-            and phase == "accept"
+            and (
+                phase == "accept"
+                or (phase == "blocked" and c.get("resume_phase") == "accept")
+            )
             and not c.get("execution_binding")
         ):
             if source.get("require_hub_assignment") is not worker.require_hub_assignment:
@@ -1409,7 +1412,31 @@ def advance_one(
             if c.get("execution_binding") != binding:
                 raise CoordinatorError("task execution configuration changed or is unpinned")
     except (CoordinatorError, StoreError) as exc:
-        return publish_blocker(store, worker, task, runner, str(exc), kind="configuration-binding")
+        message = str(exc)
+        checkpoint = c.get("question_activity_id")
+        if (
+            c.get("blocker_publish_once")
+            and c.get("blocker") == message
+            and isinstance(checkpoint, str)
+            and checkpoint
+        ):
+            return [f"blocked: {redact(message)}"]
+        if not c.get("resume_phase") and phase not in ("blocked", "ask", "done"):
+            c["resume_phase"] = phase
+        c["phase"] = "blocked"
+        c["blocker"] = message
+        c["blocker_publish_once"] = True
+        c["blocker_publish_kind"] = "configuration-binding"
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            message,
+            kind="configuration-binding",
+            reply_checkpoint=True,
+        )
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
     if phase not in ("await_merge", "done", "blocked", "ask"):

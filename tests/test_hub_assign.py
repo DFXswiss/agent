@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -27,6 +29,7 @@ def test_assign_success_prints_issue_without_token(monkeypatch, capsys):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer secret-device-token"
         assert request.url.path == "/api/assignments"
+        assert json.loads(request.content)["repo"] == "Example/Project"
         return httpx.Response(
             201,
             json={
