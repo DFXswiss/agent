@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.lane import LaneResult
+from agent_cli.lane import LaneResult, LaneUsage
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_cli import _last_agent_id, _last_task_id, run
@@ -381,6 +381,93 @@ def test_run_prints_vendor_stdout(
     assert seen.get("role") == "implementer"
     assert seen.get("vendor") == "grok"
     assert seen.get("tmux") is False
+    store = _store(tmp_path)
+    try:
+        rows = [r for r in store.rows("activity") if r.get("type") == "lane.run"]
+    finally:
+        store.close()
+    assert len(rows) == 1
+    assert rows[0]["payload"]["task_id"] == tid
+    assert rows[0]["payload"]["model"] == OPERATOR_GROK_MODEL
+
+
+def test_cli_lane_run_records_usage_and_tools(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", DEFAULT_SESSION, "--kind", "human"])
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+
+    def fake_launch(**_kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role="implementer",
+            vendor="grok",
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="secret=hidden\nSTATUS: complete\n",
+            stderr="",
+            usage=LaneUsage("reported/model", 10, 4, 2, 1, 3, 42),
+            tools=({"tool": "Read", "target": "/work/a.py", "error": False},),
+        )
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    run(
+        tmp_path,
+        [
+            "lane", "run", "--role", "implementer", "--vendor", "grok",
+            "--session", DEFAULT_SESSION, "--spec-file", str(spec),
+            "--cwd", str(tmp_path), "--no-tmux",
+        ],
+    )
+    capsys.readouterr()
+    store = _store(tmp_path)
+    try:
+        rows = [r for r in store.rows("activity") if r.get("type") == "lane.run"]
+    finally:
+        store.close()
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert payload["reported_model"] == "reported/model"
+    assert payload["usage"]["input_tokens"] == 10
+    assert payload["tools"] == [
+        {"tool": "Read", "target": "/work/a.py", "error": False}
+    ]
+    assert payload["final_text"] != "secret=hidden\nSTATUS: complete\n"
+
+
+def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", DEFAULT_SESSION, "--kind", "human"])
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            "implementer", "grok", "complete", ["grok"], 0,
+            "STATUS: complete\n", "",
+        ),
+    )
+    monkeypatch.setattr(
+        "agent_cli.main.record_lane_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("store unavailable")),
+    )
+    run(
+        tmp_path,
+        [
+            "lane", "run", "--role", "implementer", "--vendor", "grok",
+            "--session", DEFAULT_SESSION, "--spec-file", str(spec),
+            "--cwd", str(tmp_path), "--no-tmux",
+        ],
+    )
+    captured = capsys.readouterr()
+    assert "STATUS=complete" in captured.out
+    assert "lane.run write failed: store unavailable" in captured.err
 
 
 def test_run_spec_file_implementer_complete(

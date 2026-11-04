@@ -32,7 +32,15 @@ from .coordinator_common import (
 from .coordinator_config import WorkerConfig
 from .coordinator_exec import run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
-from .lane import OUTPUT_FILE_VENDORS, SPEC_VIA_STDIN, LaneResult, provider_argv
+from .lane import (
+    OUTPUT_FILE_VENDORS,
+    SPEC_VIA_STDIN,
+    LaneResult,
+    finalize_lane_output,
+    openrouter_path_error,
+    provider_argv,
+    record_lane_run,
+)
 from .model_slots import SLOT_STAGES, ModelSlots, ModelSlotsError, models_from_snapshot
 from .store import Store, utcnow
 
@@ -154,6 +162,12 @@ def launch_lane(
         raise CoordinatorError(str(exc)) from exc
 
     ctrl = control_dir(worker, task["id"])
+    write = selected.access == "workspace-write"
+    read_dirs = () if write else (str(ctrl.resolve()),)
+    if vendor == "openrouter":
+        overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
+        if overlap is not None:
+            raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}.md"
     write_spec(spec_path, role, spec_body)
     spec_text = spec_path.read_text(encoding="utf-8")
@@ -179,11 +193,10 @@ def launch_lane(
     c["lane"] = {"agent_id": aid, "role": role, "vendor": vendor, "state": "running"}
     save_task(store, task)
 
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    lane_output: str | None = None
     try:
         if vendor in OUTPUT_FILE_VENDORS:
-            fd, codex_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
+            fd, lane_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
             os.close(fd)
         argv = [
             *selected.env_prefix(),
@@ -193,7 +206,8 @@ def launch_lane(
                 cwd=worktree,
                 write=write,
                 model=selected.model,
-                output_file=codex_output,
+                output_file=lane_output,
+                read_dirs=read_dirs,
             ),
         ]
         if vendor == "grok" and role == "implementer":
@@ -237,26 +251,42 @@ def launch_lane(
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
         stderr = str(getattr(completed, "stderr") or "")
-        if codex_output is not None:
+        output_file_text = ""
+        if lane_output is not None:
             try:
-                file_text = Path(codex_output).read_text(encoding="utf-8")
+                output_file_text = Path(lane_output).read_text(encoding="utf-8")
             except OSError:
-                file_text = ""
-            if file_text:
-                stdout = file_text
+                output_file_text = ""
+        finalized = finalize_lane_output(vendor, stdout, output_file_text)
         result = LaneResult(
             role=role,
             vendor=vendor,
-            status=parse_model_result(stdout, returncode)[0],
+            status=parse_model_result(finalized.text, returncode)[0],
             argv=argv,
             returncode=returncode,
-            stdout=stdout,
+            stdout=finalized.text,
             stderr=stderr,
+            usage=finalized.usage,
+            tools=finalized.tools,
+            tools_truncated=finalized.tools_truncated,
         )
+        try:
+            record_lane_run(
+                store,
+                session_id=worker.session_id,
+                result=result,
+                model=selected.model,
+                task_id=str(task["id"]),
+                agent_id=aid,
+                round_num=round_num,
+            )
+        except Exception as exc:  # noqa: BLE001 — audit failure cannot change verdict
+            result.activity_error = f"lane.run write failed: {redact(str(exc))}"
+            c.setdefault("lane_observations", []).append(result.activity_error)
     finally:
-        if codex_output is not None:
+        if lane_output is not None:
             try:
-                os.unlink(codex_output)
+                os.unlink(lane_output)
             except OSError:
                 pass
 
@@ -674,6 +704,12 @@ def _prepare_pr_review_agent(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     ctrl = control_dir(worker, task["id"])
+    write = selected.access == "workspace-write"
+    read_dirs = () if write else (str(ctrl.resolve()),)
+    if vendor == "openrouter":
+        overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
+        if overlap is not None:
+            raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}-{head[:7]}.md"
     write_spec(spec_path, role, spec_body)
     spec_text = spec_path.read_text(encoding="utf-8")
@@ -695,10 +731,9 @@ def _prepare_pr_review_agent(
             "note": None,
         },
     )
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    lane_output: str | None = None
     if vendor in OUTPUT_FILE_VENDORS:
-        fd, codex_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
+        fd, lane_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
         os.close(fd)
     argv = [
         *selected.env_prefix(),
@@ -708,7 +743,8 @@ def _prepare_pr_review_agent(
             cwd=worktree,
             write=write,
             model=selected.model,
-            output_file=codex_output,
+            output_file=lane_output,
+            read_dirs=read_dirs,
         ),
     ]
     stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
@@ -718,8 +754,9 @@ def _prepare_pr_review_agent(
         "vendor": vendor,
         "argv": argv,
         "stdin_text": stdin_text,
-        "codex_output": codex_output,
+        "output_file": lane_output,
         "worktree": worktree,
+        "model": selected.model,
         "dimension": "quality" if role.endswith("quality") else "logic",
     }
 
@@ -740,30 +777,39 @@ def _run_prepared(
         else:
             completed = run_bounded(argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text)
     except Exception as exc:  # noqa: BLE001
+        output_file = prepared.get("output_file")
+        if output_file:
+            try:
+                os.unlink(str(output_file))
+            except OSError:
+                pass
         return prepared["agent_id"], exc
-    codex_output = prepared.get("codex_output")
+    output_file = prepared.get("output_file")
     stdout = str(getattr(completed, "stdout") or "")
     stderr = str(getattr(completed, "stderr") or "")
     returncode = int(getattr(completed, "returncode"))
-    if codex_output:
+    output_file_text = ""
+    if output_file:
         try:
-            file_text = Path(str(codex_output)).read_text(encoding="utf-8")
+            output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
         except OSError:
-            file_text = ""
-        if file_text:
-            stdout = file_text
+            output_file_text = ""
         try:
-            os.unlink(str(codex_output))
+            os.unlink(str(output_file))
         except OSError:
             pass
+    finalized = finalize_lane_output(str(prepared["vendor"]), stdout, output_file_text)
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),
         vendor=str(prepared["vendor"]),
-        status=parse_model_result(stdout, returncode)[0],
+        status=parse_model_result(finalized.text, returncode)[0],
         argv=argv,
         returncode=returncode,
-        stdout=stdout,
+        stdout=finalized.text,
         stderr=stderr,
+        usage=finalized.usage,
+        tools=finalized.tools,
+        tools_truncated=finalized.tools_truncated,
     )
 
 
@@ -1014,6 +1060,19 @@ def phase_pr_gates(
         agent["finished_at"] = utcnow()
         agent["note"] = redact(outcome.stdout or outcome.stderr or "")
         store.write("agent", "update", agent["id"], strip_row(agent))
+        try:
+            record_lane_run(
+                store,
+                session_id=worker.session_id,
+                result=outcome,
+                model=str(prep["model"]),
+                task_id=str(task["id"]),
+                agent_id=str(prep["agent_id"]),
+                round_num=None,
+            )
+        except Exception as exc:  # noqa: BLE001 — audit failure cannot change verdict
+            outcome.activity_error = f"lane.run write failed: {redact(str(exc))}"
+            c.setdefault("lane_observations", []).append(outcome.activity_error)
         outcomes.append((prep, outcome))
 
     for prep, outcome in outcomes:

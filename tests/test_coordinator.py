@@ -2959,6 +2959,85 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
     status = _checklist_status(store, tid)
     assert status["codex_pr_quality"] == "ja"
     assert status["codex_pr_logic"] == "ja"
+    lane_runs = [
+        row for row in store.rows("activity") if row.get("type") == "lane.run"
+    ]
+    assert len(lane_runs) == 2
+    assert {row["payload"]["role"] for row in lane_runs} == {
+        "pr-reviewer-quality", "pr-reviewer-logic"
+    }
+
+
+def test_parallel_openrouter_lanes_record_usage_and_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    config_path = store.home / "ai-accounts.json"
+    data = json.loads(config_path.read_text())
+    data["accounts"]["router"] = {
+        "provider": "openrouter", "config_dir": "/test/openrouter"
+    }
+    data["roles"]["router-reader"] = {
+        "account": "router", "model": "vendor/model", "access": "read-only"
+    }
+    data["sessions"]["worker-session"]["lanes"].update(
+        {
+            "openrouter:pr-reviewer-quality": "router-reader",
+            "openrouter:pr-reviewer-logic": "router-reader",
+        }
+    )
+    config_path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000e2"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+    )
+    task["models"] = {"first": "grok", "second": "openrouter"}
+    store.write(
+        "task", "update", tid, {key: value for key, value in task.items() if not key.startswith("_")}
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+
+    def run(argv, stdin=None):  # noqa: ANN001
+        wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
+        output_file = Path(argv[wrapper_index + 2])
+        role = "pr-reviewer-quality" if "pr-reviewer-quality" in (stdin or "") else "pr-reviewer-logic"
+        events = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": role, "name": "Grep", "input": {"pattern": role}}
+            ]}},
+            {"type": "result", "result": "STATUS: complete\nRESULT: approved",
+             "usage": {"input_tokens": 20, "output_tokens": 6},
+             "modelUsage": {"vendor/model": {}}, "num_turns": 2, "duration_ms": 40},
+        ]
+        output_file.write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        run,
+        vendor="openrouter",
+        stage="codex-pr",
+    )
+    rows = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
+    assert len(rows) == 2
+    assert all(row["payload"]["usage"]["input_tokens"] == 20 for row in rows)
+    assert all(row["payload"]["tools"][0]["tool"] == "Grep" for row in rows)
 
 
 def test_approved_retry_does_not_promote_a_pending_codex_key(
@@ -3112,6 +3191,86 @@ def test_preflight_accepts_claude_first_with_device_lanes(tmp_path: Path, monkey
     preflight_worker(store, worker, fake)
 
 
+def test_preflight_accepts_openrouter_first_with_device_lanes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "openrouter", "second": "codex"}
+    data["accounts"]["router-w"] = {
+        "provider": "openrouter", "config_dir": "/test/openrouter"
+    }
+    data["roles"]["router-builder"] = {
+        "account": "router-w", "model": "vendor/model", "access": "workspace-write"
+    }
+    data["roles"]["router-reader"] = {
+        "account": "router-w", "model": "vendor/model", "access": "read-only"
+    }
+    data["sessions"]["worker-session"]["lanes"].update({
+        "openrouter:implementer": "router-builder",
+        "openrouter:reviewer": "router-reader",
+        "openrouter:pr-reviewer-quality": "router-reader",
+        "openrouter:pr-reviewer-logic": "router-reader",
+    })
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    preflight_worker(store, worker, fake)
+
+
+def test_coordinator_refuses_openrouter_config_overlapping_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "overlap"
+    worktree.mkdir()
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["accounts"]["router"] = {
+        "provider": "openrouter", "config_dir": str(worktree / "config")
+    }
+    data["roles"]["router-builder"] = {
+        "account": "router", "model": "vendor/model", "access": "workspace-write"
+    }
+    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    path.write_text(json.dumps(data))
+    task = {
+        "id": "aa000001-0000-4000-8000-0000000000e0",
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    store.write("task", "insert", task["id"], task)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    with pytest.raises(CoordinatorError, match="config_dir overlaps worktree"):
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="openrouter",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=lambda argv, stdin: Completed(0, "", ""),
+        )
+    assert not [row for row in store.rows("agent") if row.get("task_id") == task["id"]]
+
+
 def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
     from agent_cli.coordinator_lanes import _prepare_pr_review_agent
 
@@ -3134,8 +3293,63 @@ def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
     )
     argv = prep["argv"]
     assert "claude" in argv and "--print" in argv
-    assert "--setting-sources" in argv and "Bash" in argv[argv.index("--disallowedTools") + 1 :]
+    assert "--restricted" in argv and "--setting-sources" not in argv
+    assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
+    assert "--add-dir" in argv
     assert "Review this." in (prep.get("stdin_text") or "")
+
+
+def test_sequential_claude_lane_records_usage_and_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "seq-claude"
+    worktree.mkdir()
+    task = {
+        "id": "aa000001-0000-4000-8000-0000000000e1",
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    store.write("task", "insert", task["id"], task)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    events = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "read-1", "name": "Read", "input": {"file_path": "a.py"}}
+        ]}},
+        {"type": "result", "result": "STATUS: complete\nRESULT: done",
+         "usage": {"input_tokens": 12, "output_tokens": 5},
+         "modelUsage": {"claude-model": {}}, "num_turns": 2, "duration_ms": 30},
+    ]
+    stream = "\n".join(json.dumps(event) for event in events) + "\n"
+    _agent, result = launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="claude",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=lambda argv, stdin: Completed(0, stream, ""),
+    )
+    assert result.usage is not None and result.usage.input_tokens == 12
+    rows = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
+    assert len(rows) == 1
+    assert rows[0]["payload"]["usage"]["output_tokens"] == 5
+    assert rows[0]["payload"]["tools"] == [
+        {"tool": "Read", "target": "a.py", "error": False}
+    ]
 
 
 

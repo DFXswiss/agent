@@ -8,7 +8,7 @@ description: >-
 # Pull-request review contract
 
 Requires **spine**. Roles: `pr-reviewer-quality`, `pr-reviewer-logic`.
-Order: model slot `first`, then model slot `second`. The provider of each slot (`grok`, `codex` or `claude`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`); the examples below assume `first` = grok and `second` = codex.
+Order: model slot `first`, then model slot `second`. The provider of each slot (`grok`, `codex`, `claude` or `openrouter`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`); the examples below assume `first` = grok and `second` = codex.
 
 Without this skill, `agent gate` and pr-reviewer `agent agent` commands refuse.
 

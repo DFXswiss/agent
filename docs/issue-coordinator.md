@@ -14,7 +14,7 @@ and bounded model lanes on the execution device. It never merges.
 | CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Legacy assignment dispatch and `supervise` refuse these sessions. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
-| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude allows only the read tools plus `acceptEdits` (edits inside the worktree only), disallows Bash, Agent, Task and the web, and runs with `--setting-sources user` and `--strict-mcp-config`; Codex is refused as slot `first`. That is process argv hardening only. |
+| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude and OpenRouter use Claude Code restricted mode with only worktree file tools, disabled slash commands and strict MCP configuration; Codex is refused as slot `first`. That is process argv hardening only. |
 
 Distinguish a requirement (DESIGN §19.7), an implemented module, and a verified
 deployment. This document does not invent evidence that a device is running the
@@ -118,9 +118,12 @@ for worker in workers.values():
   timeout), preserving stdin and cwd. External `timeout(1)` is **not** used
   (absent on stock macOS). Tests inject fakes. The implementer argv
   is hardened per first-slot provider: Grok with `--deny Bash`,
-  `--no-subagents`, and `--disable-web-search`; Claude with the read tools and
-  `acceptEdits` (edits inside the worktree only), Bash, Agent, Task and the web disallowed, `--setting-sources user` and
-  `--strict-mcp-config`; Codex is refused as slot `first`. This is process argv
+  `--no-subagents`, and `--disable-web-search`; Claude and OpenRouter through
+  Claude Code `--restricted`, `--strict-mcp-config`, disabled slash commands,
+  and only `Read,Grep,Glob,Edit,Write` for the worktree. Read-only review lanes
+  get only `Read,Grep,Glob` plus the coordinator control directory as an
+  explicit read directory. OpenRouter account configuration must not overlap
+  either readable root. Codex is refused as slot `first`. This is process argv
   hardening, **not** universal sandbox enforcement.
 - Environment context for trusted `check_argv` / `readiness_argv` (set in the
   child environment, with cwd = worktree):
@@ -410,6 +413,11 @@ otherwise they remain locally visible (`CoordinatorError` / `StoreError`
 subclass `SystemExit` and must not be mistaken for success). Preflight
 account/config failures can only report locally when GitHub is unavailable.
 No silent failure.
+
+Every completed lane process also writes script-owned `lane.run` evidence with
+the configured and provider-reported model, token usage when supplied, a bounded
+redacted file-tool transcript, and bounded final text. Failure to write this
+audit row is an observation and does not rewrite the lane verdict.
 
 ## Module layout
 

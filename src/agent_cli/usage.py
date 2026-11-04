@@ -1,4 +1,4 @@
-"""Record SuperGrok weekly quota snapshots as usage.snapshot activities."""
+"""Record configured provider usage as usage.snapshot activities."""
 
 from __future__ import annotations
 
@@ -20,6 +20,20 @@ CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings"
 USAGE_POLL_SECONDS = 60
 VENDOR = "grok"
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+OPENROUTER_VENDOR = "openrouter"
+_OPENROUTER_COMPARE_KEYS = (
+    "vendor",
+    "provider",
+    "account",
+    "usage_usd",
+    "usage_daily_usd",
+    "usage_weekly_usd",
+    "usage_monthly_usd",
+    "limit_usd",
+    "limit_remaining_usd",
+    "limit_reset",
+)
 
 _COMPARE_KEYS = (
     "vendor",
@@ -39,6 +53,15 @@ _COMPARE_KEYS = (
 
 class AuthStale(StoreError):
     """Grok login missing or expired. Not a runtime failure of this scan."""
+
+
+class OpenRouterUsageError(StoreError):
+    """One or more configured OpenRouter accounts could not be scanned."""
+
+    def __init__(self, errors: list[str], activity_ids: list[str]):
+        super().__init__("; ".join(errors))
+        self.errors = tuple(errors)
+        self.activity_ids = tuple(activity_ids)
 
 
 def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
@@ -362,3 +385,137 @@ def scan_usage(
 def usage_poll_due(last: float | None, now: float, interval: float = USAGE_POLL_SECONDS) -> bool:
     """True if last is None or now - last >= interval."""
     return last is None or now - last >= interval
+
+
+def _fetch_openrouter_key(token: str) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        with httpx.Client(timeout=20.0, follow_redirects=False) as client:
+            response = client.get(OPENROUTER_KEY_URL, headers=headers)
+    except httpx.HTTPError as exc:
+        raise StoreError(f"OpenRouter usage request failed: {exc}") from exc
+    if response.status_code != 200:
+        raise StoreError(f"OpenRouter usage returned HTTP {response.status_code}")
+    try:
+        body = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise StoreError("OpenRouter usage returned invalid JSON") from exc
+    if not isinstance(body, dict):
+        raise StoreError("OpenRouter usage response is not an object")
+    return body
+
+
+def _openrouter_number(value: Any, field: str, *, nullable: bool = False) -> int | float | None:
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise StoreError(f"OpenRouter {field} must be a number")
+    if not math.isfinite(float(value)):
+        raise StoreError(f"OpenRouter {field} must be a finite number")
+    return value
+
+
+def _openrouter_snapshot(
+    account: str, body: dict[str, Any], fetched_at: str
+) -> dict[str, Any]:
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise StoreError("OpenRouter usage data is not an object")
+    limit_reset = data.get("limit_reset")
+    if isinstance(limit_reset, (dict, list, bool)):
+        raise StoreError("OpenRouter limit_reset has an invalid type")
+    return {
+        "vendor": OPENROUTER_VENDOR,
+        "provider": OPENROUTER_VENDOR,
+        "account": account,
+        "usage_usd": _openrouter_number(data.get("usage"), "usage"),
+        "usage_daily_usd": _openrouter_number(data.get("usage_daily"), "usage_daily"),
+        "usage_weekly_usd": _openrouter_number(data.get("usage_weekly"), "usage_weekly"),
+        "usage_monthly_usd": _openrouter_number(data.get("usage_monthly"), "usage_monthly"),
+        "limit_usd": _openrouter_number(data.get("limit"), "limit", nullable=True),
+        "limit_remaining_usd": _openrouter_number(
+            data.get("limit_remaining"), "limit_remaining", nullable=True
+        ),
+        "limit_reset": limit_reset,
+        "fetched_at": fetched_at,
+    }
+
+
+def _last_openrouter_snapshot(store: Store, account: str) -> dict[str, Any] | None:
+    origin = store.device_id()
+    for row in store.rows("activity"):
+        if row.get("_origin_device_id") != origin or row.get("type") != "usage.snapshot":
+            continue
+        payload = row.get("payload")
+        if (
+            isinstance(payload, dict)
+            and payload.get("vendor") == OPENROUTER_VENDOR
+            and payload.get("account") == account
+        ):
+            return payload
+    return None
+
+
+def _openrouter_unchanged(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
+    return previous is not None and all(
+        previous.get(key) == current.get(key) for key in _OPENROUTER_COMPARE_KEYS
+    )
+
+
+def scan_openrouter_usage(
+    store: Store,
+    *,
+    fetch: Callable[[str], dict[str, Any]] | None = None,
+    now: Callable[[], str] | None = None,
+) -> list[str]:
+    """Record changed OpenRouter key-usage snapshots for configured accounts."""
+    from .ai_accounts import load_ai_accounts
+
+    accounts = load_ai_accounts(store.home)
+    created: list[str] = []
+    errors: list[str] = []
+    for account_name in accounts.usage_accounts:
+        account = accounts.accounts[account_name]
+        key_path = Path(account.config_dir) / "openrouter-api-key"
+        try:
+            try:
+                token = key_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeError) as exc:
+                raise StoreError("openrouter key missing") from exc
+            if token == "":
+                raise StoreError("openrouter key missing")
+            body = (fetch or _fetch_openrouter_key)(token)
+            if not isinstance(body, dict):
+                raise StoreError("OpenRouter usage response is not an object")
+            snapshot = _openrouter_snapshot(
+                account_name, body, (now or utcnow)()
+            )
+            if _openrouter_unchanged(
+                _last_openrouter_snapshot(store, account_name), snapshot
+            ):
+                continue
+            session_id = pick_session_id(store)
+            activity_id = str(uuid.uuid4())
+            event = store.write_with_advisory(
+                "activity",
+                "insert",
+                activity_id,
+                {
+                    "id": activity_id,
+                    "session_id": session_id,
+                    "type": "usage.snapshot",
+                    "payload": snapshot,
+                    "execution_status": "done",
+                },
+                lock_key=f"usage.snapshot:openrouter:{account_name}",
+                skip=lambda name=account_name, snap=snapshot: _openrouter_unchanged(
+                    _last_openrouter_snapshot(store, name), snap
+                ),
+            )
+            if event is not None:
+                created.append(activity_id)
+        except StoreError as exc:
+            errors.append(f"{account_name}: {exc}")
+    if errors:
+        raise OpenRouterUsageError(errors, created)
+    return created

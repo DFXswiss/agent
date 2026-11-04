@@ -68,13 +68,19 @@ def write_claude_first(home: Path, *, device_lanes: bool = True, session: str = 
 
 @pytest.mark.no_pg
 def test_supported_providers_and_default_order() -> None:
-    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
+    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude", "openrouter"})
     assert DEFAULT_MODEL_SLOTS == ModelSlots("grok", "codex")
     assert parse_model_slots(None) == DEFAULT_MODEL_SLOTS
     assert models_from_snapshot({}) == DEFAULT_MODEL_SLOTS
     assert models_from_snapshot({"models": {"first": "claude", "second": "grok"}}) == ModelSlots(
         "claude", "grok"
     )
+    assert parse_model_slots(
+        {"first": "openrouter", "second": "claude"}
+    ) == ModelSlots("openrouter", "claude")
+    assert parse_model_slots(
+        {"first": "grok", "second": "openrouter"}
+    ) == ModelSlots("grok", "openrouter")
 
 
 @pytest.mark.no_pg
@@ -192,39 +198,56 @@ def test_malformed_models_and_lanes_rejected(tmp_path: Path, change: str) -> Non
 
 @pytest.mark.no_pg
 def test_claude_argv_read_only_and_write_shapes() -> None:
-    ro = claude_argv(cwd="/work", write=False, model=CLAUDE_MODEL)
+    ro = claude_argv(
+        cwd="/work", write=False, model=CLAUDE_MODEL, read_dirs=("/control",)
+    )
     assert ro[0] == "env"
     assert "claude" in ro and "--print" in ro
     assert ro[ro.index("--model") + 1] == CLAUDE_MODEL
-    assert ro[ro.index("--add-dir") + 1] == "/work"
-    assert ro[ro.index("--setting-sources") + 1] == "user"
+    assert ro[ro.index("--add-dir") + 1] == "/control"
+    assert "--setting-sources" not in ro
+    assert "--allowedTools" not in ro
+    assert "--disallowedTools" not in ro
+    assert "--restricted" in ro
+    assert "--disable-slash-commands" in ro
+    assert ro[ro.index("--output-format") + 1] == "stream-json"
     assert "--strict-mcp-config" in ro
     assert ro[ro.index("--permission-mode") + 1] == "default"
-    disallowed = ro[ro.index("--disallowedTools") + 1 :]
-    for tool in ("Edit", "Write", "Bash", "Agent", "WebSearch", "WebFetch"):
-        assert tool in disallowed
-    allowed = ro[ro.index("--allowedTools") + 1 : ro.index("--disallowedTools")]
-    assert set(allowed) == {"Read", "Grep", "Glob"}
+    assert ro[ro.index("--tools") + 1] == "Read,Grep,Glob"
 
     rw = claude_argv(cwd="/work", write=True, model=CLAUDE_MODEL)
     assert rw[rw.index("--permission-mode") + 1] == "acceptEdits"
-    # No bare edit rule: it would allow edits outside the working directory.
-    allowed = rw[rw.index("--allowedTools") + 1 : rw.index("--disallowedTools")]
-    assert set(allowed) == {"Read", "Grep", "Glob"}
-    disallowed = rw[rw.index("--disallowedTools") + 1 :]
-    assert "Bash" in disallowed and "Agent" in disallowed
-    assert "Edit" not in disallowed
+    assert rw[rw.index("--tools") + 1] == "Read,Grep,Glob,Edit,Write"
+    assert "--add-dir" not in rw
+    with pytest.raises(SystemExit, match="write lane takes no extra directories"):
+        claude_argv(cwd="/work", write=True, model=CLAUDE_MODEL, read_dirs=("/x",))
 
 
 @pytest.mark.no_pg
 def test_provider_argv_dispatch() -> None:
     assert "claude" in provider_argv("claude", spec_file="/s.md", cwd="/w", write=False, model="m")
-    assert "--prompt-file" in provider_argv("grok", spec_file="/s.md", cwd="/w", write=False, model="m")
+    grok = provider_argv("grok", spec_file="/s.md", cwd="/w", write=False, model="m")
+    assert "--prompt-file" in grok
+    assert provider_argv(
+        "grok", spec_file="/s.md", cwd="/w", write=False, model="m",
+        read_dirs=("/ignored",),
+    ) == grok
     codex = provider_argv("codex", spec_file="/s.md", cwd="/w", write=False, model="m", output_file="/o.txt")
     assert "exec" in codex and "/o.txt" in codex
+    assert provider_argv(
+        "codex", spec_file="/s.md", cwd="/w", write=False, model="m",
+        output_file="/o.txt", read_dirs=("/ignored",),
+    ) == codex
+    openrouter = provider_argv(
+        "openrouter", spec_file="/s.md", cwd="/w", write=False, model="vendor/model",
+        output_file="/o.jsonl", read_dirs=("/control",),
+    )
+    assert "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in openrouter
+    assert "ANTHROPIC_API_KEY=" in openrouter
+    assert "/o.jsonl" in openrouter and "vendor/model" in openrouter
     with pytest.raises(SystemExit, match="output file"):
         provider_argv("codex", spec_file="/s.md", cwd="/w", write=False, model="m")
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok\\|openrouter"):
         provider_argv("gemini", spec_file="/s.md", cwd="/w", write=False, model="m")
 
 
@@ -238,7 +261,8 @@ def test_launch_claude_lane_feeds_spec_on_stdin(tmp_path: Path) -> None:
     def runner(argv: list[str], stdin_text: str | None):
         seen["argv"] = argv
         seen["stdin"] = stdin_text
-        return type("Done", (), {"returncode": 0, "stdout": "ok\nSTATUS: complete\n", "stderr": ""})()
+        event = {"type": "result", "result": "ok\nSTATUS: complete\n", "usage": {}}
+        return type("Done", (), {"returncode": 0, "stdout": json.dumps(event) + "\n", "stderr": ""})()
 
     result = launch(
         role="implementer",
@@ -263,7 +287,7 @@ def test_launch_rejects_unknown_vendor(tmp_path: Path) -> None:
     write_claude_first(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("x\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok\\|openrouter"):
         launch(
             role="implementer",
             vendor="gemini",
@@ -369,7 +393,7 @@ def test_cli_agent_start_follows_configured_first_slot(
     assert out.startswith("agent ")
     pr_agent = out.split()[1]
     _run(tmp_path, ["agent", "finish", "--id", pr_agent, "--verdict", "approved"])
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok\\|openrouter"):
         _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-logic", "--vendor", "gemini"])
     _run(tmp_path, ["task", "state", tid, "implementing"])
     _run(tmp_path, ["round", "start", "--task", tid])

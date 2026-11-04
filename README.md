@@ -32,7 +32,8 @@ paths. A38 visibility lookup likewise requires an explicitly configured
 access and session bindings without built-in selections. `agent lane run` needs
 `--session`; `agent run` uses its task session. Interactive Grok starts require
 an interactive role binding. Automatic Grok usage reads are disabled until
-`usage_session` is explicitly configured.
+`usage_session` is explicitly configured. OpenRouter key-usage reads are
+disabled until `usage_accounts` explicitly names one or more OpenRouter accounts.
 
 ## Install
 
@@ -125,12 +126,13 @@ agent knock             # valid foreground loop; the user-service daemon is the 
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon covers the loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
+agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
 agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
-# agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
+# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```
 
 `agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the Grok tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The TUI working probe (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
@@ -145,6 +147,12 @@ Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 
 `agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, github pending, mail pending, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
+
+`agent watch openrouter-usage` reads only explicitly selected `usage_accounts`
+and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
+processes record a script-owned `lane.run` activity after completion, including
+reported tokens, a bounded redacted file-tool transcript, and bounded final
+text. Neither activity stores argv, environment, profile paths, or credentials.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 
