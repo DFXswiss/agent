@@ -8,12 +8,62 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from .pr_lifecycle import _workflow_run_never_started
-from .workflow_approval import _commit_shas, _list_runs, _pending, _timestamp
+from .workflow_approval import (
+    PAGE_SIZE,
+    _commit_shas,
+    _list_runs,
+    _pending,
+    _timestamp,
+)
 
 MAX_DELETIONS = 20
 MAX_EXAMINED = 2 * MAX_DELETIONS
+# Two sweeps per hour stay under about half the shared hourly request budget.
+MAX_REQUESTS = 250
 MIN_AGE_S = 3600
 ROTATION_PERIOD_S = 1800
+
+
+class _BudgetExhausted(Exception):
+    pass
+
+
+class _BudgetedApi:
+    """Count the drain's API calls without weakening its fresh checks."""
+
+    def __init__(self, api: Any) -> None:
+        self._api = api
+        self.used = 0
+
+    def _check(self) -> None:
+        if self.used >= MAX_REQUESTS:
+            raise _BudgetExhausted
+
+    def request(self, *args: Any, **kwargs: Any) -> Any:
+        self._check()
+        self.used += 1
+        return self._api.request(*args, **kwargs)
+
+    def get_json(self, *args: Any, **kwargs: Any) -> Any:
+        self._check()
+        self.used += 1
+        return self._api.get_json(*args, **kwargs)
+
+    def get_optional(self, *args: Any, **kwargs: Any) -> Any:
+        self._check()
+        self.used += 1
+        return self._api.get_optional(*args, **kwargs)
+
+    def paginate(self, path: str, **kwargs: Any) -> Any:
+        self._check()
+        items = self._api.paginate(path, **kwargs)
+        # Reuse workflow_approval's size for GitHubApi.paginate's 100-item pages.
+        self.used += max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
+        return items
+
+
+# Counts exclude client GET retries. Pagination is charged after it finishes,
+# so one paginate call may overshoot the cap by its page count.
 
 
 def _open_pull_protection(
@@ -131,9 +181,7 @@ def drain_held_runs(
     from .a38_guard import (
         GuardError,
         PR_GUARD_CONFIG_PATH,
-        _is_rate_limit_response,
         _parse_default_branch,
-        _validate_sha,
         fetch_file_at_ref,
         resolve_default_branch_commit,
     )
@@ -147,6 +195,7 @@ def drain_held_runs(
         "deleted": [],
         "planned": [],
         "aborted": None,
+        "requests": 0,
     }
     repository = api.get_json(f"/repos/{repo}")
     default_branch = _parse_default_branch(
@@ -175,6 +224,26 @@ def drain_held_runs(
         return result
 
     result["enabled"] = True
+    api = _BudgetedApi(api)
+    try:
+        return _drain_enabled(api, repo, result, dry_run=dry_run, now=now)
+    except _BudgetExhausted:
+        result["aborted"] = "budget"
+        return result
+    finally:
+        result["requests"] = api.used
+
+
+def _drain_enabled(
+    api: Any,
+    repo: str,
+    result: dict[str, Any],
+    *,
+    dry_run: bool,
+    now: datetime | None,
+) -> dict[str, Any]:
+    from .a38_guard import GuardError, _is_rate_limit_response, _validate_sha
+
     if now is None:
         now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=MIN_AGE_S)
@@ -236,19 +305,9 @@ def drain_held_runs(
         # and every candidate is reached within
         # ceil(len(candidates) / MAX_EXAMINED) consecutive slots.
         candidates = candidates[offset:] + candidates[:offset]
-    # Request bound, excluding the API client's own GET retries: 3 gate reads
-    # (repository, default-branch commit, config),
-    # at most 10 run-list pages twice after a shift, scan-time P0 open-pull
-    # reads, and up to 3M commit pages for M distinct branch-matching pulls.
-    # For E examined and proven subset K:
-    # 23 + P0 + 3M + E + sum(i in K)(2 + Pi + 4mi).
-    # P is pull pages plus null-merge GETs; mi is matching pulls, each costing
-    # one detail GET and up to 3 commit pages. With P=1, M=m=1, E=K=40:
-    # 23+1+3+40+40*(2+1+4)=347 requests in the all-proven worst case; a run
-    # on a branch with no open pull (m=0) costs 4, about 190 for a full pass.
-    # Two sweeps an hour stay well inside the budget approval shares, and 40
-    # examined runs an hour outpace a backlog that grows a few runs an hour.
-    # MAX_EXAMINED bounds jobs reads and rechecks even if every examined run skips.
+    # MAX_REQUESTS enforces the pass-wide bound. The fresh check stays because
+    # protection must be current immediately before an irreversible delete;
+    # the cap, rather than a weaker check, bounds its cost.
     examined = 0
     try:
         for candidate in candidates:

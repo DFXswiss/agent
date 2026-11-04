@@ -177,8 +177,11 @@ candidates, but never weakens protection.
 
 The examined window of at most 40 candidates advances each half-hour slot, so
 candidates that cannot be deleted do not block the rest while jobs reads stay
-bounded; the request bound excludes the API client's own GET retries. It
-proves that a candidate never started immediately before re-reading that run;
+bounded. Each pass is capped at 250 API requests, excluding the client's own
+retries. When the cap is reached the pass ends with `aborted: "budget"`, keeps
+any deletions already made, and never deletes a run whose fresh check did not
+complete. The result reports `requests`. The pass proves that a candidate
+never started immediately before re-reading that run;
 candidates with jobs are skipped without consuming the deletion bound. Only a
 404 on the jobs read is likewise skipped; any other jobs failure aborts the
 pass. It deletes, or plans in a dry run, at most 20 runs per sweep. A denied or

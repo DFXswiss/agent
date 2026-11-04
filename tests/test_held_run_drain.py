@@ -14,6 +14,7 @@ from agent_cli.a38_guard import GuardError
 from agent_cli.held_run_drain import (
     MAX_DELETIONS,
     MAX_EXAMINED,
+    MAX_REQUESTS,
     ROTATION_PERIOD_S,
     drain_held_runs,
 )
@@ -44,6 +45,7 @@ class FakeDrain(FakeAPI):
         enabled: bool = True,
         listing_total_override: int | None = None,
     ) -> None:
+        self.requests = 0
         super().__init__()
         config = _pr_guard_config()
         if configured:
@@ -85,6 +87,7 @@ class FakeDrain(FakeAPI):
         return data
 
     def request_fn(self, method: str, url: str, body: bytes | None = None):
+        self.requests += 1
         method = method.upper()
         path = urlparse(url).path
         query = parse_qs(urlparse(url).query)
@@ -229,7 +232,81 @@ def test_superseded_old_never_started_fork_hold_is_deleted() -> None:
     fake.runs = [fake.run()]
     result = drain_held_runs(fake.api(), REPO)
     assert result["deleted"] == [101]
+    assert result["requests"] > 0
+    assert result["aborted"] is None
     assert fake.deletes == [101]
+
+
+def test_request_budget_stops_rechecks_after_preserving_deletions() -> None:
+    fake = FakeDrain()
+    fake.open_pull_items = [
+        _open_pull(
+            f"{number:040x}",
+            number=number,
+            head_ref=f"open-{number}",
+        )
+        for number in range(1, 31)
+    ]
+    fake.runs = [
+        fake.run(
+            id=ident,
+            head_sha=f"{1000 + ident:040x}",
+            head_branch=f"candidate-{ident}",
+        )
+        for ident in range(1, 11)
+    ]
+
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(10, 0))
+
+    assert result["aborted"] == "budget"
+    assert result["deleted"]
+    assert result["deleted"] == fake.deletes
+    assert result["requests"] <= MAX_REQUESTS
+    assert fake.requests <= MAX_REQUESTS + 3
+
+
+def test_request_budget_exhausted_during_scan_returns_without_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    fake.open_pull_items = [
+        _open_pull("a" * 40, number=1),
+        _open_pull("b" * 40, number=2),
+    ]
+    monkeypatch.setattr(held_run_drain, "MAX_REQUESTS", 2)
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["aborted"] == "budget"
+    assert result["deleted"] == []
+    assert fake.deletes == []
+    assert "error" not in result
+
+
+def test_request_budget_interruption_does_not_delete_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def configured_fake() -> FakeDrain:
+        fake = FakeDrain()
+        fake.runs = [fake.run()]
+        fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
+        fake.commits_by_pull[1] = []
+        return fake
+
+    measured = configured_fake()
+    measured_result = drain_held_runs(measured.api(), REPO, dry_run=True)
+    assert measured_result["planned"] == [101]
+    served_after_gate = measured_result["requests"]
+    assert measured.requests == served_after_gate + 3
+
+    monkeypatch.setattr(held_run_drain, "MAX_REQUESTS", served_after_gate - 1)
+    fake = configured_fake()
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["aborted"] == "budget"
+    assert 101 not in result["deleted"]
+    assert fake.deletes == []
 
 
 def test_open_pull_current_head_is_protected() -> None:
