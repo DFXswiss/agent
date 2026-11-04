@@ -1407,7 +1407,12 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
-        return handler()
+        lines = handler()
+        lane_observations = c.pop("lane_observations", [])
+        if isinstance(lane_observations, list) and lane_observations:
+            save_task(store, task)
+            return [*(str(item) for item in lane_observations), *lines]
+        return lines
     except CiObservedFailureError as exc:
         # Ready-side observed actual failed CI: hand off to script phase_ci.
         # Do not reply-gate on the Ready phase, and do not let same-phase retry
@@ -1421,7 +1426,15 @@ def advance_one(
         c["resume_phase"] = None
         c["blocker"] = None
         save_task(store, task)
-        return [str(exc) or "CI failed on recheck; returning to CI observation"]
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            str(exc) or "CI failed on recheck; returning to CI observation",
+        ]
     except (CoordinatorError, StoreError) as exc:
         # Task-specific failures must become GitHub-visible blockers when possible.
         c = coord(task)
@@ -1431,7 +1444,7 @@ def advance_one(
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
         save_task(store, task)
-        return publish_blocker(
+        blocker_lines = publish_blocker(
             store,
             worker,
             task,
@@ -1440,6 +1453,15 @@ def advance_one(
             kind="phase-error",
             reply_checkpoint=True,
         )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            *blocker_lines,
+        ]
     except Exception as exc:  # noqa: BLE001 — never escape as silent tick failure
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
@@ -1448,7 +1470,7 @@ def advance_one(
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
         save_task(store, task)
-        return publish_blocker(
+        blocker_lines = publish_blocker(
             store,
             worker,
             task,
@@ -1457,3 +1479,12 @@ def advance_one(
             kind="phase-error",
             reply_checkpoint=True,
         )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            *blocker_lines,
+        ]

@@ -130,7 +130,7 @@ def test_many_profiles_and_roles_load_without_fixed_count(tmp_path: Path) -> Non
     assert loaded.accounts["codex-primary"].config_dir == "/operator/path/codex-primary"
     assert loaded.roles["builder"].access == "workspace-write"
     assert loaded.roles["reader"].account is loaded.accounts["grok-primary"]
-    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
+    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude", "openrouter"})
     assert ACCESS_VALUES == frozenset({"read-only", "workspace-write"})
 
 
@@ -420,3 +420,46 @@ def test_frozen_dataclasses_expose_required_fields() -> None:
     assert accounts.roles["r"].access == "read-only"
     with pytest.raises(Exception):
         account.name = "other"  # type: ignore[misc]
+
+
+def test_openrouter_always_sets_claude_config_dir_for_default_named_path(
+    tmp_path: Path,
+) -> None:
+    default_dir = str(Path.home() / ".claude")
+    write_config(
+        tmp_path,
+        {
+            "accounts": {
+                "or": {"provider": "openrouter", "config_dir": default_dir}
+            },
+            "roles": {
+                "or-reader": {
+                    "account": "or", "model": "vendor/model", "access": "read-only"
+                }
+            },
+            "sessions": {},
+        },
+    )
+    prefix = load_ai_accounts(tmp_path).roles["or-reader"].env_prefix()
+    assert f"CLAUDE_CONFIG_DIR={default_dir}" in prefix
+
+
+def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
+    data = sample_config()
+    data["accounts"]["or"] = {
+        "provider": "openrouter",
+        "config_dir": "/operator/path/openrouter",
+    }
+    data["usage_accounts"] = ["or"]
+    write_config(tmp_path, data)
+    assert load_ai_accounts(tmp_path).usage_accounts == ("or",)
+
+    data["usage_accounts"] = ["missing"]
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError, match="unknown account"):
+        load_ai_accounts(tmp_path)
+
+    data["usage_accounts"] = ["grok-primary"]
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError, match="provider openrouter"):
+        load_ai_accounts(tmp_path)

@@ -106,8 +106,8 @@ A task exists only when the spine skill is attached. The durable unit is the ses
 **Error-to-PR as the default platform workflow.**  
 Production-error ingestion is not the product core and not a default skill. The `error.*` spellings in §14 belong to the opt-in **error-fix** skill (§21). A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
 
-**Worker capability ontology / scheduler.**  
-Providers remain the fixed adapter set `grok` | `codex` | `claude`; which one fills model slot `first` or `second` is device configuration, not a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
+**Worker capability ontology / scheduler.**
+Providers remain the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; which one fills model slot `first` or `second` is device configuration, not a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
 
 **A second event envelope beside `activity`.**  
 Outside facts enter as scripts writing catalog rows. Do not add a parallel `external_events` store.
@@ -331,7 +331,8 @@ v1 types (mechanism only):
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
-| `usage.snapshot` | — | script | — (Grok billing GET on this device; no TUI knock; payload includes account email, provider, and subscription tier). Missing or expired Grok login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`; the knock daemon stays silent. |
+| `usage.snapshot` | — | script | — (configured Grok billing or OpenRouter key-usage GET on this device; no TUI knock). Missing or expired Grok login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`; OpenRouter account failures are reported and never stored as zero values. |
+| `lane.run` | — | script | — (one completed lane process; configured/reported model, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
@@ -433,6 +434,7 @@ agent knock [--once]                           # --once drains; without --once i
 agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
+agent watch openrouter-usage                   # one scan of explicitly configured OpenRouter accounts
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
@@ -491,7 +493,7 @@ Agent does not provide its own remote lane transport or workspace mirroring.
 Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
 the `models` and `lane_execution` checks pass.
 
-**Lane providers are the fixed adapter set `grok` | `codex` | `claude`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; a `claude` lane is the headless `claude --print` adapter, not this tmux pane. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
+**Lane providers are the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; `claude` and `openrouter` lanes are headless restricted `claude --print` adapters, not this tmux pane. The OpenRouter adapter supplies its Anthropic-compatible endpoint and reads its key only inside a shell wrapper; the key is not argv or lane evidence. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
 Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub.
 
@@ -735,7 +737,7 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 | Hub assigns, leases, and reassigns work | Hub is replica + fan-out, not author. A disappeared laptop is restore or unread, not a lease expiry that moves authorship. |
 | Formal `CREATED` → `READY_FOR_PR` machine as platform | Spine already has a local task machine. A second hub machine would be a second truth. |
 | Normalized `external_events` table + fingerprint service | Outside facts are script-written `activity` rows (`pr.merged`, …). |
-| Worker capability ontology and scheduler | Providers are the fixed adapter set `grok` \| `codex` \| `claude`; slots are device configuration. Scripts are not store workers. |
+| Worker capability ontology and scheduler | Providers are the fixed adapter set `grok` \| `codex` \| `claude` \| `openrouter`; slots are device configuration. Scripts are not store workers. |
 | Policy language (allowed repos, forbidden paths, cost budgets) as core | Team-specific rules stay outside this public client (§2 Runtime). |
 | Website as an operations console for leases, token cost, stuck coding tasks | Website is the visibility replica (§7). |
 | Autonomous merge | Already forbidden. Stays forbidden. |

@@ -113,7 +113,7 @@ Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
 the operator; they are distinct from the fixed workflow kinds (`implementer`,
 `reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`) and from the supported
-provider adapters (`grok`, `codex`, `claude`). Those workflow kinds and adapters
+provider adapters (`grok`, `codex`, `claude`, `openrouter`). Those workflow kinds and adapters
 are protocol capabilities used when resolving a lane slot, not preinstalled user
 roles.
 
@@ -124,8 +124,8 @@ inner loop and runs the first PR review pair; model slot `second` runs the
 second PR review pair. The required top-level `models` block names the provider
 of each review slot:
 
-- `first`: `grok`, `codex` or `claude`
-- `second`: `grok`, `codex` or `claude`, different from `first`
+- `first`: `grok`, `codex`, `claude` or `openrouter`
+- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`
 
 The optional top-level `implementer` names the implementation provider. It may
 be `grok`, `codex`, `claude`, or `deepseek`. It must differ from
@@ -188,11 +188,22 @@ cannot be kept from running commands. It also refuses a configured implementer
 that differs from `models.first`; separate implementers are not supported by
 the coordinator yet. `agent lane run` and `agent run` accept `models.first = codex`.
 
-The `claude` adapter runs with `--setting-sources user` and `--strict-mcp-config`,
-so a worktree's `.claude/settings.json` hooks and `.mcp.json` never reach a lane.
-Hooks in the operator's own user settings still run in the lane process. That is
-accepted: the operator configured them on this device, and the lane model has no
-`Bash`.
+The `claude` and `openrouter` adapters run Claude Code with `--restricted`,
+`--strict-mcp-config`, `--disable-slash-commands`, and an explicit file-tool
+list. Restricted mode ignores user, project and local settings. A write lane
+gets only `Read,Grep,Glob,Edit,Write` in its worktree and cannot receive an
+extra directory. A read-only lane gets only `Read,Grep,Glob`; a static script
+may add an explicit read directory for control artifacts.
+
+The `openrouter` adapter points Claude Code at OpenRouter's Anthropic-compatible
+endpoint. Its model is the operator-supplied OpenRouter model id; there is no
+default. Put the key in `<config_dir>/openrouter-api-key`. A shell wrapper reads
+it only after launch and exports it as `ANTHROPIC_AUTH_TOKEN`; the key never
+appears in argv. Keep every OpenRouter `config_dir` outside every worktree and
+every added read directory. Launch is refused when those paths overlap. Claude
+Code's reported token counts and tool calls are stored in `lane.run`; its
+Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
+not OpenRouter prices.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;
@@ -208,14 +219,16 @@ pin by the same rules as `agent models first|second`.
 
 Each account requires:
 
-- `provider`: `grok`, `codex` or `claude`
+- `provider`: `grok`, `codex`, `claude` or `openrouter`
 - `config_dir`: absolute path to that profile's provider CLI configuration
   directory (no NUL, newline, CR, or parent traversal); for `claude` this is
   the directory the `CLAUDE_CONFIG_DIR` variable points to. The default
   profile is `~/.claude`: Claude Code keeps its login outside that directory,
   so for exactly this path the lane leaves `CLAUDE_CONFIG_DIR` unset instead of
   pointing it there. Any other directory is a named profile the operator logged
-  in with `CLAUDE_CONFIG_DIR=<dir> claude auth login`.
+  in with `CLAUDE_CONFIG_DIR=<dir> claude auth login`. An `openrouter` account
+  always sets `CLAUDE_CONFIG_DIR`, including when the directory is named
+  `~/.claude`.
 
 Each role requires:
 
@@ -227,6 +240,13 @@ The optional top-level `usage_session` selects an explicitly configured
 interactive Grok session for automatic billing reads. Missing/null disables
 those reads; it never chooses the host profile or the first available account.
 The selected session must exist locally, be owned and active.
+
+The optional top-level `usage_accounts` is a list of explicitly named
+`openrouter` accounts. Missing/null/`[]` disables OpenRouter polling. Each
+configured account is read from `<config_dir>/openrouter-api-key`; unknown names
+and accounts of another provider are rejected. `agent watch openrouter-usage`
+records changed USD key-usage values from OpenRouter's key endpoint as
+`usage.snapshot`, without storing the key, label, or provider ids.
 
 Each session may include:
 
@@ -267,11 +287,12 @@ authenticated for that profile.
 
 `AIAccounts.for_session(session_id)` resolves `sessions[session_id].interactive`
 and fails when that binding is absent or null. The loader may represent Codex
-and Claude roles in the manifest. Interactive runtime support remains Grok-only;
+and Claude/OpenRouter roles in the manifest. Interactive runtime support remains Grok-only;
 unsupported interactive providers are refused. The `claude` adapter is a
 headless lane (`claude --print`, spec on stdin, read tools only, plus
 `acceptEdits` (edits inside the worktree only) for a write lane; never Bash,
-subagents or the web). The configured model is required,
+subagents or the web). The OpenRouter adapter uses the same restricted file-tool
+surface. The configured model is required,
 and a supplied `--model` must agree with it. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;
 a changed or missing binding requires a new session. Existing unbound Grok conversation IDs are not silently adopted under a newly

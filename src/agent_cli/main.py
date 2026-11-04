@@ -91,7 +91,13 @@ from .runtime import (
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreConnectionError, StoreError, utcnow
-from .usage import AuthStale, scan_usage, usage_poll_due
+from .usage import (
+    AuthStale,
+    OpenRouterUsageError,
+    scan_openrouter_usage,
+    scan_usage,
+    usage_poll_due,
+)
 from .watch import (
     assigned_session_id,
     assigned_workspace_root,
@@ -189,6 +195,7 @@ ACTIVITY_TYPES = frozenset(
         "query.result",
         "subscription.set",
         "usage.snapshot",
+        "lane.run",
         "supervise.event",
     }
 )
@@ -200,6 +207,7 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "query.result",
         "session.register",
         "usage.snapshot",
+        "lane.run",
         "error.seen",
         "supervise.event",
         "issue.assigned.ack",
@@ -3515,6 +3523,21 @@ def cmd_run(args: list[str]) -> None:
                     config_home=store.home,
                     session_id=session_id,
                 )
+                working = _find_working_agent(
+                    store, tid, role=role, vendor=vendor, round_num=round_num
+                )
+                try:
+                    record_lane_run(
+                        store,
+                        session_id=session_id,
+                        result=result,
+                        model=selected_lane.model,
+                        task_id=tid,
+                        agent_id=str(working["id"]) if working is not None else None,
+                        round_num=round_num,
+                    )
+                except Exception as exc:  # noqa: BLE001 — audit failure cannot change verdict
+                    print(f"lane.run write failed: {exc}", file=sys.stderr)
                 _print_lane_result(result)
                 if role == "implementer" and result.status == "complete":
                     working = _find_working_agent(
@@ -3796,6 +3819,9 @@ def cmd_lane(args: list[str]) -> None:
         die(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
         die(f"vendor must be {PROVIDER_CHOICES}")
+    from .ai_accounts import load_ai_accounts
+
+    selected_lane = load_ai_accounts(home()).for_lane(session_id, role, vendor)
     result = launch(
         role=role,
         vendor=vendor,
@@ -3809,6 +3835,20 @@ def cmd_lane(args: list[str]) -> None:
     if dry_run:
         print(" ".join(result.argv))
         return
+    lane_store: Store | None = None
+    try:
+        lane_store = open_store()
+        record_lane_run(
+            lane_store,
+            session_id=session_id,
+            result=result,
+            model=selected_lane.model,
+        )
+    except (Exception, SystemExit) as exc:  # audit failure cannot change verdict
+        print(f"lane.run write failed: {exc}", file=sys.stderr)
+    finally:
+        if lane_store is not None:
+            lane_store.close()
     _print_lane_result(result)
     if result.status != "complete":
         raise SystemExit(2)
@@ -3836,6 +3876,17 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"usage.snapshot {usage_id}")
                 except AuthStale:
                     pass
+                except StoreError as exc:
+                    print(f"usage.snapshot error: {exc}", file=sys.stderr)
+                try:
+                    if load_ai_accounts(store.home).usage_accounts:
+                        for activity_id in scan_openrouter_usage(store):
+                            print(f"usage.snapshot {activity_id}")
+                except OpenRouterUsageError as exc:
+                    for activity_id in exc.activity_ids:
+                        print(f"usage.snapshot {activity_id}")
+                    for message in exc.errors:
+                        print(f"usage.snapshot error: {message}", file=sys.stderr)
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 try:
@@ -3987,12 +4038,13 @@ def cmd_watch(args: list[str]) -> None:
         "pending",
         "assigned",
         "grok-usage",
+        "openrouter-usage",
         "errors",
         "error-fix",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|errors|error-fix"
         )
     store = open_store()
     try:
@@ -4018,6 +4070,20 @@ def cmd_watch(args: list[str]) -> None:
             else:
                 print("usage.snapshot none")
             return
+        if args[0] == "openrouter-usage":
+            try:
+                activity_ids = scan_openrouter_usage(store)
+            except OpenRouterUsageError as exc:
+                for activity_id in exc.activity_ids:
+                    print(f"usage.snapshot {activity_id}")
+                for message in exc.errors:
+                    print(f"usage.snapshot error: {message}", file=sys.stderr)
+                raise SystemExit(1) from None
+            for activity_id in activity_ids:
+                print(f"usage.snapshot {activity_id}")
+            if not activity_ids:
+                print("usage.snapshot none")
+            return
         if args[0] == "assigned":
             from .knock import deliver
             from .runtime import run_argv
@@ -4026,7 +4092,7 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|errors|error-fix"
                 )
             follow = extra == ["--follow"]
             while True:

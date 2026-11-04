@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-SUPPORTED_PROVIDERS = frozenset({"grok", "codex", "claude"})
+SUPPORTED_PROVIDERS = frozenset({"grok", "codex", "claude", "openrouter"})
 PROVIDER_CHOICES = "|".join(sorted(SUPPORTED_PROVIDERS))
 IMPLEMENTER_PROVIDERS = SUPPORTED_PROVIDERS | frozenset({"deepseek"})
 IMPLEMENTER_PROVIDER_CHOICES = "|".join(sorted(IMPLEMENTER_PROVIDERS))

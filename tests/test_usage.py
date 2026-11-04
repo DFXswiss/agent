@@ -12,8 +12,10 @@ from agent_cli.usage import (
     CREDITS_URL,
     SETTINGS_URL,
     AuthStale,
+    OpenRouterUsageError,
     fetch_credits_and_settings,
     last_usage_snapshot,
+    scan_openrouter_usage,
     scan_usage,
     usage_poll_due,
 )
@@ -79,6 +81,94 @@ def _owned_grok_session(store: Store, session_id: str = "s-grok") -> str:
         },
     )
     return session_id
+
+
+def _openrouter_config(store: Store, config_dir: Path) -> None:
+    (store.home / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "router-a": {
+                        "provider": "openrouter",
+                        "config_dir": str(config_dir),
+                    }
+                },
+                "roles": {},
+                "sessions": {},
+                "usage_accounts": ["router-a"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _openrouter_body(*, usage: float = 1.25) -> dict[str, Any]:
+    return {
+        "data": {
+            "usage": usage,
+            "usage_daily": 0.25,
+            "usage_weekly": 0.75,
+            "usage_monthly": 1.0,
+            "limit": 10.0,
+            "limit_remaining": 8.75,
+            "limit_reset": "2026-12-01T00:00:00Z",
+            "label": "must-not-be-stored",
+            "id": "must-not-be-stored",
+        }
+    }
+
+
+def test_scan_openrouter_usage_snapshot_and_dedup(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    session_id = _owned_grok_session(store)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    _openrouter_config(store, config_dir)
+
+    def fetch(token: str) -> dict[str, Any]:
+        assert token == "router-secret"
+        return _openrouter_body()
+
+    created = scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    )
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None and row["session_id"] == session_id
+    payload = row["payload"]
+    assert payload == {
+        "vendor": "openrouter",
+        "provider": "openrouter",
+        "account": "router-a",
+        "usage_usd": 1.25,
+        "usage_daily_usd": 0.25,
+        "usage_weekly_usd": 0.75,
+        "usage_monthly_usd": 1.0,
+        "limit_usd": 10.0,
+        "limit_remaining_usd": 8.75,
+        "limit_reset": "2026-12-01T00:00:00Z",
+        "fetched_at": "2026-11-04T10:00:00Z",
+    }
+    assert "router-secret" not in json.dumps(payload)
+    assert scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:01:00Z"
+    ) == []
+
+
+def test_scan_openrouter_usage_missing_key_and_malformed_data(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    _openrouter_config(store, config_dir)
+    with pytest.raises(OpenRouterUsageError, match="openrouter key missing"):
+        scan_openrouter_usage(store, fetch=lambda _token: _openrouter_body())
+    assert not [r for r in store.rows("activity") if r.get("type") == "usage.snapshot"]
+
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    with pytest.raises(OpenRouterUsageError, match="data is not an object"):
+        scan_openrouter_usage(store, fetch=lambda _token: {"data": []})
 
 
 def test_scan_usage_inserts_snapshot(tmp_path: Path) -> None:

@@ -3541,6 +3541,86 @@ def test_preflight_accepts_claude_first_with_device_lanes(tmp_path: Path, monkey
     preflight_worker(store, worker, fake)
 
 
+def test_preflight_accepts_openrouter_first_with_device_lanes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "openrouter", "second": "codex"}
+    data["accounts"]["router-w"] = {
+        "provider": "openrouter", "config_dir": "/test/openrouter"
+    }
+    data["roles"]["router-builder"] = {
+        "account": "router-w", "model": "vendor/model", "access": "workspace-write"
+    }
+    data["roles"]["router-reader"] = {
+        "account": "router-w", "model": "vendor/model", "access": "read-only"
+    }
+    data["sessions"]["worker-session"]["lanes"].update({
+        "openrouter:implementer": "router-builder",
+        "openrouter:reviewer": "router-reader",
+        "openrouter:pr-reviewer-quality": "router-reader",
+        "openrouter:pr-reviewer-logic": "router-reader",
+    })
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    preflight_worker(store, worker, fake)
+
+
+def test_coordinator_refuses_openrouter_config_overlapping_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "overlap"
+    worktree.mkdir()
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["accounts"]["router"] = {
+        "provider": "openrouter", "config_dir": str(worktree / "config")
+    }
+    data["roles"]["router-builder"] = {
+        "account": "router", "model": "vendor/model", "access": "workspace-write"
+    }
+    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    path.write_text(json.dumps(data))
+    task = {
+        "id": "aa000001-0000-4000-8000-0000000000e0",
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    store.write("task", "insert", task["id"], task)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    with pytest.raises(CoordinatorError, match="config_dir overlaps worktree"):
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="openrouter",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=lambda argv, stdin: Completed(0, "", ""),
+        )
+    assert not [row for row in store.rows("agent") if row.get("task_id") == task["id"]]
+
+
 def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
     from agent_cli.coordinator_lanes import _prepare_pr_review_agent
 
@@ -3564,7 +3644,9 @@ def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
     )
     argv = prep["argv"]
     assert "claude" in argv and "--print" in argv
-    assert "--setting-sources" in argv and "Bash" in argv[argv.index("--disallowedTools") + 1 :]
+    assert "--restricted" in argv and "--setting-sources" not in argv
+    assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
+    assert "--add-dir" in argv
     assert "Review this." in (prep.get("stdin_text") or "")
 
 

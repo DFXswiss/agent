@@ -13,11 +13,16 @@ import pytest
 from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
 from agent_cli.lane import (
     LANE_STRIP_ENV,
+    OPENROUTER_BASE_URL,
     LaneResult,
+    _OPENROUTER_WRAPPER,
     _run_in_tmux,
+    claude_argv,
     codex_argv,
+    finalize_lane_output,
     grok_argv,
     launch,
+    openrouter_argv,
     parse_status,
     tmux_wrap_argv,
 )
@@ -30,6 +35,8 @@ OPERATOR_GROK_MODEL = "operator-lane-grok-model"
 OPERATOR_CODEX_MODEL = "operator-lane-codex-model"
 OPERATOR_GROK_HOME = "/operator/path/grok-lane-a"
 OPERATOR_CODEX_HOME = "/operator/path/codex-lane-a"
+OPERATOR_OPENROUTER_HOME = "/operator/path/openrouter-lane-a"
+OPERATOR_OPENROUTER_MODEL = "deepseek/example"
 OPERATOR_GROK_HOME_B = "/operator/path/grok-lane-b"
 OPERATOR_GROK_MODEL_B = "operator-lane-grok-model-b"
 DEFAULT_SESSION = "sess-1"
@@ -53,6 +60,9 @@ def write_operator_ai_accounts(
             "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
             "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
             "grok-b": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME_B},
+            "openrouter-a": {
+                "provider": "openrouter", "config_dir": OPERATOR_OPENROUTER_HOME
+            },
         },
         "roles": {
             "lane-builder": {
@@ -80,6 +90,16 @@ def write_operator_ai_accounts(
                 "model": OPERATOR_GROK_MODEL_B,
                 "access": "workspace-write",
             },
+            "openrouter-builder": {
+                "account": "openrouter-a",
+                "model": OPERATOR_OPENROUTER_MODEL,
+                "access": "workspace-write",
+            },
+            "openrouter-reader": {
+                "account": "openrouter-a",
+                "model": OPERATOR_OPENROUTER_MODEL,
+                "access": "read-only",
+            },
         },
         "sessions": sessions
         or {
@@ -94,6 +114,10 @@ def write_operator_ai_accounts(
                     "codex:reviewer": "codex-reader",
                     "codex:pr-reviewer-quality": "codex-reader",
                     "codex:pr-reviewer-logic": "codex-reader",
+                    "openrouter:implementer": "openrouter-builder",
+                    "openrouter:reviewer": "openrouter-reader",
+                    "openrouter:pr-reviewer-quality": "openrouter-reader",
+                    "openrouter:pr-reviewer-logic": "openrouter-reader",
                 },
             },
             ALT_SESSION: {
@@ -261,6 +285,253 @@ def test_codex_reviewer_argv_requires_explicit_model() -> None:
     assert "workspace-write" not in argv
     assert argv[argv.index("--model") + 1] == "explicit-codex-ro"
     assert argv[-1] == "-"
+
+
+def _strip_prefix() -> list[str]:
+    prefix = ["env"]
+    for key in LANE_STRIP_ENV:
+        prefix.extend(["-u", key])
+    return prefix
+
+
+def test_claude_argv_is_exactly_restricted_to_file_tools() -> None:
+    assert claude_argv(
+        cwd="/work", write=True, model="model-a"
+    ) == [
+        *_strip_prefix(),
+        "claude", "--print", "--verbose", "--output-format", "stream-json",
+        "--model", "model-a", "--restricted", "--strict-mcp-config",
+        "--disable-slash-commands", "--tools", "Read,Grep,Glob,Edit,Write",
+        "--permission-mode", "acceptEdits",
+    ]
+    assert claude_argv(
+        cwd="/work", write=False, model="model-b", read_dirs=("/control", "/evidence")
+    ) == [
+        *_strip_prefix(),
+        "claude", "--print", "--verbose", "--output-format", "stream-json",
+        "--model", "model-b", "--restricted", "--strict-mcp-config",
+        "--disable-slash-commands", "--tools", "Read,Grep,Glob",
+        "--permission-mode", "default", "--add-dir", "/control",
+        "--add-dir", "/evidence",
+    ]
+    with pytest.raises(SystemExit, match="write lane takes no extra directories"):
+        claude_argv(cwd="/work", write=True, model="m", read_dirs=("/control",))
+
+
+def test_openrouter_argv_has_wrapper_and_never_has_key() -> None:
+    argv = openrouter_argv(
+        cwd="/work",
+        write=False,
+        model="deepseek/example",
+        output_file="/tmp/output.jsonl",
+        read_dirs=("/control",),
+    )
+    assert argv == [
+        *_strip_prefix(),
+        f"ANTHROPIC_BASE_URL={OPENROUTER_BASE_URL}",
+        "ANTHROPIC_API_KEY=",
+        "sh", "-c", _OPENROUTER_WRAPPER, "sh", "/tmp/output.jsonl",
+        "claude", "--print", "--verbose", "--output-format", "stream-json",
+        "--model", "deepseek/example", "--restricted", "--strict-mcp-config",
+        "--disable-slash-commands", "--tools", "Read,Grep,Glob",
+        "--permission-mode", "default", "--add-dir", "/control",
+    ]
+    assert "secret-test-key" not in " ".join(argv)
+
+
+def test_openrouter_wrapper_missing_and_present_key(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "record.txt"
+    fake = bin_dir / "claude"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "printf '%s|%s|%s\\n' \"${ANTHROPIC_AUTH_TOKEN:+set}\" \"$ANTHROPIC_BASE_URL\" \"$*\" > \"$FAKE_RECORD\"\n"
+        "printf '%s\\n' '{\"type\":\"result\",\"result\":\"STATUS: complete\",\"usage\":{}}'\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    output = tmp_path / "stream.jsonl"
+    argv = openrouter_argv(
+        cwd=str(tmp_path), write=False, model="vendor/model", output_file=str(output)
+    )
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["FAKE_RECORD"] = str(record)
+    env["CLAUDE_CONFIG_DIR"] = str(config)
+    missing = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
+    assert missing.returncode == 2
+    assert "STATUS: unavailable" in missing.stdout
+    assert "openrouter key missing" in missing.stdout
+    assert not output.exists()
+
+    key = "secret-test-key"
+    (config / "openrouter-api-key").write_text(key, encoding="utf-8")
+    present = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
+    assert present.returncode == 0
+    assert present.stdout == ""
+    assert '"type":"result"' in output.read_text(encoding="utf-8")
+    recorded = record.read_text(encoding="utf-8")
+    assert recorded.startswith(f"set|{OPENROUTER_BASE_URL}|")
+    assert key not in recorded
+    assert key not in " ".join(argv)
+
+
+def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
+    events = [
+        {"type": "system", "subtype": "init", "model": "fallback-model"},
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "working"},
+            {"type": "tool_use", "id": "tool-1", "name": "Read", "input": {"file_path": "/work/a.py"}},
+            {"type": "tool_use", "id": "tool-2", "name": "Grep", "input": {"pattern": "secret=abc"}},
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "tool-2", "is_error": True, "content": "denied"}
+        ]}},
+        {"type": "result", "result": "done\nSTATUS: complete", "num_turns": 3,
+         "duration_ms": 42, "usage": {"input_tokens": 10, "output_tokens": 4,
+         "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1},
+         "modelUsage": {"vendor/model": {}}},
+    ]
+    stream = "\n".join(json.dumps(event) for event in events)
+    out = finalize_lane_output("claude", stream, "")
+    assert out.text == "done\nSTATUS: complete"
+    assert out.usage is not None
+    assert out.usage.model == "vendor/model"
+    assert out.usage.input_tokens == 10
+    assert out.usage.num_turns == 3
+    assert out.tools == (
+        {"tool": "Read", "target": "/work/a.py", "error": False},
+        {"tool": "Grep", "target": "[redacted]", "error": True},
+    )
+    assert out.tools_truncated is False
+
+
+def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
+    no_result = json.dumps({"type": "assistant", "message": {"content": []}})
+    assert finalize_lane_output("claude", no_result, "").text == ""
+    assert finalize_lane_output("claude", "not json", "").usage is None
+    blocks = [
+        {"type": "tool_use", "id": f"t-{i}", "name": "Read", "input": {"path": "x" * 500}}
+        for i in range(201)
+    ]
+    stream = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init", "model": "fallback"}),
+            json.dumps({"type": "assistant", "message": {"content": blocks}}),
+            json.dumps({"type": "result", "result": "STATUS: complete", "usage": {},
+                        "modelUsage": {"a": {}, "b": {}}}),
+        ]
+    )
+    out = finalize_lane_output("openrouter", "pane noise", stream)
+    assert len(out.tools) == 200
+    assert out.tools_truncated is True
+    assert len(out.tools[0]["target"]) <= 300
+    assert out.usage is not None and out.usage.model == "fallback"
+    assert finalize_lane_output("codex", "stdout", "file").text == "file"
+    assert finalize_lane_output("grok", "stdout", "file").text == "stdout"
+
+
+@pytest.mark.parametrize("config_inside_worktree", [False, True])
+def test_launch_refuses_openrouter_config_and_worktree_overlap(
+    tmp_path: Path, config_inside_worktree: bool
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    config_dir = worktree / "config" if config_inside_worktree else tmp_path
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit, match="overlaps"):
+        launch(
+            role="implementer",
+            vendor="openrouter",
+            spec_file=str(spec),
+            cwd=str(worktree),
+            dry_run=True,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_refuses_openrouter_read_directory_inside_config(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("review\n", encoding="utf-8")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    exposed = config_dir / "evidence"
+    exposed.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(SystemExit, match="read directory overlaps"):
+        launch(
+            role="reviewer",
+            vendor="openrouter",
+            spec_file=str(spec),
+            cwd=str(worktree),
+            read_dirs=(str(exposed),),
+            dry_run=True,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
+        output_file = Path(argv[wrapper_index + 2])
+        output_file.write_text(
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": "STATUS: complete",
+                    "usage": {"input_tokens": 7, "output_tokens": 2},
+                    "modelUsage": {OPERATOR_OPENROUTER_MODEL: {}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        assert stdin_text == "implement\n"
+        return SimpleNamespace(returncode=0, stdout="pane output is not the result", stderr="")
+
+    result = launch(
+        role="implementer",
+        vendor="openrouter",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.stdout == "STATUS: complete"
+    assert result.status == "complete"
+    assert result.usage is not None
+    assert result.usage.model == OPERATOR_OPENROUTER_MODEL
+    assert result.usage.input_tokens == 7
 
 
 def test_parse_status_complete() -> None:

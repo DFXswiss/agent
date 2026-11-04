@@ -49,6 +49,7 @@ PROVIDER_HOME_ENV = {
     "grok": "GROK_HOME",
     "codex": "CODEX_HOME",
     "claude": "CLAUDE_CONFIG_DIR",
+    "openrouter": "CLAUDE_CONFIG_DIR",
 }
 ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
 # Fixed workflow kinds that must resolve to read-only access. These are protocol

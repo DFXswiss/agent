@@ -588,7 +588,7 @@ def lane_runner(fake: FakeGh):
             with fake._lane_lock:
                 fake.parallel_launch_seen = {"pr-reviewer-quality", "pr-reviewer-logic"} <= fake._inflight_roles
         fake.launched.append(role)
-        if role == "implementer":
+        if role == "implementer" and "grok" in argv:
             assert "--deny" in argv and "Bash" in argv
             assert "--no-subagents" in argv
             assert "--disable-web-search" in argv
@@ -598,6 +598,17 @@ def lane_runner(fake: FakeGh):
             fake._lane_barrier.wait(timeout=3)
             with fake._lane_lock:
                 fake._inflight_roles.discard(role)
+        if "claude" in argv:
+            stream = json.dumps(
+                {"type": "result", "result": out, "usage": {}}
+            ) + "\n"
+            if f"ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+                wrapper_index = next(
+                    i for i, value in enumerate(argv) if "openrouter-api-key" in value
+                )
+                Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
+                return Completed(0, "", "")
+            return Completed(0, stream, "")
         return Completed(0, out, "")
 
     return run
