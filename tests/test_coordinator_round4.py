@@ -255,16 +255,26 @@ def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
     class CaptureHub(QueryHub):
         def query(self, match):
             seen.append(match)
-            return {"rows": []}
+            rows = (
+                [assignment_row(repo="Example/project")]
+                if "Example/project#7" in match["payload.issue_key"]["in"]
+                else []
+            )
+            return {"rows": rows}
 
     monkeypatch.setattr("agent_cli.coordinator_github.Hub", CaptureHub)
-    _hub_assignment_row(
+    row_id, retry = _hub_assignment_row(
         MetaStore(), repo="example/project", number=7, agent="worker-bot",
         assignment_actor="human-owner", reply_logins=("human-owner",),
+        canonical_repo="Example/project",
     )
+    assert row_id == "assignment-row"
+    assert retry is None
     assert seen == [{
         "type": "assignment.created",
-        "payload.issue_key": {"in": ["example/project#7"]},
+        "payload.issue_key": {
+            "in": ["example/project#7", "Example/project#7"],
+        },
     }]
 
 
@@ -313,7 +323,12 @@ def _patch_accept_prerequisites(monkeypatch):
         "agent_cli.coordinator_github.account_for",
         lambda *_a, **_k: SimpleNamespace(login="worker-bot"),
     )
-    monkeypatch.setattr("agent_cli.coordinator_github.verify_issue_assigned", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.verify_issue_assigned",
+        lambda *_a, **_k: {
+            "repository_url": "https://api.github.com/repos/Example/project"
+        },
+    )
     monkeypatch.setattr("agent_cli.coordinator_github.save_task", lambda *_a, **_k: None)
     monkeypatch.setattr(
         "agent_cli.coordinator_github.gh_list",
@@ -323,6 +338,42 @@ def _patch_accept_prerequisites(monkeypatch):
             "created_at": "2026-01-01T00:00:00Z",
         }],
     )
+
+
+def test_phase_accept_falls_back_to_issue_lookup_for_canonical_repo(
+    monkeypatch, tmp_path
+):
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.verify_issue_assigned", lambda *_a, **_k: {}
+    )
+    lookups = []
+
+    def issue_lookup(runner, argv):
+        lookups.append((runner, argv))
+        return {"repository": {"full_name": "Example/project"}}
+
+    captured = {}
+
+    def hub_assignment(_store, **kwargs):
+        captured.update(kwargs)
+        return None, "device is not paired with a hub"
+
+    monkeypatch.setattr("agent_cli.coordinator_github.gh_json", issue_lookup)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row", hub_assignment
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker", lambda *_a, **_k: ["published"]
+    )
+    task = _accept_task()
+    task["payload"]["coordinator"]["source"]["repo"] = "example/project"
+
+    assert phase_accept(
+        object(), _accept_worker(tmp_path), task, object()
+    ) == ["published"]
+    assert lookups[0][1] == ["gh", "api", "repos/example/project/issues/7"]
+    assert captured["canonical_repo"] == "Example/project"
 
 
 def test_missing_hub_assignment_publishes_blocker_and_never_starts_acceptance(monkeypatch, tmp_path):
@@ -448,9 +499,14 @@ def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, 
     assert checkpoint["resume_phase"] == "implement"
     assert checkpoint["question_activity_id"] == "question-checkpoint"
     assert checkpoint["replies_consumed_through"] == 41
-    assert checkpoint["blocker_publish_once"] is True
+    assert checkpoint["binding_blocker"] == "configuration changed"
+    assert "blocker_publish_once" not in checkpoint
     assert published == [
-        {"kind": "configuration-binding", "preserve_reply_checkpoint": True}
+        {
+            "kind": "configuration-binding",
+            "preserve_reply_checkpoint": True,
+            "binding_notice": True,
+        }
     ]
 
 
@@ -467,13 +523,17 @@ def test_runtime_configuration_error_in_ci_resumes_when_binding_is_restored(
             raise CoordinatorError("configuration changed")
         return object()
 
-    monkeypatch.setattr("agent_cli.coordinator_runtime._open_tasks", lambda *_a, **_k: [task])
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime._open_tasks", lambda *_a, **_k: [task]
+    )
     monkeypatch.setattr("agent_cli.coordinator_runtime.repo_cfg", repo_config)
     monkeypatch.setattr(
         "agent_cli.coordinator_runtime.execution_binding",
         lambda *_a, **_k: "pinned-binding",
     )
-    monkeypatch.setattr("agent_cli.coordinator_runtime.save_task", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.save_task", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         "agent_cli.coordinator_runtime.publish_blocker",
         lambda *_a, **_k: ["published"],
@@ -494,12 +554,69 @@ def test_runtime_configuration_error_in_ci_resumes_when_binding_is_restored(
         object(), make_worker(tmp_path), runner=object(), lane_runner=None
     ) == ["published"]
     assert checkpoint["phase"] == "ci"
+    assert checkpoint["binding_blocker"] == "configuration changed"
     broken["value"] = False
     assert advance_one(
         object(), make_worker(tmp_path), runner=object(), lane_runner=None
     ) == ["CI resumed"]
     assert checkpoint["phase"] == "ci"
-    assert "blocker_publish_once" not in checkpoint
+    assert "binding_blocker" not in checkpoint
+    assert "binding_blocker_activity_id" not in checkpoint
+
+
+def test_restored_binding_retries_failed_accept_blocker_without_overwriting_it(
+    monkeypatch, tmp_path
+):
+    task = _accept_task()
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint.update(
+        phase="blocked",
+        resume_phase="accept",
+        execution_binding="pinned-binding",
+        blocker="device is not paired with a hub",
+        blocker_publish_once=True,
+        blocker_publish_kind="configuration-binding",
+        question_activity_id="older-question",
+    )
+    broken = {"value": True}
+
+    def repo_config(*_args, **_kwargs):
+        if broken["value"]:
+            raise CoordinatorError("configuration changed")
+        return object()
+
+    posts = []
+
+    def post(*_args, **kwargs):
+        posts.append(kwargs["body"])
+        return f"published-{len(posts)}"
+
+    monkeypatch.setattr("agent_cli.coordinator_runtime._open_tasks", lambda *_a, **_k: [task])
+    monkeypatch.setattr("agent_cli.coordinator_runtime.repo_cfg", repo_config)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.execution_binding",
+        lambda *_a, **_k: "pinned-binding",
+    )
+    monkeypatch.setattr("agent_cli.coordinator_runtime.save_task", lambda *_a, **_k: None)
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", lambda *_a, **_k: None)
+    monkeypatch.setattr("agent_cli.coordinator_github.post_issue_comment", post)
+
+    advance_one(object(), make_worker(tmp_path), runner=object(), lane_runner=None)
+    assert checkpoint["blocker"] == "device is not paired with a hub"
+    assert "blocker_activity_id" not in checkpoint
+    assert checkpoint["binding_blocker"] == "configuration changed"
+    assert checkpoint["binding_blocker_activity_id"] == "published-1"
+
+    broken["value"] = False
+    advance_one(object(), make_worker(tmp_path), runner=object(), lane_runner=None)
+    assert posts == [
+        "Blocked: configuration changed",
+        "Blocked: device is not paired with a hub",
+    ]
+    assert checkpoint["blocker"] == "device is not paired with a hub"
+    assert checkpoint["blocker_activity_id"] == "published-2"
+    assert "binding_blocker" not in checkpoint
+    assert "binding_blocker_activity_id" not in checkpoint
 
 
 def test_published_configuration_blocker_is_not_republished(monkeypatch, tmp_path):

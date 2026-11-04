@@ -57,10 +57,11 @@ that no deviation was declared.
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
 sends the repository spelling exactly as supplied, while the hub canonicalizes
-it; the coordinator therefore queries `payload.issue_key` with both
-`<repository>#<number>` and its case-folded form (deduplicated when equal), then
-compares the returned repository case-insensitively. The compatible hub adds
-the canonical `<owner>/<name>#<number>` issue key to every
+it; the coordinator therefore queries `payload.issue_key` with the configured
+`<repository>#<number>` spelling, its case-folded form, and GitHub's canonical
+`<owner>/<name>#<number>` spelling from the issue or assignment-event response
+(deduplicated when equal), then compares the returned repository
+case-insensitively. The compatible hub adds the canonical issue key to every
 `assignment.created` payload. The coordinator accepts only a row for the issue
 and agent with all of these properties: the top-level query-row `github_login`
 equals the GitHub assignment-event actor and is listed in `reply_logins`;
@@ -78,8 +79,8 @@ A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
 is younger than 120 seconds. After that grace period it publishes `assignment
 was not issued through the hub`, blocks acceptance, and pins the issue reply
 checkpoint without failing the task or starting a model. An unpaired device,
-hub HTTP 400/401/403, or a query response at the 500-row cap is likewise a
-configuration blocker with a single published checkpoint. Other hub
+hub HTTP 400/401/403, or a query response with at least 500 rows is likewise a
+configuration blocker published once with a reply checkpoint. Other hub
 transport/protocol failures keep phase `accept`, retry,
 and publish a blocker at most once per hour according to
 `hub_assignment_retry_published_at`. The cap remains a defensive truncation

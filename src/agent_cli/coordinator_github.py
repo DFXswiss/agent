@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -165,6 +166,7 @@ def publish_blocker(
     kind: str = "blocker",
     reply_checkpoint: bool = False,
     preserve_reply_checkpoint: bool = False,
+    binding_notice: bool = False,
     occurrence: str | None = None,
 ) -> list[str]:
     """Publish a source-issue blocker.
@@ -176,6 +178,8 @@ def publish_blocker(
     checkpoint and must not reset consumed replies for that same checkpoint.
     Execution-binding notices use ``preserve_reply_checkpoint`` because they
     recover without an authorized reply when the pinned binding is restored.
+    ``binding_notice`` keeps their publication state separate from the phase
+    blocker publication state.
     """
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else None
@@ -211,7 +215,10 @@ def publish_blocker(
             occurrence=resolved_occurrence,
         )
         changed = False
-        if c.get("blocker_publish_once"):
+        if binding_notice:
+            c["binding_blocker_activity_id"] = activity_id
+            changed = True
+        elif c.get("blocker_publish_once"):
             c["blocker_activity_id"] = activity_id
             changed = True
         if should_pin:
@@ -340,6 +347,7 @@ def _hub_assignment_row(
     agent: str,
     assignment_actor: str,
     reply_logins: tuple[str, ...],
+    canonical_repo: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Return (matching row id, retry reason); neither means a definite no-match."""
     hub_url = store.meta("hub_url")
@@ -347,7 +355,10 @@ def _hub_assignment_row(
     if not hub_url or not token:
         return None, "device is not paired with a hub"
     issue_key = f"{repo}#{number}"
-    issue_keys = list(dict.fromkeys((issue_key, issue_key.casefold())))
+    canonical_issue_key = f"{canonical_repo or repo}#{number}"
+    issue_keys = list(
+        dict.fromkeys((issue_key, issue_key.casefold(), canonical_issue_key))
+    )
     hub = Hub(hub_url, token)
     try:
         try:
@@ -395,6 +406,36 @@ def _hub_assignment_row(
     return None, None
 
 
+def _canonical_issue_repo(expected_repo: str, *responses: object) -> str | None:
+    """Return GitHub's canonical owner/name from issue or event responses."""
+    for response in responses:
+        items = response if isinstance(response, list) else [response]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            repository = item.get("repository")
+            candidate = (
+                repository.get("full_name") if isinstance(repository, dict) else None
+            )
+            if not isinstance(candidate, str) or not candidate:
+                repository_url = item.get("repository_url")
+                match = re.fullmatch(
+                    r"https://api\.github\.com/repos/([^/]+)/([^/]+)",
+                    str(repository_url or ""),
+                )
+                candidate = (
+                    f"{match.group(1)}/{match.group(2)}" if match is not None else None
+                )
+            if candidate is None:
+                continue
+            if candidate.casefold() != expected_repo.casefold():
+                raise CoordinatorError(
+                    "issue response repository does not match configured repository"
+                )
+            return candidate
+    return None
+
+
 def _parse_coordinator_time(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -434,7 +475,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
     try:
-        verify_issue_assigned(scoped_runner, repo, number, account.login)
+        issue = verify_issue_assigned(scoped_runner, repo, number, account.login)
     except CoordinatorError as exc:
         c["phase"] = "blocked"
         c["resume_phase"] = "accept"
@@ -456,6 +497,14 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
     source["assignment_event_id"] = latest["id"]
     source["assignment_at"] = latest.get("created_at")
     if worker.require_hub_assignment:
+        canonical_repo = _canonical_issue_repo(repo, issue, events)
+        if canonical_repo is None:
+            issue_response = gh_json(
+                scoped_runner, ["gh", "api", f"repos/{repo}/issues/{number}"]
+            )
+            canonical_repo = _canonical_issue_repo(repo, issue_response)
+        if canonical_repo is None:
+            raise CoordinatorError("issue response has no canonical repository name")
         row_id, retry = _hub_assignment_row(
             store,
             repo=repo,
@@ -463,6 +512,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             agent=account.login,
             assignment_actor=str(actor["login"]),
             reply_logins=worker.reply_logins,
+            canonical_repo=canonical_repo,
         )
         if retry is not None:
             if _hub_assignment_configuration_error(retry):
