@@ -797,6 +797,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
 ):
     from agent_cli.allow import CHECKLIST_KEYS
 
+    runner = FakeGh()
     store = Store(tmp_path)
     write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -905,7 +906,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
         lambda *_args: None,
     )
 
-    lines = phase_readiness(store, worker, store.row("task", task_id), object())
+    lines = phase_readiness(store, worker, store.row("task", task_id), runner)
     assert "readiness ok" in lines[0]
     saved = store.row("task", task_id)
     assert saved["payload"]["coordinator"]["phase"] == "await_ready"
