@@ -3460,8 +3460,33 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert len(store.rows("ping")) == 2
 
     mail("second-mail", "outside-reviewer", second)
+    comments_before = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+
+    def fail_checklist(*_args, **_kwargs):
+        raise RuntimeError("simulated checklist write failure")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            "agent_cli.coordinator_a38.set_checklist", fail_checklist
+        )
+        with pytest.raises(RuntimeError, match="checklist write failure"):
+            phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert not any(
+        row.get("type") == "message.read"
+        and row.get("payload", {}).get("message_id") == "second-mail"
+        for row in store.rows("activity")
+    )
+    comments_after_failure = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+    assert comments_after_failure == comments_before + 1
     lines = phase_await_second_review(store, worker, store.row("task", tid), fake)
     assert "external second review" in lines[0]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == comments_after_failure
     final = store.row("task", tid)
     assert final["payload"]["coordinator"]["phase"] == "ci"
     statuses = {row["key"]: row for row in store.rows("checklist_item") if row.get("task_id") == tid}
@@ -3525,9 +3550,34 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         "findings": "The result contains a defect that must be fixed.",
     }
     mail("blocking-mail", "outside-reviewer", blocking_result)
+    comments_before = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+
+    def fail_save(*_args, **_kwargs):
+        raise RuntimeError("simulated task save failure")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr("agent_cli.coordinator_a38.save_task", fail_save)
+        with pytest.raises(RuntimeError, match="task save failure"):
+            phase_await_second_review(
+                store, worker, store.row("task", blocking_tid), fake
+            )
+    assert not any(
+        row.get("type") == "message.read"
+        and row.get("payload", {}).get("message_id") == "blocking-mail"
+        for row in store.rows("activity")
+    )
+    comments_after_failure = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+    assert comments_after_failure == comments_before + 1
     blocking_lines = phase_await_second_review(
         store, worker, store.row("task", blocking_tid), fake
     )
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == comments_after_failure
     assert "routing to implementer" in blocking_lines[0]
     blocked = store.row("task", blocking_tid)
     assert blocked["state"] == "implementing"

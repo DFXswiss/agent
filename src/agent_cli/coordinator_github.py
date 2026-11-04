@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -77,6 +76,7 @@ READINESS_CONTRACT = (
 HUB_ASSIGNMENT_GRACE_SECONDS = 120
 HUB_ASSIGNMENT_QUERY_CAP = 500
 HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS = 3600
+FORK_VISIBILITY_GRACE_SECONDS = 300
 
 
 def _task_models(task: dict[str, Any]) -> ModelSlots:
@@ -277,26 +277,20 @@ def _fork_repository(
     *,
     repo: str,
     publication_repo: str,
-    sleep_fn=time.sleep,
-) -> None:
-    """Ensure the publication fork exists and is a fork of exactly ``repo``."""
+    create_if_missing: bool = True,
+) -> bool:
+    """Check the publication fork once, optionally requesting it when absent."""
     lookup = ["gh", "api", f"repos/{publication_repo}"]
     completed = runner(lookup)
     if completed.returncode != 0:
         missing_detail = (completed.stderr or completed.stdout or "").casefold()
         if "404" not in missing_detail and "not found" not in missing_detail:
             raise CoordinatorError(redact(missing_detail or "fork lookup failed"))
-        created = runner(["gh", "api", "-X", "POST", f"repos/{repo}/forks"])
-        if created.returncode != 0:
-            raise CoordinatorError(redact(created.stderr or created.stdout or "fork creation failed"))
-        for attempt in range(10):
-            completed = runner(lookup)
-            if completed.returncode == 0:
-                break
-            if attempt < 9:
-                sleep_fn(5)
-        else:
-            raise CoordinatorError("created fork did not become available after 10 tries")
+        if create_if_missing:
+            created = runner(["gh", "api", "-X", "POST", f"repos/{repo}/forks"])
+            if created.returncode != 0:
+                raise CoordinatorError(redact(created.stderr or created.stdout or "fork creation failed"))
+        return False
     try:
         data = json.loads((completed.stdout or "").strip())
     except json.JSONDecodeError as exc:
@@ -305,6 +299,7 @@ def _fork_repository(
     parent_name = parent.get("full_name") if isinstance(parent, dict) else None
     if not isinstance(parent_name, str) or parent_name.casefold() != repo.casefold():
         raise CoordinatorError("publication fork has a different parent repository")
+    return True
 
 
 def _owner_repository_config(
@@ -313,7 +308,8 @@ def _owner_repository_config(
     *,
     repo: str,
     login: str,
-) -> RepositoryConfig:
+    fork_already_requested: bool = False,
+) -> RepositoryConfig | None:
     base = validate_base(_gh_jq_text(
         runner,
         ["gh", "api", f"repos/{repo}", "--jq", ".default_branch"],
@@ -329,7 +325,13 @@ def _owner_repository_config(
     publication = repo
     if can_push == "false":
         publication = f"{login}/{repo.split('/', 1)[1]}"
-        _fork_repository(runner, repo=repo, publication_repo=publication)
+        if not _fork_repository(
+            runner,
+            repo=repo,
+            publication_repo=publication,
+            create_if_missing=not fork_already_requested,
+        ):
+            return None
     return RepositoryConfig(
         repo=repo,
         base=base,
@@ -587,12 +589,44 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         c.pop("blocker_activity_id", None)
         clear_reply_recovery(c)
     if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
+        fork_requested_at = source.get("fork_requested_at")
         cfg = _owner_repository_config(
             worker,
             scoped_runner,
             repo=repo,
             login=account.login.casefold(),
+            fork_already_requested=fork_requested_at is not None,
         )
+        if cfg is None:
+            if fork_requested_at is None:
+                source["fork_requested_at"] = utcnow()
+                save_task(store, task)
+                return ["publication fork not yet visible; retrying accept"]
+            age = _seconds_since(fork_requested_at)
+            if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
+                save_task(store, task)
+                return ["publication fork not yet visible; retrying accept"]
+            message = (
+                "publication fork did not become visible within "
+                f"{FORK_VISIBILITY_GRACE_SECONDS} seconds"
+            )
+            if c.get("blocker") != message:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = message
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "publication-fork"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="publication-fork",
+                reply_checkpoint=True,
+            )
         source["repository_config"] = {
             "repo": cfg.repo,
             "base": cfg.base,

@@ -195,7 +195,6 @@ def execution_binding(
                 "enabled": True,
                 "second_reviewers": worker.second_reviewers,
                 "second_review_timeout_seconds": worker.second_review_timeout_seconds,
-                "a38_timeout_seconds": worker.a38_timeout_seconds,
             },
         }
     else:

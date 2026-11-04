@@ -105,7 +105,6 @@ def test_a38_worker_requires_and_normalizes_external_reviewers(tmp_path):
     assert loaded.a38 is True
     assert loaded.second_reviewers == ('reviewer-one', 'reviewer-two')
     assert loaded.second_review_timeout_seconds == 86400
-    assert loaded.a38_timeout_seconds == 7200
     assert loaded.repositories['example/project'].check_argv == ()
 
 
@@ -127,18 +126,25 @@ def test_a38_worker_refuses_missing_or_duplicate_reviewers(tmp_path, reviewers, 
         load_coordinator_config(tmp_path)
 
 
-@pytest.mark.parametrize('key,value', [
-    ('second_review_timeout_seconds', 599),
-    ('a38_timeout_seconds', True),
-])
-def test_a38_worker_refuses_short_or_non_integer_timeouts(tmp_path, key, value):
+def test_a38_worker_refuses_short_second_review_timeout(tmp_path):
     data = config(tmp_path)
     worker = data['workers']['selected-session']
     worker['a38'] = True
     worker['second_reviewers'] = ['reviewer']
-    worker[key] = value
+    worker['second_review_timeout_seconds'] = 599
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='integer >= 600'):
+        load_coordinator_config(tmp_path)
+
+
+def test_a38_worker_refuses_removed_a38_timeout_key(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer']
+    worker['a38_timeout_seconds'] = 7200
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='explicit workspace, replies and timing'):
         load_coordinator_config(tmp_path)
 
 
