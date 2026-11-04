@@ -313,12 +313,13 @@ def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -
 
 def last_usage_snapshot(store: Store, vendor: str = VENDOR) -> dict[str, Any] | None:
     """Newest owned activity with type=='usage.snapshot' and payload.vendor==vendor; return its payload dict or None."""
-    event = store.last_own_activity_insert("usage.snapshot")
-    if event is None:
-        return None
-    payload = event.get("payload")
-    if isinstance(payload, dict) and payload.get("vendor") == vendor:
-        return payload
+    origin = store.device_id()
+    for event in store.rows("activity"):
+        if event.get("_origin_device_id") != origin or event.get("type") != "usage.snapshot":
+            continue
+        payload = event.get("payload")
+        if isinstance(payload, dict) and payload.get("vendor") == vendor:
+            return payload
     return None
 
 

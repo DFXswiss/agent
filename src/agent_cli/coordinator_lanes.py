@@ -282,7 +282,13 @@ def launch_lane(
                 output_file_text = Path(lane_output).read_text(encoding="utf-8")
             except OSError:
                 output_file_text = ""
-        finalized = finalize_lane_output(vendor, stdout, output_file_text)
+        finalized = finalize_lane_output(
+            vendor,
+            stdout,
+            output_file_text,
+            cwd=worktree,
+            stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+        )
         result = LaneResult(
             role=role,
             vendor=vendor,
