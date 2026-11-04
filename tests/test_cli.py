@@ -5196,3 +5196,49 @@ def test_implementer_done_n_a_still_refused(
                 "no finished implementer",
             ],
         )
+
+
+def test_review_second_send_validates_and_writes_session_mail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "reviewer", "--kind", "human"])
+    capsys.readouterr()
+    task_id = "11111111-1111-4111-8111-111111111111"
+    head = "a" * 40
+    result = {
+        "kind": "a38.second-review/v1",
+        "task_id": task_id,
+        "head": head,
+        "defects": 0,
+        "blocks_merge": False,
+        "findings": "",
+        "lanes": [
+            {"id": "conformity-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
+            {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
+        ],
+    }
+    path = tmp_path / "second-review.json"
+    path.write_text(json.dumps(result), encoding="utf-8")
+    run(
+        tmp_path,
+        ["review", "second", "send", "--to-session", "worker", "--task", task_id, "--head", head, "--file", str(path)],
+    )
+    activity_id = capsys.readouterr().out.strip()
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row["session_id"] == "reviewer"
+        assert row["type"] == "message"
+        assert row["execution_status"] == "pending"
+        assert row["payload"] == {"to_session": "worker", "payload": result}
+    finally:
+        store.close()
+
+    result["unknown"] = True
+    path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(SystemExit, match="documented keys"):
+        run(
+            tmp_path,
+            ["review", "second", "send", "--to-session", "worker", "--task", task_id, "--head", head, "--file", str(path)],
+        )

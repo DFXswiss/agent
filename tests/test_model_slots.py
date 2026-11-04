@@ -142,6 +142,11 @@ def test_slots_resolve_stage_and_vendor() -> None:
     with pytest.raises(ModelSlotsError):
         models.for_stage("other-pr")
 
+    external = ModelSlots("grok", None)
+    assert external.for_stage("codex-pr") is None
+    assert external.slot_of("codex") is None
+    assert external.as_dict() == {"first": "grok", "second": None}
+
 
 @pytest.mark.no_pg
 @pytest.mark.parametrize(

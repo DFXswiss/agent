@@ -76,9 +76,9 @@ class PinnedModelSlotsError(ModelSlotsError):
 @dataclass(frozen=True)
 class ModelSlots:
     first: str
-    second: str
+    second: str | None
 
-    def for_slot(self, slot: str) -> str:
+    def for_slot(self, slot: str) -> str | None:
         if slot == "first":
             return self.first
         if slot == "second":
@@ -94,11 +94,11 @@ class ModelSlots:
     def slot_of(self, vendor: str) -> str | None:
         if vendor == self.first:
             return "first"
-        if vendor == self.second:
+        if self.second is not None and vendor == self.second:
             return "second"
         return None
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, str | None]:
         return {"first": self.first, "second": self.second}
 
 
@@ -116,20 +116,24 @@ LEGACY_RECORDED_SLOTS = ModelSlots("grok", "codex")
 
 
 def parse_model_slots(raw: Any) -> ModelSlots:
-    """Validate the ``models`` block: exactly ``first`` and ``second``, distinct, supported."""
+    """Validate the slots; ``second: null`` selects an external second review."""
     if raw is None:
         raise ModelSlotsError(MODELS_NOT_CONFIGURED)
     if not isinstance(raw, Mapping) or set(raw) != set(MODEL_SLOTS):
         raise ModelSlotsError("models must be an object with exactly first and second")
-    values: dict[str, str] = {}
-    for slot in MODEL_SLOTS:
-        value = raw.get(slot)
-        if not isinstance(value, str) or value not in SUPPORTED_PROVIDERS:
-            raise ModelSlotsError(f"models.{slot} must be one of {PROVIDER_CHOICES}")
-        values[slot] = value
-    if values["first"] == values["second"]:
+    first = raw.get("first")
+    second = raw.get("second")
+    if not isinstance(first, str) or first not in SUPPORTED_PROVIDERS:
+        raise ModelSlotsError(f"models.first must be one of {PROVIDER_CHOICES}")
+    if second is not None and (
+        not isinstance(second, str) or second not in SUPPORTED_PROVIDERS
+    ):
+        raise ModelSlotsError(
+            f"models.second must be null or one of {PROVIDER_CHOICES}"
+        )
+    if first == second:
         raise ModelSlotsError("models.first and models.second must be different providers")
-    return ModelSlots(values["first"], values["second"])
+    return ModelSlots(first, second)
 
 
 def parse_implementer(raw: Any, models: ModelSlots) -> str:

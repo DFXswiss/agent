@@ -125,7 +125,9 @@ second PR review pair. The required top-level `models` block names the provider
 of each review slot:
 
 - `first`: `grok`, `codex`, `claude` or `openrouter`
-- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`
+- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`,
+  or JSON `null` when an A38 coordinator worker obtains the second review
+  externally
 
 The optional top-level `implementer` names the implementation provider. It may
 be `grok`, `codex`, `claude`, or `deepseek`. It must differ from

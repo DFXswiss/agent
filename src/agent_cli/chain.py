@@ -360,6 +360,18 @@ def close_allowed(
             )
         return CloseVerdict(True, "allow", step)
     snap = snapshot or {}
+    if (
+        status == "ja"
+        and key in CODEX_SECOND_REVIEW_KEYS
+        and models_from_snapshot(snap).second is None
+    ):
+        if not str(evidence or "").startswith(EXTERNAL_SECOND_REVIEW_PREFIX):
+            return CloseVerdict(
+                False,
+                f"{key} requires evidence starting {EXTERNAL_SECOND_REVIEW_PREFIX}",
+                step,
+            )
+        return CloseVerdict(True, "allow", step)
     if status == "unavailable":
         extra = _unavailable_gate_ok(step, snap)
     elif _late_inner_skip(key, status, evidence, snap):

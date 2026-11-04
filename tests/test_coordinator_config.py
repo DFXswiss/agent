@@ -90,3 +90,53 @@ def test_repository_cannot_escape_selected_api_path(tmp_path, repo):
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='repository must be owner/name'):
         load_coordinator_config(tmp_path)
+
+
+def test_a38_worker_requires_and_normalizes_external_reviewers(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['second_reviewers'] = ['Reviewer-One', 'reviewer-two']
+    worker['repositories']['example/project']['check_argv'] = []
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.review_session is None
+    assert loaded.a38 is True
+    assert loaded.second_reviewers == ('reviewer-one', 'reviewer-two')
+    assert loaded.second_review_timeout_seconds == 86400
+    assert loaded.a38_timeout_seconds == 7200
+    assert loaded.repositories['example/project'].check_argv == ()
+
+
+@pytest.mark.parametrize(
+    'reviewers,error',
+    [
+        (None, 'nonempty second_reviewers'),
+        ([], 'nonempty second_reviewers'),
+        (['Same', 'same'], 'distinct'),
+    ],
+)
+def test_a38_worker_refuses_missing_or_duplicate_reviewers(tmp_path, reviewers, error):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = True
+    worker['second_reviewers'] = reviewers
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize('key,value', [
+    ('second_review_timeout_seconds', 599),
+    ('a38_timeout_seconds', True),
+])
+def test_a38_worker_refuses_short_or_non_integer_timeouts(tmp_path, key, value):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer']
+    worker[key] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='integer >= 600'):
+        load_coordinator_config(tmp_path)

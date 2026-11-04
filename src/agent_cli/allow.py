@@ -78,6 +78,7 @@ N_A_ALLOWED = frozenset(
 
 SECOND_REVIEW_KEYS = frozenset({"review_2_quality", "review_2_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
+EXTERNAL_SECOND_REVIEW_PREFIX = "external second review by "
 
 # (stage, dimension, model slot). The provider comes from the device's
 # ``models`` configuration (see model_slots).
@@ -149,6 +150,25 @@ def both_second_reviews_na(statuses: Mapping[str, Any], evidence: Mapping[str, A
         canonical_statuses.get(key) == "n_a"
         and recorded.get(key) == SECOND_REVIEW_NOT_POSTED
         for key in SECOND_REVIEW_KEYS
+    )
+
+
+def external_second_review_ok(
+    task: Mapping[str, Any],
+    statuses: Mapping[str, Any],
+    evidence: Mapping[str, Any] | None,
+) -> bool:
+    """External slot-second evidence replaces gate rows only for ``second: null``."""
+    try:
+        external = models_from_snapshot(task).second is None
+    except (TypeError, ValueError):
+        return False
+    recorded = evidence if isinstance(evidence, Mapping) else {}
+    return external and all(
+        statuses.get(key) == "ja"
+        and isinstance(recorded.get(key), str)
+        and str(recorded[key]).startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
+        for key in CODEX_SECOND_REVIEW_KEYS
     )
 
 
@@ -246,6 +266,10 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     for stage, dim, slot in GATE_PAIRS:
         vendor = models.for_slot(slot)
         if skip_second_gates and stage == "review-2":
+            continue
+        if vendor is None:
+            blocking.append(f"{tid}:gate:{stage}/{dim}=external_review_missing")
+            all_gates_ok = False
             continue
         got = latest.get((stage, dim))
         if got is None:

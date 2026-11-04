@@ -471,6 +471,18 @@ class Store:
         if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
             return
         payload = row["payload"]
+        # The relay authenticates the GitHub account that published a replica
+        # event. Preserve that envelope fact for recipient-side mail policy;
+        # never trust a sender-provided payload field with the same name.
+        if (
+            row.get("table") == "activity"
+            and isinstance(payload, dict)
+            and payload.get("type") == "message"
+        ):
+            payload = {key: value for key, value in payload.items() if key != "_github_login"}
+            relay_login = row.get("_github_login")
+            if isinstance(relay_login, str) and relay_login:
+                payload["_github_login"] = relay_login.casefold()
         if row.get("table") == "ping" and isinstance(payload, dict):
             current = self.row("ping", row["row_id"])
             if isinstance(current, dict) and current.get("acked_at") and not payload.get("acked_at"):

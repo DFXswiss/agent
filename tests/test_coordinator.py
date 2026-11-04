@@ -113,6 +113,7 @@ def patch_execute_github(monkeypatch: Any) -> None:
         "agent_cli.coordinator_git",
         "agent_cli.coordinator_github",
         "agent_cli.coordinator_lanes",
+        "agent_cli.coordinator_a38",
     ):
         monkeypatch.setattr(f"{mod}.execute_github", fake_execute)
 
@@ -135,6 +136,7 @@ def patch_run_bounded(monkeypatch: Any, fake: FakeGh) -> None:
 
     monkeypatch.setattr("agent_cli.coordinator_runtime.run_bounded", fake_bounded)
     monkeypatch.setattr("agent_cli.coordinator_github.run_bounded", fake_bounded)
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_bounded)
 
 
 def test_harden_grok_write_adds_denies() -> None:

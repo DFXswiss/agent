@@ -31,6 +31,8 @@ def required_lane_slots(models: ModelSlots) -> tuple[str, ...]:
     slots: list[str] = []
     for slot, kinds in SLOT_LANE_KINDS.items():
         vendor = models.for_slot(slot)
+        if vendor is None:
+            continue
         slots.extend(f"{vendor}:{kind}" for kind in kinds)
     return tuple(slots)
 

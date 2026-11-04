@@ -688,7 +688,7 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
         if isinstance(evidence, dict):
             evidence["ci_green"] = False
             evidence["ci_head"] = head
-        invalidate_head_evidence(c, head)
+        invalidate_head_evidence(c, "" if worker.a38 else head)
         save_task(store, task)
         return [f"CI failed on {head[:7]}; routing to implementer"]
     if obs.kind != "green":
@@ -925,8 +925,11 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         raise CoordinatorError("PR is not open")
     if str(pr.get("mergeable") or "").upper() != "MERGEABLE":
         raise CoordinatorError(f"PR not mergeable ({pr.get('mergeable')})")
-    if pr.get("isDraft") is not True:
-        raise CoordinatorError("PR must still be draft before formal approve")
+    if worker.a38:
+        if pr.get("isDraft") not in (True, False):
+            raise CoordinatorError("PR draft state is unavailable before readiness completes")
+    elif pr.get("isDraft") is not True:
+        raise CoordinatorError("PR must still be draft before readiness completes")
 
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
     if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
@@ -957,7 +960,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         evidence["readiness_head"] = head
         evidence["readiness_base"] = base_sha or cfg.base
         evidence["readiness_at"] = utcnow()
-    c["phase"] = "formal_approve"
+    c["phase"] = "await_ready" if worker.a38 else "formal_approve"
     save_task(store, task)
     return [f"readiness ok on {head[:7]}"]
 
@@ -1042,6 +1045,10 @@ def phase_formal_approve(
     runner: Runner,
 ) -> list[str]:
     """APPROVE via review.post activity + commit_id transport; verify strictly."""
+    if worker.a38:
+        raise CoordinatorError("A38 mode never posts a formal APPROVE")
+    if worker.review_session is None:
+        raise CoordinatorError("formal approve requires review_session")
     fresh = phase_readiness(store, worker, task, runner)
     if coord(task).get("phase") != "formal_approve":
         return fresh
@@ -1351,6 +1358,8 @@ def _fresh_formal_still_approved(
     number = as_int(c.get("pr_number"))
     if number is None:
         raise CoordinatorError("formal recheck requires PR number")
+    if worker.review_session is None:
+        raise CoordinatorError("formal recheck requires review_session")
     try:
         review_account = account_for(store, worker.review_session)
         scoped_review = review_account.runner(runner)
@@ -1484,6 +1493,8 @@ def _raise_revoked_one_review(
 
 
 def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
+    if worker.a38:
+        raise CoordinatorError("A38 mode never leaves draft; the guard owns Ready")
     c = coord(task)
     target = target_repo(task)
     number = as_int(c.get("pr_number"))

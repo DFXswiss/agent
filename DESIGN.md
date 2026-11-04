@@ -644,8 +644,10 @@ hostnames belong in the deployment configuration, not this public repository.
 6. Publication and readiness follow the existing
    [pull-request lifecycle](docs/pull-request-lifecycle.md): the script publishes
    a draft immediately after the first signed task commit, while tests and
-   reviews may still be pending. The script marks Ready for review only after
-   the required checks and reviews hold on the final head. These steps do not
+   reviews may still be pending. The configured readiness owner marks Ready for
+   review only after the required checks and reviews hold on the final head: the
+   coordinator does so for the ordinary path, while the PR guard alone does so
+   for explicit coordinator A38 mode. These steps do not
    wait for this numbered list to finish before publishing the first draft.
 7. The human reviews and merges on GitHub. Completion requires verification of
    that human merge, as defined in the lifecycle.
@@ -676,6 +678,15 @@ the workflow is enabled on a deployment:
 - [`github_act.py`](src/agent_cli/github_act.py) provides the GitHub activity
   executor. Its existence alone does not establish that model lanes cannot
   access GitHub or execute tests or other agents.
+- An explicitly configured coordinator A38 worker keeps the same deterministic
+  boundary with a different readiness owner: the script runs and verifies the
+  repository A38 suite, publishes the author report and two validated author
+  review comments, and relays an allowlisted external second-review result from
+  session mail. The hub remains only the sanctioned person-ping/session-mail
+  relay. No second-slot model is launched. The coordinator never posts a formal
+  approval and never marks the pull request Ready; it observes the PR guard
+  making the unchanged head Ready, then waits for the verified human merge. Non-A38
+  workers retain the formal-review and leave-draft path described above.
 
 This section defines the required responsibility boundary. It does not claim
 that a sandbox or other technical enforcement has been implemented.

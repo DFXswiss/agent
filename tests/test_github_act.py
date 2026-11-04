@@ -603,6 +603,36 @@ def test_comment_post_first_then_idempotent(tmp_path: Path) -> None:
     assert row2["result"]["id"] == 99
 
 
+def test_comment_post_exact_body_does_not_append_activity_marker(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-report"
+    report = "<!-- DFX-LOCAL-CI:v1 -->\nverified report\n<!-- /DFX-LOCAL-CI:v1 -->"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": report,
+            "target": "pr",
+            "exact_body": True,
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[1] == "api":
+            return Completed(0, "[]", "")
+        if argv[:3] == ["gh", "pr", "comment"]:
+            assert argv[argv.index("--body") + 1] == report
+            assert ACTIVITY_MARKER.format(id=act_id) not in report
+            return Completed(0, "https://github.com/dfxswiss/agent/pull/3#issuecomment-9\n", "")
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+
+
 def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

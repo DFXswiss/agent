@@ -121,6 +121,28 @@ def test_apply_replica_row_updates_own_ping_ack(tmp_path: Path) -> None:
     assert store.row("ping", pid)["acked_at"] == "2026-08-13T12:00:01Z"
 
 
+def test_replica_mail_preserves_only_relay_authenticated_github_login(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": "mail",
+            "origin_device_id": "reviewer-device",
+            "_github_login": "Allowed-Reviewer",
+            "payload": {
+                "id": "mail",
+                "type": "message",
+                "session_id": "reviewer-session",
+                "payload": {"to_session": "worker", "payload": {"kind": "test"}},
+                "execution_status": "pending",
+                "_github_login": "spoofed",
+            },
+            "updated_at": "2026-08-13T12:00:01Z",
+        }
+    )
+    assert store.row("activity", "mail")["_github_login"] == "allowed-reviewer"
+
+
 def test_apply_replica_row_compares_updated_at_as_timestamptz(tmp_path: Path) -> None:
     store = Store(tmp_path)
     store.apply_replica_row(
