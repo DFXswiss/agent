@@ -128,6 +128,7 @@ def drain_held_runs(
         PR_GUARD_CONFIG_PATH,
         _is_rate_limit_response,
         _parse_default_branch,
+        _validate_sha,
         fetch_file_at_ref,
         resolve_default_branch_commit,
     )
@@ -219,7 +220,8 @@ def drain_held_runs(
     # Report the full backlog before the never-started proof; deleted and
     # planned remain bounded because they represent the per-sweep write budget.
     result["candidates"] = len(candidates)
-    # Request bound: 3 gate reads (repository, default-branch commit, config),
+    # Request bound, excluding the API client's own GET retries: 3 gate reads
+    # (repository, default-branch commit, config),
     # at most 10 run-list pages twice after a shift, scan-time P0 open-pull
     # reads, and up to 3M commit pages for M distinct branch-matching pulls.
     # For E examined and proven subset K:
@@ -232,96 +234,121 @@ def drain_held_runs(
     # examined runs an hour outpace a backlog that grows a few runs an hour.
     # MAX_EXAMINED bounds jobs reads and rechecks even if every examined run skips.
     examined = 0
-    for candidate in candidates:
-        completed = result["planned"] if dry_run else result["deleted"]
-        if len(completed) >= MAX_DELETIONS:
-            break
-        if examined >= MAX_EXAMINED:
-            break
-        examined += 1
-        if not _workflow_run_never_started(
-            api, repo, candidate, missing_ok=True
-        ):
-            continue
-        run_id = candidate["id"]
-        reread_path = f"/repos/{repo}/actions/runs/{run_id}"
-        reread_status, current = api.get_optional(reread_path)
-        if reread_status == 404:
-            continue
-        if reread_status != 200:
-            raise GuardError(f"GitHub API HTTP {reread_status} for {reread_path}")
-        current_sha = current.get("head_sha") if isinstance(current, Mapping) else None
-        current_head_repository = (
-            current.get("head_repository") if isinstance(current, Mapping) else None
-        )
-        current_head_repo = (
-            current_head_repository.get("full_name")
-            if isinstance(current_head_repository, Mapping)
-            else None
-        )
-        current_head_branch = (
-            current.get("head_branch")
-            if isinstance(current, Mapping)
-            else None
-        )
-        if (
-            not isinstance(current, Mapping)
-            or current.get("id") != run_id
-            or not _pending(current)
-            or not isinstance(current_sha, str)
-            or current_sha == ""
-            or not isinstance(current_head_repo, str)
-            or current_head_repo == ""
-            or current_head_repo.lower() == repo.lower()
-            or not isinstance(current_head_branch, str)
-            or current_head_branch == ""
-        ):
-            continue
-        current_protection = _open_pull_protection(api, repo)
-        branch_key = (current_head_repo.lower(), current_head_branch)
-        detail_protected = False
-        for number in current_protection[1].get(branch_key, []):
-            detail = api.get_json(f"/repos/{repo}/pulls/{number}")
-            detail_head = detail.get("head") if isinstance(detail, Mapping) else None
-            detail_head_sha = (
-                detail_head.get("sha")
-                if isinstance(detail_head, Mapping)
+    try:
+        for candidate in candidates:
+            completed = result["planned"] if dry_run else result["deleted"]
+            if len(completed) >= MAX_DELETIONS:
+                break
+            if examined >= MAX_EXAMINED:
+                break
+            examined += 1
+            if not _workflow_run_never_started(
+                api, repo, candidate, missing_ok=True
+            ):
+                continue
+            run_id = candidate["id"]
+            reread_path = f"/repos/{repo}/actions/runs/{run_id}"
+            reread_status, current = api.get_optional(reread_path)
+            if reread_status == 404:
+                continue
+            if reread_status != 200:
+                raise GuardError(
+                    f"GitHub API HTTP {reread_status} for {reread_path}"
+                )
+            current_sha = (
+                current.get("head_sha") if isinstance(current, Mapping) else None
+            )
+            current_head_repository = (
+                current.get("head_repository")
+                if isinstance(current, Mapping)
                 else None
             )
-            detail_merge_sha = (
-                detail.get("merge_commit_sha")
-                if isinstance(detail, Mapping)
+            current_head_repo = (
+                current_head_repository.get("full_name")
+                if isinstance(current_head_repository, Mapping)
+                else None
+            )
+            current_head_branch = (
+                current.get("head_branch")
+                if isinstance(current, Mapping)
                 else None
             )
             if (
-                isinstance(detail_head_sha, str)
-                and detail_head_sha.lower() == current_sha.lower()
-            ) or (
-                isinstance(detail_merge_sha, str)
-                and detail_merge_sha.lower() == current_sha.lower()
+                not isinstance(current, Mapping)
+                or current.get("id") != run_id
+                or not _pending(current)
+                or not isinstance(current_sha, str)
+                or current_sha == ""
+                or not isinstance(current_head_repo, str)
+                or current_head_repo == ""
+                or current_head_repo.lower() == repo.lower()
+                or not isinstance(current_head_branch, str)
+                or current_head_branch == ""
             ):
-                detail_protected = True
-                break
-        if detail_protected:
-            continue
-        if _run_is_protected(api, repo, current, current_protection, {}):
-            continue
-        if dry_run:
-            result["planned"].append(run_id)
-            continue
-        status, data, headers = api.request(
-            "DELETE", f"/repos/{repo}/actions/runs/{run_id}", retry=False
-        )
-        if status in {200, 204}:
-            result["deleted"].append(run_id)
-            continue
-        if status == 404:
-            continue
-        if _is_rate_limit_response(status, data, headers):
-            result["aborted"] = "rate-limited"
+                continue
+            current_protection = _open_pull_protection(api, repo)
+            branch_key = (current_head_repo.lower(), current_head_branch)
+            detail_protected = False
+            for number in current_protection[1].get(branch_key, []):
+                detail = api.get_json(f"/repos/{repo}/pulls/{number}")
+                if not isinstance(detail, Mapping):
+                    raise GuardError("open pull request head sha missing")
+                detail_head = detail.get("head")
+                detail_head_sha = (
+                    detail_head.get("sha")
+                    if isinstance(detail_head, Mapping)
+                    else None
+                )
+                try:
+                    detail_head_sha = _validate_sha(
+                        detail_head_sha, "open pull request head sha"
+                    )
+                except GuardError as exc:
+                    raise GuardError(
+                        "open pull request head sha missing"
+                    ) from exc
+                detail_merge_sha = detail.get("merge_commit_sha")
+                if detail_merge_sha is not None:
+                    try:
+                        detail_merge_sha = _validate_sha(
+                            detail_merge_sha, "open pull request merge sha"
+                        )
+                    except GuardError as exc:
+                        raise GuardError(
+                            "open pull request merge sha invalid"
+                        ) from exc
+                if detail_head_sha == current_sha.lower() or (
+                    detail_merge_sha is not None
+                    and detail_merge_sha == current_sha.lower()
+                ):
+                    detail_protected = True
+                    break
+            if detail_protected:
+                continue
+            if _run_is_protected(api, repo, current, current_protection, {}):
+                continue
+            if dry_run:
+                result["planned"].append(run_id)
+                continue
+            status, data, headers = api.request(
+                "DELETE", f"/repos/{repo}/actions/runs/{run_id}", retry=False
+            )
+            if status in {200, 204}:
+                result["deleted"].append(run_id)
+                continue
+            if status == 404:
+                continue
+            if _is_rate_limit_response(status, data, headers):
+                result["aborted"] = "rate-limited"
+                return result
+            if status in {401, 403}:
+                result["aborted"] = "forbidden"
+                return result
+            raise GuardError(f"held run delete HTTP {status}")
+    except GuardError as exc:
+        if result["deleted"]:
+            result["aborted"] = "error"
+            result["error"] = str(exc)
             return result
-        if status in {401, 403}:
-            result["aborted"] = "forbidden"
-            return result
-        raise GuardError(f"held run delete HTTP {status}")
+        raise
     return result

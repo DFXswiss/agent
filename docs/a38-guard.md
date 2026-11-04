@@ -174,14 +174,18 @@ At the 1000-run listing cap, the pass processes that capped window; it may omit
 candidates, but never weakens protection.
 
 The pass examines at most 40 candidates per sweep, oldest first, which bounds
-the jobs reads. It proves that a candidate never started immediately before
-re-reading that run; candidates with jobs or an unreadable jobs inventory are
-skipped without consuming the deletion bound. It deletes, or plans in a dry
-run, at most 20 runs per sweep. A denied or rate-limited delete aborts the pass,
-while a drain failure never changes the guard's exit code. Deleting a
-never-started hold is a distinct write class, not an exception to the rule that
-the guard never cancels: cancel cannot clear `action_required` on a run that is
-already `completed`, so only deletion shrinks the held-run listing. The pass
+the jobs reads; the request bound excludes the API client's own GET retries. It
+proves that a candidate never started immediately before re-reading that run;
+candidates with jobs are skipped without consuming the deletion bound. Only a
+404 on the jobs read is likewise skipped; any other jobs failure aborts the
+pass. It deletes, or plans in a dry run, at most 20 runs per sweep. A denied or
+rate-limited delete aborts the pass, while a drain failure never changes the
+guard's exit code. Once a run has been deleted, a later failure ends the pass
+with `aborted: "error"` and an `error` message while retaining the deleted ids;
+a failure before the first deletion still fails the pass. Deleting a never-started
+hold is a distinct write class, not an exception to the rule that the guard
+never cancels: cancel cannot clear `action_required` on a run that is already
+`completed`, so only deletion shrinks the held-run listing. The pass
 never approves, cancels, reruns or dispatches a workflow.
 
 ## Optional environment deployment approval

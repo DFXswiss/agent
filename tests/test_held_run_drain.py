@@ -37,7 +37,7 @@ class FakeDrain(FakeAPI):
         self.open_pull_lists: list[list[dict]] = []
         self.open_pull_gets = 0
         self.current_open_pull_items: list[dict] = []
-        self.pull_overrides: dict[int, dict] = {}
+        self.pull_overrides: dict[int, object] = {}
         self.commits_by_pull: dict[int, list[str]] = {}
         self.commits_reads: dict[int, list[list[str]]] = {}
         self.commit_read_counts: dict[int, int] = {}
@@ -181,6 +181,19 @@ def test_fork_proof_is_case_insensitive_and_skips_same_repository_runs() -> None
     assert fake.deletes == []
 
 
+def test_open_pull_branch_fork_match_is_case_insensitive() -> None:
+    fake = FakeDrain()
+    run = fake.run(head_repository={"full_name": "CONTRIBUTOR/fork"})
+    fake.runs = [run]
+    fake.open_pull_items = [
+        _open_pull("a" * 40, "b" * 40, head_repo="Contributor/Fork")
+    ]
+    fake.commits_by_pull[1] = [run["head_sha"]]
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == []
+    assert fake.deletes == []
+
+
 def test_superseded_old_never_started_fork_hold_is_deleted() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run()]
@@ -273,6 +286,46 @@ def test_last_single_pull_read_protects_changed_merge_sha() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["candidates"] == 1
     assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+@pytest.mark.parametrize("detail", [[], "invalid"])
+def test_last_single_pull_read_malformed_body_fails_closed(detail: object) -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40, "b" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.pull_overrides[1] = detail
+    with pytest.raises(GuardError, match="open pull request head sha missing"):
+        drain_held_runs(fake.api(), REPO)
+    assert fake.deletes == []
+
+
+def test_last_single_pull_read_malformed_head_sha_fails_closed() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40, "b" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.pull_overrides[1] = {
+        **listed,
+        "head": {**listed["head"], "sha": "not-a-sha"},
+    }
+    with pytest.raises(GuardError, match="open pull request head sha missing"):
+        drain_held_runs(fake.api(), REPO)
+    assert fake.deletes == []
+
+
+def test_last_single_pull_read_malformed_merge_sha_fails_closed() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    listed = _open_pull("a" * 40, "b" * 40)
+    fake.runs = [run]
+    fake.open_pull_items = [listed]
+    fake.pull_overrides[1] = {**listed, "merge_commit_sha": "nope"}
+    with pytest.raises(GuardError, match="open pull request merge sha invalid"):
+        drain_held_runs(fake.api(), REPO)
     assert fake.deletes == []
 
 
@@ -477,6 +530,26 @@ def test_rate_limited_delete_aborts_the_pass() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["aborted"] == "rate-limited"
     assert result["deleted"] == []
+    assert fake.deletes == [101]
+
+
+def test_later_delete_failure_preserves_deleted_ids() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(id=101), fake.run(id=102)]
+    fake.delete_responses[102] = (500, {"message": "failed"}, {})
+    result = drain_held_runs(fake.api(), REPO)
+    assert result["deleted"] == [101]
+    assert result["aborted"] == "error"
+    assert "HTTP 500" in result["error"]
+    assert fake.deletes == [101, 102]
+
+
+def test_delete_failure_before_any_delete_still_raises() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    fake.delete_responses[101] = (500, {"message": "failed"}, {})
+    with pytest.raises(GuardError, match="held run delete HTTP 500"):
+        drain_held_runs(fake.api(), REPO)
     assert fake.deletes == [101]
 
 
