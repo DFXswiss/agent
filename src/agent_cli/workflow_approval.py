@@ -55,6 +55,7 @@ def _list_runs(
     params: Mapping[str, Any],
     *,
     allow_truncated: bool = False,
+    single_page: bool = False,
 ) -> list[Mapping[str, Any]]:
     from .a38_guard import GuardError
 
@@ -74,7 +75,8 @@ def _list_runs(
         items: list[Mapping[str, Any]] = []
         seen_ids: set[int] = set()
         total_count: int | None = None
-        for page in range(1, MAX_RUNS // PAGE_SIZE + 1):
+        pages = range(1, 2) if single_page else range(1, MAX_RUNS // PAGE_SIZE + 1)
+        for page in pages:
             query = urlencode({**params, "per_page": PAGE_SIZE, "page": page})
             data = api.get_json(f"/repos/{repo}/actions/runs?{query}")
             if not isinstance(data, Mapping) or type(data.get("total_count")) is not int:
@@ -117,6 +119,14 @@ def _list_runs(
                 return items, "duplicate", total_count
             items.extend(batch)
             seen_ids.update(batch_ids)
+            if single_page:
+                if len(batch) == PAGE_SIZE:
+                    raise fail(
+                        "workflow run in-flight listing exceeds one page",
+                        total_count,
+                        len(items),
+                    )
+                return items, None, total_count
             if len(batch) < PAGE_SIZE:
                 return items, None, total_count
         if allow_truncated:
@@ -131,9 +141,10 @@ def _list_runs(
     if shift_cause is not None:
         # A changed count and a duplicate id are the detectable signs that the
         # paged inventory shifted. A departing row replaced by an entering row
-        # is not detectable here. That can only defer an action_required
-        # approval, while the in-flight listings that guard against cancellation
-        # are single short pages per branch.
+        # is not detectable here. The in-flight listings that guard against
+        # cancellation enforce their one-page property with single_page; an
+        # undetectable shift in the remaining paged listings can only defer an
+        # action_required approval.
         listed, shift_cause, observed_total = once()
     if shift_cause is not None:
         if allow_truncated:
@@ -198,7 +209,7 @@ def _pull_request_inventory(api: Any, repo: str, pull: Mapping[str, Any]) -> lis
             "branch": head["ref"],
             "event": "pull_request",
             "status": status,
-        }))
+        }, single_page=status in _IN_FLIGHT_STATUSES))
     merged = _merge_listed_runs(*groups)
     merge = _merge_sha(pull)
     if merge is not None and not any(run.get("head_sha") == merge for run in merged):

@@ -74,6 +74,8 @@ class FakeApproval(FakeAPI):
         self.jobs_gets: list[int] = []
         self.cancel_status = 202
         self.actions_pages: list[int] = []
+        self.query_pages: list[tuple[str | None, int]] = []
+        self.current_query: dict[str, list[str]] = {}
         self.compare_urls: list[str] = []
         self.event_reads = 0
         self.post_status = 201
@@ -140,9 +142,12 @@ class FakeApproval(FakeAPI):
         path = urlparse(url).path
         root = f"/repos/{REPO}"
         if method == "GET" and path == f"{root}/actions/runs":
-            page = int((parse_qs(urlparse(url).query).get("page") or ["1"])[0])
-            per_page = int((parse_qs(urlparse(url).query).get("per_page") or ["100"])[0])
+            self.current_query = parse_qs(urlparse(url).query)
+            page = int((self.current_query.get("page") or ["1"])[0])
+            per_page = int((self.current_query.get("per_page") or ["100"])[0])
             self.actions_pages.append(page)
+            status = (self.current_query.get("status") or [None])[0]
+            self.query_pages.append((status, page))
             if self.on_inventory is not None:
                 self.on_inventory(self, page)
             if callable(self.inventory):
@@ -938,13 +943,102 @@ def test_allowlist_does_not_filter_approval() -> None:
 # --- pagination -------------------------------------------------------------
 
 
-def test_pagination_boundary_reads_page_two_for_the_pending_run() -> None:
+def test_full_in_flight_page_fails_closed_without_reading_page_two() -> None:
     fake = FakeApproval()
-    fake.runs = [fake.run(id=i, event="push") for i in range(1, 101)]
-    fake.runs.append(fake.run(id=101))
+    queued = [
+        fake.run(
+            id=i,
+            path=OTHER,
+            status="queued",
+            conclusion=None,
+            created_at="2026-09-05T10:00:00Z",
+        )
+        for i in range(1000, 1100)
+    ]
+
+    def inventory(page: int) -> dict:
+        status = (fake.current_query.get("status") or [None])[0]
+        if status == "queued":
+            if page == 1:
+                return {"total_count": 101, "workflow_runs": queued}
+            return {
+                "total_count": 101,
+                "workflow_runs": [
+                    fake.run(
+                        id=1100,
+                        status="queued",
+                        conclusion=None,
+                        created_at="2026-09-05T12:00:00Z",
+                    )
+                ],
+            }
+        if status in wa._IN_FLIGHT_STATUSES:
+            return {"total_count": 0, "workflow_runs": []}
+        return {"total_count": 1, "workflow_runs": [fake.run()]}
+
+    fake.inventory = inventory
+    with pytest.raises(GuardError, match="in-flight listing exceeds one page"):
+        reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == []
+    assert ("queued", 1) in fake.query_pages
+    assert ("queued", 2) not in fake.query_pages
+
+
+def test_short_in_flight_page_still_allows_approval() -> None:
+    fake = FakeApproval()
+
+    def inventory(page: int) -> dict:
+        status = (fake.current_query.get("status") or [None])[0]
+        if status == "queued":
+            return {
+                "total_count": 1,
+                "workflow_runs": [
+                    fake.run(id=202, path=OTHER, status="queued", conclusion=None)
+                ],
+            }
+        if status in wa._IN_FLIGHT_STATUSES:
+            return {"total_count": 0, "workflow_runs": []}
+        return {"total_count": 1, "workflow_runs": [fake.run()]}
+
+    fake.inventory = inventory
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [101]
-    assert 2 in fake.actions_pages
+    assert ("queued", 1) in fake.query_pages
+    assert ("queued", 2) not in fake.query_pages
+    assert any(
+        item["run_id"] == 101 and item["status"] == "approved"
+        for item in result.workflow_approvals
+    )
+
+
+def test_action_required_full_page_reads_page_two_and_approves() -> None:
+    fake = FakeApproval()
+    page_one = [fake.run(id=i, event="push") for i in range(1, 101)]
+
+    def inventory(page: int) -> dict:
+        status = (fake.current_query.get("status") or [None])[0]
+        if status == "action_required":
+            if page == 1:
+                return {"total_count": 101, "workflow_runs": page_one}
+            if page == 2:
+                return {"total_count": 101, "workflow_runs": [fake.run(id=101)]}
+            raise AssertionError(f"unexpected action_required page {page}")
+        if status in wa._IN_FLIGHT_STATUSES:
+            return {"total_count": 0, "workflow_runs": []}
+        event = (fake.current_query.get("event") or [None])[0]
+        if event == "pull_request":
+            return {"total_count": 0, "workflow_runs": []}
+        return {"total_count": 1, "workflow_runs": [fake.run(id=101)]}
+
+    fake.inventory = inventory
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [101]
+    assert ("action_required", 2) in fake.query_pages
+    assert all(
+        page == 1
+        for status, page in fake.query_pages
+        if status in wa._IN_FLIGHT_STATUSES
+    )
     assert any(item["run_id"] == 101 and item["status"] == "approved" for item in result.workflow_approvals)
     assert fake.cancels == []
     assert not any(item.get("status") in {"cancelled", "planned-cancel"} for item in result.workflow_approvals)
@@ -956,6 +1050,11 @@ def test_full_page_matching_total_count_still_reads_the_next_page() -> None:
     fake.runs.append(fake.run(id=100))
 
     def inventory(page: int) -> dict:
+        status = (fake.current_query.get("status") or [None])[0]
+        if status in wa._IN_FLIGHT_STATUSES:
+            return {"total_count": 0, "workflow_runs": []}
+        if status == "action_required":
+            return {"total_count": 1, "workflow_runs": [fake.run(id=100)]}
         if page == 1:
             return {"total_count": 100, "workflow_runs": copy.deepcopy(fake.runs)}
         if page == 2:
@@ -965,11 +1064,14 @@ def test_full_page_matching_total_count_still_reads_the_next_page() -> None:
     fake.inventory = inventory
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [100]
-    # total_count matching a full page is not the end of the list. The empty
-    # follow-up is. Each inventory is the head listing plus one branch listing
-    # per held or in-flight status. That pair runs again before POST, then the
-    # unfiltered sibling read and the manual-activation scan.
-    assert fake.actions_pages == [1, 2] * 16
+    # total_count matching a full page is not the end of a paged head listing.
+    # The empty follow-up is; status-scoped in-flight guards stay on page one.
+    assert (None, 2) in fake.query_pages
+    assert all(
+        page == 1
+        for status, page in fake.query_pages
+        if status in wa._IN_FLIGHT_STATUSES
+    )
     assert 3 not in fake.actions_pages
     assert any(item["run_id"] == 100 and item["status"] == "approved" for item in result.workflow_approvals)
     assert fake.cancels == []
@@ -1013,6 +1115,9 @@ def test_pagination_count_change_retry_returns_the_clean_list() -> None:
     def inventory(page: int) -> dict:
         # actions_pages already includes this request. The first pass changes
         # count on page 2; the retry and later listings are consistent.
+        status = (fake.current_query.get("status") or [None])[0]
+        if status in wa._IN_FLIGHT_STATUSES:
+            return {"total_count": 0, "workflow_runs": []}
         first_attempt = len(fake.actions_pages) <= 2
         if page == 1:
             return {
@@ -1026,7 +1131,12 @@ def test_pagination_count_change_retry_returns_the_clean_list() -> None:
     fake.inventory = inventory
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [101]
-    assert fake.actions_pages == [1, 2] * 17
+    assert fake.query_pages[:4] == [(None, 1), (None, 2), (None, 1), (None, 2)]
+    assert all(
+        page == 1
+        for status, page in fake.query_pages
+        if status in wa._IN_FLIGHT_STATUSES
+    )
     assert any(
         item["run_id"] == 101 and item["status"] == "approved"
         for item in result.workflow_approvals
@@ -1120,6 +1230,9 @@ def test_empty_followup_page_ends_the_list() -> None:
     fake.runs = page_one
 
     def full_then_empty(page: int) -> dict:
+        status = (fake.current_query.get("status") or [None])[0]
+        if status in wa._IN_FLIGHT_STATUSES:
+            return {"total_count": 0, "workflow_runs": []}
         if page == 1:
             return {"total_count": 150, "workflow_runs": copy.deepcopy(page_one)}
         if page == 2:
@@ -1129,7 +1242,13 @@ def test_empty_followup_page_ends_the_list() -> None:
     fake.inventory = full_then_empty
     result = reconcile_pull(fake.api(), REPO, 1)
     assert fake.posts == [100]
-    assert fake.actions_pages == [1, 2] * 16
+    assert (None, 2) in fake.query_pages
+    assert ("action_required", 2) in fake.query_pages
+    assert all(
+        page == 1
+        for status, page in fake.query_pages
+        if status in wa._IN_FLIGHT_STATUSES
+    )
     assert 3 not in fake.actions_pages
     assert any(
         item["run_id"] == 100 and item["status"] == "approved"
