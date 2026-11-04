@@ -170,7 +170,8 @@ the broader, conservative first filter. The final protection check validates
 the candidate fork and branch, then uses a head-filtered query for only the open
 pulls on that fork and branch: those are the pulls whose approval could release
 the run. Each result is re-read in full and, when its detail still names that
-fork and branch, checked against a fresh commit list. A detail naming another
+fork and branch, checked against a fresh commit list. A matching open pull whose
+merge commit is still being computed protects the run. A detail naming another
 head is ignored. A candidate with an invalid fork or branch name is never
 deleted, and neither is a run with an empty head branch. In the scan-time
 check, a null merge SHA in the list is resolved with one single-pull read,

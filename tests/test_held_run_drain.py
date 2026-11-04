@@ -475,6 +475,19 @@ def test_force_push_orphan_on_open_pull_branch_is_deleted() -> None:
     assert fake.deletes == [101]
 
 
+def test_recheck_null_merge_sha_protects_candidate_without_aborting() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run()]
+    fake.open_pull_items = [_open_pull("a" * 40)]
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["candidates"] == 1
+    assert result["deleted"] == []
+    assert result["aborted"] is None
+    assert fake.deletes == []
+
+
 def test_fresh_open_pull_recheck_protects_candidate_before_delete() -> None:
     fake = FakeDrain()
     run = fake.run()

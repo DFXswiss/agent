@@ -450,6 +450,10 @@ def _drain_enabled(
                 detail_head_sha, detail_merge_sha = _detail_shas(
                     detail, detail_head
                 )
+                # GitHub may report null while recomputing the merge commit.
+                if detail_merge_sha is None:
+                    detail_protected = True
+                    break
                 try:
                     detail_commits = {
                         sha.lower() for sha in _commit_shas(api, repo, number)
