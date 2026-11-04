@@ -167,6 +167,7 @@ class FakeGh:
         self.commits_ahead = False
         self.signed = True
         self.workflow_runs: list[dict[str, Any]] = []
+        self.statuses: list[dict[str, Any]] = []
         # Optional inventory overrides for protocol/transport fault tests.
         # ``workflow_inventory_body`` replaces the JSON body when set (any shape).
         # ``workflow_inventory_rc`` non-zero simulates transient transport failure.
@@ -423,6 +424,8 @@ class FakeGh:
 
         if argv[:2] == ["gh", "api"] and argv[-1] == "repos/example/project":
             return Completed(0, json.dumps({"default_branch": "develop"}), "")
+        if argv[:2] == ["gh", "api"] and str(argv[-1]).endswith("/statuses"):
+            return Completed(0, json.dumps(self.statuses), "")
         if argv[:2] == ["gh", "api"] and str(argv[-1]).startswith("repos/example/project/commits/"):
             return Completed(0, json.dumps({"sha": "c" * 40}), "")
         if argv[:2] == ["gh", "api"] and "contents/.github/pr-guard.json" in str(argv[-1]):

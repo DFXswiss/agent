@@ -1,0 +1,1013 @@
+"""A38 phases for the script-owned issue coordinator.
+
+The worker account publishes author evidence. The external second reviewer
+communicates only through existing hub pings and session mail. This module
+never submits a GitHub review approval and never changes draft state.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping
+from uuid import NAMESPACE_URL, uuid5
+
+from .a38_review import (
+    REVIEW_BEGIN,
+    REVIEW_END,
+    ReviewError,
+    render_review_record,
+    validate_declaration,
+    validate_review_record,
+    validate_visible,
+)
+from .allow import EXTERNAL_SECOND_REVIEW_PREFIX, evaluate_allow, external_second_review_ok
+from .coordinator_common import (
+    CoordinatorError,
+    Runner,
+    as_int,
+    coord,
+    gh_json,
+    gh_list,
+    is_sha,
+    redact,
+    save_task,
+    scoped,
+    target_repo,
+)
+from .coordinator_config import WorkerConfig
+from .coordinator_exec import run_bounded
+from .coordinator_git import (
+    control_dir,
+    ensure_draft,
+    execute_github,
+    git,
+    queue_activity,
+    repo_cfg,
+    require_git_ok,
+    verify_signed_clean_head,
+)
+from .coordinator_lanes import (
+    invalidate_head_evidence,
+    latest_gates,
+    review_rules_bound,
+    set_checklist,
+)
+from .local_ci import LocalCiError, parse_comment
+from .store import Store, utcnow
+
+PROVIDER_DISPLAY = {
+    "grok": "xAI",
+    "codex": "OpenAI",
+    "claude": "Anthropic",
+    "openrouter": "OpenRouter",
+}
+SECOND_REVIEW_KIND = "a38.second-review/v1"
+_SECOND_KEYS = frozenset(
+    {"kind", "task_id", "head", "defects", "blocks_merge", "findings", "lanes"}
+)
+_LANE_KEYS = frozenset(
+    {"id", "provider", "model", "model_number", "prompt", "status", "result"}
+)
+
+
+def _bounded_text(value: Any, label: str, *, maximum: int = 20000) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise CoordinatorError(f"{label} requires nonempty text of at most {maximum} characters")
+    if "\x00" in value:
+        raise CoordinatorError(f"{label} contains a NUL byte")
+    return value
+
+
+def validate_second_review_payload(raw: Any) -> dict[str, Any]:
+    """Strict, shared validator for reviewer CLI input and coordinator mail."""
+    if not isinstance(raw, Mapping) or set(raw) != _SECOND_KEYS:
+        raise CoordinatorError("second review must contain exactly the documented keys")
+    if raw.get("kind") != SECOND_REVIEW_KIND:
+        raise CoordinatorError(f"second review kind must be {SECOND_REVIEW_KIND}")
+    task_id = _bounded_text(raw.get("task_id"), "second review task_id", maximum=36)
+    try:
+        parsed_task = uuid.UUID(task_id)
+    except ValueError as exc:
+        raise CoordinatorError("second review task_id must be a UUID") from exc
+    if str(parsed_task) != task_id:
+        raise CoordinatorError("second review task_id must be a canonical UUID")
+    head = raw.get("head")
+    if not isinstance(head, str) or not is_sha(head):
+        raise CoordinatorError("second review head must be a lowercase 40-hex SHA")
+    defects = raw.get("defects")
+    if isinstance(defects, bool) or not isinstance(defects, int) or defects < 0:
+        raise CoordinatorError("second review defects must be an integer >= 0")
+    blocks_merge = raw.get("blocks_merge")
+    if not isinstance(blocks_merge, bool):
+        raise CoordinatorError("second review blocks_merge must be a boolean")
+    if blocks_merge and defects < 1:
+        raise CoordinatorError("second review blocking defects must be counted")
+    findings = raw.get("findings")
+    if not isinstance(findings, str) or len(findings) > 20000 or "\x00" in findings:
+        raise CoordinatorError("second review findings must be text of at most 20000 characters")
+    if defects >= 1 and not findings.strip():
+        raise CoordinatorError("second review findings are required when defects >= 1")
+    lanes = raw.get("lanes")
+    if not isinstance(lanes, list) or len(lanes) != 2:
+        raise CoordinatorError("second review requires conformity-b and logic-b lanes")
+    validated_lanes: list[dict[str, str]] = []
+    for index, expected in enumerate(("conformity-b", "logic-b")):
+        lane = lanes[index]
+        if not isinstance(lane, Mapping) or set(lane) != _LANE_KEYS:
+            raise CoordinatorError(f"second review lane {expected} has unknown or missing keys")
+        if lane.get("id") != expected:
+            raise CoordinatorError("second review lanes must be conformity-b then logic-b")
+        if lane.get("status") != "complete" or lane.get("result") != "pass":
+            raise CoordinatorError(f"second review lane {expected} must be complete/pass")
+        validated_lanes.append(
+            {
+                "id": expected,
+                "provider": _bounded_text(lane.get("provider"), f"{expected} provider", maximum=200),
+                "model": _bounded_text(lane.get("model"), f"{expected} model", maximum=200),
+                "model_number": _bounded_text(
+                    lane.get("model_number"), f"{expected} model_number", maximum=200
+                ),
+                "prompt": _bounded_text(lane.get("prompt"), f"{expected} prompt"),
+                "status": "complete",
+                "result": "pass",
+            }
+        )
+    if validated_lanes[0]["model"] != validated_lanes[1]["model"]:
+        raise CoordinatorError("both second review lanes must name the same model")
+    return {
+        "kind": SECOND_REVIEW_KIND,
+        "task_id": task_id,
+        "head": head,
+        "defects": defects,
+        "blocks_merge": blocks_merge,
+        "findings": findings,
+        "lanes": validated_lanes,
+    }
+
+
+def _a38_state(c: dict[str, Any]) -> dict[str, Any]:
+    value = c.setdefault("a38", {})
+    if not isinstance(value, dict):
+        value = {}
+        c["a38"] = value
+    return value
+
+
+def _observation(c: dict[str, Any], text: str) -> None:
+    observations = c.setdefault("observations", [])
+    if not isinstance(observations, list):
+        observations = []
+        c["observations"] = observations
+    observations.append({"at": utcnow(), "text": redact(text, limit=1000)})
+    del observations[:-50]
+
+
+def _record_local_check(
+    store: Store,
+    task: Mapping[str, Any],
+    *,
+    name: str,
+    command: str,
+    passed: bool,
+    output: str,
+    head: str,
+) -> None:
+    ident = str(uuid.uuid4())
+    store.write(
+        "local_check",
+        "insert",
+        ident,
+        {
+            "id": ident,
+            "task_id": task["id"],
+            "name": name,
+            "command": command,
+            "result": "pass" if passed else "fail",
+            "output": redact(output),
+            "ran_at": utcnow(),
+            "head_sha": head,
+        },
+    )
+
+
+def _a38_failure_summary(report_path: Path, logs_dir: Path, fallback: str) -> str:
+    lines: list[str] = []
+    try:
+        report = parse_comment(report_path.read_text(encoding="utf-8"))
+        for run in report.runs:
+            if run.result != "pass" or run.exit_code != 0:
+                lines.append(f"{run.id} ({run.name}): {run.result}, exit {run.exit_code}")
+    except (OSError, UnicodeError, LocalCiError):
+        pass
+    if logs_dir.is_dir():
+        for path in sorted(logs_dir.iterdir())[:10]:
+            if not path.is_file():
+                continue
+            try:
+                tail = path.read_text(encoding="utf-8", errors="replace")[-1200:].strip()
+            except OSError:
+                continue
+            if tail:
+                lines.append(f"{path.name} tail:\n{tail}")
+    return redact("\n".join(lines) or fallback, limit=6000)
+
+
+def _run_cli(argv: list[str], *, worker: WorkerConfig, cwd: Path) -> Any:
+    return run_bounded(
+        [sys.executable, "-m", "agent_cli.main", "a38", *argv],
+        timeout=worker.a38_timeout_seconds,
+        cwd=str(cwd),
+        clear_ambient_github=True,
+    )
+
+
+def phase_tests(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    """Run the optional trusted precheck, complete A38 suite, and publish its report."""
+    if not worker.a38:
+        raise CoordinatorError("A38 tests phase called for a non-A38 worker")
+    c = coord(task)
+    source = c["source"]
+    cfg = repo_cfg(worker, str(source["repo"]))
+    worktree = str(c["worktree"])
+    head = verify_signed_clean_head(store, worker, runner, worktree)
+    c["head_sha"] = head
+    a38 = _a38_state(c)
+    prior = a38.get("report")
+    if isinstance(prior, dict) and prior.get("head") == head:
+        activity = store.row("activity", str(prior.get("activity_id") or ""))
+        if activity is not None and activity.get("execution_status") == "done":
+            c["phase"] = "pr_gates_grok"
+            task["state"] = "pr-review"
+            save_task(store, task)
+            return [f"A38 report already posted on {head[:7]}"]
+
+    if cfg.check_argv:
+        from .coordinator_common import coordinator_env
+
+        precheck = run_bounded(
+            list(cfg.check_argv),
+            timeout=worker.check_timeout,
+            cwd=worktree,
+            env=coordinator_env(c, worker, cfg),
+            clear_ambient_github=True,
+        )
+        pre_output = (precheck.stdout or "") + "\n" + (precheck.stderr or "")
+        if precheck.returncode != 0:
+            _record_local_check(
+                store,
+                task,
+                name="coordinator-check",
+                command=" ".join(cfg.check_argv),
+                passed=False,
+                output=pre_output,
+                head=head,
+            )
+            c["findings"] = f"Trusted precheck failed on {head[:7]}:\n{redact(pre_output)}"
+            evidence = c.setdefault("evidence", {})
+            if isinstance(evidence, dict):
+                evidence["tests_pass"] = False
+                evidence["tests_head"] = head
+            c["phase"] = "implement"
+            task["state"] = "implementing"
+            invalidate_head_evidence(c, head)
+            save_task(store, task)
+            return [f"trusted precheck failed on {head[:7]}; routing to implementer"]
+        _record_local_check(
+            store,
+            task,
+            name="coordinator-check",
+            command=" ".join(cfg.check_argv),
+            passed=True,
+            output=pre_output,
+            head=head,
+        )
+
+    fetched = git(
+        store,
+        worker,
+        runner,
+        worktree,
+        "fetch",
+        "--no-tags",
+        "origin",
+        f"+refs/heads/{cfg.base}:refs/remotes/origin/{cfg.base}",
+    )
+    require_git_ok(fetched, "fetch A38 base")
+    base_result = git(store, worker, runner, worktree, "rev-parse", f"refs/remotes/origin/{cfg.base}")
+    require_git_ok(base_result, "resolve A38 base")
+    base_sha = (base_result.stdout or "").strip().lower()
+    if not is_sha(base_sha):
+        raise CoordinatorError("A38 base revision is not a 40-hex SHA")
+    a38["base_sha"] = base_sha
+    policy_result = git(store, worker, runner, worktree, "show", f"{base_sha}:.github/a38.json")
+    require_git_ok(policy_result, "load A38 policy from base")
+
+    run_dir = control_dir(worker, str(task["id"])) / "a38" / head
+    try:
+        if run_dir.exists():
+            if run_dir.is_symlink() or not run_dir.is_dir():
+                raise CoordinatorError("A38 run path is not a managed directory")
+            shutil.rmtree(run_dir)
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise CoordinatorError("cannot create a fresh A38 run directory") from exc
+    policy_path = run_dir / "policy.json"
+    report_path = run_dir / "report.md"
+    logs_dir = run_dir / "logs"
+    policy_path.write_text(policy_result.stdout or "", encoding="utf-8")
+
+    api = scoped(store, worker.session_id, runner)
+    visibility = gh_json(api, ["gh", "api", f"repos/{cfg.repo}", "--jq", ".private"])
+    if not isinstance(visibility, bool):
+        raise CoordinatorError("target repository visibility lookup did not return a boolean")
+    visibility_flag = "--private" if visibility else "--public"
+    steps = [
+        ["policy", "--file", str(policy_path)],
+        [
+            "run",
+            "--repo",
+            worktree,
+            "--policy",
+            str(policy_path),
+            "--base-sha",
+            base_sha,
+            "--repository",
+            cfg.repo,
+            "--output",
+            str(report_path),
+            "--logs-dir",
+            str(logs_dir),
+            visibility_flag,
+        ],
+        [
+            "verify",
+            "--policy",
+            str(policy_path),
+            "--file",
+            str(report_path),
+            "--repo",
+            cfg.repo,
+            "--head",
+            head,
+            visibility_flag,
+        ],
+    ]
+    results = []
+    for index, argv in enumerate(steps):
+        if index == 2 and not report_path.is_file():
+            break
+        results.append(_run_cli(argv, worker=worker, cwd=run_dir))
+        if index == 0 and results[-1].returncode != 0:
+            break
+    passed = len(results) == 3 and all(result.returncode == 0 for result in results)
+    output = "\n".join(
+        redact((result.stdout or "") + "\n" + (result.stderr or ""), limit=2000)
+        for result in results
+    )
+    _record_local_check(
+        store,
+        task,
+        name="a38",
+        command="agent a38 policy; agent a38 run; agent a38 verify",
+        passed=passed,
+        output=output,
+        head=head,
+    )
+    if not passed:
+        details = _a38_failure_summary(report_path, logs_dir, output or "A38 failed")
+        c["findings"] = f"A38 failed on {head[:7]}:\n{details}"
+        evidence = c.setdefault("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["tests_pass"] = False
+            evidence["tests_head"] = head
+        c["phase"] = "implement"
+        task["state"] = "implementing"
+        invalidate_head_evidence(c, head)
+        save_task(store, task)
+        return [f"A38 failed on {head[:7]}; routing to implementer"]
+
+    try:
+        report_body = report_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise CoordinatorError("verified A38 report cannot be read") from exc
+    draft_lines = ensure_draft(store, worker, task, runner)
+    if str(coord(task).get("head_sha") or "") != head:
+        raise CoordinatorError("published pull request head differs from verified A38 head")
+    if c.get("pr_number"):
+        try:
+            set_checklist(
+                store,
+                task,
+                "pushed",
+                "ja",
+                f"draft PR {c.get('pr_number')} head {head}",
+                source="script",
+            )
+        except CoordinatorError:
+            pass
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task['id']}:{head}"))
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError("A38 report comment requires a pull request number")
+    queue_activity(
+        store,
+        activity_id=activity_id,
+        session_id=worker.session_id,
+        typ="comment.post",
+        payload={
+            "repo": target_repo(task),
+            "number": number,
+            "body": report_body,
+            "target": "pr",
+            "exact_body": True,
+        },
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
+    row = store.row("activity", activity_id)
+    if row is None or row.get("execution_status") != "done":
+        raise CoordinatorError("A38 report comment was not verified published")
+    result = row.get("result") if isinstance(row.get("result"), dict) else {}
+    if not isinstance(result.get("url"), str) or not result["url"]:
+        raise CoordinatorError("A38 report comment URL was not verified")
+    a38["report"] = {
+        "head": head,
+        "activity_id": activity_id,
+        "id": result.get("id"),
+        "url": result.get("url"),
+    }
+    evidence = c.setdefault("evidence", {})
+    if isinstance(evidence, dict):
+        evidence["tests_pass"] = True
+        evidence["tests_head"] = head
+    set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
+    c["phase"] = "pr_gates_grok"
+    task["state"] = "pr-review"
+    save_task(store, task)
+    return [f"A38 passed and report posted on {head[:7]}", *draft_lines]
+
+
+def _summary(task: Mapping[str, Any], language: str) -> str:
+    key = "change_summary_en" if language == "en" else "change_summary_de"
+    value = task.get(key)
+    if not isinstance(value, str) or not value.strip() or "\n" in value:
+        raise CoordinatorError(f"task {language.upper()} summary is missing")
+    return value.strip()
+
+
+def _machine_block(payload: Mapping[str, Any]) -> str:
+    return (
+        f"{REVIEW_BEGIN}\n```json\n"
+        + json.dumps(payload, ensure_ascii=False, sort_keys=False, separators=(",", ":"))
+        + f"\n```\n{REVIEW_END}"
+    )
+
+
+def _render_review_comment(
+    task: Mapping[str, Any],
+    payload: dict[str, Any],
+    *,
+    rules_bound: bool,
+    reviewer: str | None = None,
+    findings: str = "",
+) -> str:
+    lanes = payload["lanes"]
+    model = lanes[0]["model"]
+    second = lanes[0]["id"] == "conformity-b"
+    if second:
+        defects = int(payload["defects"])
+        blocks = bool(payload["blocks_merge"])
+        if defects == 0:
+            en_status, de_status = "No defects.", "Keine Mängel."
+        elif blocks:
+            en_status = "There are defects that must be fixed."
+            de_status = "Es gibt Mängel, die behoben werden müssen."
+        else:
+            en_status = "There are defects that do not block the merge."
+            de_status = "Es gibt Mängel, die den Merge nicht blockieren."
+        visible = (
+            f"EN:\nSecond review with {model}\n{en_status}\n\n"
+            f"DE:\nZweiter Review mit {model}\n{de_status}\n\n"
+        )
+        detail_prefix = (
+            f"{_summary(task, 'en')}\n\n{_summary(task, 'de')}\n\n"
+            f"Second review by @{reviewer}.\n"
+        )
+        if findings:
+            detail_prefix += f"\n{findings.strip()}\n"
+    else:
+        passes = int(payload["passes"])
+        visible = (
+            f"EN:\nFirst review with {model}\nReady after {passes} review passes.\n"
+            f"{_summary(task, 'en')}\n\n"
+            f"DE:\nErster Review mit {model}\nBereit nach {passes} Review-Durchläufen.\n"
+            f"{_summary(task, 'de')}\n\n"
+        )
+        detail_prefix = ""
+    try:
+        record = render_review_record(payload, rules_bound=rules_bound)
+    except ReviewError as exc:
+        raise CoordinatorError(f"A38 review comment validation failed: {exc}") from exc
+    body = (
+        visible
+        + "<details>\n<summary>Details</summary>\n\n"
+        + detail_prefix
+        + ("\n" if detail_prefix and not detail_prefix.endswith("\n\n") else "")
+        + record
+        + _machine_block(payload)
+        + "\n\n</details>"
+    )
+    reasons = [
+        *validate_declaration(
+            payload,
+            head=str(payload["head"]),
+            markdown_only=False,
+            rules_bound=rules_bound,
+        ),
+        *validate_visible(body, int(payload["passes"])),
+        *validate_review_record(body, payload, rules_bound=rules_bound),
+    ]
+    if reasons:
+        raise CoordinatorError("A38 review comment validation failed: " + "; ".join(dict.fromkeys(reasons)))
+    return body
+
+
+def _post_comment(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    activity_id: str,
+    body: str,
+) -> dict[str, Any]:
+    c = coord(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError("A38 comment requires a pull request number")
+    queue_activity(
+        store,
+        activity_id=activity_id,
+        session_id=worker.session_id,
+        typ="comment.post",
+        payload={"repo": target_repo(task), "number": number, "body": body, "target": "pr"},
+    )
+    execute_github(store, runner, activity_ids=(activity_id,))
+    row = store.row("activity", activity_id)
+    if row is None or row.get("execution_status") != "done":
+        raise CoordinatorError("A38 review comment was not verified published")
+    result = row.get("result") if isinstance(row.get("result"), dict) else {}
+    if not isinstance(result.get("url"), str) or not result["url"]:
+        raise CoordinatorError("A38 review comment URL was not verified")
+    return result
+
+
+def phase_first_comment(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    if not worker.a38:
+        raise CoordinatorError("A38 first-comment phase called for a non-A38 worker")
+    c = coord(task)
+    head = verify_signed_clean_head(store, worker, runner, str(c.get("worktree") or ""))
+    if head != str(c.get("head_sha") or ""):
+        invalidate_head_evidence(c, head)
+        c["head_sha"] = head
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["head changed before first A38 review comment"]
+    gates = latest_gates(store, str(task["id"]))
+    models = task.get("models") if isinstance(task.get("models"), dict) else {}
+    vendor = models.get("first")
+    if not isinstance(vendor, str):
+        raise CoordinatorError("A38 first review provider is not pinned")
+    for dimension in ("quality", "logic"):
+        gate = gates.get(("grok-pr", dimension))
+        if gate is None or gate.get("verdict") != "approved" or gate.get("head_sha") != head or gate.get("vendor") != vendor:
+            raise CoordinatorError(f"missing first review gate grok-pr/{dimension} on {head[:7]}")
+    a38 = _a38_state(c)
+    existing = a38.get("first_comment")
+    if isinstance(existing, dict) and existing.get("head") == head:
+        row = store.row("activity", str(existing.get("activity_id") or ""))
+        if row is not None and row.get("execution_status") == "done":
+            send_second_review_requests(store, worker, task)
+            c["phase"] = "await_second_review"
+            save_task(store, task)
+            return [f"first A38 review comment already posted on {head[:7]}"]
+    prompts = a38.get("gate_prompts")
+    head_prompts = prompts.get(head) if isinstance(prompts, dict) else None
+    if not isinstance(head_prompts, dict):
+        raise CoordinatorError("first review prompt evidence is missing")
+    lanes = []
+    for dimension, lane_id in (("quality", "conformity-a"), ("logic", "logic-a")):
+        item = head_prompts.get(dimension)
+        if not isinstance(item, dict):
+            raise CoordinatorError(f"first review {dimension} prompt evidence is missing")
+        model = item.get("model")
+        prompt = item.get("prompt")
+        if not isinstance(model, str) or not isinstance(prompt, str):
+            raise CoordinatorError(f"first review {dimension} model/prompt evidence is missing")
+        lanes.append(
+            {
+                "id": lane_id,
+                "result": "pass",
+                "status": "complete",
+                "provider": PROVIDER_DISPLAY[vendor],
+                "model": model,
+                "model_number": model,
+                "prompt": prompt,
+            }
+        )
+    if lanes[0]["model"] != lanes[1]["model"]:
+        raise CoordinatorError("first review lanes do not share one model")
+    payload = {
+        "schema": "a38-review/v2",
+        "head": head,
+        "passes": max(1, int(a38.get("first_review_passes") or 0)),
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": lanes,
+    }
+    rules_bound = review_rules_bound(store, worker, runner, task)
+    body = _render_review_comment(task, payload, rules_bound=rules_bound)
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
+    result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
+    a38["first_comment"] = {
+        "head": head,
+        "activity_id": activity_id,
+        "id": result.get("id"),
+        "url": result.get("url"),
+    }
+    send_second_review_requests(store, worker, task)
+    c["phase"] = "await_second_review"
+    save_task(store, task)
+    return [f"first A38 review comment posted on {head[:7]}"]
+
+
+def _ping_id(task_id: str, head: str, login: str, occurrence: int) -> str:
+    return str(uuid5(NAMESPACE_URL, f"coordinator-a38-review-request:{task_id}:{head}:{login}:{occurrence}"))
+
+
+def send_second_review_requests(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], *, force: bool = False
+) -> bool:
+    c = coord(task)
+    head = str(c.get("head_sha") or "")
+    if not is_sha(head):
+        raise CoordinatorError("second review request requires current head")
+    a38 = _a38_state(c)
+    prior = a38.get("second_review")
+    if isinstance(prior, dict) and prior.get("head") == head and not force:
+        return False
+    occurrence = int(prior.get("request_count") or 0) if isinstance(prior, dict) else 0
+    if force:
+        occurrence += 1
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError("second review request requires pull request number")
+    url = str(c.get("pr_url") or f"https://github.com/{target_repo(task)}/pull/{number}")
+    note = (
+        f"Second review requested for {target_repo(task)}#{number} at head {head}. "
+        f"Reply with `agent review second send --to-session {worker.session_id} "
+        f"--task {task['id']} --head {head} --file <result.json>`. {url}"
+    )
+    if len(note) > 1000:
+        raise CoordinatorError("second review request exceeds 1000 characters")
+    sender = store.meta("github_login")
+    if not isinstance(sender, str) or not sender:
+        raise CoordinatorError("device must be paired before sending second-review pings")
+    now = utcnow()
+    requested_at = (
+        prior.get("requested_at")
+        if isinstance(prior, dict) and prior.get("head") == head
+        else now
+    )
+    a38["second_review"] = {
+        "head": head,
+        "requested_at": requested_at,
+        "last_requested_at": now,
+        "request_count": occurrence,
+        "pinged": list(worker.second_reviewers),
+        "status": "requested",
+    }
+    for login in worker.second_reviewers:
+        pid = _ping_id(str(task["id"]), head, login, occurrence)
+        if store.row("ping", pid) is not None:
+            continue
+        store.write(
+            "ping",
+            "insert",
+            pid,
+            {
+                "id": pid,
+                "from_login": sender.casefold(),
+                "to_login": login,
+                "kind": "review-request",
+                "task_id": task["id"],
+                "body": note,
+                "created_at": now,
+                "acked_at": None,
+            },
+        )
+    save_task(store, task)
+    return True
+
+
+def _mark_message_read(store: Store, worker: WorkerConfig, message_id: str) -> None:
+    ack_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-message-read:{worker.session_id}:{message_id}"))
+    if store.row("activity", ack_id) is not None:
+        return
+    store.write(
+        "activity",
+        "insert",
+        ack_id,
+        {
+            "id": ack_id,
+            "session_id": worker.session_id,
+            "type": "message.read",
+            "payload": {"message_id": message_id},
+            "execution_status": "done",
+        },
+    )
+
+
+def _read_message_ids(store: Store, worker: WorkerConfig) -> set[str]:
+    ids: set[str] = set()
+    for row in store.rows("activity"):
+        if row.get("type") != "message.read" or row.get("session_id") != worker.session_id:
+            continue
+        payload = row.get("payload")
+        if isinstance(payload, dict) and isinstance(payload.get("message_id"), str):
+            ids.add(payload["message_id"])
+    return ids
+
+
+def _fresh_pr_head(store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner) -> str:
+    c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError("second review intake requires pull request number")
+    view = gh_json(
+        scoped(store, worker.session_id, runner),
+        ["gh", "pr", "view", str(number), "--repo", target_repo(dict(task)), "--json", "headRefOid"],
+    )
+    head = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
+    if not is_sha(head):
+        raise CoordinatorError("cannot read current pull request head")
+    return head
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def phase_await_second_review(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    if not worker.a38:
+        raise CoordinatorError("external second-review phase called for a non-A38 worker")
+    c = coord(task)
+    current = _fresh_pr_head(store, worker, task, runner)
+    expected = str(c.get("head_sha") or "")
+    if current != expected:
+        c["head_sha"] = current
+        invalidate_head_evidence(c, current)
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["PR head changed while awaiting second review; invalidating evidence"]
+    read = _read_message_ids(store, worker)
+    messages = list(reversed(store.rows("activity")))
+    for row in messages:
+        message_id = str(row.get("id") or "")
+        if not message_id or message_id in read or row.get("type") != "message":
+            continue
+        outer = row.get("payload")
+        if not isinstance(outer, dict) or outer.get("to_session") != worker.session_id:
+            continue
+        raw = outer.get("payload")
+        if not isinstance(raw, Mapping):
+            continue
+        if raw.get("kind") != SECOND_REVIEW_KIND or raw.get("task_id") != task["id"]:
+            continue
+        login = row.get("_github_login")
+        if not isinstance(login, str) or not login:
+            _mark_message_read(store, worker, message_id)
+            _observation(c, "second review mail ignored: sender GitHub login is unavailable")
+            save_task(store, task)
+            continue
+        login = login.casefold()
+        if login not in worker.second_reviewers:
+            _mark_message_read(store, worker, message_id)
+            _observation(c, f"second review mail from unauthorized @{login} ignored")
+            save_task(store, task)
+            continue
+        try:
+            payload = validate_second_review_payload(raw)
+        except CoordinatorError as exc:
+            _mark_message_read(store, worker, message_id)
+            _observation(c, f"malformed second review mail ignored: {exc}")
+            save_task(store, task)
+            continue
+        if payload["head"] != current:
+            _mark_message_read(store, worker, message_id)
+            _observation(c, "second review for stale head ignored")
+            save_task(store, task)
+            continue
+        declaration = {
+            "schema": "a38-review/v2",
+            "head": current,
+            "passes": 1,
+            "defects": payload["defects"],
+            "set_aside": "none",
+            "blocks_merge": payload["blocks_merge"],
+            "lanes": payload["lanes"],
+        }
+        findings = redact(payload["findings"], limit=20000) if payload["defects"] else ""
+        rules_bound = review_rules_bound(store, worker, runner, task)
+        try:
+            body = _render_review_comment(
+                task,
+                declaration,
+                rules_bound=rules_bound,
+                reviewer=login,
+                findings=findings,
+            )
+        except CoordinatorError as exc:
+            _mark_message_read(store, worker, message_id)
+            _observation(c, f"malformed second review mail ignored: {exc}")
+            save_task(store, task)
+            continue
+        activity_id = str(
+            uuid5(NAMESPACE_URL, f"coordinator-a38-second:{task['id']}:{current}:{message_id}")
+        )
+        result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
+        _mark_message_read(store, worker, message_id)
+        a38 = _a38_state(c)
+        state = a38.get("second_review")
+        if not isinstance(state, dict) or state.get("head") != current:
+            state = {"head": current, "pinged": list(worker.second_reviewers)}
+            a38["second_review"] = state
+        state.update(
+            {
+                "status": "posted",
+                "reviewer": login,
+                "activity_id": activity_id,
+                "id": result.get("id"),
+                "url": result.get("url"),
+            }
+        )
+        if payload["blocks_merge"]:
+            c["findings"] = findings
+            invalidate_head_evidence(c, "")
+            c["phase"] = "implement"
+            task["state"] = "implementing"
+            save_task(store, task)
+            return [f"blocking external second review by @{login}; routing to implementer"]
+        evidence = (
+            f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
+            f"{result['url']}"
+        )
+        set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
+        set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
+        c["phase"] = "ci"
+        save_task(store, task)
+        return [f"external second review by @{login} posted on {current[:7]}"]
+
+    a38 = _a38_state(c)
+    state = a38.get("second_review")
+    last = _parse_iso(state.get("last_requested_at")) if isinstance(state, dict) else None
+    now = datetime.now(timezone.utc)
+    if last is not None and (now - last).total_seconds() >= worker.second_review_timeout_seconds:
+        if send_second_review_requests(store, worker, task, force=True):
+            _observation(c, "second review request timed out; review-request pings re-sent")
+            save_task(store, task)
+            return ["second review still pending; review-request pings re-sent"]
+    return ["awaiting external second review"]
+
+
+def _checklist_maps(store: Store, task_id: str) -> tuple[dict[str, str], dict[str, str]]:
+    statuses: dict[str, str] = {}
+    evidence: dict[str, str] = {}
+    for row in store.rows("checklist_item"):
+        if row.get("task_id") != task_id:
+            continue
+        key = str(row.get("key") or "")
+        statuses[key] = str(row.get("status") or "")
+        evidence[key] = str(row.get("evidence") or "")
+    return statuses, evidence
+
+
+def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> None:
+    c = coord(task)
+    a38 = _a38_state(c)
+    for key in ("report", "first_comment", "second_review"):
+        value = a38.get(key)
+        if not isinstance(value, dict) or value.get("head") != head:
+            raise CoordinatorError(f"A38 {key} evidence is missing on {head[:7]}")
+    if a38["second_review"].get("status") != "posted":
+        raise CoordinatorError("external second review comment is not posted")
+    statuses, evidence = _checklist_maps(store, str(task["id"]))
+    snapshot = {**task, "checklist_evidence": evidence}
+    if not external_second_review_ok(snapshot, statuses, evidence):
+        raise CoordinatorError("external second review checklist evidence is missing")
+
+
+def phase_await_ready(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    if not worker.a38:
+        raise CoordinatorError("await-ready phase called for a non-A38 worker")
+    c = coord(task)
+    head = str(c.get("head_sha") or "")
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None or not is_sha(head):
+        raise CoordinatorError("await-ready requires pull request number and head")
+    api = scoped(store, worker.session_id, runner)
+    view = gh_json(
+        api,
+        [
+            "gh",
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            target_repo(task),
+            "--json",
+            "isDraft,headRefOid,state",
+        ],
+    )
+    observed = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
+    if observed != head:
+        if not is_sha(observed):
+            raise CoordinatorError("cannot read pull request head while awaiting Ready")
+        c["head_sha"] = observed
+        invalidate_head_evidence(c, observed)
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["PR head changed while awaiting guard Ready; invalidating evidence"]
+    if str(view.get("state") or "").upper() != "OPEN":
+        raise CoordinatorError("pull request is not open while awaiting guard Ready")
+    if view.get("isDraft") is False:
+        require_ready_evidence(store, task, head)
+        allowed = evaluate_allow(
+            "pr-ready",
+            session_id=worker.session_id,
+            task_id=str(task["id"]),
+            session_tasks=[
+                {
+                    "id": task["id"],
+                    "session_id": task.get("session_id"),
+                    "state": task.get("state"),
+                }
+            ],
+        )
+        if not allowed.allowed:
+            raise CoordinatorError(f"pr-ready denied: {allowed.reason}")
+        evidence = c.setdefault("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["ready_head"] = head
+        c["phase"] = "await_merge"
+        task["state"] = "pr-review"
+        save_task(store, task)
+        return [f"guard set Ready on {head[:7]}; awaiting human merge"]
+    if view.get("isDraft") is not True:
+        raise CoordinatorError("pull request draft state is unavailable")
+    statuses = gh_list(
+        api,
+        [
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{target_repo(task)}/commits/{head}/statuses",
+        ],
+    )
+    newest = next(
+        (
+            item
+            for item in statuses
+            if isinstance(item, dict) and str(item.get("context") or "").startswith("A38 / report")
+        ),
+        None,
+    )
+    a38 = _a38_state(c)
+    a38["guard_status"] = {
+        "head": head,
+        "context": newest.get("context") if isinstance(newest, dict) else None,
+        "state": newest.get("state") if isinstance(newest, dict) else None,
+        "description": newest.get("description") if isinstance(newest, dict) else "A38 / report status absent",
+        "observed_at": utcnow(),
+    }
+    save_task(store, task)
+    description = a38["guard_status"]["description"] or "A38 / report status has no description"
+    return [f"awaiting guard Ready on {head[:7]}: {redact(str(description), limit=500)}"]

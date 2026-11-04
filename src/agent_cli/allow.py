@@ -72,6 +72,7 @@ N_A_ALLOWED = frozenset(
 
 CODEX_SECOND_REVIEW_KEYS = frozenset({"codex_pr_quality", "codex_pr_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
+EXTERNAL_SECOND_REVIEW_PREFIX = "external second review by "
 
 # (stage, dimension, model slot). The stage names are the historical ledger
 # identifiers of slot ``first`` and ``second``; the provider comes from the
@@ -142,6 +143,25 @@ def both_codex_reviews_na(statuses: Mapping[str, Any], evidence: Mapping[str, An
     )
 
 
+def external_second_review_ok(
+    task: Mapping[str, Any],
+    statuses: Mapping[str, Any],
+    evidence: Mapping[str, Any] | None,
+) -> bool:
+    """External slot-second evidence replaces gate rows only for ``second: null``."""
+    try:
+        external = models_from_snapshot(task).second is None
+    except (TypeError, ValueError):
+        return False
+    recorded = evidence if isinstance(evidence, Mapping) else {}
+    return external and all(
+        statuses.get(key) == "ja"
+        and isinstance(recorded.get(key), str)
+        and str(recorded[key]).startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
+        for key in CODEX_SECOND_REVIEW_KEYS
+    )
+
+
 def _tid(task: dict[str, Any]) -> str:
     return str(task.get("id", "?"))
 
@@ -185,6 +205,11 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     trusted = task.get("trusted_pr_guard")
     opener = task.get("pull_opener")
     recorded = task.get("checklist_evidence")
+    external_second = external_second_review_ok(
+        task,
+        checklist,
+        recorded if isinstance(recorded, Mapping) else None,
+    )
     skip_codex_gates = both_codex_reviews_na(
         checklist,
         recorded if isinstance(recorded, Mapping) else None,
@@ -231,7 +256,13 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     all_gates_ok = True
     for stage, dim, slot in GATE_PAIRS:
         vendor = models.for_slot(slot)
+        if slot == "second" and external_second:
+            continue
         if skip_codex_gates and stage == "codex-pr":
+            continue
+        if vendor is None:
+            blocking.append(f"{tid}:gate:{stage}/{dim}=external_review_missing")
+            all_gates_ok = False
             continue
         got = latest.get((stage, dim))
         if got is None:

@@ -47,6 +47,12 @@ from .coordinator_common import (
     strip_row,
 )
 from .coordinator_config import WorkerConfig
+from .coordinator_a38 import (
+    phase_await_ready as phase_a38_await_ready,
+    phase_await_second_review,
+    phase_first_comment as phase_a38_first_comment,
+    phase_tests as phase_a38_tests,
+)
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
     ensure_draft,
@@ -107,28 +113,39 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
     for skill in REQUIRED_WORKER_SKILLS:
         if not has_skill(session, skill):
             raise CoordinatorError(f"worker session missing skill {skill}")
-    review = owned_session(store, worker.review_session)
-    for skill in REQUIRED_REVIEW_SKILLS:
-        if not has_skill(review, skill):
-            raise CoordinatorError(f"review_session missing skill {skill}")
     try:
         accounts = load_accounts(store.home)
         worker_account = accounts.for_session(worker.session_id)
-        review_account = accounts.for_session(worker.review_session)
+        review_account = None
+        if not worker.a38:
+            if worker.review_session is None:
+                raise CoordinatorError("non-A38 worker requires review_session")
+            review = owned_session(store, worker.review_session)
+            for skill in REQUIRED_REVIEW_SKILLS:
+                if not has_skill(review, skill):
+                    raise CoordinatorError(f"review_session missing skill {skill}")
+            review_account = accounts.for_session(worker.review_session)
     except AccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if worker_account.login.casefold() == review_account.login.casefold():
+    if review_account is not None and worker_account.login.casefold() == review_account.login.casefold():
         raise CoordinatorError("formal review_session must use a different GitHub login")
+    if worker.a38 and worker_account.login.casefold() in worker.second_reviewers:
+        raise CoordinatorError("second_reviewers must not contain the worker GitHub login")
     if worker_account.git_identity is None:
         raise CoordinatorError("worker GitHub account requires git identity for signed commits")
     try:
         worker_account.runner(runner, require_git=True)
-        review_account.runner(runner)
+        if review_account is not None:
+            review_account.runner(runner)
     except AccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     try:
         ai = load_ai_accounts(store.home)
         _refuse_codex_first(ai.models.first)
+        if worker.a38 and ai.models.second is not None:
+            raise CoordinatorError("A38 workers require models.second = null")
+        if not worker.a38 and ai.models.second is None:
+            raise CoordinatorError("models.second = null is allowed only for A38 workers")
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(worker.session_id, role, vendor)
@@ -154,17 +171,35 @@ def execution_binding(
     cfg = repo_cfg(worker, repo)
     github = load_accounts(store.home)
     ai = ai if ai is not None else load_ai_accounts(store.home)
-    selected = {
-        "repository": asdict(cfg), "workspace": str(worker.workspace_root),
-        "worker_session": worker.session_id, "review_session": worker.review_session,
-        "reply_logins": worker.reply_logins,
-        "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
-        # Only a non-default models block enters the hash, so a device without one,
-        # or with the default written out, keeps the hash of earlier tasks.
-        **({"models": ai.models.as_dict()} if ai.models != DEFAULT_MODEL_SLOTS else {}),
-        "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
-                  for slot in required_lane_slots(ai.models)],
-    }
+    if worker.a38:
+        selected = {
+            "repository": asdict(cfg), "workspace": str(worker.workspace_root),
+            "worker_session": worker.session_id,
+            "reply_logins": worker.reply_logins,
+            "github": [asdict(github.for_session(worker.session_id))],
+            "models": ai.models.as_dict(),
+            "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
+                      for slot in required_lane_slots(ai.models)],
+            "a38": {
+                "enabled": True,
+                "second_reviewers": worker.second_reviewers,
+                "second_review_timeout_seconds": worker.second_review_timeout_seconds,
+                "a38_timeout_seconds": worker.a38_timeout_seconds,
+            },
+        }
+    else:
+        assert worker.review_session is not None
+        selected = {
+            "repository": asdict(cfg), "workspace": str(worker.workspace_root),
+            "worker_session": worker.session_id, "review_session": worker.review_session,
+            "reply_logins": worker.reply_logins,
+            "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
+            # Only a non-default models block enters the hash, so a device without one,
+            # or with the default written out, keeps the hash of earlier tasks.
+            **({"models": ai.models.as_dict()} if ai.models != DEFAULT_MODEL_SLOTS else {}),
+            "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
+                      for slot in required_lane_slots(ai.models)],
+        }
     return hashlib.sha256(json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -1166,6 +1201,8 @@ def phase_inner_review(
 
 
 def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
+    if worker.a38:
+        return phase_a38_tests(store, worker, task, runner)
     c = coord(task)
     source = c["source"]
     cfg = repo_cfg(worker, str(source["repo"]))
@@ -1319,8 +1356,11 @@ def advance_one(
         "publish_draft": lambda: phase_publish_draft(store, worker, task, runner),
         "pr_gates_grok": lambda: phase_pr_gates_grok(store, worker, task, runner, lane_runner),
         "pr_gates_codex": lambda: phase_pr_gates_codex(store, worker, task, runner, lane_runner),
+        "a38_first_comment": lambda: phase_a38_first_comment(store, worker, task, runner),
+        "await_second_review": lambda: phase_await_second_review(store, worker, task, runner),
         "ci": lambda: phase_ci(store, worker, task, runner),
         "readiness": lambda: phase_readiness(store, worker, task, runner),
+        "await_ready": lambda: phase_a38_await_ready(store, worker, task, runner),
         "formal_approve": lambda: phase_formal_approve(store, worker, task, runner),
         "leave_draft": lambda: phase_leave_draft(store, worker, task, runner),
         "await_merge": lambda: phase_await_merge(store, worker, task, runner),

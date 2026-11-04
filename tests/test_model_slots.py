@@ -81,6 +81,9 @@ def test_supported_providers_and_default_order() -> None:
     assert parse_model_slots(
         {"first": "grok", "second": "openrouter"}
     ) == ModelSlots("grok", "openrouter")
+    assert parse_model_slots({"first": "grok", "second": None}) == ModelSlots(
+        "grok", None
+    )
 
 
 @pytest.mark.no_pg
@@ -96,6 +99,11 @@ def test_slots_resolve_stage_and_vendor() -> None:
         models.for_slot("third")
     with pytest.raises(ModelSlotsError):
         models.for_stage("other-pr")
+
+    external = ModelSlots("grok", None)
+    assert external.for_stage("codex-pr") is None
+    assert external.slot_of("codex") is None
+    assert external.as_dict() == {"first": "grok", "second": None}
 
 
 @pytest.mark.no_pg
@@ -365,6 +373,84 @@ def test_coordinator_slot_helpers() -> None:
     assert REQUIRED_LANE_SLOTS == required_lane_slots(DEFAULT_MODEL_SLOTS)
     assert checklist_key_for_stage("grok-pr", "quality") == "grok_pr_quality"
     assert checklist_key_for_stage("codex-pr", "logic") == "codex_pr_logic"
+    assert required_lane_slots(ModelSlots("grok", None)) == (
+        "grok:implementer",
+        "grok:reviewer",
+        "grok:pr-reviewer-quality",
+        "grok:pr-reviewer-logic",
+    )
+
+
+@pytest.mark.no_pg
+def test_external_second_review_satisfies_done_gate_without_second_gate_rows() -> None:
+    head = "a" * 40
+    checklist = {
+        "session_registered": "ja",
+        "contributing_read": "ja",
+        "contributing_ok": "ja",
+        "coverage_ok": "ja",
+        "handbook_ok": "ja",
+        "grok_pr_quality": "ja",
+        "grok_pr_logic": "ja",
+        "codex_pr_quality": "ja",
+        "codex_pr_logic": "ja",
+        "deviation_declared": "n_a",
+        "deviation_granted": "n_a",
+    }
+    prefix = f"external second review by reviewer at {head}: "
+    task = {
+        "id": "task",
+        "workflow": "review",
+        "models": {"first": "grok", "second": None},
+        "checklist": checklist,
+        "checklist_evidence": {
+            "codex_pr_quality": prefix + "https://example.invalid/comment",
+            "codex_pr_logic": prefix + "https://example.invalid/comment",
+        },
+        "gates": [
+            {"stage": "grok-pr", "dimension": "quality", "vendor": "grok", "verdict": "approved", "head_sha": head},
+            {"stage": "grok-pr", "dimension": "logic", "vendor": "grok", "verdict": "approved", "head_sha": head},
+        ],
+        "local_checks": [],
+        "summaries": {"en": "Done.", "de": "Erledigt."},
+    }
+    assert ready_for_done_blocking(task) == []
+    task["checklist_evidence"]["codex_pr_logic"] = "ordinary evidence"
+    assert any("codex-pr/logic=external_review_missing" in item for item in ready_for_done_blocking(task))
+
+
+@pytest.mark.no_pg
+def test_models_cli_prints_external_for_null_second(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": None}}),
+        encoding="utf-8",
+    )
+    _run(tmp_path, ["models"])
+    assert capsys.readouterr().out.splitlines() == ["first=grok", "second=external"]
+    _run(tmp_path, ["models", "second", "--json"])
+    assert json.loads(capsys.readouterr().out) == {"second": None}
+
+
+def test_gate_record_refuses_external_second_slot(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": None}}),
+        encoding="utf-8",
+    )
+    tid = _task(tmp_path, capsys)
+    with pytest.raises(SystemExit, match="second review is external"):
+        _run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid,
+                "--stage", "codex-pr", "--dimension", "quality",
+                "--vendor", "codex", "--verdict", "approved",
+                "--head", "a" * 40, "--agent", "22222222-2222-4222-8222-222222222222",
+            ],
+        )
 
 
 # --- CLI with configured slots ----------------------------------------------

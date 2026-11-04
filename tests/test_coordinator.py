@@ -113,6 +113,7 @@ def patch_execute_github(monkeypatch: Any) -> None:
         "agent_cli.coordinator_git",
         "agent_cli.coordinator_github",
         "agent_cli.coordinator_lanes",
+        "agent_cli.coordinator_a38",
     ):
         monkeypatch.setattr(f"{mod}.execute_github", fake_execute)
 
@@ -135,6 +136,7 @@ def patch_run_bounded(monkeypatch: Any, fake: FakeGh) -> None:
 
     monkeypatch.setattr("agent_cli.coordinator_runtime.run_bounded", fake_bounded)
     monkeypatch.setattr("agent_cli.coordinator_github.run_bounded", fake_bounded)
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_bounded)
 
 
 def test_harden_grok_write_adds_denies() -> None:
@@ -3160,6 +3162,394 @@ def test_preflight_refuses_codex_as_first_model(tmp_path: Path, monkeypatch: pyt
     patch_account_runners(monkeypatch, fake)
     with pytest.raises(CoordinatorError, match="models.first = codex"):
         preflight_worker(store, worker, fake)
+
+
+def test_preflight_refuses_external_second_for_non_a38_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    with pytest.raises(CoordinatorError, match="only for A38 workers"):
+        preflight_worker(store, worker, fake)
+
+
+def test_a38_preflight_requires_null_second_and_excludes_worker_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    with pytest.raises(CoordinatorError, match="models.second = null"):
+        preflight_worker(store, worker, fake)
+
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data))
+    preflight_worker(store, worker, fake)
+
+    from agent_cli.coordinator_runtime import execution_binding
+
+    binding = execution_binding(store, worker, "example/project")
+    assert execution_binding(
+        store, replace(worker, review_session="ignored-session"), "example/project"
+    ) == binding
+    assert execution_binding(
+        store, replace(worker, second_reviewers=("another-reviewer",)), "example/project"
+    ) != binding
+
+    own_reviewer = replace(worker, second_reviewers=("worker-bot",))
+    with pytest.raises(CoordinatorError, match="worker GitHub login"):
+        preflight_worker(store, own_reviewer, fake)
+
+
+def test_a38_ci_and_readiness_route_to_guard_ready_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_github import phase_ci
+
+    store, ordinary_worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    worker = replace(
+        ordinary_worker,
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    tid = "44444444-4444-4444-8444-444444444444"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="ci",
+        checklist_codex={"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+        models={"first": "grok", "second": None},  # type: ignore[dict-item]
+    )
+    evidence = f"external second review by outside-reviewer at {fake.head}: https://x/comment"
+    for row in store.rows("checklist_item"):
+        if row.get("task_id") == tid and row.get("key") in {
+            "codex_pr_quality",
+            "codex_pr_logic",
+        }:
+            updated = {key: value for key, value in row.items() if not key.startswith("_")}
+            updated["evidence"] = evidence
+            updated["source"] = "script"
+            store.write("checklist_item", "update", row["id"], updated)
+    current = store.row("task", tid)
+    current["payload"]["coordinator"]["a38"] = {
+        "report": {"head": fake.head},
+        "first_comment": {"head": fake.head},
+        "second_review": {"head": fake.head, "status": "posted"},
+    }
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in current.items() if not key.startswith("_")},
+    )
+
+    assert "CI green" in phase_ci(store, worker, store.row("task", tid), fake)[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "readiness"
+    lines = phase_readiness(store, worker, store.row("task", tid), fake)
+    assert "readiness ok" in lines[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_ready"
+
+
+def test_a38_first_comment_ping_and_external_mail_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
+    from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    store.set_meta("github_login", "worker-bot")
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: fake.head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.review_rules_bound", lambda *a: True)
+    tid = "11111111-1111-4111-8111-111111111111"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "pr-review",
+        "title": "A38 task",
+        "repo": "example/project",
+        "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "change_summary_en": "The coordinator supports an external second review.",
+        "change_summary_de": "Der Koordinator unterstützt einen externen zweiten Review.",
+        "payload": {
+            "coordinator": {
+                "phase": "a38_first_comment",
+                "head_sha": fake.head,
+                "worktree": str(worker.workspace_root / tid),
+                "pr_number": 42,
+                "pr_url": "https://github.com/example/project/pull/42",
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {
+                    "report": {"head": fake.head, "activity_id": "report"},
+                    "first_review_passes": 1,
+                    "gate_prompts": {
+                        fake.head: {
+                            "quality": {"prompt": COMPLIANCE_PROMPT + " Check quality.", "model": "grok-model", "provider": "grok"},
+                            "logic": {"prompt": COMPLIANCE_PROMPT + " Check logic.", "model": "grok-model", "provider": "grok"},
+                        }
+                    },
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for dimension in ("quality", "logic"):
+        gid = f"grok-{dimension}"
+        store.write(
+            "review_gate",
+            "insert",
+            gid,
+            {"id": gid, "task_id": tid, "stage": "grok-pr", "dimension": dimension, "vendor": "grok", "verdict": "approved", "head_sha": fake.head, "recorded_at": "2026-01-01T00:00:00Z"},
+        )
+    checklist = {
+        "session_registered": "ja", "spec_written": "ja", "implementer_done": "ja",
+        "reviewer_approved": "ja", "local_check_pass": "ja", "pushed": "ja",
+        "grok_pr_quality": "ja", "grok_pr_logic": "ja",
+        "codex_pr_quality": "pending", "codex_pr_logic": "pending",
+        "contributing_ok": "pending", "deviation_declared": "pending", "deviation_granted": "pending",
+    }
+    for key, status in checklist.items():
+        cid = f"check-{key}"
+        store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
+
+    saved = store.row("task", tid)
+    assert "first A38 review comment posted" in phase_first_comment(store, worker, saved, fake)[0]
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    first_body = comments[0]["payload"]["body"]
+    first_declaration = parse_review_block(first_body)
+    assert {lane["id"] for lane in first_declaration["lanes"]} == {"conformity-a", "logic-a"}
+    assert validate_visible(first_body, 1) == []
+    assert len(store.rows("ping")) == 1
+    phase_first_comment(store, worker, store.row("task", tid), fake)
+    assert len(store.rows("ping")) == 1
+
+    second = {
+        "kind": "a38.second-review/v1", "task_id": tid, "head": fake.head,
+        "defects": 0, "blocks_merge": False, "findings": "",
+        "lanes": [
+            {"id": "conformity-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
+            {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
+        ],
+    }
+
+    def mail(row_id: str, login: str, payload: object) -> None:
+        store.apply_replica_row(
+            {"table": "activity", "row_id": row_id, "origin_device_id": f"{row_id}-device", "_github_login": login, "payload": {"id": row_id, "session_id": "reviewer-session", "type": "message", "payload": {"to_session": worker.session_id, "payload": payload}, "execution_status": "pending"}, "updated_at": "2026-01-01T00:00:01Z"}
+        )
+
+    mail("unauthorized-mail", "not-allowed", second)
+    assert phase_await_second_review(store, worker, store.row("task", tid), fake) == ["awaiting external second review"]
+    assert "unauthorized" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    stale = {**second, "head": "b" * 40}
+    mail("stale-mail", "outside-reviewer", stale)
+    phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "stale head" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    mail("malformed-mail", "outside-reviewer", {"kind": "a38.second-review/v1", "task_id": tid})
+    phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "malformed" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    invalid_blocking = {**second, "blocks_merge": True}
+    mail("invalid-blocking-mail", "outside-reviewer", invalid_blocking)
+    phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "blocking defects" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    waiting = store.row("task", tid)
+    waiting["payload"]["coordinator"]["a38"]["second_review"]["last_requested_at"] = "2000-01-01T00:00:00Z"
+    store.write("task", "update", tid, {key: value for key, value in waiting.items() if not key.startswith("_")})
+    assert "re-sent" in phase_await_second_review(store, worker, store.row("task", tid), fake)[0]
+    assert len(store.rows("ping")) == 2
+
+    mail("second-mail", "outside-reviewer", second)
+    lines = phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "external second review" in lines[0]
+    final = store.row("task", tid)
+    assert final["payload"]["coordinator"]["phase"] == "ci"
+    statuses = {row["key"]: row for row in store.rows("checklist_item") if row.get("task_id") == tid}
+    assert statuses["codex_pr_quality"]["status"] == "ja"
+    assert statuses["codex_pr_logic"]["evidence"].startswith("external second review by outside-reviewer")
+
+    awaiting = store.row("task", tid)
+    awaiting["payload"]["coordinator"]["phase"] = "await_ready"
+    store.write("task", "update", tid, {key: value for key, value in awaiting.items() if not key.startswith("_")})
+    fake.statuses = [{"context": "A38 / report", "state": "pending", "description": "Waiting for guard policy"}]
+    writes_before = len(store.rows("activity"))
+    assert "Waiting for guard policy" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
+    waiting = store.row("task", tid)
+    assert waiting["payload"]["coordinator"]["a38"]["guard_status"]["description"] == "Waiting for guard policy"
+    assert len(store.rows("activity")) == writes_before
+    fake.pr["isDraft"] = False
+    assert "awaiting human merge" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
+
+    blocking_tid = "22222222-2222-4222-8222-222222222222"
+    blocking_task = {
+        **task,
+        "id": blocking_tid,
+        "state": "pr-review",
+        "payload": {
+            "coordinator": {
+                "phase": "await_second_review",
+                "head_sha": fake.head,
+                "worktree": str(worker.workspace_root / blocking_tid),
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {
+                    "second_review": {
+                        "head": fake.head,
+                        "status": "requested",
+                        "last_requested_at": "2026-01-01T00:00:00Z",
+                    }
+                },
+            }
+        },
+    }
+    store.write("task", "insert", blocking_tid, blocking_task)
+    blocking_result = {
+        **second,
+        "task_id": blocking_tid,
+        "defects": 1,
+        "blocks_merge": True,
+        "findings": "The result contains a defect that must be fixed.",
+    }
+    mail("blocking-mail", "outside-reviewer", blocking_result)
+    blocking_lines = phase_await_second_review(
+        store, worker, store.row("task", blocking_tid), fake
+    )
+    assert "routing to implementer" in blocking_lines[0]
+    blocked = store.row("task", blocking_tid)
+    assert blocked["state"] == "implementing"
+    assert blocked["payload"]["coordinator"]["phase"] == "implement"
+    assert blocked["payload"]["coordinator"]["findings"] == blocking_result["findings"]
+    assert "second_review" not in blocked["payload"]["coordinator"]["a38"]
+
+
+def test_a38_tests_run_policy_run_verify_and_post_exact_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    base = "b" * 40
+    tid = "33333333-3333-4333-8333-333333333333"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}}},
+    }
+    store.write("task", "insert", tid, task)
+    checklist = {
+        "session_registered": "ja", "spec_written": "ja", "implementer_done": "ja",
+        "reviewer_approved": "ja", "local_check_pass": "pending", "pushed": "pending",
+        "grok_pr_quality": "pending", "grok_pr_logic": "pending",
+        "codex_pr_quality": "pending", "codex_pr_logic": "pending",
+        "contributing_ok": "pending", "deviation_declared": "pending", "deviation_granted": "pending",
+    }
+    for key, status in checklist.items():
+        cid = f"a38-check-{key}"
+        store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", lambda *a, **k: Completed(0, "trusted check passed", ""))
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, base + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    calls: list[str] = []
+    report_body = "<!-- DFX-LOCAL-CI:v1 -->\nverified report\n<!-- /DFX-LOCAL-CI:v1 -->"
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        calls.append(argv[0])
+        if argv[0] == "run":
+            Path(argv[argv.index("--output") + 1]).write_text(report_body, encoding="utf-8")
+        return Completed(0, "ok", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+    assert calls == ["policy", "run", "verify"]
+    assert "report posted" in lines[0]
+    report_rows = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert report_rows[0]["payload"]["body"] == report_body
+    assert report_rows[0]["payload"]["exact_body"] is True
+    checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
+    assert any(row.get("name") == "a38" and row.get("result") == "pass" for row in checks)
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["a38"]["report"]["head"] == head
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
 
 
 

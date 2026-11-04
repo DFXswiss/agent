@@ -41,6 +41,7 @@ from .lane import (
     provider_argv,
     record_lane_run,
 )
+from .allow import CODEX_SECOND_REVIEW_KEYS, EXTERNAL_SECOND_REVIEW_PREFIX
 from .model_slots import SLOT_STAGES, ModelSlots, ModelSlotsError, models_from_snapshot
 from .store import Store, utcnow
 
@@ -334,6 +335,17 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
     evidence.pop("formal_head", None)
     evidence.pop("ready_head", None)
     c["evidence"] = evidence
+    a38 = c.get("a38")
+    if isinstance(a38, dict):
+        for key in ("report", "first_comment", "second_review", "guard_status"):
+            value = a38.get(key)
+            if isinstance(value, dict) and value.get("head") != head:
+                a38.pop(key, None)
+        prompts = a38.get("gate_prompts")
+        if isinstance(prompts, dict):
+            a38["gate_prompts"] = {
+                key: value for key, value in prompts.items() if key == head
+            }
 
 
 def record_gate(
@@ -454,6 +466,21 @@ def set_checklist(
     snap = checklist_snapshot(store, task)
     current = (snap.get("checklist") or {}).get(key)
     if current == status:
+        if (
+            status == "ja"
+            and key in CODEX_SECOND_REVIEW_KEYS
+            and models_from_snapshot(task).second is None
+            and evidence.startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
+        ):
+            for item in store.rows("checklist_item"):
+                if item.get("task_id") == task["id"] and item.get("key") == key:
+                    if item.get("evidence") == evidence and item.get("source") == source:
+                        return
+                    item["evidence"] = evidence
+                    item["source"] = source
+                    item["updated_at"] = utcnow()
+                    store.write("checklist_item", "update", item["id"], strip_row(item))
+                    return
         return
     workflow = str(task.get("workflow") or "")
     verdict = close_allowed(
@@ -910,7 +937,9 @@ def phase_pr_gates(
         raise CoordinatorError("uncertain prior lane outcome for vendor stage")
     latest = latest_gates(store, task["id"])
     second_stage = stage == SLOT_STAGES["second"]
-    next_phase = "ci" if second_stage else "pr_gates_codex"
+    next_phase = "ci" if second_stage else (
+        "a38_first_comment" if worker.a38 else "pr_gates_codex"
+    )
     first_vendor = _task_models(task).first
 
     def _approved(gate: dict[str, Any] | None, want_vendor: str) -> bool:
@@ -954,6 +983,13 @@ def phase_pr_gates(
         save_task(store, task)
         return lines
 
+    if worker.a38 and not second_stage:
+        a38 = c.setdefault("a38", {})
+        if not isinstance(a38, dict):
+            a38 = {}
+            c["a38"] = a38
+        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
+
     if c.get("pr_number") and head:
         try:
             set_checklist(
@@ -979,6 +1015,10 @@ def phase_pr_gates(
     try:
         for dimension, role in needed:
             scope = _pr_review_scope(dimension)
+            if worker.a38 and not second_stage:
+                a38 = c.setdefault("a38", {})
+                prompts = a38.setdefault("gate_prompts", {})
+                head_prompts = prompts.setdefault(head, {})
             prepared_list.append(
                 _prepare_pr_review_agent(
                     store,
@@ -1001,6 +1041,12 @@ def phase_pr_gates(
                     ),
                 )
             )
+            if worker.a38 and not second_stage:
+                head_prompts[dimension] = {
+                    "prompt": scope,
+                    "model": str(prepared_list[-1]["model"]),
+                    "provider": vendor,
+                }
     except CoordinatorError as exc:
         # Prelaunch failure after some inserts: close phantoms.
         for prep in prepared_list:
@@ -1189,13 +1235,16 @@ def _phase_pr_gates_slot(
     slot: str,
 ) -> list[str]:
     models = _task_models(task)
+    vendor = models.for_slot(slot)
+    if vendor is None:
+        raise CoordinatorError(f"model slot {slot} is external and has no lane")
     return phase_pr_gates(
         store,
         worker,
         task,
         runner,
         lane_runner,
-        vendor=models.for_slot(slot),
+        vendor=vendor,
         stage=SLOT_STAGES[slot],
     )
 

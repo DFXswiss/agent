@@ -15,6 +15,7 @@ from .allow import (
     CODEX_SECOND_REVIEW_KEYS,
     GATE_UNAVAILABLE_KEYS,
     N_A_ALLOWED,
+    EXTERNAL_SECOND_REVIEW_PREFIX,
     SECOND_REVIEW_NOT_POSTED,
     codex_second_review_na,
 )
@@ -345,6 +346,18 @@ def close_allowed(
             )
         return CloseVerdict(True, "allow", step)
     snap = snapshot or {}
+    if (
+        status == "ja"
+        and key in CODEX_SECOND_REVIEW_KEYS
+        and models_from_snapshot(snap).second is None
+    ):
+        if not str(evidence or "").startswith(EXTERNAL_SECOND_REVIEW_PREFIX):
+            return CloseVerdict(
+                False,
+                f"{key} requires evidence starting {EXTERNAL_SECOND_REVIEW_PREFIX}",
+                step,
+            )
+        return CloseVerdict(True, "allow", step)
     if status == "unavailable":
         extra = _unavailable_gate_ok(step, snap)
     elif _late_inner_skip(key, status, evidence, snap):
@@ -486,7 +499,7 @@ def step_vendor_label(step: Step, models: ModelSlots | None) -> str:
     """Provider name for a pinned agent step, ``-`` otherwise."""
     if step.kind != "agent" or step.slot is None:
         return "-"
-    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
+    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot) or "external"
 
 
 def handoff_prompt(

@@ -1343,6 +1343,11 @@ def cmd_gate(args: list[str]) -> None:
     try:
         task = _need(store, "task", tid)
         models = models_from_snapshot(task)
+        if stage == "codex-pr" and models.second is None:
+            die(
+                "gate record --stage codex-pr is unavailable: the second review is external; "
+                "record it through the codex_pr_quality/codex_pr_logic checklist evidence"
+            )
         expected_vendor = models.for_stage(stage)
         if vendor != expected_vendor:
             die(f"stage {stage} requires vendor {expected_vendor} (model slot pinned on the task)")
@@ -2320,6 +2325,8 @@ def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
 def _all_gate_pairs_approved_same_head(
     latest: dict[tuple[str, str], dict], models: ModelSlots
 ) -> bool:
+    if models.second is None:
+        return False
     heads: set[str] = set()
     for stage, dim, slot in GATE_PAIRS:
         got = latest.get((stage, dim))
@@ -3082,6 +3089,8 @@ def cmd_run(args: list[str]) -> None:
                 role = str(step.role or "")
                 models = models_from_snapshot(snap)
                 vendor = models.for_slot(str(step.slot)) if step.slot else models.first
+                if vendor is None:
+                    die("model slot second is external; no agent lane can be started")
                 session_id = str(snap.get("session_id") or "")
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
@@ -3378,13 +3387,75 @@ def cmd_models(args: list[str]) -> None:
         if as_json:
             print(json.dumps({slot: models.for_slot(slot)}, sort_keys=True))
         else:
-            print(models.for_slot(slot))
+            print(models.for_slot(slot) or "external")
         return
     if as_json:
         print(json.dumps(models.as_dict(), sort_keys=True))
         return
     for slot, vendor in models.as_dict().items():
-        print(f"{slot}={vendor}")
+        print(f"{slot}={vendor or 'external'}")
+
+
+def cmd_review(args: list[str]) -> None:
+    """Send a strictly validated external A38 second-review result as session mail."""
+    if len(args) < 2 or args[:2] != ["second", "send"]:
+        die(
+            "Usage: agent review second send --to-session SID --task UUID "
+            "--head SHA --file PATH [--session OWN_SID]"
+        )
+    rest = args[2:]
+    to_session = require_flag(rest, "--to-session")
+    task_id = require_flag(rest, "--task")
+    head_sha = require_flag(rest, "--head").lower()
+    path = Path(require_flag(rest, "--file"))
+    own_session = flag(rest, "--session")
+    if not path.is_file():
+        die(f"second review file not found: {path}")
+    from .a38_review import ReviewError, loads_strict
+    from .coordinator_a38 import validate_second_review_payload
+    from .coordinator_common import CoordinatorError
+
+    try:
+        payload = loads_strict(path.read_text(encoding="utf-8"))
+        validated = validate_second_review_payload(payload)
+    except (OSError, UnicodeError, ReviewError, CoordinatorError) as exc:
+        die(str(exc))
+    if validated["task_id"] != task_id:
+        die("second review task_id does not match --task")
+    if validated["head"] != head_sha:
+        die("second review head does not match --head")
+    store = open_store()
+    try:
+        if own_session is None:
+            active = [
+                str(row.get("id") or "")
+                for row in store.rows("session")
+                if row.get("_origin_device_id") == store.device_id()
+                and row.get("status") == "active"
+            ]
+            if len(active) != 1:
+                die("--session is required unless exactly one active owned session exists")
+            own_session = active[0]
+        session = _need(store, "session", own_session)
+        _require_owned(store, session, "session")
+        if session.get("status") != "active":
+            die(f"session {own_session} is not active")
+        activity_id = str(uuid.uuid4())
+        store.write(
+            "activity",
+            "insert",
+            activity_id,
+            {
+                "id": activity_id,
+                "session_id": own_session,
+                "type": "message",
+                "payload": {"to_session": to_session, "payload": validated},
+                "execution_status": "pending",
+            },
+        )
+        print(activity_id)
+    finally:
+        store.close()
 
 
 def cmd_lane(args: list[str]) -> None:
@@ -3939,6 +4010,7 @@ COMMANDS = {
     "knock": cmd_knock,
     "lane": cmd_lane,
     "models": cmd_models,
+    "review": cmd_review,
     "watch": cmd_watch,
     "supervise": cmd_supervise,
     "coordinate": cmd_coordinate,
@@ -3955,7 +4027,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|subscribe|mail|supervise|coordinate> …"
+            "github|query|subscribe|mail|review|supervise|coordinate> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

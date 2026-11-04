@@ -85,7 +85,9 @@ second PR review pair. The optional top-level `models` block names the provider
 of each slot:
 
 - `first`: `grok`, `codex`, `claude` or `openrouter`
-- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`
+- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`,
+  or JSON `null` when an A38 coordinator worker obtains the second review
+  externally
 
 Which provider a person works with is this device-local choice; no provider
 name is fixed in the chain. The stored ledger identifiers keep their historical
@@ -93,6 +95,10 @@ names and now mean the slot, not a provider: gate stages `grok-pr` (slot
 `first`) and `codex-pr` (slot `second`), checklist keys `grok_pr_*` and
 `codex_pr_*`, coordinator phases `pr_gates_grok` and `pr_gates_codex`. A device
 without a `models` block keeps the historical order `grok`, then `codex`.
+`agent models` prints `second=external` (or `external` for the selected slot)
+for a pinned null second slot; JSON output preserves `null`. A null second slot
+does not authorize an ordinary workflow to omit a review. The issue coordinator
+accepts it only for a worker with explicit A38 mode and external reviewers.
 
 A task pins the device's `models` when it is created (`task create`, the issue
 coordinator, error-fix tasks). Every later check for that task (`agent agent start` for `reviewer` and
@@ -134,6 +140,9 @@ and the chain, which pin the implementer to `models.first` (closing
 `implementer_done` or `conflicts_resolved` of a task created before model slots,
 which carries no pin, also accepts a finished row of the second provider); `agent gate record
 --stage S --vendor X` requires `X` to be the provider of the slot `S` stands for.
+For a task pinned with `second: null`, `gate record --stage codex-pr` is refused;
+the external result is recorded in the two `codex_pr_*` checklist keys with
+`external second review by ...` evidence.
 
 ## Required fields
 

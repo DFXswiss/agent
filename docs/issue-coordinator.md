@@ -27,9 +27,10 @@ null/empty `workers` enables no worker. Operator-supplied worker keys are
 existing session IDs, bound explicitly in `github-accounts.json` and
 `ai-accounts.json`; the coordinator does not select accounts or roles for them.
 
-Each configured worker explicitly names `review_session`, `workspace_root`,
-`repositories`, `reply_logins`, `poll_seconds`, `lane_timeout`, and
-`check_timeout`. Each repository entry names its `base`, `publication_repo`,
+Each configured worker explicitly names `workspace_root`, `repositories`,
+`reply_logins`, `poll_seconds`, `lane_timeout`, and `check_timeout`.
+Non-A38 workers also name `review_session`; A38 workers use the external-review
+configuration below. Each repository entry names its `base`, `publication_repo`,
 `check_argv`, and `readiness_argv`. The two argv arrays belong to trusted
 device configuration, never issue text or model output. They run the target
 repository's required tests and additional readiness validation;
@@ -95,7 +96,7 @@ for worker in workers.values():
   workers cannot open duplicate tasks/PRs for the same issue.
 - Before accepting work, `tick` preflights: worker session locally
   owned/active with skills `spine`, `review-loop`, `pr-review`; formal
-  `review_session` owned/active with `pr-review`; all required AI lane slots
+  `review_session` owned/active with `pr-review` for non-A38 workers; all required AI lane slots
   present for the worker session; worker and review GitHub accounts configured,
   authenticated, and bound to **different** logins; worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
@@ -103,7 +104,8 @@ for worker in workers.values():
 - Required AI slots, with `<first>` / `<second>` the providers of the device's
   model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
   `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,
-  `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic`. The coordinator
+  plus `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic` when the
+  second slot is not external. The coordinator
   pins `models` on each task it accepts and refuses `models.first = codex`,
   because a codex implementer can run commands. A non-default `models` block
   is part of the execution binding, so changing it stops accepted tasks with
@@ -431,3 +433,62 @@ audit row is an observation and does not rewrite the lane verdict.
 | `coordinator_exec.py` | Bounded subprocess helper |
 | `coordinator_common.py` | Shared helpers / constants |
 | `coordinator_config.py` | Parent-owned configuration loaders |
+| `coordinator_a38.py` | A38 suite, author review comments, external review mail, guard Ready observation |
+
+## A38 mode
+
+A worker opts in explicitly with `"a38": true`. This is never an installation
+default. The worker then requires a nonempty, distinct, lowercased
+`second_reviewers` list that excludes its own configured GitHub login. Optional
+`second_review_timeout_seconds` (default `86400`) and `a38_timeout_seconds`
+(default `7200`) must be at least 600. `review_session` is unused and optional;
+`check_argv` may be empty, while `readiness_argv` remains required. The device's
+models must pin a non-Codex first provider and `"second": null`. A null second
+slot is refused for every non-A38 worker.
+
+Illustrative worker fragment:
+
+```json
+{
+  "a38": true,
+  "second_reviewers": ["reviewer-one", "reviewer-two"],
+  "second_review_timeout_seconds": 86400,
+  "a38_timeout_seconds": 7200
+}
+```
+
+On each new clean signed head, the script optionally runs `check_argv`, then
+validates the trusted-base A38 policy, runs the complete A38 suite in
+`workspace_root/.coordinator-control/<task-id>/a38/<head>/`, verifies its
+report, and posts that report unchanged with the worker GitHub account. A
+failure returns bounded findings to the implementer. The first-slot quality and
+logic gates then run as usual. Their approved result is rendered and validated
+as the `conformity-a` / `logic-a` author comment.
+
+The coordinator does not launch model slot `second`. It sends one
+`review-request` person ping to every configured reviewer. A reviewer returns a
+strict result through session mail without calling GitHub:
+
+```text
+agent review second send --to-session SID --task UUID --head SHA --file result.json [--session OWN_SID]
+```
+
+The relay-authenticated sender login must be allowlisted. The worker validates
+the mail and guard declaration, publishes the `conformity-b` / `logic-b`
+comment as the pull request author, and marks both historical `codex_pr_*`
+checklist keys with external-review evidence. A blocking result returns to the
+implementer; stale, malformed, or unauthorized mail is acknowledged and
+recorded as an observation. Pending requests are re-pinged once per configured
+timeout and are never skipped.
+
+The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
+`a38_first_comment` → `await_second_review` → `ci` → `readiness` →
+`await_ready` → `await_merge` → `done`.
+The worker never posts a formal approval and never calls `gh pr ready`. While
+the pull request remains draft it only records the newest `A38 / report` status
+description. It advances after the guard has made the unchanged head Ready,
+then observes the human merge exactly like an ordinary worker. A new head
+invalidates its report, both comment checkpoints, and external-review state.
+
+These A38 settings enter the task execution binding only for A38 workers, so
+the binding hashes of existing non-A38 workers remain stable.

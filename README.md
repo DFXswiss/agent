@@ -92,6 +92,7 @@ agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>
 agent work list --session <session-id>
 agent models [first|second] [--task <uuid>] [--json]   # provider of each model slot: device setting, or the pin of a task
+agent review second send --to-session SID --task <uuid> --head <sha> --file PATH [--session OWN_SID]
 agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>
