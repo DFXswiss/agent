@@ -221,6 +221,7 @@ Rules:
 - **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin. The matcher runs only inside origins this login may see under §6.
 - Implicit **session mail** does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
 - Person pings this login **sent or received** are delivered the same way (snapshots on pull / WebSocket), independent of a subscription. Team-visible pings this login is not a party to stay on the website and on query; they are not laptop pull.
+- Every inbox, restore, and live-push replica snapshot carries the hub-authenticated owning login on the row envelope as `github_login`. `_github_login` exists only in API/query payload copies; the local replica apply strips sender-supplied `_github_login` and `github_login` payload fields before preserving the authenticated envelope login for mail policy.
 - `GET /sync/restore` returns `own_events`, `inbox` (each session-mail snapshot addressed to a session this device owns, plus the parent `session` snapshot for that activity’s `session_id`), and `pings` (person-ping snapshots this login sent or received).
 - `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dropped socket is logged and retried with capped exponential backoff, not a process exit and not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.

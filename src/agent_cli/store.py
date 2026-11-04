@@ -479,8 +479,12 @@ class Store:
             and isinstance(payload, dict)
             and payload.get("type") == "message"
         ):
-            payload = {key: value for key, value in payload.items() if key != "_github_login"}
-            relay_login = row.get("_github_login")
+            payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in ("_github_login", "github_login")
+            }
+            relay_login = row.get("github_login")
             if isinstance(relay_login, str) and relay_login:
                 payload["_github_login"] = relay_login.casefold()
         if row.get("table") == "ping" and isinstance(payload, dict):

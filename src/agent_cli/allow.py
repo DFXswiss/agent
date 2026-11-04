@@ -6,6 +6,7 @@ with a snapshot of the current session.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -79,6 +80,7 @@ N_A_ALLOWED = frozenset(
 SECOND_REVIEW_KEYS = frozenset({"review_2_quality", "review_2_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
 EXTERNAL_SECOND_REVIEW_PREFIX = "external second review by "
+_EXTERNAL_SECOND_REVIEW_HEAD = re.compile(r"\bat ([0-9a-f]{40})\b")
 
 # (stage, dimension, model slot). The provider comes from the device's
 # ``models`` configuration (see model_slots).
@@ -158,7 +160,7 @@ def external_second_review_ok(
     statuses: Mapping[str, Any],
     evidence: Mapping[str, Any] | None,
 ) -> bool:
-    """External slot-second evidence replaces gate rows only for ``second: null``."""
+    """External slot-second evidence replaces gate rows only for coordinator A38."""
     try:
         external = models_from_snapshot(task).second is None
     except (TypeError, ValueError):
@@ -166,10 +168,41 @@ def external_second_review_ok(
     recorded = evidence if isinstance(evidence, Mapping) else {}
     return external and all(
         statuses.get(key) == "ja"
-        and isinstance(recorded.get(key), str)
-        and str(recorded[key]).startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
+        and external_second_review_evidence_ok(task, recorded.get(key))
         for key in CODEX_SECOND_REVIEW_KEYS
     )
+
+
+def external_second_review_evidence_ok(
+    task: Mapping[str, Any], evidence: Any
+) -> bool:
+    """Require coordinator A38 provenance and the approved first-gate head."""
+    payload = task.get("payload")
+    coordinator = payload.get("coordinator") if isinstance(payload, Mapping) else None
+    a38 = coordinator.get("a38") if isinstance(coordinator, Mapping) else None
+    if not (a38 is True or isinstance(a38, Mapping) and a38.get("enabled") is True):
+        return False
+    if not isinstance(evidence, str) or not evidence.startswith(EXTERNAL_SECOND_REVIEW_PREFIX):
+        return False
+    match = _EXTERNAL_SECOND_REVIEW_HEAD.search(evidence)
+    if match is None:
+        return False
+    evidence_head = match.group(1)
+    try:
+        first_vendor = models_from_snapshot(task).first
+    except (TypeError, ValueError):
+        return False
+    latest = _latest_gates(list(task.get("gates") or []))
+    for dimension in ("quality", "logic"):
+        gate = latest.get(("grok-pr", dimension))
+        if (
+            gate is None
+            or gate.get("vendor") != first_vendor
+            or gate.get("verdict") != "approved"
+            or gate.get("head_sha") != evidence_head
+        ):
+            return False
+    return True
 
 
 def _tid(task: dict[str, Any]) -> str:

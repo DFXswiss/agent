@@ -610,6 +610,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 "fingerprint mismatch",
                 "fingerprint is required",
                 "error_id is required",
+                EXTERNAL_SECOND_TASK_CREATION_ERROR,
             }:
                 _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.fix {rid} error")

@@ -424,6 +424,42 @@ def record_gate(
         task["state"] = "implementing"
 
 
+def gate_prompt_evidence(
+    store: Store,
+    gate: dict[str, Any] | None,
+    *,
+    head: str,
+    dimension: str,
+    vendor: str,
+) -> dict[str, str] | None:
+    """Read durable A38 prompt provenance from the agent that produced a gate."""
+    if not isinstance(gate, dict):
+        return None
+    agent_id = gate.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    agent = store.row("agent", agent_id)
+    if agent is None:
+        return None
+    provider = agent.get("provider")
+    model = agent.get("model")
+    prompt = agent.get("prompt")
+    if (
+        provider != vendor
+        or agent.get("vendor") != vendor
+        or agent.get("task_id") != gate.get("task_id")
+        or agent.get("role") != f"pr-reviewer-{dimension}"
+        or agent.get("head_sha") != head
+        or agent.get("dimension") != dimension
+        or not isinstance(model, str)
+        or not model
+        or not isinstance(prompt, str)
+        or not prompt
+    ):
+        return None
+    return {"provider": provider, "model": model, "prompt": prompt}
+
+
 def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
     """Real agent/check/gate snapshot for chain.close_allowed."""
     tid = task["id"]
@@ -480,6 +516,7 @@ def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "session_active": bool(session and session.get("status") == "active"),
         "checklist": checklist,
         "agents": agents,
@@ -768,6 +805,7 @@ def _prepare_pr_review_agent(
     stage: str,
     head: str,
     spec_body: str,
+    review_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Insert working agent and build argv on the main thread (Store-safe)."""
     try:
@@ -1043,12 +1081,24 @@ def phase_pr_gates(
 
     def _approved(gate: dict[str, Any] | None, want_vendor: str) -> bool:
         # A gate counts only from the provider pinned on the task for that slot.
-        return (
+        approved = (
             gate is not None
             and gate.get("verdict") == "approved"
             and gate.get("head_sha") == head
             and gate.get("vendor") == want_vendor
         )
+        if not approved:
+            return False
+        if worker.a38 and not second_stage:
+            dimension = str(gate.get("dimension") or "")
+            return gate_prompt_evidence(
+                store,
+                gate,
+                head=head,
+                dimension=dimension,
+                vendor=want_vendor,
+            ) is not None
+        return True
 
     if second_stage:
         for dim in ("quality", "logic"):
@@ -1116,10 +1166,6 @@ def phase_pr_gates(
     try:
         for dimension, role in needed:
             scope = _pr_review_scope(dimension)
-            if worker.a38 and not second_stage:
-                a38 = c.setdefault("a38", {})
-                prompts = a38.setdefault("gate_prompts", {})
-                head_prompts = prompts.setdefault(head, {})
             prepared_list.append(
                 _prepare_pr_review_agent(
                     store,
@@ -1141,6 +1187,7 @@ def phase_pr_gates(
                         f"Script-generated diff excerpt follows; do not run Git.\n"
                         f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
                     ),
+                    review_prompt=scope,
                 )
             )
     except (StoreError, Exception) as exc:

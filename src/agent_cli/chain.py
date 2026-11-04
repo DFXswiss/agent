@@ -365,10 +365,10 @@ def close_allowed(
         and key in CODEX_SECOND_REVIEW_KEYS
         and models_from_snapshot(snap).second is None
     ):
-        if not str(evidence or "").startswith(EXTERNAL_SECOND_REVIEW_PREFIX):
+        if not external_second_review_evidence_ok(snap, evidence):
             return CloseVerdict(
                 False,
-                f"{key} requires evidence starting {EXTERNAL_SECOND_REVIEW_PREFIX}",
+                f"{key} requires coordinator A38 evidence at the approved grok-pr head",
                 step,
             )
         return CloseVerdict(True, "allow", step)

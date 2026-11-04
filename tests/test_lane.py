@@ -403,6 +403,8 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
             {"type": "text", "text": "working"},
             {"type": "tool_use", "id": "tool-1", "name": "Read", "input": {"file_path": "/work/a.py"}},
             {"type": "tool_use", "id": "tool-2", "name": "Grep", "input": {"pattern": "secret=abc"}},
+            {"type": "tool_use", "id": "tool-3", "name": "Grep", "input": {"pattern": "/work/a.py"}},
+            {"type": "tool_use", "id": "tool-4", "name": "Read", "input": {}},
         ]}},
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": "tool-2", "is_error": True, "content": "denied"}
@@ -422,6 +424,8 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
     assert out.tools == (
         {"tool": "Read", "target": "a.py", "error": False},
         {"tool": "Grep", "target": "[redacted]", "error": True},
+        {"tool": "Grep", "target": "/work/a.py", "error": False},
+        {"tool": "Read", "target": "", "error": False},
     )
     assert out.tools_truncated is False
 

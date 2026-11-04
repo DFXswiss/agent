@@ -28,6 +28,9 @@ SLOT_STAGES = {"first": "review-1", "second": "review-2"}
 STAGE_SLOTS = {stage: slot for slot, stage in SLOT_STAGES.items()}
 SLOT_KEY_PREFIXES = {"first": "review_1_", "second": "review_2_"}
 STAGE_CHOICES = "|".join(SLOT_STAGES[slot] for slot in MODEL_SLOTS)
+EXTERNAL_SECOND_TASK_CREATION_ERROR = (
+    "models.second = null is allowed only for coordinator A38 task creation"
+)
 
 LEGACY_STAGE_ALIASES = {"grok-pr": "review-1", "codex-pr": "review-2"}
 LEGACY_KEY_ALIASES = {

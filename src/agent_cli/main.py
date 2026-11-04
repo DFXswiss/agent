@@ -720,6 +720,9 @@ def cmd_task(args: list[str]) -> None:
                 )
                 print(f"task {tid}")
                 return
+            models = _store_models(store)
+            if models.second is None:
+                die(EXTERNAL_SECOND_TASK_CREATION_ERROR)
             tid = str(uuid.uuid4())
             store.write(
                 "task",
@@ -2747,6 +2750,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "checklist": checklist,
         "checklist_evidence": checklist_evidence,
         "summaries": {

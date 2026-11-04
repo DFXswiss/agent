@@ -2219,7 +2219,7 @@ def _seed_ready_side_task(
     codex_gates: tuple[str, ...] = (),
     seed_formal_review: bool = False,
     extra_evidence: dict[str, Any] | None = None,
-    models: dict[str, str] | None = None,
+    models: dict[str, str | None] | None = None,
     first_vendor: str = "grok",
     second_vendor: str = "codex",
 ) -> dict[str, Any]:
@@ -2263,6 +2263,7 @@ def _seed_ready_side_task(
                     "base_sha": fake.base,
                     "head_sha": fake.head,
                     "evidence": evidence,
+                    **({"a38": {"enabled": True}} if worker.a38 else {}),
                 }
             },
             "state": "pr-review",

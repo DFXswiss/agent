@@ -52,6 +52,7 @@ from .coordinator_git import (
     verify_signed_clean_head,
 )
 from .coordinator_lanes import (
+    gate_prompt_evidence,
     invalidate_head_evidence,
     latest_gates,
     review_rules_bound,
@@ -599,25 +600,33 @@ def phase_first_comment(
             c["phase"] = "await_second_review"
             save_task(store, task)
             return [f"first A38 review comment already posted on {head[:7]}"]
-    prompts = a38.get("gate_prompts")
-    head_prompts = prompts.get(head) if isinstance(prompts, dict) else None
-    if not isinstance(head_prompts, dict):
-        raise CoordinatorError("first review prompt evidence is missing")
     lanes = []
     for dimension, lane_id in (("quality", "conformity-a"), ("logic", "logic-a")):
-        item = head_prompts.get(dimension)
-        if not isinstance(item, dict):
-            raise CoordinatorError(f"first review {dimension} prompt evidence is missing")
+        item = gate_prompt_evidence(
+            store,
+            gates.get(("grok-pr", dimension)),
+            head=head,
+            dimension=dimension,
+            vendor=vendor,
+        )
+        if item is None:
+            c["phase"] = "pr_gates_grok"
+            save_task(store, task)
+            return [f"first review {dimension} prompt evidence missing; re-running gate"]
+        provider = item.get("provider")
         model = item.get("model")
         prompt = item.get("prompt")
-        if not isinstance(model, str) or not isinstance(prompt, str):
-            raise CoordinatorError(f"first review {dimension} model/prompt evidence is missing")
+        assert (
+            isinstance(provider, str)
+            and isinstance(model, str)
+            and isinstance(prompt, str)
+        )
         lanes.append(
             {
                 "id": lane_id,
                 "result": "pass",
                 "status": "complete",
-                "provider": PROVIDER_DISPLAY[vendor],
+                "provider": PROVIDER_DISPLAY[provider],
                 "model": model,
                 "model_number": model,
                 "prompt": prompt,
@@ -917,7 +926,11 @@ def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> Non
     if a38["second_review"].get("status") != "posted":
         raise CoordinatorError("external second review comment is not posted")
     statuses, evidence = _checklist_maps(store, str(task["id"]))
-    snapshot = {**task, "checklist_evidence": evidence}
+    snapshot = {
+        **task,
+        "checklist_evidence": evidence,
+        "gates": list(latest_gates(store, str(task["id"])).values()),
+    }
     if not external_second_review_ok(snapshot, statuses, evidence):
         raise CoordinatorError("external second review checklist evidence is missing")
 
