@@ -13,6 +13,7 @@ from .workflow_approval import _commit_shas, _list_runs, _pending, _timestamp
 MAX_DELETIONS = 20
 MAX_EXAMINED = 2 * MAX_DELETIONS
 MIN_AGE_S = 3600
+ROTATION_PERIOD_S = 1800
 
 
 def _open_pull_protection(
@@ -121,7 +122,11 @@ def _run_is_protected(
 
 
 def drain_held_runs(
-    api: Any, repo: str, *, dry_run: bool = False
+    api: Any,
+    repo: str,
+    *,
+    dry_run: bool = False,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     from .a38_guard import (
         GuardError,
@@ -170,7 +175,10 @@ def drain_held_runs(
         return result
 
     result["enabled"] = True
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=MIN_AGE_S)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=MIN_AGE_S)
+    slot = int(now.timestamp()) // ROTATION_PERIOD_S
     commit_cache: dict[int, set[str] | None] = {}
     protection = _open_pull_protection(api, repo)
     protected = protection[0]
@@ -220,6 +228,14 @@ def drain_held_runs(
     # Report the full backlog before the never-started proof; deleted and
     # planned remain bounded because they represent the per-sweep write budget.
     result["candidates"] = len(candidates)
+    if candidates:
+        offset = (slot * MAX_EXAMINED) % len(candidates)
+        # Each window remains oldest-first. For a stable candidate set,
+        # consecutive slots advance its start by MAX_EXAMINED modulo the set
+        # size, so no non-deletable prefix can monopolise the examined slots
+        # and every candidate is reached within
+        # ceil(len(candidates) / MAX_EXAMINED) consecutive slots.
+        candidates = candidates[offset:] + candidates[:offset]
     # Request bound, excluding the API client's own GET retries: 3 gate reads
     # (repository, default-branch commit, config),
     # at most 10 run-list pages twice after a shift, scan-time P0 open-pull

@@ -173,8 +173,9 @@ GitHub's 250-commit cap protects runs on its branch instead of aborting the pass
 At the 1000-run listing cap, the pass processes that capped window; it may omit
 candidates, but never weakens protection.
 
-The pass examines at most 40 candidates per sweep, oldest first, which bounds
-the jobs reads; the request bound excludes the API client's own GET retries. It
+The examined window of at most 40 candidates advances each half-hour slot, so
+candidates that cannot be deleted do not block the rest while jobs reads stay
+bounded; the request bound excludes the API client's own GET retries. It
 proves that a candidate never started immediately before re-reading that run;
 candidates with jobs are skipped without consuming the deletion bound. Only a
 404 on the jobs read is likewise skipped; any other jobs failure aborts the

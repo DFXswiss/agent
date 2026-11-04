@@ -14,6 +14,7 @@ from agent_cli.a38_guard import GuardError
 from agent_cli.held_run_drain import (
     MAX_DELETIONS,
     MAX_EXAMINED,
+    ROTATION_PERIOD_S,
     drain_held_runs,
 )
 from test_a38_guard import REPO, FakeAPI, _pr_guard_config
@@ -21,6 +22,16 @@ from test_a38_guard import REPO, FakeAPI, _pr_guard_config
 pytestmark = pytest.mark.no_pg
 
 FORK = "contributor/fork"
+BASE_SLOT = int(
+    datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+) // ROTATION_PERIOD_S
+
+
+def _now_for_offset(candidate_count: int, wanted_offset: int) -> datetime:
+    slot = BASE_SLOT
+    while (slot * MAX_EXAMINED) % candidate_count != wanted_offset:
+        slot += 1
+    return datetime.fromtimestamp(slot * ROTATION_PERIOD_S, tz=timezone.utc)
 
 
 class FakeDrain(FakeAPI):
@@ -457,7 +468,9 @@ def test_deletion_is_bounded_and_oldest_runs_are_deleted_first() -> None:
         for ident in range(1, MAX_DELETIONS + 3)
     ]
     fake.runs.reverse()
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(
+        fake.api(), REPO, now=_now_for_offset(MAX_DELETIONS + 2, 0)
+    )
     assert result["candidates"] == MAX_DELETIONS + 2
     assert result["deleted"] == list(range(1, MAX_DELETIONS + 1))
     assert fake.jobs_gets == list(range(1, MAX_DELETIONS + 1))
@@ -471,7 +484,9 @@ def test_started_job_does_not_consume_the_deletion_bound() -> None:
         for ident in range(1, MAX_DELETIONS + 2)
     ]
     fake.jobs_by_run[1] = [{"id": 1}]
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(
+        fake.api(), REPO, now=_now_for_offset(MAX_DELETIONS + 1, 0)
+    )
     assert result["candidates"] == MAX_DELETIONS + 1
     assert result["deleted"] == list(range(2, MAX_DELETIONS + 2))
     assert fake.jobs_gets == list(range(1, MAX_DELETIONS + 2))
@@ -484,7 +499,7 @@ def test_examination_bound_stops_jobs_reads_before_later_candidates() -> None:
     fake.runs = [fake.run(id=ident) for ident in range(1, total + 1)]
     for ident in range(1, total):
         fake.jobs_by_run[ident] = [{"id": ident}]
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(total, 0))
     assert result["candidates"] == MAX_EXAMINED + 6
     assert result["deleted"] == []
     assert fake.jobs_gets == list(range(1, MAX_EXAMINED + 1))
@@ -492,10 +507,58 @@ def test_examination_bound_stops_jobs_reads_before_later_candidates() -> None:
     assert fake.deletes == []
 
 
+def test_examination_window_advances_past_a_non_deletable_prefix() -> None:
+    candidate_count = MAX_EXAMINED + 5
+    first_now = _now_for_offset(candidate_count, 0)
+
+    first = FakeDrain()
+    first.runs = [
+        first.run(id=ident) for ident in range(1, candidate_count + 1)
+    ]
+    for ident in range(1, MAX_EXAMINED + 1):
+        first.jobs_by_run[ident] = [{"id": ident}]
+    first_result = drain_held_runs(first.api(), REPO, now=first_now)
+    assert first_result["deleted"] == []
+    assert first.jobs_gets == list(range(1, MAX_EXAMINED + 1))
+
+    next_now = first_now + timedelta(seconds=ROTATION_PERIOD_S)
+    second = FakeDrain()
+    second.runs = [
+        second.run(id=ident) for ident in range(1, candidate_count + 1)
+    ]
+    for ident in range(1, MAX_EXAMINED + 1):
+        second.jobs_by_run[ident] = [{"id": ident}]
+    second_result = drain_held_runs(second.api(), REPO, now=next_now)
+    assert second_result["deleted"] == list(
+        range(MAX_EXAMINED + 1, candidate_count + 1)
+    )
+    assert second.jobs_gets[:5] == list(
+        range(MAX_EXAMINED + 1, candidate_count + 1)
+    )
+
+
+def test_wrapped_window_examines_every_candidate_below_the_bound() -> None:
+    candidate_count = 7
+    offset = MAX_EXAMINED % candidate_count
+    fake = FakeDrain()
+    fake.runs = [
+        fake.run(id=ident) for ident in range(1, candidate_count + 1)
+    ]
+    result = drain_held_runs(
+        fake.api(), REPO, now=_now_for_offset(candidate_count, offset)
+    )
+    expected = list(range(offset + 1, candidate_count + 1)) + list(
+        range(1, offset + 1)
+    )
+    assert set(fake.jobs_gets) == set(range(1, candidate_count + 1))
+    assert result["deleted"] == expected
+    assert fake.deletes == expected
+
+
 def test_ten_full_listing_pages_are_processed_as_a_window() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run(id=ident) for ident in range(1, 1001)]
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(1000, 0))
     assert result["scanned"] == 1000
     assert result["candidates"] == 1000
     assert result["deleted"] == list(range(1, MAX_DELETIONS + 1))
@@ -507,7 +570,7 @@ def test_missing_jobs_inventory_skips_run_and_deletes_next_candidate() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run(id=101), fake.run(id=102)]
     fake.jobs_404.add(101)
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(2, 0))
     assert result["deleted"] == [102]
     assert fake.jobs_gets == [101, 102]
     assert fake.deletes == [102]
@@ -517,7 +580,7 @@ def test_forbidden_delete_aborts_after_one_attempt() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run(id=101), fake.run(id=102)]
     fake.delete_responses[101] = (403, {"message": "forbidden"}, {})
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(2, 0))
     assert result["aborted"] == "forbidden"
     assert result["deleted"] == []
     assert fake.deletes == [101]
@@ -537,7 +600,7 @@ def test_later_delete_failure_preserves_deleted_ids() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run(id=101), fake.run(id=102)]
     fake.delete_responses[102] = (500, {"message": "failed"}, {})
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(2, 0))
     assert result["deleted"] == [101]
     assert result["aborted"] == "error"
     assert "HTTP 500" in result["error"]
@@ -557,7 +620,7 @@ def test_missing_reread_is_tolerated_and_the_next_candidate_is_deleted() -> None
     fake = FakeDrain()
     fake.runs = [fake.run(id=101), fake.run(id=102)]
     fake.missing_on_reread.add(101)
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(2, 0))
     assert result["deleted"] == [102]
     assert fake.deletes == [102]
 
@@ -566,7 +629,7 @@ def test_missing_delete_is_tolerated_and_the_next_candidate_is_deleted() -> None
     fake = FakeDrain()
     fake.runs = [fake.run(id=101), fake.run(id=102)]
     fake.delete_responses[101] = (404, {"message": "missing"}, {})
-    result = drain_held_runs(fake.api(), REPO)
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(2, 0))
     assert result["deleted"] == [102]
     assert fake.deletes == [101, 102]
 
