@@ -371,11 +371,6 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
             value = a38.get(key)
             if isinstance(value, dict) and value.get("head") != head:
                 a38.pop(key, None)
-        prompts = a38.get("gate_prompts")
-        if isinstance(prompts, dict):
-            a38["gate_prompts"] = {
-                key: value for key, value in prompts.items() if key == head
-            }
 
 
 def record_gate(

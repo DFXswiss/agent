@@ -613,14 +613,9 @@ def phase_first_comment(
             c["phase"] = "pr_gates_grok"
             save_task(store, task)
             return [f"first review {dimension} prompt evidence missing; re-running gate"]
-        provider = item.get("provider")
-        model = item.get("model")
-        prompt = item.get("prompt")
-        assert (
-            isinstance(provider, str)
-            and isinstance(model, str)
-            and isinstance(prompt, str)
-        )
+        provider = item["provider"]
+        model = item["model"]
+        prompt = item["prompt"]
         lanes.append(
             {
                 "id": lane_id,
