@@ -1425,23 +1425,16 @@ def advance_one(
         refresh_execution_binding(store, worker, task)
     except (CoordinatorError, StoreError) as exc:
         message = str(exc)
-        blocker_activity_id = c.get("blocker_activity_id")
+        binding_blocker_activity_id = c.get("binding_blocker_activity_id")
         if (
-            c.get("blocker_publish_once")
-            and c.get("blocker_publish_kind") == "configuration-binding"
-            and c.get("blocker") == message
-            and isinstance(blocker_activity_id, str)
-            and blocker_activity_id
+            c.get("binding_blocker") == message
+            and isinstance(binding_blocker_activity_id, str)
+            and binding_blocker_activity_id
         ):
             return [f"blocked: {redact(message)}"]
-        if (
-            c.get("blocker") != message
-            or c.get("blocker_publish_kind") != "configuration-binding"
-        ):
-            c.pop("blocker_activity_id", None)
-        c["blocker"] = message
-        c["blocker_publish_once"] = True
-        c["blocker_publish_kind"] = "configuration-binding"
+        if c.get("binding_blocker") != message:
+            c.pop("binding_blocker_activity_id", None)
+        c["binding_blocker"] = message
         save_task(store, task)
         return publish_blocker(
             store,
@@ -1451,12 +1444,11 @@ def advance_one(
             message,
             kind="configuration-binding",
             preserve_reply_checkpoint=True,
+            binding_notice=True,
         )
-    if c.get("blocker_publish_kind") == "configuration-binding" and phase != "blocked":
-        c.pop("blocker", None)
-        c.pop("blocker_publish_once", None)
-        c.pop("blocker_publish_kind", None)
-        c.pop("blocker_activity_id", None)
+    if "binding_blocker" in c or "binding_blocker_activity_id" in c:
+        c.pop("binding_blocker", None)
+        c.pop("binding_blocker_activity_id", None)
         save_task(store, task)
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
