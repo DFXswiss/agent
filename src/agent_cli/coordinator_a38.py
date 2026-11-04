@@ -235,7 +235,7 @@ def phase_tests(
         raise CoordinatorError("A38 tests phase called for a non-A38 worker")
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     worktree = str(c["worktree"])
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head

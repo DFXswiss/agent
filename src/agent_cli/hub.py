@@ -30,12 +30,19 @@ class Hub:
             raise HubError("device token is not set; run agent pair")
         return {"Authorization": f"Bearer {self.token}"}
 
-    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+    def authenticated_headers(self) -> dict[str, str]:
+        return self._headers()
+
+    def request_raw(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Return an HTTP response without applying endpoint-specific status policy."""
         url = urljoin(self.base_url + "/", path.lstrip("/"))
         try:
-            response = self.client.request(method, url, **kwargs)
+            return self.client.request(method, url, **kwargs)
         except httpx.HTTPError as exc:
             raise HubError(f"hub request failed: {exc}") from exc
+
+    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = self.request_raw(method, path, **kwargs)
         if response.status_code >= 400:
             detail = _detail(response)
             raise HubError(f"hub {method} {path} → HTTP {response.status_code}: {detail}")

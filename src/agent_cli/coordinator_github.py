@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -44,7 +45,7 @@ from .coordinator_common import (
     target_repo,
     text,
 )
-from .coordinator_config import WorkerConfig
+from .coordinator_config import RepositoryConfig, WorkerConfig, validate_base
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
     execute_github,
@@ -59,6 +60,7 @@ from .github_act import (
     REVIEW_APPROVE_NON_APPROVED,
 )
 from .github_accounts import AccountError
+from .hub import Hub, HubError
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .store import Store, StoreError, utcnow
 
@@ -240,6 +242,132 @@ def verify_issue_assigned(runner: Runner, repo: str, number: int, login: str) ->
     return data
 
 
+def _gh_jq_text(runner: Runner, argv: list[str], label: str) -> str:
+    completed = runner(argv)
+    if completed.returncode != 0:
+        raise CoordinatorError(redact(completed.stderr or completed.stdout or f"{label} failed"))
+    value = (completed.stdout or "").strip()
+    if not value or any(char in value for char in "\0\r\n"):
+        raise CoordinatorError(f"{label} returned no usable value")
+    return value
+
+
+def _fork_repository(
+    runner: Runner,
+    *,
+    repo: str,
+    publication_repo: str,
+    sleep_fn=time.sleep,
+) -> None:
+    """Ensure the publication fork exists and is a fork of exactly ``repo``."""
+    lookup = ["gh", "api", f"repos/{publication_repo}"]
+    completed = runner(lookup)
+    if completed.returncode != 0:
+        missing_detail = (completed.stderr or completed.stdout or "").casefold()
+        if "404" not in missing_detail and "not found" not in missing_detail:
+            raise CoordinatorError(redact(missing_detail or "fork lookup failed"))
+        created = runner(["gh", "api", "-X", "POST", f"repos/{repo}/forks"])
+        if created.returncode != 0:
+            raise CoordinatorError(redact(created.stderr or created.stdout or "fork creation failed"))
+        for attempt in range(10):
+            completed = runner(lookup)
+            if completed.returncode == 0:
+                break
+            if attempt < 9:
+                sleep_fn(5)
+        else:
+            raise CoordinatorError("created fork did not become available after 10 tries")
+    try:
+        data = json.loads((completed.stdout or "").strip())
+    except json.JSONDecodeError as exc:
+        raise CoordinatorError("fork lookup returned invalid JSON") from exc
+    parent = data.get("parent") if isinstance(data, dict) else None
+    parent_name = parent.get("full_name") if isinstance(parent, dict) else None
+    if not isinstance(parent_name, str) or parent_name.casefold() != repo.casefold():
+        raise CoordinatorError("publication fork has a different parent repository")
+
+
+def _owner_repository_config(
+    worker: WorkerConfig,
+    runner: Runner,
+    *,
+    repo: str,
+    login: str,
+) -> RepositoryConfig:
+    base = validate_base(_gh_jq_text(
+        runner,
+        ["gh", "api", f"repos/{repo}", "--jq", ".default_branch"],
+        "default branch lookup",
+    ))
+    can_push = _gh_jq_text(
+        runner,
+        ["gh", "api", f"repos/{repo}", "--jq", ".permissions.push"],
+        "push permission lookup",
+    ).casefold()
+    if can_push not in {"true", "false"}:
+        raise CoordinatorError("push permission lookup returned neither true nor false")
+    publication = repo
+    if can_push == "false":
+        publication = f"{login}/{repo.split('/', 1)[1]}"
+        _fork_repository(runner, repo=repo, publication_repo=publication)
+    return RepositoryConfig(
+        repo=repo,
+        base=base,
+        publication_repo=publication,
+        check_argv=worker.owner_check_argv,
+        readiness_argv=worker.owner_readiness_argv or (),
+    )
+
+
+def _hub_assignment_row(
+    store: Store,
+    *,
+    repo: str,
+    number: int,
+    agent: str,
+    assignment_actor: str,
+    reply_logins: tuple[str, ...],
+) -> tuple[str | None, str | None]:
+    """Return (matching row id, retry reason); neither means a definite no-match."""
+    hub_url = store.meta("hub_url")
+    token = store.meta("device_token")
+    if not hub_url or not token:
+        return None, "device is not paired with a hub"
+    hub = Hub(hub_url, token)
+    try:
+        try:
+            result = hub.query({"type": "assignment.created", "payload.repo": repo})
+        except HubError as exc:
+            return None, redact(str(exc))
+        except Exception as exc:  # malformed/transport client responses retry acceptance
+            return None, redact(str(exc) or type(exc).__name__)
+    finally:
+        hub.close()
+    rows = result.get("rows") if isinstance(result, dict) else None
+    if not isinstance(rows, list):
+        return None, "hub assignment query returned an invalid response"
+    allowed = {login.casefold() for login in reply_logins}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("payload")
+        inner = payload.get("payload") if isinstance(payload, dict) else None
+        envelope_login = row.get("github_login")
+        if not isinstance(inner, dict) or not isinstance(envelope_login, str):
+            continue
+        if (
+            str(inner.get("repo") or "").casefold() == repo.casefold()
+            and as_int(inner.get("number")) == number
+            and str(inner.get("agent") or "").casefold() == agent.casefold()
+            and envelope_login.casefold() == assignment_actor.casefold()
+            and envelope_login.casefold() in allowed
+        ):
+            row_id = row.get("row_id")
+            if isinstance(row_id, str) and row_id:
+                return row_id, None
+    return None, None
+
+
 def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
@@ -269,6 +397,58 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
     source["assignment_actor"] = actor["login"]
     source["assignment_event_id"] = latest["id"]
     source["assignment_at"] = latest.get("created_at")
+    if worker.require_hub_assignment:
+        row_id, retry = _hub_assignment_row(
+            store,
+            repo=repo,
+            number=number,
+            agent=account.login,
+            assignment_actor=str(actor["login"]),
+            reply_logins=worker.reply_logins,
+        )
+        if retry is not None:
+            c["hub_assignment_retry"] = retry
+            save_task(store, task)
+            return [f"hub assignment query unavailable; retrying accept: {retry}"]
+        if row_id is None:
+            message = "assignment was not issued through the hub"
+            c["blocker"] = message
+            c["resume_phase"] = "accept"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="hub-assignment",
+                reply_checkpoint=True,
+            )
+        source["hub_assignment_row_id"] = row_id
+        c.pop("hub_assignment_retry", None)
+        c.pop("blocker", None)
+        clear_reply_recovery(c)
+    if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
+        cfg = _owner_repository_config(
+            worker,
+            scoped_runner,
+            repo=repo,
+            login=account.login.casefold(),
+        )
+        source["repository_config"] = {
+            "repo": cfg.repo,
+            "base": cfg.base,
+            "publication_repo": cfg.publication_repo,
+            "check_argv": list(cfg.check_argv),
+            "readiness_argv": list(cfg.readiness_argv),
+        }
+        source["base"] = cfg.base
+        source["publication_repo"] = cfg.publication_repo
+        from .coordinator_runtime import execution_binding
+
+        c["execution_binding"] = execution_binding(
+            store, worker, repo, repository_config=cfg, owner_scoped=True
+        )
     marker = acceptance_marker(repo, number, worker.session_id)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-accept:{worker.session_id}:{repo}:{number}"))
     body = f"{ACCEPT_BODY}\n{marker}"
@@ -792,6 +972,32 @@ def _apply_readiness_checklist(
     head: str,
 ) -> None:
     """Close contributing/deviation from trusted readiness before Ready. No inferred grants."""
+    if readiness.get("owner_a38_default") is True:
+        set_checklist(
+            store,
+            task,
+            "contributing_ok",
+            "ja",
+            f"conformity-a approved at {head}",
+            source="script",
+        )
+        set_checklist(
+            store,
+            task,
+            "deviation_declared",
+            "n_a",
+            "no deviation declared",
+            source="script",
+        )
+        set_checklist(
+            store,
+            task,
+            "deviation_granted",
+            "n_a",
+            "no deviation declared",
+            source="script",
+        )
+        return
     set_checklist(
         store,
         task,
@@ -854,7 +1060,7 @@ def _apply_readiness_checklist(
 def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     worktree = str(c["worktree"])
     head = verify_signed_clean_head(store, worker, runner, worktree)
     if head != str(c.get("head_sha") or "").lower():
@@ -864,25 +1070,37 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head changed before readiness"]
 
-    env = coordinator_env(c, worker, cfg)
-    completed = run_bounded(
-        list(cfg.readiness_argv),
-        timeout=worker.check_timeout,
-        cwd=worktree,
-        env=env,
-        clear_ambient_github=True,
-    )
-    if completed.returncode != 0:
-        raise CoordinatorError(
-            redact(f"readiness failed: {(completed.stderr or completed.stdout or '')[:500]}")
-        )
     base_sha = str(c.get("base_sha") or "")
-    readiness = _parse_readiness_result(
-        completed.stdout or "",
-        head=head,
-        base=base_sha,
-        base_name=cfg.base,
+    owner_a38_default = bool(
+        source.get("owner_scoped") and worker.a38 and not cfg.readiness_argv
     )
+    if owner_a38_default:
+        readiness = {
+            "head": head,
+            "base": base_sha,
+            "contributing_ok": True,
+            "deviation": {"declared": False},
+            "owner_a38_default": True,
+        }
+    else:
+        env = coordinator_env(c, worker, cfg)
+        completed = run_bounded(
+            list(cfg.readiness_argv),
+            timeout=worker.check_timeout,
+            cwd=worktree,
+            env=env,
+            clear_ambient_github=True,
+        )
+        if completed.returncode != 0:
+            raise CoordinatorError(
+                redact(f"readiness failed: {(completed.stderr or completed.stdout or '')[:500]}")
+            )
+        readiness = _parse_readiness_result(
+            completed.stdout or "",
+            head=head,
+            base=base_sha,
+            base_name=cfg.base,
+        )
 
     # Re-verify clean signed head AFTER readiness (command may have touched files).
     head_after = verify_signed_clean_head(store, worker, runner, worktree)
@@ -1502,7 +1720,7 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     head = verify_signed_clean_head(store, worker, runner, worktree)
     if number is None:
         raise CoordinatorError("leave-draft requires PR number")
-    cfg = repo_cfg(worker, str(c["source"]["repo"]))
+    cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
 
     # Recheck allow pr-ready and fresh evidence before transition.
     task["state"] = "pr-review"
@@ -1763,7 +1981,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 f"Merge was not by a human User (got {merged_type or 'missing type'})",
                 kind="nonhuman-merge",
             )
-        cfg = repo_cfg(worker, str(c["source"]["repo"]))
+        cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
         if str((info.get("head") or {}).get("sha") or "") != expected_head:

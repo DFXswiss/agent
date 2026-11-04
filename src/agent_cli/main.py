@@ -405,35 +405,61 @@ def cmd_skills(args: list[str]) -> None:
     print(found)
 
 
-def cmd_init(_: list[str]) -> None:
+def cmd_init(args: list[str]) -> None:
     from .daemon import (
         SERVICE_LABEL,
         agent_argv,
         install_and_start_service,
     )
 
+    if any(arg != "--no-service" for arg in args) or args.count("--no-service") > 1:
+        die("Usage: agent init [--no-service]")
+    no_service = "--no-service" in args
     external = pg_dsn_from_env()
     override = os.environ.get("AGENT_HOME")
     if override and not _same_home(home(), default_home()):
         if external is None:
-            print(
-                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
-                f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; agent "
-                f"daemon --uninstall stops that cluster and removes the service again, the device.json stays",
-                file=sys.stderr,
-            )
+            if no_service:
+                warning = (
+                    f"init creates a separate postgres cluster and device identity there; "
+                    "no user service is installed"
+                )
+            else:
+                warning = (
+                    f"init creates a separate postgres cluster and device identity there and repoints the "
+                    f"user service {SERVICE_LABEL} at it; agent daemon --uninstall stops that cluster and "
+                    "removes the service again, the device.json stays"
+                )
         else:
-            print(
-                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init writes a separate device "
-                f"identity there and repoints the user service {SERVICE_LABEL} at it; the cluster logic is "
-                f"bypassed by AGENT_PG_DSN",
-                file=sys.stderr,
+            service = (
+                "no user service is installed"
+                if no_service
+                else f"the user service {SERVICE_LABEL} is repointed at it"
             )
+            warning = (
+                f"init writes a separate device identity there and {service}; the cluster logic is "
+                "bypassed by AGENT_PG_DSN"
+            )
+        print(
+            f"agent: AGENT_HOME={home()} is not the default {default_home()}; {warning}",
+            file=sys.stderr,
+        )
     store = open_store(create=True)
     try:
-        install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
-        daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
-        print(f"ok  device={store.device_id()} home={store.home} daemon={daemon_state}")
+        program = [*agent_argv(), "daemon"]
+        if no_service:
+            print(f"ok  device={store.device_id()} home={store.home} daemon=not-installed")
+            print(f"daemon argv: {shlex.join(program)}")
+            print(f"environment: AGENT_HOME={shlex.quote(str(store.home))}")
+            pg_bin = os.environ.get("AGENT_PG_BIN")
+            if pg_bin:
+                print(f"environment: AGENT_PG_BIN={shlex.quote(pg_bin)}")
+            if external:
+                print(f"environment: AGENT_PG_DSN={shlex.quote(external)}")
+        else:
+            install_and_start_service(home=store.home, program=program)
+            daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
+            print(f"ok  device={store.device_id()} home={store.home} daemon={daemon_state}")
     finally:
         store.close()
 
@@ -3673,6 +3699,57 @@ def cmd_query(args: list[str]) -> None:
         store.close()
 
 
+def cmd_assign(args: list[str]) -> None:
+    from .hub_assign import AssignmentFailure, create_assignment
+
+    agent = require_flag(args, "--agent")
+    repo = require_flag(args, "--repo")
+    title = require_flag(args, "--title")
+    body_value = flag(args, "--body")
+    body_file = flag(args, "--body-file")
+    if (body_value is None) == (body_file is None):
+        die("assign requires exactly one of --body or --body-file")
+    if not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+",
+        repo,
+    ) or repo.split("/", 1)[1] in {".", ".."}:
+        die("repo must be Owner/Name")
+    if not 1 <= len(title) <= 256:
+        die("title must be 1..256 characters")
+    if body_file is not None:
+        path = Path(body_file)
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            die(f"cannot read body file {path}: {exc}")
+    else:
+        body = body_value or ""
+    if not 1 <= len(body) <= 60000:
+        die("body must be 1..60000 characters")
+    store = open_store()
+    try:
+        hub = _hub_from_store(store)
+        try:
+            try:
+                result = create_assignment(
+                    hub, agent=agent, repo=repo, title=title, body=body
+                )
+            except AssignmentFailure as exc:
+                print(exc.detail, file=sys.stderr)
+                if exc.url:
+                    print(exc.url, file=sys.stderr)
+                raise SystemExit(1) from None
+        finally:
+            hub.close()
+    finally:
+        store.close()
+    number = result.get("number")
+    url = result.get("url")
+    if isinstance(number, bool) or not isinstance(number, int) or not isinstance(url, str):
+        die("hub returned an invalid assignment response")
+    print(f"assigned {repo}#{number} {url}")
+
+
 def cmd_subscribe(args: list[str]) -> None:
     if not args or args[0] not in ("list", "set", "clear"):
         die("Usage: agent subscribe list|set --file PATH|clear")
@@ -4449,6 +4526,7 @@ COMMANDS = {
     "coordinate": cmd_coordinate,
     "github": cmd_github,
     "query": cmd_query,
+    "assign": cmd_assign,
     "subscribe": cmd_subscribe,
     "mail": cmd_mail,
 }
@@ -4460,7 +4538,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|subscribe|mail|review|supervise|coordinate> …"
+            "github|query|assign|subscribe|mail|review|supervise|coordinate> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:
