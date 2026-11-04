@@ -99,8 +99,6 @@ def _list_runs(
                 raise fail("workflow run inventory invalid", total_count, len(items))
             if not batch:
                 if page == 1 and total_count > 0:
-                    if allow_truncated:
-                        return [], None, total_count
                     raise fail(
                         "workflow run inventory incomplete", total_count, len(items)
                     )
@@ -130,8 +128,8 @@ def _list_runs(
             if len(batch) < PAGE_SIZE:
                 return items, None, total_count
         if allow_truncated:
-            # Drain protection is refreshed before each delete. A partial list
-            # can therefore only omit candidates, not weaken protection.
+            # The drain accepts this page-bound partial list; protection is
+            # refreshed before each delete.
             return items, None, total_count
         raise fail(
             "workflow run pagination bound exceeded", total_count, len(items)
@@ -148,6 +146,7 @@ def _list_runs(
         listed, shift_cause, observed_total = once()
     if shift_cause is not None:
         if allow_truncated:
+            # A persistent shift may return the last attempt's prefix.
             return listed
         if shift_cause == "count":
             raise fail(

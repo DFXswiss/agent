@@ -37,7 +37,13 @@ def _now_for_offset(candidate_count: int, wanted_offset: int) -> datetime:
 class FakeDrain(FakeAPI):
     """FakeAPI plus held-run inventory, jobs reads, and run deletion."""
 
-    def __init__(self, *, configured: bool = True, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        configured: bool = True,
+        enabled: bool = True,
+        listing_total_override: int | None = None,
+    ) -> None:
         super().__init__()
         config = _pr_guard_config()
         if configured:
@@ -57,6 +63,7 @@ class FakeDrain(FakeAPI):
         self.run_overrides: dict[int, dict] = {}
         self.missing_on_reread: set[int] = set()
         self.delete_responses: dict[int, tuple[int, object, dict]] = {}
+        self.listing_total_override = listing_total_override
         self.listing_calls: list[str] = []
         self.jobs_gets: list[int] = []
         self.deletes: list[int] = []
@@ -123,7 +130,11 @@ class FakeDrain(FakeAPI):
             start = (page - 1) * per_page
             chunk = self.runs[start : start + per_page]
             return 200, {
-                "total_count": len(self.runs),
+                "total_count": (
+                    len(self.runs)
+                    if self.listing_total_override is None
+                    else self.listing_total_override
+                ),
                 "workflow_runs": copy.deepcopy(chunk),
             }, {}
         if path.startswith(f"{root}/actions/runs/"):
@@ -180,6 +191,14 @@ def test_explicitly_disabled_does_not_list_or_delete() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["enabled"] is False
     assert fake.listing_calls == []
+    assert fake.deletes == []
+
+
+def test_empty_first_listing_page_with_positive_total_fails_closed() -> None:
+    fake = FakeDrain(listing_total_override=1)
+    with pytest.raises(GuardError, match="incomplete"):
+        drain_held_runs(fake.api(), REPO)
+    assert len(fake.listing_calls) == 1
     assert fake.deletes == []
 
 

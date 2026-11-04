@@ -1367,17 +1367,18 @@ def test_truncated_listing_returns_last_attempt_rows_on_persistent_shift() -> No
     assert scripted.page_one_reads == 2
 
 
-def test_truncated_listing_accepts_empty_first_page_with_nonzero_total() -> None:
+def test_truncated_listing_still_rejects_empty_first_page_with_nonzero_total() -> None:
     class Scripted:
         def get_json(self, path: str) -> dict:
             return {"total_count": 7, "workflow_runs": []}
 
-    assert wa._list_runs(
-        Scripted(),
-        REPO,
-        {"event": "pull_request", "status": "action_required"},
-        allow_truncated=True,
-    ) == []
+    with pytest.raises(GuardError, match="incomplete"):
+        wa._list_runs(
+            Scripted(),
+            REPO,
+            {"event": "pull_request", "status": "action_required"},
+            allow_truncated=True,
+        )
 
 
 # --- 403 / mutation / association failures ----------------------------------
