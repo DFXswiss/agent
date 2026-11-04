@@ -57,14 +57,19 @@ that no deviation was declared.
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
 sends the repository spelling exactly as supplied, while the hub canonicalizes
-it; the coordinator therefore queries both that spelling and its case-folded
-form (deduplicated when equal), then compares the returned repository
-case-insensitively. It accepts only a row for the issue and agent with all of
-these properties: the top-level query-row `github_login` equals the GitHub
-assignment-event actor and is listed in `reply_logins`; `origin_device_id` is
+it; the coordinator therefore queries `payload.issue_key` with both
+`<repository>#<number>` and its case-folded form (deduplicated when equal), then
+compares the returned repository case-insensitively. The compatible hub adds
+the canonical `<owner>/<name>#<number>` issue key to every
+`assignment.created` payload. The coordinator accepts only a row for the issue
+and agent with all of these properties: the top-level query-row `github_login`
+equals the GitHub assignment-event actor and is listed in `reply_logins`;
+`origin_device_id` is
 exactly `web:<that envelope github_login>`; and the inner assignment payload's
 `actor` is case-insensitively equal to that envelope login. Thus a device-origin
-row is rejected even if the rest of its payload matches. The hub's
+row is rejected even if the rest of its payload matches. This property requires
+the hub to refuse device ids and pushed origins beginning with `web:`; only the
+hub may create that named website origin. The hub's
 `replica_out` query shape exposes `github_login` and `origin_device_id` at the
 row top level; it does not use the `_github_login` copy produced by other hub
 state endpoints.
@@ -72,13 +77,13 @@ state endpoints.
 A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
 is younger than 120 seconds. After that grace period it publishes `assignment
 was not issued through the hub`, blocks acceptance, and pins the issue reply
-checkpoint without failing the task or starting a model. An unpaired device or
-hub HTTP 401/403 is likewise a configuration blocker with a single published
-checkpoint. Other hub transport/protocol failures keep phase `accept`, retry,
+checkpoint without failing the task or starting a model. An unpaired device,
+hub HTTP 400/401/403, or a query response at the 500-row cap is likewise a
+configuration blocker with a single published checkpoint. Other hub
+transport/protocol failures keep phase `accept`, retry,
 and publish a blocker at most once per hour according to
-`hub_assignment_retry_published_at`. The hub query response is capped at 500
-rows; a response with 500 or more rows is treated as the retry reason `hub
-assignment query truncated`, never as a definite mismatch.
+`hub_assignment_retry_published_at`. The cap remains a defensive truncation
+check rather than a definite mismatch.
 
 Example device configuration (illustrative values, **not installation defaults**):
 

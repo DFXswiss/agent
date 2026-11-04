@@ -164,6 +164,7 @@ def publish_blocker(
     *,
     kind: str = "blocker",
     reply_checkpoint: bool = False,
+    preserve_reply_checkpoint: bool = False,
     occurrence: str | None = None,
 ) -> list[str]:
     """Publish a source-issue blocker.
@@ -173,6 +174,8 @@ def publish_blocker(
     ``resume_phase`` so a missed boolean cannot silently wedge another
     recoverable path. Status re-publishes while waiting keep an existing
     checkpoint and must not reset consumed replies for that same checkpoint.
+    Execution-binding notices use ``preserve_reply_checkpoint`` because they
+    recover without an authorized reply when the pinned binding is restored.
     """
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else None
@@ -184,7 +187,11 @@ def publish_blocker(
     has_prior = isinstance(prior, str) and bool(prior)
     # Explicit request (re)pins when eligible; otherwise auto-pin only when a
     # recoverable resume_phase is set and no checkpoint exists yet.
-    should_pin = eligible and (reply_checkpoint or not has_prior)
+    should_pin = (
+        not preserve_reply_checkpoint
+        and eligible
+        and (reply_checkpoint or not has_prior)
+    )
     resolved_occurrence = occurrence or ""
     if occurrence is None and should_pin and c.get("resume_phase") == "formal_approve":
         # Every invalidated approval needs a reply after its own blocker, even
@@ -203,6 +210,10 @@ def publish_blocker(
             kind=kind,
             occurrence=resolved_occurrence,
         )
+        changed = False
+        if c.get("blocker_publish_once"):
+            c["blocker_activity_id"] = activity_id
+            changed = True
         if should_pin:
             prior = c.get("question_activity_id")
             c["question_activity_id"] = activity_id
@@ -210,6 +221,8 @@ def publish_blocker(
             # replies; a new checkpoint activity starts a fresh reply window.
             if prior != activity_id:
                 c["replies_consumed_through"] = None
+            changed = True
+        if changed:
             save_task(store, task)
         lines.append(f"blocker published on {source['repo']}#{source['number']}")
     except (CoordinatorError, StoreError) as exc:
@@ -333,12 +346,16 @@ def _hub_assignment_row(
     token = store.meta("device_token")
     if not hub_url or not token:
         return None, "device is not paired with a hub"
-    repos = list(dict.fromkeys((repo, repo.casefold())))
+    issue_key = f"{repo}#{number}"
+    issue_keys = list(dict.fromkeys((issue_key, issue_key.casefold())))
     hub = Hub(hub_url, token)
     try:
         try:
             result = hub.query(
-                {"type": "assignment.created", "payload.repo": {"in": repos}}
+                {
+                    "type": "assignment.created",
+                    "payload.issue_key": {"in": issue_keys},
+                }
             )
         except HubError as exc:
             return None, redact(str(exc))
@@ -402,6 +419,8 @@ def _hub_assignment_configuration_error(reason: str) -> bool:
     folded = reason.casefold()
     return (
         reason == "device is not paired with a hub"
+        or reason == "hub assignment query truncated"
+        or "http 400" in folded
         or "http 401" in folded
         or "http 403" in folded
     )
@@ -447,6 +466,8 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         )
         if retry is not None:
             if _hub_assignment_configuration_error(retry):
+                if c.get("blocker") != retry:
+                    c.pop("blocker_activity_id", None)
                 c["phase"] = "blocked"
                 c["resume_phase"] = "accept"
                 c["blocker"] = retry
@@ -490,6 +511,8 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                 save_task(store, task)
                 return ["hub assignment event not yet visible; retrying accept"]
             message = "assignment was not issued through the hub"
+            if c.get("blocker") != message:
+                c.pop("blocker_activity_id", None)
             c["blocker"] = message
             c["resume_phase"] = "accept"
             c["phase"] = "blocked"
@@ -511,6 +534,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         c.pop("blocker", None)
         c.pop("blocker_publish_once", None)
         c.pop("blocker_publish_kind", None)
+        c.pop("blocker_activity_id", None)
         clear_reply_recovery(c)
     if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
         cfg = _owner_repository_config(
@@ -2284,6 +2308,7 @@ def phase_read_replies(
     c.pop("resume_phase", None)
     c.pop("blocker_publish_once", None)
     c.pop("blocker_publish_kind", None)
+    c.pop("blocker_activity_id", None)
     if resume == "implement":
         task["state"] = "implementing"
     save_task(store, task)
@@ -2307,24 +2332,25 @@ def phase_blocked(
             str(c.get("blocker") or "uncertain lane outcome"),
             kind="uncertain-lane",
         )
+    blocker = redact(str(c.get("blocker") or "blocked"))
+    if c.get("blocker_publish_once"):
+        blocker_activity_id = c.get("blocker_activity_id")
+        if not isinstance(blocker_activity_id, str) or not blocker_activity_id:
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                blocker,
+                kind=str(c.get("blocker_publish_kind") or "blocker"),
+                reply_checkpoint=True,
+            )
     # Try authorized reply recovery without starting a model blindly.
     prior_phase = str(c.get("phase") or "blocked")
     lines = phase_read_replies(store, worker, task, runner)
     resumed = str(coord(task).get("phase") or "")
     if resumed not in ("ask", "blocked", prior_phase) and resumed:
         return lines
-    blocker = redact(str(c.get("blocker") or "blocked"))
     if c.get("blocker_publish_once"):
-        checkpoint = c.get("question_activity_id")
-        if isinstance(checkpoint, str) and checkpoint:
-            return lines
-        return publish_blocker(
-            store,
-            worker,
-            task,
-            runner,
-            blocker,
-            kind=str(c.get("blocker_publish_kind") or "blocker"),
-            reply_checkpoint=True,
-        )
+        return lines
     return publish_blocker(store, worker, task, runner, blocker, kind="status")
