@@ -157,9 +157,10 @@ A repository may opt in with `"held_run_drain": {"enabled": true}` in the
 trusted default-branch `.github/pr-guard.json`; omission disables the pass. It
 runs only after the per-pull-request work in the repository-wide scheduled
 sweep. A candidate is a `pull_request` run with `run_attempt: 1` still in
-`completed` / `action_required`, whose nonempty head SHA is neither the current
-head, the merge commit, nor any commit of an open pull request whose head branch
-and fork match the run's, whose `head_repository.full_name` is a nonempty name
+`completed` / `action_required`, whose valid 40-character hexadecimal head SHA
+is neither the current head, the merge commit, nor any commit of an open pull
+request whose head branch and fork match the run's, whose
+`head_repository.full_name` is a nonempty name
 different from the base repository, whose creation time is at least one hour
 old, and which is not protected at scan time. The reported candidate count is
 this full superseded set before the never-started proof, including candidates

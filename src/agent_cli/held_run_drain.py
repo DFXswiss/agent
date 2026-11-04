@@ -9,7 +9,6 @@ from typing import Any, Mapping
 
 from .pr_lifecycle import _workflow_run_never_started
 from .workflow_approval import (
-    PAGE_SIZE,
     _commit_shas,
     _list_runs,
     _pending,
@@ -19,9 +18,9 @@ from .workflow_approval import (
 MAX_DELETIONS = 20
 MAX_EXAMINED = 2 * MAX_DELETIONS
 # Two sweeps per hour stay under about half the shared hourly request budget.
-# Each pass is capped at 250 API requests after the three configuration reads,
-# excluding the client's own GET retries, and the cap is enforced before each
-# request and each pagination page.
+# Each pass is capped at 250 API requests after the three configuration reads.
+# The cap is checked before every request, including each pagination page;
+# the client's own GET retries are outside this wrapper's count.
 MAX_REQUESTS = 250
 MIN_AGE_S = 3600
 ROTATION_PERIOD_S = 1800
@@ -58,27 +57,9 @@ class _BudgetedApi:
         return self._api.get_optional(*args, **kwargs)
 
     def paginate(self, path: str, **kwargs: Any) -> Any:
-        from .a38_guard import GuardError, MAX_COMMENT_PAGES_ITEMS
+        from .a38_guard import GitHubApi
 
-        remaining = MAX_REQUESTS - self.used
-        if remaining <= 0:
-            raise _BudgetExhausted
-        caller_limit = kwargs.get("hard_limit", MAX_COMMENT_PAGES_ITEMS)
-        budget_limit = remaining * PAGE_SIZE - 1
-        kwargs["hard_limit"] = min(caller_limit, budget_limit)
-        try:
-            items = self._api.paginate(path, **kwargs)
-        except GuardError as exc:
-            if (
-                str(exc).startswith("pagination exceeded bound")
-                and budget_limit < caller_limit
-            ):
-                self.used = MAX_REQUESTS
-                raise _BudgetExhausted from exc
-            raise
-        # Reuse workflow_approval's size for GitHubApi.paginate's 100-item pages.
-        self.used += max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
-        return items
+        return GitHubApi.paginate(self, path, **kwargs)
 
 
 def _open_pull_protection(
@@ -309,12 +290,11 @@ def _drain_enabled(
     for run in runs:
         if not _pending(run):
             continue
-        head_sha = run.get("head_sha")
-        if (
-            not isinstance(head_sha, str)
-            or head_sha == ""
-            or head_sha.lower() in protected
-        ):
+        try:
+            head_sha = _validate_sha(run.get("head_sha"), "workflow run head sha")
+        except GuardError:
+            continue
+        if head_sha in protected:
             continue
         head_repository = run.get("head_repository")
         if not isinstance(head_repository, Mapping):
@@ -331,9 +311,11 @@ def _drain_enabled(
             continue
         if _timestamp(run.get("created_at")) >= cutoff:
             continue
-        if _run_is_protected(api, repo, run, protection, commit_cache):
+        candidate = dict(run)
+        candidate["head_sha"] = head_sha
+        if _run_is_protected(api, repo, candidate, protection, commit_cache):
             continue
-        candidates.append(run)
+        candidates.append(candidate)
 
     candidates.sort(
         key=lambda run: (_timestamp(run.get("created_at")), run["id"])
@@ -377,6 +359,12 @@ def _drain_enabled(
             current_sha = (
                 current.get("head_sha") if isinstance(current, Mapping) else None
             )
+            try:
+                current_sha = _validate_sha(
+                    current_sha, "workflow run head sha"
+                )
+            except GuardError:
+                continue
             current_head_repository = (
                 current.get("head_repository")
                 if isinstance(current, Mapping)
@@ -396,8 +384,7 @@ def _drain_enabled(
                 not isinstance(current, Mapping)
                 or current.get("id") != run_id
                 or not _pending(current)
-                or not isinstance(current_sha, str)
-                or current_sha == ""
+                or current_sha != candidate["head_sha"]
                 or not isinstance(current_head_repo, str)
                 or current_head_repo == ""
                 or current_head_repo.lower() == repo.lower()
@@ -449,8 +436,8 @@ def _drain_enabled(
                         detail, detail_head
                     )
                     if (
-                        detail_head_sha == current_sha.lower()
-                        or detail_merge_sha == current_sha.lower()
+                        detail_head_sha == current_sha
+                        or detail_merge_sha == current_sha
                     ):
                         detail_protected = True
                         break
@@ -471,9 +458,9 @@ def _drain_enabled(
                     detail_protected = True
                     break
                 if (
-                    detail_head_sha == current_sha.lower()
-                    or detail_merge_sha == current_sha.lower()
-                    or current_sha.lower() in detail_commits
+                    detail_head_sha == current_sha
+                    or detail_merge_sha == current_sha
+                    or current_sha in detail_commits
                 ):
                     detail_protected = True
                     break
@@ -490,6 +477,10 @@ def _drain_enabled(
             final_sha = (
                 final.get("head_sha") if isinstance(final, Mapping) else None
             )
+            try:
+                final_sha = _validate_sha(final_sha, "workflow run head sha")
+            except GuardError:
+                continue
             final_head_repository = (
                 final.get("head_repository")
                 if isinstance(final, Mapping)
@@ -505,9 +496,6 @@ def _drain_enabled(
                 if isinstance(final, Mapping)
                 else None
             )
-            final_never_started = _workflow_run_never_started(
-                api, repo, candidate, missing_ok=True
-            )
             if (
                 not isinstance(final, Mapping)
                 or final.get("id") != run_id
@@ -517,8 +505,12 @@ def _drain_enabled(
                 or final_head_repo == ""
                 or final_head_repo.lower() == repo.lower()
                 or final_head_branch != current_head_branch
-                or not final_never_started
             ):
+                continue
+            final_never_started = _workflow_run_never_started(
+                api, repo, candidate, missing_ok=True
+            )
+            if not final_never_started:
                 continue
             if dry_run:
                 result["planned"].append(run_id)

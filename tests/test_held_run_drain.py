@@ -54,6 +54,7 @@ class FakeDrain(FakeAPI):
         self.runs: list[dict] = []
         self.open_pull_items: list[dict] = []
         self.open_pull_lists: list[list[dict]] = []
+        self.open_pull_page_size: int | None = None
         self.open_pull_gets = 0
         self.pull_list_queries: list[str] = []
         self.current_open_pull_items: list[dict] = []
@@ -125,10 +126,11 @@ class FakeDrain(FakeAPI):
             self.current_open_pull_items = copy.deepcopy(items)
             page = int((query.get("page") or ["1"])[0])
             per_page = int((query.get("per_page") or ["100"])[0])
-            start = (page - 1) * per_page
-            chunk = items[start : start + per_page]
+            response_page_size = self.open_pull_page_size or per_page
+            start = (page - 1) * response_page_size
+            chunk = items[start : start + response_page_size]
             headers: dict[str, str] = {}
-            if start + per_page < len(items):
+            if start + response_page_size < len(items):
                 next_query = {
                     key: list(values)
                     for key, values in query.items()
@@ -360,6 +362,31 @@ def test_multi_page_open_pull_scan_stops_at_the_request_budget(
     assert fake.requests - 3 <= held_run_drain.MAX_REQUESTS
 
 
+def test_short_linked_pages_are_each_charged_to_the_request_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeDrain()
+    fake.open_pull_items = [
+        _open_pull(
+            f"{number:040x}",
+            "f" * 40,
+            number=number,
+            head_ref=f"open-{number}",
+        )
+        for number in range(1, 6)
+    ]
+    fake.open_pull_page_size = 1
+    monkeypatch.setattr(held_run_drain, "MAX_REQUESTS", 3)
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["aborted"] == "budget"
+    assert result["requests"] == held_run_drain.MAX_REQUESTS
+    assert fake.open_pull_gets == held_run_drain.MAX_REQUESTS
+    assert fake.requests <= held_run_drain.MAX_REQUESTS + 3
+    assert fake.deletes == []
+
+
 def test_request_budget_interruption_does_not_delete_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -393,6 +420,18 @@ def test_open_pull_current_head_is_protected() -> None:
     result = drain_held_runs(fake.api(), REPO)
     assert result["protected"] == 1
     assert result["deleted"] == []
+    assert fake.deletes == []
+
+
+def test_malformed_run_head_sha_is_not_a_candidate() -> None:
+    fake = FakeDrain()
+    fake.runs = [fake.run(head_sha="abc")]
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["candidates"] == 0
+    assert result["deleted"] == []
+    assert fake.jobs_gets == []
     assert fake.deletes == []
 
 
@@ -709,8 +748,53 @@ def test_run_becoming_queued_after_protection_reads_prevents_delete() -> None:
 
     assert result["candidates"] == 1
     assert result["deleted"] == []
-    assert fake.jobs_gets == [101, 101]
+    # The final run read already shows the run is no longer held, so the
+    # final jobs read is skipped.
+    assert fake.jobs_gets == [101]
     assert fake.deletes == []
+
+
+def test_malformed_reread_run_head_sha_prevents_delete() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    fake.runs = [run]
+    fake.run_overrides[101] = {**run, "head_sha": "abc"}
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["candidates"] == 1
+    assert result["deleted"] == []
+    assert fake.jobs_gets == [101]
+    assert fake.deletes == []
+
+
+def test_malformed_final_run_head_sha_prevents_delete() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    fake.runs = [run]
+    fake.run_reads[101] = [run, {**run, "head_sha": "abc"}]
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["candidates"] == 1
+    assert result["deleted"] == []
+    assert fake.jobs_gets == [101]
+    assert fake.deletes == []
+
+
+def test_run_head_sha_comparisons_use_validated_lowercase() -> None:
+    fake = FakeDrain()
+    run = fake.run()
+    fake.runs = [run]
+    fake.run_reads[101] = [
+        {**run, "head_sha": run["head_sha"].upper()},
+        run,
+    ]
+
+    result = drain_held_runs(fake.api(), REPO)
+
+    assert result["deleted"] == [101]
+    assert fake.deletes == [101]
 
 
 def test_hold_inside_the_age_floor_is_not_deleted() -> None:
