@@ -829,7 +829,7 @@ def _read_message_ids(store: Store, worker: WorkerConfig) -> set[str]:
     return ids
 
 
-def _fresh_pr_head(
+def fresh_pr_head(
     store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner
 ) -> str | None:
     c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
@@ -1051,7 +1051,7 @@ def phase_await_second_review(
     if not worker.a38:
         raise CoordinatorError("external second-review phase called for a non-A38 worker")
     c = coord(task)
-    current = _fresh_pr_head(store, worker, task, runner)
+    current = fresh_pr_head(store, worker, task, runner)
     if current is None:
         return ["PR state temporarily unavailable; retrying"]
     expected = str(c.get("head_sha") or "")
@@ -1061,6 +1061,9 @@ def phase_await_second_review(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting second review; invalidating evidence"]
+    if pr_open_unmerged(store, worker, task, runner) is False:
+        # A draft cannot be merged; a closed one gets no further review comments.
+        raise CoordinatorError("pull request is not open while awaiting second review")
     lines = intake_second_reviews(store, worker, task, runner, current)
     if lines is not None:
         return lines

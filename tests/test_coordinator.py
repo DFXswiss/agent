@@ -3952,6 +3952,70 @@ def test_a38_await_merge_posts_no_second_review_after_revocation(
     assert len(comments) == 1
 
 
+def test_a38_later_phase_ignores_mail_for_a_head_replaced_by_a_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000003"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="old-head-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+    fake.pr["headRefOid"] = "c" * 40
+    monkeypatch.setattr(coordinator_runtime, "phase_ci", lambda *args, **kwargs: ["ci handler"])
+
+    assert advance_one(store, worker, runner=fake, lane_runner=None) == ["ci handler"]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 1
+
+
+def test_a38_await_second_review_stops_on_a_closed_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    task_id = "abababab-0000-4000-8000-000000000004"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "CLOSED"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="mail-after-close",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+
+    with pytest.raises(CoordinatorError, match="not open while awaiting second review"):
+        phase_await_second_review(store, worker, task, fake)
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert comments == []
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4341,6 +4405,8 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         },
     }
     store.write("task", "insert", blocking_tid, blocking_task)
+    # The second scenario uses a fresh, still open draft pull request.
+    fake.pr["state"] = "OPEN"
     blocking_result = {
         **second,
         "task_id": blocking_tid,

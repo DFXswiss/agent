@@ -741,15 +741,20 @@ def launch(
             except OSError:
                 output_file_text = ""
 
+        stream_from_output_file = vendor in OUTPUT_FILE_VENDORS or (
+            vendor == "claude" and tmux
+        )
         finalized = finalize_lane_output(
             vendor,
             stdout,
             output_file_text,
             cwd=cwd,
-            stream_from_output_file=(
-                vendor in OUTPUT_FILE_VENDORS or (vendor == "claude" and tmux)
-            ),
+            stream_from_output_file=stream_from_output_file,
         )
+        if stream_from_output_file and not finalized.text and stdout and not stderr:
+            # In tmux the pane merges stderr into stdout; keep that diagnostic as stderr
+            # so the CLI and lane.run show why a lane produced no stream output.
+            stderr = stdout
         status = parse_status(finalized.text, returncode)
         return LaneResult(
             role=role,

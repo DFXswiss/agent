@@ -596,6 +596,40 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
     assert result.usage.input_tokens == 7
 
 
+def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    reason = "STATUS: unavailable\nopenrouter key missing\n"
+    monkeypatch.setattr(
+        "agent_cli.lane._run_in_tmux",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=2, stdout=reason, stderr=""),
+    )
+
+    result = launch(
+        role="implementer",
+        vendor="openrouter",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        tmux=True,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.status == "unavailable"
+    assert result.stdout == ""
+    assert "openrouter key missing" in result.stderr
+
+
 def test_launch_openrouter_missing_key_records_stderr_reason(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     config_dir = tmp_path / "router-config"

@@ -49,6 +49,7 @@ from .coordinator_common import (
 )
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
+    fresh_pr_head,
     intake_second_reviews,
     pr_open_unmerged,
     phase_await_ready as phase_a38_await_ready,
@@ -1529,6 +1530,12 @@ def advance_one(
             # Once a human can merge (await_ready onward), a result that arrives after the
             # merge or close must not reroute the task; intake only runs on an open PR.
             mergeable_phase = phase in {"await_ready", "leave_draft", "await_merge"}
+            # Validate late mail against the live PR head: after a push the phase handler
+            # invalidates evidence, and a result for the old head must not reroute the task.
+            if isinstance(second, dict) and second.get("head") == current:
+                live = fresh_pr_head(store, worker, task, runner)
+                if live != current:
+                    second = None
             if (
                 isinstance(second, dict)
                 and second.get("head") == current
