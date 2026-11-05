@@ -3537,6 +3537,10 @@ def reconcile_pull(
             if is_rate_limit_error(exc):
                 if assessment is not None:
                     setattr(exc, "completed", _completed_steps(assessment))
+                    # A failing verdict the limit kept from being published
+                    # is still a failure of this run.
+                    if _assessment_exit_code(assessment) != 0:
+                        setattr(exc, "failed_before", True)
                 raise
             if _is_guard_error(exc) and "changed before publish" in str(exc):
                 last_err = exc
@@ -4037,7 +4041,7 @@ def _note_sweep_rate_limit(
 ) -> None:
     results.append(_rate_limited_entry(exc, repo=repo, pr=pr))
     setattr(exc, "results", results)
-    setattr(exc, "failed_before", failed_before)
+    setattr(exc, "failed_before", getattr(exc, "failed_before", False) or failed_before)
 
 
 def _emit_rate_limited(exc: BaseException, args: argparse.Namespace) -> None:
@@ -4206,7 +4210,11 @@ def _run(
                 except RuntimeError as exc:
                     if is_rate_limit_error(exc):
                         setattr(exc, "results", results)
-                        setattr(exc, "failed_before", any(exit_codes))
+                        setattr(
+                            exc,
+                            "failed_before",
+                            getattr(exc, "failed_before", False) or any(exit_codes),
+                        )
                         raise
                     if not _is_guard_error(exc):
                         raise

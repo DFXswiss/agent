@@ -5485,6 +5485,57 @@ class A38GuardRateLimitTests(unittest.TestCase):
         )
         self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
 
+    def test_unpublished_failing_verdict_keeps_exit_one(self) -> None:
+        failing = Assessment(
+            ok=False,
+            status="hard_fail",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            hard_fail=True,
+        )
+        pull = a38_guard.PullSnapshot(
+            repo=REPO,
+            number=1,
+            state="open",
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            private=False,
+            author_id=AUTHOR_ID,
+            author_login="author",
+        )
+        limited = RateLimitError("GitHub API rate limited before publish", retry_at=None)
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch.object(a38_guard, "fetch_pull", return_value=pull), mock.patch.object(
+            a38_guard, "assess_pull", return_value=failing
+        ), mock.patch.object(a38_guard, "publish_assessment", side_effect=limited):
+            code, stdout, _stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout)["status"], "rate_limited")
+
+    def test_sweep_keeps_flag_from_current_pull_request(self) -> None:
+        limited = RateLimitError("GitHub API rate limited", retry_at=None)
+        limited.failed_before = True
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1]
+        ), mock.patch.object(a38_guard, "reconcile_pull", side_effect=limited):
+            code, _stdout, _stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                FakeAPI().api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+
     def test_multi_pull_event_limit_records_earlier_failure(self) -> None:
         limited = RateLimitError("GitHub API rate limited", retry_at=None)
         event = {
