@@ -4469,6 +4469,63 @@ def test_a38_tests_refuses_a_foreign_row_on_the_report_activity_id(
         coordinator_a38.phase_tests(store, worker, task, fake)
 
 
+def test_a38_block_on_open_pr_then_block_after_merge_does_not_reopen_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000013"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    for index, message_id in enumerate(("block-open", "block-merged"), start=1):
+        _a38_review_mail(
+            store,
+            worker,
+            message_id=message_id,
+            login="reviewer-one",
+            payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+            second=index,
+        )
+    states = iter(["OPEN", "MERGED", "MERGED", "MERGED"])
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_args: next(states))
+
+    intake_second_reviews(store, worker, task, fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "implementing"
+
+
+def test_a38_saved_newest_block_routes_on_a_later_tick_after_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000014"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    c = task["payload"]["coordinator"]
+    c.setdefault("a38", {})["second_review"] = {
+        "head": fake.head,
+        "status": "posted",
+        "reviews": [{"reviewer": "reviewer-one", "activity_id": "a", "id": 1, "url": "u", "blocks_merge": True}],
+    }
+    c["second_review_block"] = {"head": fake.head, "findings": "Fix it.", "reviewer": "reviewer-one"}
+    fake.pr["state"] = "OPEN"
+
+    lines = intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None and "routing to implementer" in lines[-1]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert saved["payload"]["coordinator"]["findings"] == "Fix it."
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
