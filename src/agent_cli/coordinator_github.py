@@ -2564,8 +2564,10 @@ def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
         return "missing"
     # The newest posted second review decides (docs/a38.md): a later clearing
     # review lifts an earlier block, a later block overrides an earlier pass.
+    from .coordinator_a38 import newest_reviews_block
+
     reviews = [review for review in state.get("reviews") or [] if isinstance(review, dict)]
-    if reviews and reviews[-1].get("blocks_merge") is True:
+    if newest_reviews_block(reviews):
         return "blocking"
     return "passed"
 
