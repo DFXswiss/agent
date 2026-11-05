@@ -359,6 +359,9 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
     c["evidence"] = evidence
     a38 = c.get("a38")
     if isinstance(a38, dict):
+        block = c.get("second_review_block")
+        if isinstance(block, dict) and block.get("head") != head:
+            c.pop("second_review_block", None)
         for key in ("report", "first_comment", "second_review", "guard_status"):
             value = a38.get(key)
             if isinstance(value, dict) and value.get("head") != head:

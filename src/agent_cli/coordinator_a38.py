@@ -972,7 +972,6 @@ def intake_second_reviews(
     read = _read_message_ids(store, worker)
     messages = list(reversed(store.rows("activity")))
     lines: list[str] = []
-    pending_block: tuple[str, str] | None = None
     for row in messages:
         message_id = str(row.get("id") or "")
         if not message_id or message_id in read or row.get("type") != "message":
@@ -1102,13 +1101,12 @@ def intake_second_reviews(
                 # await_merge decides by the newest one.
                 continue
             # Keep reading the queued mail first: a newer passing review of the same
-            # head supersedes this block; the newest review decides after the loop.
-            pending_block = (findings, login)
+            # head supersedes this block; the saved newest review decides after the loop.
+            c["second_review_block"] = {"head": current, "findings": findings, "reviewer": login}
             save_task(store, task)
             _mark_message_read(store, worker, message_id)
             lines.append(f"blocking external second review by @{login} recorded")
             continue
-        pending_block = None
         evidence = (
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
             f"{result['url']}"
@@ -1122,15 +1120,44 @@ def intake_second_reviews(
         save_task(store, task)
         _mark_message_read(store, worker, message_id)
         lines.append(f"external second review by @{login} posted on {current[:7]}")
-    if pending_block is not None:
-        findings, login = pending_block
-        c["findings"] = findings
-        invalidate_head_evidence(c, "")
-        c["phase"] = "implement"
-        task["state"] = "implementing"
-        save_task(store, task)
-        lines.append(f"blocking external second review by @{login}; routing to implementer")
+    routed = _route_newest_blocking_review(store, worker, task, runner, current)
+    if routed is not None:
+        lines.append(routed)
     return lines or None
+
+
+def _route_newest_blocking_review(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner, current: str
+) -> str | None:
+    """Route to the implementer when the saved newest review of this head blocks.
+
+    Decided from durable state, so a crash between marking mail read and routing
+    cannot lose the block, and only while the pull request is still open."""
+    c = coord(task)
+    state = _a38_state(c).get("second_review")
+    reviews = state.get("reviews") if isinstance(state, dict) else None
+    block = c.get("second_review_block")
+    if (
+        not isinstance(state, dict)
+        or state.get("head") != current
+        or not isinstance(reviews, list)
+        or not reviews
+        or not isinstance(reviews[-1], dict)
+        or reviews[-1].get("blocks_merge") is not True
+        or c.get("phase") == "await_merge"
+        or not isinstance(block, dict)
+        or block.get("head") != current
+    ):
+        return None
+    if pr_state(store, worker, task, runner) != "OPEN":
+        return None
+    c["findings"] = block.get("findings") or ""
+    c.pop("second_review_block", None)
+    invalidate_head_evidence(c, "")
+    c["phase"] = "implement"
+    task["state"] = "implementing"
+    save_task(store, task)
+    return f"blocking external second review by @{block.get('reviewer')}; routing to implementer"
 
 
 def phase_await_second_review(
