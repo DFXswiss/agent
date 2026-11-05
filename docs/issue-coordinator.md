@@ -682,7 +682,9 @@ non-recoverable blocker `merged-without-second-review` after that, and publishes
 `merged-with-blocking-second-review` at once when the newest posted review blocks the merge.
 Both merge blockers are final like `closed-unmerged`: the task stays blocked, and a
 review that arrives after that blocker is published is not taken in. A new head invalidates its report, both comment checkpoints, and
-external-review state.
+external-review state. A blocking review that arrives after the guard set Ready
+is fixed on the same pull request: an A38 worker pushes the new head to the open
+pull request whether or not it is still a draft, and the guard decides Ready again.
 
 These A38 settings enter the task execution binding only for A38 workers, so
 the binding hashes of existing non-A38 workers remain stable.

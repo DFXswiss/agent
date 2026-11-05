@@ -1427,11 +1427,13 @@ def _second_review_intake_allowed(
     c: dict[str, Any],
     runner: Runner,
     phase: str,
-) -> bool:
+) -> bool | None:
     """Intake runs on an open PR (in await_merge only while still assigned), and in
     await_merge also after the merge, which closes the issue; a blocking result
-    there never reopens work."""
+    there never reopens work. None means the state is unreadable."""
     state = pr_state(store, worker, task, runner)
+    if state is None:
+        return None
     if state == "OPEN":
         return phase != "await_merge" or _source_still_assigned(store, worker, c, runner)
     return phase == "await_merge" and state == "MERGED"
@@ -1581,15 +1583,23 @@ def advance_one(
             # a result that arrives after a merge or close never reopens work.
             # Validate late mail against the live PR head: after a push the phase handler
             # invalidates evidence, and a result for the old head must not reroute the task.
+            # An unreadable head or state retries the tick: skipping intake would let the
+            # phase decide on a stored review while a newer one is still waiting.
+            unreadable = [f"PR state temporarily unavailable before second-review intake in {phase}; retrying"]
             if isinstance(second, dict) and second.get("head") == current:
                 live = fresh_pr_head(store, worker, task, runner)
+                if live is None:
+                    return unreadable
                 if live != current:
                     second = None
-            if (
-                isinstance(second, dict)
-                and second.get("head") == current
-                and _second_review_intake_allowed(store, worker, task, c, runner, phase)
-            ):
+            allowed = (
+                _second_review_intake_allowed(store, worker, task, c, runner, phase)
+                if isinstance(second, dict) and second.get("head") == current
+                else False
+            )
+            if allowed is None:
+                return unreadable
+            if allowed:
                 intake_lines = intake_second_reviews(store, worker, task, runner, current)
                 if coord(task).get("phase") != phase:
                     return intake_lines or [

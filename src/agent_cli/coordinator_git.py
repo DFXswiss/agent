@@ -490,7 +490,7 @@ def ensure_draft(
         return []
     existing_pr = as_int(c.get("pr_number") or task.get("ref"))
     if existing_pr is not None:
-        before = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch)
+        before = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch, allow_ready=worker.a38)
         local_head = verify_signed_clean_head(store, worker, runner, worktree)
         if before['head']['sha'] not in {c.get('published_head'), local_head}:
             raise CoordinatorError('PR head changed outside this task; refusing to overwrite it')
@@ -500,7 +500,7 @@ def ensure_draft(
     save_task(store, task)
 
     if existing_pr is not None:
-        after = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch)
+        after = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch, allow_ready=worker.a38)
         if after['head']['sha'] != sha:
             raise CoordinatorError('updated Draft head is not yet verified')
         c['published_head'] = sha
@@ -551,7 +551,7 @@ def ensure_draft(
     return [f"draft opened {target}#{number} head={sha[:7]}"]
 
 
-def _verify_draft(store, worker, runner, target, number, cfg, branch):
+def _verify_draft(store, worker, runner, target, number, cfg, branch, *, allow_ready=False):
     result = gh_json(scoped(store, worker.session_id, runner),
                      ['gh', 'api', f'repos/{target}/pulls/{number}'])
     if not isinstance(result, dict):
@@ -559,7 +559,10 @@ def _verify_draft(store, worker, runner, target, number, cfg, branch):
     base = result.get('base') or {}
     head = result.get('head') or {}
     user = result.get('user') or {}
-    if (result.get('state') != 'open' or result.get('draft') is not True
+    # An A38 guard may set Ready before a blocking second review arrives; the fix is
+    # pushed to that open pull request and the guard decides Ready again for the new head.
+    draft_ok = result.get('draft') is True or (allow_ready and result.get('draft') is False)
+    if (result.get('state') != 'open' or not draft_ok
             or str(user.get('login', '')).casefold() != account_for(store, worker.session_id).login.casefold()
             or base.get('ref') != cfg.base
             or str((base.get('repo') or {}).get('full_name', '')).casefold() != target.casefold()
