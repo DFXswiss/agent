@@ -1030,6 +1030,16 @@ def intake_second_reviews(
                 }
             )
         if payload["blocks_merge"]:
+            if pr_state(store, worker, task, runner) == "MERGED":
+                # A human merged meanwhile; the posted result must not reopen work.
+                c["phase"] = "await_merge"
+                save_task(store, task)
+                _mark_message_read(store, worker, message_id)
+                lines.append(
+                    f"blocking external second review by @{login} arrived after the merge; "
+                    "verifying the merge"
+                )
+                return lines
             c["findings"] = findings
             invalidate_head_evidence(c, "")
             c["phase"] = "implement"
@@ -1069,8 +1079,14 @@ def phase_await_second_review(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting second review; invalidating evidence"]
-    if pr_open_unmerged(store, worker, task, runner) is False:
-        # A draft cannot be merged; a closed one gets no further review comments.
+    state = pr_state(store, worker, task, runner)
+    if state == "MERGED":
+        # The guard may make the PR Ready before the second review; verify the merge.
+        c["phase"] = "await_merge"
+        save_task(store, task)
+        return ["PR merged while awaiting second review; verifying the merge"]
+    if state == "CLOSED":
+        # A closed pull request gets no further review comments.
         raise CoordinatorError("pull request is not open while awaiting second review")
     lines = intake_second_reviews(store, worker, task, runner, current)
     if lines is not None:

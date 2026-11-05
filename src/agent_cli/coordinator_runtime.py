@@ -1555,9 +1555,8 @@ def advance_one(
             a38 = c.get("a38")
             second = a38.get("second_review") if isinstance(a38, dict) else None
             current = str(c.get("head_sha") or "")
-            # Once a human can merge (await_ready onward), a result that arrives after the
-            # merge or close must not reroute the task; intake only runs on an open PR.
-            mergeable_phase = phase in {"await_ready", "leave_draft", "await_merge"}
+            # Intake only runs on an open PR: a result that arrives after a merge or
+            # close must not reroute the task.
             # Validate late mail against the live PR head: after a push the phase handler
             # invalidates evidence, and a result for the old head must not reroute the task.
             if isinstance(second, dict) and second.get("head") == current:
@@ -1567,7 +1566,7 @@ def advance_one(
             if (
                 isinstance(second, dict)
                 and second.get("head") == current
-                and (not mergeable_phase or pr_open_unmerged(store, worker, task, runner) is True)
+                and pr_open_unmerged(store, worker, task, runner) is True
                 and (phase != "await_merge" or _source_still_assigned(store, worker, c, runner))
             ):
                 intake_lines = intake_second_reviews(store, worker, task, runner, current)
