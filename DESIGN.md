@@ -499,10 +499,11 @@ Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_devic
 
 The knock in §10 uses the **registered pane**, not `tmux_session` derived from the session id. `agent session input` remains argv-only (`send-keys -l` then a separate Enter).
 
-An operator or another paired device may issue work with `agent assign`. The
-client sends the paired device bearer only to the configured hub's
-`POST /api/assignments`; the hub authorizes the human owner, creates and verifies
-the GitHub issue assignment, and records `assignment.created`. The client sends
+A human owner may issue work with `agent assign` from a device paired to that
+owner (never an agent's own device). The client sends the paired device bearer
+only to the configured hub's `POST /api/assignments`; the hub authorizes the
+human owner, creates and verifies the GitHub issue assignment, and records
+`assignment.created` under origin `web:<login>`, as §2 describes. The client sends
 the repository exactly as supplied; the hub canonicalizes its repository
 spelling. The client does not print or persist the bearer anywhere new.
 
