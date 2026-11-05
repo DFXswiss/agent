@@ -1517,10 +1517,13 @@ def advance_one(
     if worker.a38 and phase in A38_MERGEABLE_WAIT_PHASES and phase != "await_ready":
         # The guard may make the PR Ready before these phases finish; a human merge
         # then goes straight to the merge check instead of a "not open" blocker.
-        if pr_state(store, worker, task, runner) == "MERGED":
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            # await_merge verifies a merge or publishes the closed-unmerged blocker.
             c["phase"] = "await_merge"
             save_task(store, task)
-            return [f"PR merged during {phase}; verifying the merge"]
+            verb = "merged" if live_state == "MERGED" else "closed"
+            return [f"PR {verb} during {phase}; verifying the merge"]
 
     handlers = {
         "accept": lambda: phase_accept(store, worker, task, runner),

@@ -3868,7 +3868,7 @@ def test_a38_await_merge_skips_second_review_intake_once_the_pr_is_not_open(
     comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     if pr_state == "MERGED":
         # The merged head's review is still taken in, but never reopens work.
-        assert any("arrived after the merge" in line for line in lines)
+        assert any("left the open state" in line for line in lines)
         assert len(comments) == 2
     else:
         assert lines == ["merge observed"]
@@ -4028,9 +4028,10 @@ def test_a38_await_second_review_stops_on_a_closed_draft(
     assert comments == []
 
 
+@pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
 @pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness"])
 def test_a38_human_merge_during_a_wait_phase_goes_to_the_merge_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, pr_state: str, verb: str
 ) -> None:
     from agent_cli import coordinator_runtime
     from agent_cli.coordinator_runtime import advance_one
@@ -4046,13 +4047,13 @@ def test_a38_human_merge_during_a_wait_phase_goes_to_the_merge_check(
         task_id,
         {key: value for key, value in task.items() if not key.startswith("_")},
     )
-    fake.pr["state"] = "MERGED"
+    fake.pr["state"] = pr_state
     for name in ("phase_await_second_review", "phase_ci", "phase_readiness"):
         monkeypatch.setattr(coordinator_runtime, name, lambda *args, **kwargs: ["handler ran"])
 
     lines = advance_one(store, worker, runner=fake, lane_runner=None)
 
-    assert lines == [f"PR merged during {phase}; verifying the merge"]
+    assert lines == [f"PR {verb} during {phase}; verifying the merge"]
     saved = store.row("task", task_id)
     assert saved is not None
     assert saved["payload"]["coordinator"]["phase"] == "await_merge"
@@ -4098,7 +4099,7 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
 
     lines = intake_second_reviews(store, worker, task, fake, fake.head)
 
-    assert lines is not None and "arrived after the merge" in lines[-1]
+    assert lines is not None and "left the open state" in lines[-1]
     saved = store.row("task", task_id)
     assert saved is not None
     assert saved["payload"]["coordinator"]["phase"] == "await_merge"
@@ -4182,6 +4183,61 @@ def test_a38_merge_with_blocking_second_review_blocks_at_once(
         store, worker, task, fake, fake.head, blocking=True
     ) == ["blocker merged-with-blocking-second-review"]
     assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def test_a38_blocking_review_with_unknown_pr_state_retries_without_rerouting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000a"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-unknown-state",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_args: None)
+
+    lines = intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None and "retrying the blocking second review" in lines[-1]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] != "implement"
+    assert "blocking-unknown-state" not in _read_message_ids(store, worker)
+
+
+def test_a38_await_second_review_with_unknown_pr_state_takes_no_mail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    task_id = "abababab-0000-4000-8000-00000000000b"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="mail-unknown-state",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_args: None)
+
+    assert phase_await_second_review(store, worker, task, fake) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert [row for row in store.rows("activity") if row.get("type") == "comment.post"] == []
 
 
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(

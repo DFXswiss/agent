@@ -607,7 +607,10 @@ observe contexts never count. It advances after the guard has made the
 unchanged head Ready, then observes the human merge exactly like an ordinary
 worker. The guard may make the pull request Ready while the worker is still in
 `await_second_review`, `ci`, `readiness` or `await_ready`; a pull request merged
-in any of these phases goes straight to `await_merge`, which verifies the merge.
+in any of these phases goes straight to `await_merge`, which verifies the merge;
+a pull request closed there also goes to `await_merge`, which publishes the
+`closed-unmerged` blocker. An unreadable pull request state is retried on the
+next tick without taking in mail.
 Second-review intake runs while the pull request is open and, in `await_merge`,
 also after the merge, so a review of the merged head is still published; it never
 reopens work. A merged pull request completes only with a passing second review:

@@ -935,27 +935,27 @@ def intake_second_reviews(
             continue
         login = row.get("_github_login")
         if not isinstance(login, str) or not login:
-            _mark_message_read(store, worker, message_id)
             _observation(c, "second review mail ignored: sender GitHub login is unavailable")
             save_task(store, task)
+            _mark_message_read(store, worker, message_id)
             continue
         login = login.casefold()
         if login not in worker.second_reviewers:
-            _mark_message_read(store, worker, message_id)
             _observation(c, f"second review mail from unauthorized @{login} ignored")
             save_task(store, task)
+            _mark_message_read(store, worker, message_id)
             continue
         try:
             payload = validate_second_review_payload(raw)
         except CoordinatorError as exc:
-            _mark_message_read(store, worker, message_id)
             _observation(c, f"malformed second review mail ignored: {exc}")
             save_task(store, task)
+            _mark_message_read(store, worker, message_id)
             continue
         if payload["head"] != current:
-            _mark_message_read(store, worker, message_id)
             _observation(c, "second review for stale head ignored")
             save_task(store, task)
+            _mark_message_read(store, worker, message_id)
             continue
         declaration = {
             "schema": "a38-review/v2",
@@ -977,9 +977,9 @@ def intake_second_reviews(
                 findings=findings,
             )
         except CoordinatorError as exc:
-            _mark_message_read(store, worker, message_id)
             _observation(c, f"malformed second review mail ignored: {exc}")
             save_task(store, task)
+            _mark_message_read(store, worker, message_id)
             continue
         activity_id = str(
             uuid5(NAMESPACE_URL, f"coordinator-a38-second:{task['id']}:{current}:{message_id}")
@@ -1030,14 +1030,21 @@ def intake_second_reviews(
                 }
             )
         if payload["blocks_merge"]:
-            if pr_state(store, worker, task, runner) == "MERGED":
+            live_state = pr_state(store, worker, task, runner)
+            if live_state is None:
+                # Unknown state: keep the mail unread and retry; the comment post is
+                # idempotent by activity id.
+                save_task(store, task)
+                lines.append("PR state temporarily unavailable; retrying the blocking second review")
+                return lines
+            if live_state != "OPEN":
                 # A human merged meanwhile; the posted result must not reopen work.
                 c["phase"] = "await_merge"
                 save_task(store, task)
                 _mark_message_read(store, worker, message_id)
                 lines.append(
-                    f"blocking external second review by @{login} arrived after the merge; "
-                    "verifying the merge"
+                    f"blocking external second review by @{login} arrived after the pull request "
+                    "left the open state; verifying the merge"
                 )
                 return lines
             c["findings"] = findings
@@ -1080,6 +1087,8 @@ def phase_await_second_review(
         save_task(store, task)
         return ["PR head changed while awaiting second review; invalidating evidence"]
     state = pr_state(store, worker, task, runner)
+    if state is None:
+        return ["PR state temporarily unavailable; retrying"]
     if state == "MERGED":
         # The guard may make the PR Ready before the second review; verify the merge.
         c["phase"] = "await_merge"
