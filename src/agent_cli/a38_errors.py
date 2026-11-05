@@ -34,8 +34,10 @@ class RateLimitError(GuardError):
         self.retry_epoch = retry_epoch
         self.results: list[dict[str, Any]] | None = None
         self.completed: dict[str, Any] | None = None
-        # Set by a sweep or multi-PR event when an earlier pull request in the
-        # same run failed; the run then exits 1 although it stopped at a limit.
+        # Set when the run had already failed before the limit stopped it: an
+        # earlier pull request in a sweep or multi-PR event failed, or the
+        # current pull request had a failing verdict the limit kept from being
+        # published. The run then exits 1 although it stopped at a limit.
         self.failed_before = False
 
 
