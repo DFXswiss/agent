@@ -885,14 +885,15 @@ def cmd_round(args: list[str]) -> None:
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
                 die("round still has a working agent")
-        if current:
+        if current > 0:
             open_round = [
                 r
                 for r in store.rows("task_round")
                 if r.get("task_id") == tid and r.get("round") == current
             ]
             if (
-                open_round
+                task.get("state") == "reviewing"
+                and len(open_round) == 1
                 and open_round[0].get("implementer_verdict") == "done"
                 and open_round[0].get("reviewer_verdict") is None
             ):
