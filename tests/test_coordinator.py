@@ -3953,6 +3953,40 @@ def test_a38_unassigned_source_with_unreadable_pr_state_retries_without_blocking
     assert "blocker" not in saved["payload"]["coordinator"]
 
 
+@pytest.mark.parametrize("unreadable", ["head", "state"])
+def test_a38_unreadable_pr_before_second_review_intake_retries_the_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreadable: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000000e"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    if unreadable == "head":
+        monkeypatch.setattr(coordinator_runtime, "fresh_pr_head", lambda *a, **k: None)
+    else:
+        monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: None)
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge handler"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [
+        "PR state temporarily unavailable before second-review intake in await_merge; retrying"
+    ]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+
 def test_a38_await_merge_posts_no_second_review_after_revocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

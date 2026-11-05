@@ -1738,3 +1738,45 @@ def test_a38_early_merge_without_hub_statement_publishes_readiness_blocker(
     assert published == [
         (MANDATE_DEVIATION_BLOCKER, {"kind": "readiness", "reply_checkpoint": True})
     ]
+
+
+@pytest.mark.parametrize(
+    ("a38", "allow_ready", "draft", "accepted"),
+    [
+        (True, True, False, True),
+        (True, True, True, True),
+        (False, False, False, False),
+        (True, False, False, False),
+    ],
+)
+def test_verify_draft_accepts_a_ready_pr_only_for_an_a38_push(
+    monkeypatch, tmp_path, a38, allow_ready, draft, accepted
+):
+    from agent_cli import coordinator_git
+
+    worker = replace(make_worker(tmp_path), a38=a38)
+    cfg = RepositoryConfig("Example/project", "main", "worker-bot/project", (), ())
+    pull = {
+        "state": "open",
+        "draft": draft,
+        "user": {"login": "worker-bot"},
+        "base": {"ref": "main", "repo": {"full_name": "Example/project"}},
+        "head": {"ref": "task-1", "sha": "a" * 40, "repo": {"full_name": "worker-bot/project"}},
+    }
+    monkeypatch.setattr(coordinator_git, "gh_json", lambda *a, **k: pull)
+    monkeypatch.setattr(coordinator_git, "scoped", lambda *a, **k: object())
+    monkeypatch.setattr(
+        coordinator_git, "account_for", lambda *a, **k: SimpleNamespace(login="worker-bot")
+    )
+
+    def verify():
+        return coordinator_git._verify_draft(
+            object(), worker, object(), "Example/project", 42, cfg, "task-1",
+            allow_ready=allow_ready,
+        )
+
+    if accepted:
+        assert verify() is pull
+    else:
+        with pytest.raises(CoordinatorError, match="Draft identity, route, head or state changed"):
+            verify()
