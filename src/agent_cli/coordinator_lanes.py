@@ -268,6 +268,7 @@ def launch_lane(
             output_file_text,
             cwd=worktree,
             stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+            config_dir=selected.account.config_dir,
         )
         result = LaneResult(
             role=role,
@@ -912,6 +913,7 @@ def _run_prepared(
         output_file_text,
         cwd=str(worktree),
         stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
+        config_dir=prepared.get("config_dir"),
     )
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),

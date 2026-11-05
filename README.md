@@ -52,7 +52,10 @@ writes and starts no user service. Its output gives the exact `agent daemon`
 argv and required `AGENT_HOME`, plus `AGENT_PG_BIN` or `AGENT_PG_DSN` when
 configured, for a system service such as a launchd LaunchDaemon with `UserName`.
 For `AGENT_PG_DSN`, the output only says that the variable is set and must keep
-its current value; it never prints the DSN itself.
+its current value; it never prints the DSN itself. `--no-service` is refused while a
+device daemon user service is installed for the same `AGENT_HOME` (run
+`agent daemon --uninstall` first), and it stops with an error when an existing
+unit cannot be read or records no `AGENT_HOME`.
 
 ## Pair and sync
 

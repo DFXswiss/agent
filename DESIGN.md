@@ -712,7 +712,9 @@ the workflow is enabled on a deployment:
   sessions selected for the coordinator.
 - `agent init --no-service` creates the same local store and identity without
   installing a user service, so a headless host's system supervisor can run the
-  unchanged `agent daemon` process with the printed argv and environment.
+  unchanged `agent daemon` process with the printed argv and environment. It is
+  refused while a user service is installed for the same `AGENT_HOME`, and stops
+  when an existing unit cannot be read or records no `AGENT_HOME`.
 - The shipped `ask=False` path in
   [`supervise.py`](src/agent_cli/supervise.py) does not acknowledge completion of
   an assignment from verified PR results. Its optional closed-question path is
