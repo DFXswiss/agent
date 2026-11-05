@@ -172,8 +172,8 @@ The selected session must exist locally, be owned and active.
 
 The optional top-level `usage_accounts` is a list of explicitly named
 `openrouter` accounts. Missing/null/`[]` disables OpenRouter polling. Each
-configured account is read from `<config_dir>/openrouter-api-key`; unknown names
-and accounts of another provider are rejected. `agent watch openrouter-usage`
+configured account is read from `<config_dir>/openrouter-api-key`; unknown names,
+accounts of another provider and duplicate names are rejected. `agent watch openrouter-usage`
 records changed USD key-usage values from OpenRouter's key endpoint as
 `usage.snapshot`, without storing the key, label, or provider ids.
 

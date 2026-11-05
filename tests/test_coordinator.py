@@ -4108,6 +4108,45 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
     assert saved["state"] != "implementing"
 
 
+def test_a38_blocking_review_in_await_merge_on_an_open_pr_reopens_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000000a"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-on-a-ready-pr",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    fake.pr["state"] = "OPEN"
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge handler"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert "merge handler" not in lines
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert saved["state"] == "implementing"
+
+
 @pytest.mark.parametrize(
     ("reviews", "expected"),
     [
