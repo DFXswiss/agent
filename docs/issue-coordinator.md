@@ -635,8 +635,10 @@ the newest passing review is recorded and a pass after a block on the same head
 (also after the merge) closes them. It continues accepting
 unread reviews for that head through CI, readiness, Ready observation, and merge
 observation, and publishes one idempotent review comment for every valid mail.
-Any later blocking result returns the task to the implementer immediately;
-stale, malformed, or unauthorized mail is acknowledged and recorded as an
+Each tick takes in all queued unread mail for the head and the newest review
+decides: a blocking result returns the task to the implementer only when no newer
+passing review of the same head follows it in that tick; stale, malformed, or
+unauthorized mail is acknowledged and recorded as an
 observation. Pending requests are re-pinged once per configured timeout and are
 never skipped. A pull request closed while the task awaits the second review
 stops the wait with a blocker; no further second-review comments or pings are
