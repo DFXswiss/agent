@@ -422,7 +422,8 @@ for worker in workers.values():
     open, posts no further second-review comments once the assignment is revoked. An A38 task in `await_second_review`,
     `ci`, `readiness` or `await_ready` whose pull request is merged or closed (a
     merge closes the issue) moves to `await_merge` (an unreadable pull request state
-retries the tick instead of blocking), which verifies the human merge
+retries the tick instead of blocking); once its pull request exists, the rerun phases
+from `implement` to `a38_first_comment` check for a merge the same way, which verifies the human merge
     or blocks a pull request closed without one. Unless readiness already ran on
     that exact merged head (`readiness_head`), even when its keys were closed on an
     earlier head, it first runs the owner hub-statement default or the configured

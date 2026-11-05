@@ -4275,7 +4275,7 @@ def test_a38_same_time_review_arriving_later_is_superseded_by_mail_order(
 @pytest.mark.parametrize(("pr_state", "phase"), [("MERGED", "await_merge"), ("OPEN", "implement")])
 def test_a38_implement_after_a_block_checks_for_a_merge_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, phase: str
-) -> None:
+) -> None:  # the later rerun phases are covered below
     from agent_cli import coordinator_runtime
     from agent_cli.coordinator_runtime import advance_one
 
@@ -4301,6 +4301,37 @@ def test_a38_implement_after_a_block_checks_for_a_merge_first(
 
     assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == phase
     assert ("implementer started" in lines) is (pr_state == "OPEN")
+
+
+@pytest.mark.parametrize(
+    "phase", ["inner_review", "tests", "publish_draft", "pr_gates_grok", "a38_first_comment"]
+)
+@pytest.mark.parametrize(("pr_state", "expected"), [("MERGED", "await_merge"), (None, None)])
+def test_a38_published_rerun_phases_check_for_a_merge_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, pr_state, expected
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000013"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: pr_state)
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved_phase = store.row("task", task_id)["payload"]["coordinator"]["phase"]
+    if expected is None:
+        assert lines == [f"PR state temporarily unavailable before {phase}; retrying"]
+        assert saved_phase == phase
+    else:
+        assert saved_phase == expected
 
 
 def test_a38_unchanged_head_after_a_block_asks_the_reviewers_again() -> None:

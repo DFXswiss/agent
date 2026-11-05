@@ -49,7 +49,6 @@ from .coordinator_common import (
 )
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
-    head_review_blocks,
     fresh_pr_head,
     intake_second_reviews,
     pr_state,
@@ -1384,6 +1383,9 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
 # A38 phases in which the guard may already have made the PR Ready, so a human
 # can merge before the worker reaches await_merge.
 A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness", "await_ready"})
+A38_PUBLISHED_RERUN_PHASES = frozenset(
+    {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment"}
+)
 
 
 def _second_review_intake_allowed(
@@ -1495,15 +1497,11 @@ def advance_one(
         c.pop("binding_blocker", None)
         c.pop("binding_blocker_activity_id", None)
         save_task(store, task)
-    # An A38 task sent back to the implementer by a blocking review still has an open,
-    # possibly Ready PR; a human merge then is checked like in the wait phases.
+    # Once an A38 pull request exists the guard may make it Ready (also before a rerun
+    # after a blocking review), so every later phase checks for a human merge first.
     mergeable_wait = worker.a38 and (
         phase in A38_MERGEABLE_WAIT_PHASES
-        or (
-            phase == "implement"
-            and as_int(c.get("pr_number")) is not None
-            and head_review_blocks(c, str(c.get("head_sha") or ""))
-        )
+        or (phase in A38_PUBLISHED_RERUN_PHASES and as_int(c.get("pr_number")) is not None)
     )
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
@@ -1534,8 +1532,8 @@ def advance_one(
         # The guard may make the PR Ready before these phases finish; a human merge
         # then goes straight to the merge check instead of a "not open" blocker.
         live_state = pr_state(store, worker, task, runner)
-        if live_state is None and phase == "implement":
-            return ["PR state temporarily unavailable before the implementer; retrying"]
+        if live_state is None and phase in A38_PUBLISHED_RERUN_PHASES:
+            return [f"PR state temporarily unavailable before {phase}; retrying"]
         if live_state in ("MERGED", "CLOSED"):
             # await_merge verifies a merge or publishes the closed-unmerged blocker.
             c["phase"] = "await_merge"
