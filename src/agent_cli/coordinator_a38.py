@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid5, uuid4
 
 from .a38_guard import status_context_enforce
 from .a38_review import (
@@ -775,9 +775,24 @@ def send_second_review_requests(
 
 
 def _mark_message_read(store: Store, worker: WorkerConfig, message_id: str) -> None:
-    ack_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-message-read:{worker.session_id}:{message_id}"))
-    if store.row("activity", ack_id) is not None:
-        return
+    # The device id keeps a replica row from another device off the local receipt's id.
+    ack_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"coordinator-a38-message-read:{store.device_id()}:{worker.session_id}:{message_id}",
+        )
+    )
+    existing = store.row("activity", ack_id)
+    if existing is not None:
+        if (
+            existing.get("_origin_device_id") == store.device_id()
+            and existing.get("execution_status") == "done"
+        ):
+            return
+        if message_id in _read_message_ids(store, worker):
+            return
+        # Another device holds this id; a fresh id keeps the local receipt writable.
+        ack_id = str(uuid4())
     store.write(
         "activity",
         "insert",
@@ -837,6 +852,37 @@ def _fresh_pr_head(
     if not is_sha(head):
         raise CoordinatorError("cannot read current pull request head")
     return head
+
+
+def pr_open_unmerged(
+    store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner
+) -> bool | None:
+    """Return whether the task's pull request is still open, or None when unreadable."""
+    c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        return None
+    api = scoped(store, worker.session_id, runner)
+    try:
+        view = gh_json(
+            api,
+            [
+                "gh",
+                "pr",
+                "view",
+                str(number),
+                "--repo",
+                target_repo(dict(task)),
+                "--json",
+                "state",
+            ],
+        )
+    except CoordinatorError:
+        return None
+    state = str(view.get("state") or "").upper() if isinstance(view, dict) else ""
+    if state not in ("OPEN", "CLOSED", "MERGED"):
+        return None
+    return state == "OPEN"
 
 
 def _parse_iso(value: Any) -> datetime | None:

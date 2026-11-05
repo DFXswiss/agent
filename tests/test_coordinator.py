@@ -3817,6 +3817,106 @@ def test_a38_later_phase_intake_routes_a_later_blocking_review(
     assert len(comments) == 2
 
 
+@pytest.mark.parametrize("pr_state", ["MERGED", "CLOSED"])
+def test_a38_await_merge_skips_second_review_intake_once_the_pr_is_not_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "77777777-7777-4777-8777-777777777777"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    saved["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = pr_state
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="late-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge observed"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == ["merge observed"]
+    after = store.row("task", task_id)
+    assert after is not None
+    assert after["payload"]["coordinator"]["phase"] == "await_merge"
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 1
+
+
+def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_a38
+
+    store, worker, _fake, _task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id="88888888-8888-4888-8888-888888888888"
+    )
+    ack_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-a38-message-read:"
+            f"{store.device_id()}:{worker.session_id}:occupied-mail",
+        )
+    )
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": ack_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": ack_id,
+                "session_id": worker.session_id,
+                "type": "message.read",
+                "payload": {"message_id": "other-mail"},
+                "execution_status": "done",
+            },
+            "updated_at": "2026-01-01T00:00:03Z",
+        }
+    )
+
+    coordinator_a38._mark_message_read(store, worker, "occupied-mail")
+    coordinator_a38._mark_message_read(store, worker, "occupied-mail")
+
+    assert "occupied-mail" in coordinator_a38._read_message_ids(store, worker)
+    assert "other-mail" not in coordinator_a38._read_message_ids(store, worker)
+    receipts = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "message.read"
+        and row.get("payload", {}).get("message_id") == "occupied-mail"
+    ]
+    assert len(receipts) == 1
+
+
 def test_a38_first_comment_ping_and_external_mail_happy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
