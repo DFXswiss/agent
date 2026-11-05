@@ -124,6 +124,10 @@ def test_review_comment_refuses_github_oversize_body() -> None:
         (lambda p: p.update({"blocks_merge": True}), "blocking defects"),
         (lambda p: p.update({"unknown": True}), "documented keys"),
         (lambda p: p["lanes"][1].update({"model": "Other model"}), "same model"),
+        (
+            lambda p: p.update({"defects": 0, "blocks_merge": False, "findings": "A real defect."}),
+            "findings require defects >= 1",
+        ),
     ],
 )
 def test_second_review_schema_refuses_invalid_results(mutate, reason) -> None:
