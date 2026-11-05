@@ -1067,15 +1067,18 @@ def intake_second_reviews(
         posted_state = _a38_state(c).get("second_review")
         posted_reviews = posted_state.get("reviews") if isinstance(posted_state, dict) else None
         at = str(row.get("_updated_at") or "")
+        # A post that may have happened before a crash counts as posted (its watermark).
+        pending_post = posted_state.get("pending_post") if isinstance(posted_state, dict) else None
+        known = [review for review in posted_reviews or [] if isinstance(review, dict)]
+        if isinstance(pending_post, dict) and pending_post.get("mail_id") != str(message_id):
+            known.append(pending_post)
         if (
             isinstance(posted_state, dict)
             and posted_state.get("head") == current
-            and isinstance(posted_reviews, list)
             and any(
-                isinstance(review, dict)
-                and (str(review.get("at") or ""), str(review.get("mail_id") or ""))
+                (str(review.get("at") or ""), str(review.get("mail_id") or ""))
                 > (at, str(message_id))
-                for review in posted_reviews
+                for review in known
             )
         ):
             _observation(c, f"second review by @{login} superseded by a newer posted review")
@@ -1109,12 +1112,17 @@ def intake_second_reviews(
         activity_id = str(
             uuid5(NAMESPACE_URL, f"coordinator-a38-second:{task['id']}:{current}:{message_id}")
         )
-        result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
         a38 = _a38_state(c)
         state = a38.get("second_review")
         if not isinstance(state, dict) or state.get("head") != current:
             state = {"head": current, "pinged": list(worker.second_reviewers)}
             a38["second_review"] = state
+        # Persist the ordering watermark before posting, so a crash after the post
+        # cannot let an older mail be posted after it on the retry.
+        state["pending_post"] = {"at": at, "mail_id": str(message_id), "activity_id": activity_id}
+        save_task(store, task)
+        result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
+        state.pop("pending_post", None)
         reviews = state.get("reviews")
         if not isinstance(reviews, list):
             reviews = []

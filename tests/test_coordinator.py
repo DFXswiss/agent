@@ -4411,6 +4411,45 @@ def test_check_label_hides_owner_commands() -> None:
     assert check_label({"source": {}}, cfg) == "/opt/secret/check --token=x"
 
 
+def test_a38_crash_after_a_post_keeps_an_older_late_review_unposted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000016"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    _a38_review_mail(
+        store, worker, message_id="newer-pass", login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head), second=20,
+    )
+    real_post = coordinator_a38._post_comment
+
+    def post_then_crash(*args, **kwargs):
+        real_post(*args, **kwargs)
+        raise RuntimeError("crash after the post")
+
+    monkeypatch.setattr(coordinator_a38, "_post_comment", post_then_crash)
+    with pytest.raises(RuntimeError):
+        intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    monkeypatch.setattr(coordinator_a38, "_post_comment", real_post)
+    _a38_review_mail(
+        store, worker, message_id="older-block", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True), second=5,
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    state = store.row("task", task_id)["payload"]["coordinator"]["a38"]["second_review"]
+    assert [review["mail_id"] for review in state["reviews"]] == ["newer-pass"]
+    assert "pending_post" not in state
+    posts = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(posts) == 1
+
+
 def test_a38_unchanged_head_after_a_block_asks_the_reviewers_again() -> None:
     from agent_cli.coordinator_a38 import head_review_blocks
 
@@ -5405,13 +5444,14 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     comments_after_failure = len(
         [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     )
-    assert comments_after_failure == comments_before + 1
+    # The ordering watermark is saved before the post, so a failed save posts nothing.
+    assert comments_after_failure == comments_before
     blocking_lines = phase_await_second_review(
         store, worker, store.row("task", blocking_tid), fake
     )
     assert len(
         [row for row in store.rows("activity") if row.get("type") == "comment.post"]
-    ) == comments_after_failure
+    ) == comments_before + 1
     assert "routing to implementer" in blocking_lines[-1]
     blocked = store.row("task", blocking_tid)
     assert blocked["state"] == "implementing"
