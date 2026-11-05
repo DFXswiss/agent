@@ -396,7 +396,7 @@ def _fetch_openrouter_key(
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     try:
         if client is None:
-            with httpx.Client(timeout=20.0, follow_redirects=False) as owned:
+            with httpx.Client(timeout=8.0, follow_redirects=False) as owned:
                 response = owned.get(OPENROUTER_KEY_URL, headers=headers)
         else:
             response = client.get(OPENROUTER_KEY_URL, headers=headers)
