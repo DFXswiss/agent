@@ -621,7 +621,10 @@ strict result through session mail without calling GitHub:
 ```
 
 Save that shape with the task, head, model, prompts, and result from the actual
-review, then send it through the existing activity interface:
+review, then send it through the existing activity interface. The lane
+`provider`, `model`, `model_number` and `prompt` are published verbatim, so text
+that redaction would change (a token, an authorization header, a private home
+path) rejects the mail:
 
 ```text
 agent activity add --session OWN_SID --type message --payload-file result-mail.json

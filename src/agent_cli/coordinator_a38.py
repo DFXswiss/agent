@@ -86,6 +86,14 @@ def _bounded_text(value: Any, label: str, *, maximum: int = 20000) -> str:
     return value
 
 
+def _public_text(value: Any, label: str, *, maximum: int = 20000) -> str:
+    """Bounded text that is published verbatim, so it must survive redaction unchanged."""
+    text = _bounded_text(value, label, maximum=maximum)
+    if redact(text, limit=maximum + 1) != text:
+        raise CoordinatorError(f"{label} contains secret-like text or a private path")
+    return text
+
+
 def validate_second_review_payload(raw: Any) -> dict[str, Any]:
     """Strict, shared validator for reviewer CLI input and coordinator mail."""
     if not isinstance(raw, Mapping) or set(raw) != _SECOND_KEYS:
@@ -132,12 +140,12 @@ def validate_second_review_payload(raw: Any) -> dict[str, Any]:
         validated_lanes.append(
             {
                 "id": expected,
-                "provider": _bounded_text(lane.get("provider"), f"{expected} provider", maximum=200),
-                "model": _bounded_text(lane.get("model"), f"{expected} model", maximum=200),
-                "model_number": _bounded_text(
+                "provider": _public_text(lane.get("provider"), f"{expected} provider", maximum=200),
+                "model": _public_text(lane.get("model"), f"{expected} model", maximum=200),
+                "model_number": _public_text(
                     lane.get("model_number"), f"{expected} model_number", maximum=200
                 ),
-                "prompt": _bounded_text(lane.get("prompt"), f"{expected} prompt"),
+                "prompt": _public_text(lane.get("prompt"), f"{expected} prompt"),
                 "status": "complete",
                 "result": "pass",
             }
@@ -1159,7 +1167,6 @@ def _route_newest_blocking_review(
         or state.get("head") != current
         or not isinstance(reviews, list)
         or not newest_reviews_block(reviews)
-        or c.get("phase") == "await_merge"
         or not isinstance(block, dict)
         or block.get("head") != current
     ):

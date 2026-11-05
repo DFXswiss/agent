@@ -128,6 +128,22 @@ def test_review_comment_refuses_github_oversize_body() -> None:
             lambda p: p.update({"defects": 0, "blocks_merge": False, "findings": "A real defect."}),
             "findings require defects >= 1",
         ),
+        (
+            lambda p: p["lanes"][0].update(
+                {"prompt": p["lanes"][0]["prompt"] + " token ghp_" + "a" * 36}
+            ),
+            "conformity-b prompt contains secret-like text",
+        ),
+        (
+            lambda p: p["lanes"][1].update(
+                {"prompt": p["lanes"][1]["prompt"] + " See /Users/reviewer/checkout."}
+            ),
+            "logic-b prompt contains secret-like text or a private path",
+        ),
+        (
+            lambda p: p["lanes"][1].update({"provider": "Bearer abcdefghijklmnop"}),
+            "logic-b provider contains secret-like text",
+        ),
     ],
 )
 def test_second_review_schema_refuses_invalid_results(mutate, reason) -> None:

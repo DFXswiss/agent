@@ -463,3 +463,8 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     write_config(tmp_path, data)
     with pytest.raises(AccountError, match="provider openrouter"):
         load_ai_accounts(tmp_path)
+
+    data["usage_accounts"] = ["or", "or"]
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError, match="duplicate account or"):
+        load_ai_accounts(tmp_path)
