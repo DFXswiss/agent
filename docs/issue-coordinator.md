@@ -587,7 +587,9 @@ agent activity add --session OWN_SID --type message --payload-file result-mail.j
 The relay-authenticated sender login must be allowlisted. The worker validates
 the mail and guard declaration, publishes the `conformity-b` / `logic-b`
 comment as the pull request author, and marks both historical `codex_pr_*`
-checklist keys with the first external-review evidence. It continues accepting
+checklist keys with the evidence of every passing external review, so
+the newest passing review is recorded and a pass after a block on the same head
+(also after the merge) closes them. It continues accepting
 unread reviews for that head through CI, readiness, Ready observation, and merge
 observation, and publishes one idempotent review comment for every valid mail.
 Any later blocking result returns the task to the implementer immediately;
