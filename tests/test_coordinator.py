@@ -3516,6 +3516,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
 ) -> None:
     from dataclasses import replace
 
+    from agent_cli.a38_guard import status_context_enforce, status_context_observe
     from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
     from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
     from agent_cli.coordinator_github import phase_await_merge
@@ -3563,6 +3564,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
                     "repo": "example/project",
                     "number": 7,
                     "assigned_id": "assigned-a38",
+                    "base": "develop",
                 },
                 "a38": {
                     "enabled": True,
@@ -3740,7 +3742,15 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     awaiting = store.row("task", tid)
     awaiting["payload"]["coordinator"]["phase"] = "await_ready"
     store.write("task", "update", tid, {key: value for key, value in awaiting.items() if not key.startswith("_")})
-    fake.statuses = [{"context": "A38 / report", "state": "pending", "description": "Waiting for guard policy"}]
+    enforce_context = status_context_enforce("develop")
+    observe_context = status_context_observe("develop")
+    fake.statuses = [
+        {
+            "context": enforce_context,
+            "state": "pending",
+            "description": "Waiting for guard policy",
+        }
+    ]
     writes_before = len(store.rows("activity"))
     assert "Waiting for guard policy" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
     waiting = store.row("task", tid)
@@ -3756,7 +3766,43 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         f"PR left draft without a successful A38 status on {fake.head[:7]}"
     )
     fake.statuses = [
-        {"context": "A38 / report", "state": "success", "description": "A38 passed"}
+        {
+            "context": observe_context,
+            "state": "success",
+            "description": "Observe passed",
+        }
+    ]
+    assert phase_await_ready(store, worker, store.row("task", tid), fake) == [
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    ]
+    observed_only = store.row("task", tid)["payload"]["coordinator"]
+    assert observed_only["phase"] == "await_ready"
+    assert observed_only["a38"]["guard_status"]["context"] is None
+    fake.statuses = [
+        {
+            "context": observe_context,
+            "state": "success",
+            "description": "Observe passed",
+        },
+        {
+            "context": enforce_context,
+            "state": "failure",
+            "description": "Enforce failed",
+        },
+    ]
+    assert phase_await_ready(store, worker, store.row("task", tid), fake) == [
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    ]
+    enforce_red = store.row("task", tid)["payload"]["coordinator"]
+    assert enforce_red["phase"] == "await_ready"
+    assert enforce_red["a38"]["guard_status"]["context"] == enforce_context
+    assert enforce_red["a38"]["guard_status"]["state"] == "failure"
+    fake.statuses = [
+        {
+            "context": enforce_context,
+            "state": "success",
+            "description": "A38 passed",
+        }
     ]
     assert "awaiting human merge" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
     assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
@@ -3915,7 +3961,11 @@ def test_a38_await_ready_retries_transient_pr_and_status_reads(
                 "phase": "await_ready",
                 "head_sha": head,
                 "pr_number": 42,
-                "source": {"repo": "example/project", "number": 7},
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "base": "develop",
+                },
             }
         },
     }

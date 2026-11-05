@@ -345,14 +345,17 @@ def test_run_prints_vendor_stdout(
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
     seen: dict = {}
+    argv_model = "model-passed-in-run-argv"
+    lane_argv = ["grok", "-m", argv_model]
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         seen.update(kwargs)
         return LaneResult(
             role="implementer",
             vendor="grok",
+            model=argv_model,
             status="complete",
-            argv=["grok"],
+            argv=lane_argv,
             returncode=0,
             stdout="implemented the thing, distinctive-marker-run456\nSTATUS: complete\n",
             stderr="",
@@ -388,7 +391,7 @@ def test_run_prints_vendor_stdout(
         store.close()
     assert len(rows) == 1
     assert rows[0]["payload"]["task_id"] == tid
-    assert rows[0]["payload"]["model"] == OPERATOR_GROK_MODEL
+    assert rows[0]["payload"]["model"] == lane_argv[lane_argv.index("-m") + 1]
 
 
 def test_cli_lane_run_records_usage_and_tools(
@@ -399,13 +402,16 @@ def test_cli_lane_run_records_usage_and_tools(
     write_operator_ai_accounts(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
+    argv_model = "model-passed-in-lane-argv"
+    lane_argv = ["grok", "-m", argv_model]
 
     def fake_launch(**_kwargs):  # type: ignore[no-untyped-def]
         return LaneResult(
             role="implementer",
             vendor="grok",
+            model=argv_model,
             status="complete",
-            argv=["grok"],
+            argv=lane_argv,
             returncode=0,
             stdout="secret=hidden\nSTATUS: complete\n",
             stderr="",
@@ -430,6 +436,7 @@ def test_cli_lane_run_records_usage_and_tools(
         store.close()
     assert len(rows) == 1
     payload = rows[0]["payload"]
+    assert payload["model"] == lane_argv[lane_argv.index("-m") + 1]
     assert payload["reported_model"] == "reported/model"
     assert payload["usage"]["input_tokens"] == 10
     assert payload["tools"] == [
@@ -449,7 +456,7 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     monkeypatch.setattr(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
-            "implementer", "grok", "complete", ["grok"], 0,
+            "implementer", "grok", OPERATOR_GROK_MODEL, "complete", ["grok"], 0,
             "STATUS: complete\n", "",
         ),
     )
@@ -484,6 +491,7 @@ def test_run_spec_file_implementer_complete(
         return LaneResult(
             role="implementer",
             vendor="grok",
+            model=OPERATOR_GROK_MODEL,
             status="complete",
             argv=["grok"],
             returncode=0,
@@ -669,6 +677,7 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
         return LaneResult(
             role="reviewer",
             vendor="grok",
+            model=OPERATOR_GROK_MODEL,
             status="complete",
             argv=["grok"],
             returncode=0,
@@ -915,7 +924,8 @@ def test_run_launches_the_provider_pinned_on_the_task(
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         seen.update(kwargs)
         return LaneResult(
-            role="implementer", vendor=kwargs["vendor"], status="complete", argv=["claude"],
+            role="implementer", vendor=kwargs["vendor"], model="claude-model",
+            status="complete", argv=["claude"],
             returncode=0, stdout="done\nSTATUS: complete\n", stderr="",
         )
 

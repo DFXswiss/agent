@@ -13,8 +13,12 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .model_slots import PROVIDER_CHOICES, SUPPORTED_PROVIDERS
+
+if TYPE_CHECKING:
+    from .ai_accounts import AIRole
 
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 LANE_VENDORS = tuple(sorted(SUPPORTED_PROVIDERS))
@@ -30,6 +34,7 @@ NPROC_CAP = 800
 LANE_STRIP_ENV = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
+    "OPENROUTER_API_KEY",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_CUSTOM_HEADERS",
@@ -76,6 +81,7 @@ class LaneOutput:
 class LaneResult:
     role: str
     vendor: str
+    model: str
     status: str
     argv: list[str]
     returncode: int
@@ -455,7 +461,6 @@ def record_lane_run(
     *,
     session_id: str,
     result: LaneResult,
-    model: str,
     task_id: str | None = None,
     agent_id: str | None = None,
     round_num: int | None = None,
@@ -492,7 +497,7 @@ def record_lane_run(
     payload = {
         "role": result.role,
         "vendor": result.vendor,
-        "model": model,
+        "model": result.model,
         "reported_model": usage.model if usage is not None else None,
         "task_id": task_id,
         "agent_id": agent_id,
@@ -607,15 +612,22 @@ def launch(
     config_home: Path | None = None,
     session_id: str | None = None,
     read_dirs: tuple[str, ...] = (),
+    binding: AIRole | None = None,
 ) -> LaneResult:
     if role not in LANE_ROLES:
         raise SystemExit(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
         raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
-    from .ai_accounts import load_ai_accounts
     if not session_id or config_home is None:
         raise SystemExit("lane requires an explicit session and AI configuration home")
-    selected = load_ai_accounts(config_home).for_lane(session_id, role, vendor)
+    if binding is None:
+        from .ai_accounts import load_ai_accounts
+
+        selected = load_ai_accounts(config_home).for_lane(session_id, role, vendor)
+    else:
+        selected = binding
+        if selected.account.provider != vendor:
+            raise SystemExit("lane binding provider does not match requested vendor")
 
     path = Path(spec_file)
     if not path.is_file():
@@ -692,6 +704,7 @@ def launch(
         return LaneResult(
             role=role,
             vendor=vendor,
+            model=selected.model,
             status="",
             argv=argv,
             returncode=0,
@@ -741,6 +754,7 @@ def launch(
         return LaneResult(
             role=role,
             vendor=vendor,
+            model=selected.model,
             status=status,
             argv=argv,
             returncode=returncode,

@@ -269,6 +269,7 @@ def launch_lane(
         result = LaneResult(
             role=role,
             vendor=vendor,
+            model=selected.model,
             status=parse_model_result(finalized.text, returncode)[0],
             argv=argv,
             returncode=returncode,
@@ -283,7 +284,6 @@ def launch_lane(
                 store,
                 session_id=worker.session_id,
                 result=result,
-                model=selected.model,
                 task_id=str(task["id"]),
                 agent_id=aid,
                 round_num=round_num,
@@ -886,6 +886,7 @@ def _run_prepared(
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),
         vendor=str(prepared["vendor"]),
+        model=str(prepared["model"]),
         status=parse_model_result(finalized.text, returncode)[0],
         argv=argv,
         returncode=returncode,
@@ -1158,7 +1159,6 @@ def phase_pr_gates(
                 store,
                 session_id=worker.session_id,
                 result=outcome,
-                model=str(prep["model"]),
                 task_id=str(task["id"]),
                 agent_id=str(prep["agent_id"]),
                 round_num=None,
