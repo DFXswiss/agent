@@ -126,6 +126,25 @@ def test_a38_worker_refuses_missing_or_duplicate_reviewers(tmp_path, reviewers, 
         load_coordinator_config(tmp_path)
 
 
+@pytest.mark.parametrize(
+    'fields,error',
+    [
+        ({'a38': 'yes'}, 'a38 must be a boolean'),
+        ({'require_hub_assignment': 1}, 'require_hub_assignment must be a boolean'),
+        ({'second_reviewers': 'reviewer'}, 'second_reviewers must be a list'),
+        ({'a38': True, 'second_reviewers': ['-bad']}, 'invalid second reviewer login'),
+        ({'a38': True, 'second_reviewers': ['a--b']}, 'invalid second reviewer login'),
+        ({'a38': True, 'second_reviewers': ['a' * 40]}, 'invalid second reviewer login'),
+    ],
+)
+def test_worker_refuses_malformed_a38_and_hub_fields(tmp_path, fields, error):
+    data = config(tmp_path)
+    data['workers']['selected-session'].update(fields)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
 def test_a38_worker_refuses_short_second_review_timeout(tmp_path):
     data = config(tmp_path)
     worker = data['workers']['selected-session']

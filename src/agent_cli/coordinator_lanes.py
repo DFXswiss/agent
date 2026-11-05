@@ -291,6 +291,7 @@ def launch_lane(
             output_file_text,
             cwd=worktree,
             stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+            config_dir=selected.account.config_dir,
         )
         result = LaneResult(
             role=role,

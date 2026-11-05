@@ -112,7 +112,9 @@ configuration blocker published once with a reply checkpoint. Other hub
 transport/protocol failures keep phase `accept`, retry,
 and publish a blocker at most once per hour according to
 `hub_assignment_retry_published_at`. The cap remains a defensive truncation
-check rather than a definite mismatch.
+check rather than a definite mismatch. Both blockers post fixed texts; the hub
+error detail, which can name the hub host, stays in the task as
+`hub_assignment_retry`.
 
 Example device configuration (illustrative values, **not installation defaults**):
 
@@ -633,7 +635,10 @@ characters, so every accepted review fits in one GitHub comment:
 agent activity add --session OWN_SID --type message --payload-file result-mail.json
 ```
 
-The relay-authenticated sender login must be allowlisted. The worker validates
+The relay-authenticated sender login must be allowlisted. The worker trusts that login, not the
+process that wrote the mail: an allowlisted second reviewer vouches for every
+second-review mail sent from a device paired to that login, as the A38 standard
+expects of the person named in the second review comment. The worker validates
 the mail and guard declaration, publishes the `conformity-b` / `logic-b`
 comment as the pull request author, and marks both historical `codex_pr_*`
 checklist keys with the evidence of every passing external review, so

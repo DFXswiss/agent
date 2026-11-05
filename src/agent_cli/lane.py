@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -360,6 +360,22 @@ def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
 
 
 def finalize_lane_output(
+    vendor: str,
+    stdout: str,
+    output_file_text: str,
+    *,
+    cwd: str,
+    stream_from_output_file: bool = False,
+    config_dir: str | None = None,
+) -> LaneOutput:
+    """Final text, usage and tools of one lane run, with the account directory hidden."""
+    out = _finalize_lane_output(
+        vendor, stdout, output_file_text, cwd=cwd, stream_from_output_file=stream_from_output_file
+    )
+    return replace(out, text=hide_config_dir(out.text, config_dir))
+
+
+def _finalize_lane_output(
     vendor: str,
     stdout: str,
     output_file_text: str,
@@ -763,6 +779,7 @@ def launch(
             output_file_text,
             cwd=cwd,
             stream_from_output_file=stream_from_output_file,
+            config_dir=selected.account.config_dir,
         )
         if stream_from_output_file and not finalized.text and stdout and not stderr:
             # In tmux the pane merges stderr into stdout; keep that diagnostic as stderr

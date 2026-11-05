@@ -1134,7 +1134,17 @@ def intake_second_reviews(
                 continue
             # Keep reading the queued mail first: a newer passing review of the same
             # head supersedes this block; the saved newest review decides after the loop.
-            c["second_review_block"] = {"head": current, "findings": findings, "reviewer": login}
+            at = str(row.get("_updated_at") or "")
+            saved_block = c.get("second_review_block")
+            # A late delivery of an older blocking review keeps the newer block's findings.
+            if not (
+                isinstance(saved_block, dict)
+                and saved_block.get("head") == current
+                and str(saved_block.get("at") or "") > at
+            ):
+                c["second_review_block"] = {
+                    "head": current, "findings": findings, "reviewer": login, "at": at
+                }
             save_task(store, task)
             _mark_message_read(store, worker, message_id)
             lines.append(f"blocking external second review by @{login} recorded")

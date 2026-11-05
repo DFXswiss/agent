@@ -447,6 +447,21 @@ def test_finalize_lane_output_drops_text_of_a_failed_result(result_fields) -> No
     assert out.usage is not None and out.usage.input_tokens == 5
 
 
+@pytest.mark.parametrize("vendor", ["openrouter", "codex", "grok"])
+def test_finalize_lane_output_hides_the_account_directory_in_the_final_text(vendor: str) -> None:
+    text = "Unable to use /opt/profiles/router/settings.json\nSTATUS: complete"
+    if vendor == "openrouter":
+        event = {"type": "result", "subtype": "success", "is_error": False, "result": text}
+        out = finalize_lane_output(
+            vendor, "", json.dumps(event), cwd="/work", config_dir="/opt/profiles/router"
+        )
+    else:
+        out = finalize_lane_output(
+            vendor, text, "", cwd="/work", config_dir="/opt/profiles/router"
+        )
+    assert out.text == "Unable to use <config_dir>/settings.json\nSTATUS: complete"
+
+
 def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None:
     real = tmp_path / "real-profile"
     real.mkdir()

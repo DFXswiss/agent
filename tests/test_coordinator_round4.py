@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli.coordinator_github import (
+    HUB_CONFIGURATION_BLOCKER,
     HubAssignmentMandate,
     MANDATE_DEVIATION_BLOCKER,
     _apply_readiness_checklist,
@@ -821,14 +822,14 @@ def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path)
     _patch_accept_prerequisites(monkeypatch)
     monkeypatch.setattr(
         "agent_cli.coordinator_github._hub_assignment_row",
-        lambda *_a, **_k: (None, "hub unavailable"),
+        lambda *_a, **_k: (None, "hub request failed: [Errno 8] hub.internal.example"),
     )
     published = []
     clock = {"now": "2026-01-01T01:00:00Z"}
     monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: clock["now"])
     monkeypatch.setattr(
         "agent_cli.coordinator_github.publish_blocker",
-        lambda *_a, **kwargs: published.append(kwargs) or ["published"],
+        lambda *args, **kwargs: published.append((args[4], kwargs)) or ["published"],
     )
     task = _accept_task()
     lines = phase_accept(object(), _accept_worker(tmp_path), task, object())
@@ -837,6 +838,8 @@ def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path)
     assert "retrying accept" in lines[0]
     assert checkpoint["hub_assignment_retry_published_at"] == "2026-01-01T01:00:00Z"
     assert len(published) == 1
+    assert "hub.internal.example" not in published[0][0]
+    assert "hub.internal.example" in checkpoint["hub_assignment_retry"]
     lines = phase_accept(object(), _accept_worker(tmp_path), task, object())
     assert "retrying accept" in lines[0]
     assert len(published) == 1
@@ -863,9 +866,11 @@ def test_hub_configuration_errors_block_with_reply_checkpoint(monkeypatch, tmp_p
         lambda *_a, **_k: (None, reason),
     )
     published = []
+    messages = []
     monkeypatch.setattr(
         "agent_cli.coordinator_github.publish_blocker",
-        lambda *_a, **kwargs: published.append(kwargs) or ["published"],
+        lambda *args, **kwargs: (published.append(kwargs), messages.append(args[4]))
+        and ["published"],
     )
     task = _accept_task()
     assert phase_accept(object(), _accept_worker(tmp_path), task, object()) == ["published"]
@@ -874,6 +879,8 @@ def test_hub_configuration_errors_block_with_reply_checkpoint(monkeypatch, tmp_p
     assert checkpoint["resume_phase"] == "accept"
     assert checkpoint["blocker_publish_once"] is True
     assert published == [{"kind": "configuration-binding", "reply_checkpoint": True}]
+    assert messages == [HUB_CONFIGURATION_BLOCKER]
+    assert checkpoint["hub_assignment_retry"] == reason
 
 
 def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, tmp_path):

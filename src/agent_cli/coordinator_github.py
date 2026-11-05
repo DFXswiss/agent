@@ -82,6 +82,10 @@ READINESS_CONTRACT = (
 )
 
 HUB_ASSIGNMENT_GRACE_SECONDS = 120
+HUB_CONFIGURATION_BLOCKER = (
+    "Hub assignment verification is refused by the hub or the device is not paired; "
+    "fix the device pairing or hub configuration, then reply here."
+)
 HUB_ASSIGNMENT_QUERY_CAP = 500
 HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS = 3600
 FORK_VISIBILITY_GRACE_SECONDS = 300
@@ -582,12 +586,15 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             canonical_repo=canonical_repo,
         )
         if retry is not None:
+            # The detail can name the hub host; only a fixed text goes to GitHub.
+            c["hub_assignment_retry"] = retry
             if _hub_assignment_configuration_error(retry):
-                if c.get("blocker") != retry:
+                public = HUB_CONFIGURATION_BLOCKER
+                if c.get("blocker") != public:
                     c.pop("blocker_activity_id", None)
                 c["phase"] = "blocked"
                 c["resume_phase"] = "accept"
-                c["blocker"] = retry
+                c["blocker"] = public
                 c["blocker_publish_once"] = True
                 c["blocker_publish_kind"] = "configuration-binding"
                 save_task(store, task)
@@ -596,11 +603,10 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                     worker,
                     task,
                     runner,
-                    retry,
+                    public,
                     kind="configuration-binding",
                     reply_checkpoint=True,
                 )
-            c["hub_assignment_retry"] = retry
             elapsed = _seconds_since(c.get("hub_assignment_retry_published_at"))
             line = f"hub assignment query unavailable; retrying accept: {retry}"
             if elapsed is None or elapsed >= HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS:
@@ -614,7 +620,8 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                         worker,
                         task,
                         runner,
-                        f"Hub assignment verification is temporarily unavailable: {retry}",
+                        "Hub assignment verification is temporarily unavailable; "
+                        "the worker retries acceptance.",
                         kind="hub-assignment-retry",
                         occurrence=published_at,
                     ),
