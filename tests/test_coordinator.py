@@ -4837,8 +4837,9 @@ def test_a38_await_ready_retries_transient_pr_and_status_reads(
         phase_await_ready(store, worker, task, malformed_draft)
 
 
+@pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
 def test_a38_await_ready_hands_a_merged_pr_to_await_merge(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, verb: str
 ) -> None:
     from dataclasses import replace
 
@@ -4865,7 +4866,7 @@ def test_a38_await_ready_hands_a_merged_pr_to_await_merge(
 
     def merged(_argv: list[str]) -> Completed:
         return Completed(
-            0, json.dumps({"headRefOid": head, "isDraft": False, "state": "MERGED"}), ""
+            0, json.dumps({"headRefOid": head, "isDraft": False, "state": pr_state}), ""
         )
 
     monkeypatch.setattr(
@@ -4874,7 +4875,7 @@ def test_a38_await_ready_hands_a_merged_pr_to_await_merge(
     monkeypatch.setattr("agent_cli.coordinator_a38.save_task", lambda *_args: None)
 
     assert phase_await_ready(store, worker, task, merged) == [
-        "PR merged while awaiting guard Ready; verifying the merge"
+        f"PR {verb} while awaiting guard Ready; verifying the merge"
     ]
     assert task["payload"]["coordinator"]["phase"] == "await_merge"
 
