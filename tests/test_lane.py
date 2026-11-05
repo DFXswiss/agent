@@ -24,6 +24,7 @@ from agent_cli.lane import (
     launch,
     openrouter_argv,
     parse_status,
+    record_lane_run,
     tmux_wrap_argv,
 )
 from agent_cli.main import _sanitize_lane_output, main
@@ -377,8 +378,9 @@ def test_openrouter_wrapper_missing_and_present_key(tmp_path: Path) -> None:
     env["CLAUDE_CONFIG_DIR"] = str(config)
     missing = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
     assert missing.returncode == 2
-    assert "STATUS: unavailable" in missing.stdout
-    assert "openrouter key missing" in missing.stdout
+    assert missing.stdout == ""
+    assert "STATUS: unavailable" in missing.stderr
+    assert "openrouter key missing" in missing.stderr
     assert not output.exists()
 
     key = "secret-test-key"
@@ -591,6 +593,57 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
     assert result.usage is not None
     assert result.usage.model == OPERATOR_OPENROUTER_MODEL
     assert result.usage.input_tokens == 7
+
+
+def test_launch_openrouter_missing_key_records_stderr_reason(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    reason = "STATUS: unavailable\nopenrouter key missing\n"
+
+    def missing_key(argv: list[str], stdin_text: str | None) -> object:
+        assert any("openrouter-api-key" in value for value in argv)
+        assert stdin_text == "implement\n"
+        return SimpleNamespace(returncode=2, stdout="", stderr=reason)
+
+    result = launch(
+        role="implementer",
+        vendor="openrouter",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=missing_key,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.stdout == ""
+    assert result.status == "unavailable"
+
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(
+            self, table: str, operation: str, row_id: str, row: dict
+        ) -> None:
+            assert (table, operation, row_id) == ("activity", "insert", row["id"])
+            self.row = row
+
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=result,
+        model=OPERATOR_OPENROUTER_MODEL,
+    )
+    assert store.row is not None
+    assert store.row["payload"]["final_text"] == reason
 
 
 def test_parse_status_complete() -> None:
