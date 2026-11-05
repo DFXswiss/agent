@@ -885,6 +885,21 @@ def cmd_round(args: list[str]) -> None:
         for agent in store.rows("agent"):
             if agent.get("task_id") == tid and agent.get("status") == "working":
                 die("round still has a working agent")
+        if current:
+            open_round = [
+                r
+                for r in store.rows("task_round")
+                if r.get("task_id") == tid and r.get("round") == current
+            ]
+            if (
+                open_round
+                and open_round[0].get("implementer_verdict") == "done"
+                and open_round[0].get("reviewer_verdict") is None
+            ):
+                die(
+                    f"round {current} awaits its reviewer: start the reviewer "
+                    f"for round {current} before round start"
+                )
         n = current + 1
         task["current_round"] = n
         task["state"] = "implementing"
