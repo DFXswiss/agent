@@ -1414,6 +1414,32 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
     return tasks
 
 
+def _verify_source_assigned(
+    store: Store, worker: WorkerConfig, c: dict[str, Any], runner: Runner
+) -> None:
+    source = c.get("source")
+    if isinstance(source, dict):
+        scoped_runner = scoped(store, worker.session_id, runner)
+        account = account_for(store, worker.session_id)
+        verify_issue_assigned(
+            scoped_runner,
+            str(source["repo"]),
+            int(source["number"]),
+            account.login,
+        )
+
+
+def _source_still_assigned(
+    store: Store, worker: WorkerConfig, c: dict[str, Any], runner: Runner
+) -> bool:
+    """await_merge skips the revocation stop; a revoked task posts no new review comments."""
+    try:
+        _verify_source_assigned(store, worker, c, runner)
+    except CoordinatorError:
+        return False
+    return True
+
+
 def advance_one(
     store: Store,
     worker: WorkerConfig,
@@ -1456,21 +1482,19 @@ def advance_one(
         c.pop("binding_blocker", None)
         c.pop("binding_blocker_activity_id", None)
         save_task(store, task)
-    # Stop new effects when assignment is revoked. await_ready and await_merge only
-    # observe (a merge closes the issue); formal_approve / leave_draft must not proceed.
-    if phase not in ("await_ready", "await_merge", "done", "blocked", "ask"):
+    # Stop new effects when assignment is revoked. await_merge may continue
+    # observation only; formal_approve / leave_draft must not proceed.
+    if phase not in ("await_merge", "done", "blocked", "ask"):
         try:
-            source = c.get("source")
-            if isinstance(source, dict):
-                scoped_runner = scoped(store, worker.session_id, runner)
-                account = account_for(store, worker.session_id)
-                verify_issue_assigned(
-                    scoped_runner,
-                    str(source["repo"]),
-                    int(source["number"]),
-                    account.login,
-                )
+            _verify_source_assigned(store, worker, c, runner)
         except CoordinatorError as exc:
+            if worker.a38 and phase == "await_ready" and pr_open_unmerged(
+                store, worker, task, runner
+            ) is False:
+                # A merge closes the issue; await_merge verifies the human merge.
+                c["phase"] = "await_merge"
+                save_task(store, task)
+                return ["PR closed while awaiting guard Ready; verifying the merge"]
             c["phase"] = "blocked"
             c["resume_phase"] = phase if phase not in ("blocked", "ask", "done") else "implement"
             c["blocker"] = str(exc)
@@ -1522,6 +1546,7 @@ def advance_one(
                 isinstance(second, dict)
                 and second.get("head") == current
                 and (not mergeable_phase or pr_open_unmerged(store, worker, task, runner) is True)
+                and (phase != "await_merge" or _source_still_assigned(store, worker, c, runner))
             ):
                 intake_lines = intake_second_reviews(store, worker, task, runner, current)
                 if coord(task).get("phase") == "implement":
