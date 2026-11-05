@@ -418,7 +418,11 @@ def _openrouter_number(value: Any, field: str, *, nullable: bool = False) -> int
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise StoreError(f"OpenRouter {field} must be a number")
-    if not math.isfinite(float(value)):
+    try:
+        finite = math.isfinite(float(value))
+    except OverflowError:
+        finite = False
+    if not finite:
         raise StoreError(f"OpenRouter {field} must be a finite number")
     return value
 
