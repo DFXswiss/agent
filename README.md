@@ -176,7 +176,7 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
-text. Neither activity stores argv, environment, profile paths, or credentials.
+text. Neither activity stores argv, environment, profile paths, or credentials; a tool target outside the worktree is stored as `[redacted]`.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 
