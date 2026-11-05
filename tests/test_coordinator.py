@@ -3223,6 +3223,83 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
     assert status["review_2_logic"] == "ja"
 
 
+def test_parallel_openrouter_missing_key_records_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    config_path = store.home / "ai-accounts.json"
+    data = json.loads(config_path.read_text())
+    data["accounts"]["router"] = {
+        "provider": "openrouter",
+        "config_dir": "/test/openrouter",
+    }
+    data["roles"]["router-reader"] = {
+        "account": "router",
+        "model": "vendor/model",
+        "access": "read-only",
+    }
+    data["sessions"]["worker-session"]["lanes"].update(
+        {
+            "openrouter:pr-reviewer-quality": "router-reader",
+            "openrouter:pr-reviewer-logic": "router-reader",
+        }
+    )
+    config_path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000e3"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+    )
+    task["models"] = {"first": "grok", "second": "openrouter"}
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    reason = "STATUS: unavailable\nopenrouter key missing\n"
+
+    def missing_key(argv, stdin=None):  # noqa: ANN001
+        assert any("openrouter-api-key" in str(value) for value in argv)
+        return Completed(2, "", reason)
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        missing_key,
+        vendor="openrouter",
+        stage="codex-pr",
+    )
+    assert any("unavailable; blocked" in line for line in lines)
+    agents = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == tid and row.get("vendor") == "openrouter"
+    ]
+    assert len(agents) == 2
+    assert all(row["note"] == reason for row in agents)
+    lane_runs = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row["payload"].get("task_id") == tid
+    ]
+    assert len(lane_runs) == 2
+    assert all(row["payload"]["final_text"] == reason for row in lane_runs)
+
+
 def test_approved_retry_does_not_promote_a_pending_codex_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

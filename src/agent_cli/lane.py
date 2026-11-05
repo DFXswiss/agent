@@ -200,11 +200,11 @@ def claude_argv(
 _OPENROUTER_WRAPPER = (
     'out=$1; shift; key_file=${CLAUDE_CONFIG_DIR:+$CLAUDE_CONFIG_DIR/openrouter-api-key}; '
     'if [ -z "$key_file" ] || [ ! -r "$key_file" ]; then '
-    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing'; exit 2; fi; "
+    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing' >&2; exit 2; fi; "
     'key=$(cat "$key_file" 2>/dev/null) || { '
-    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing'; exit 2; }; "
+    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing' >&2; exit 2; }; "
     'if [ -z "$key" ]; then '
-    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing'; exit 2; fi; "
+    "printf '%s\\n' 'STATUS: unavailable' 'openrouter key missing' >&2; exit 2; fi; "
     'export ANTHROPIC_AUTH_TOKEN="$key"; exec "$@" > "$out"'
 )
 
@@ -486,6 +486,9 @@ def record_lane_run(
             }
         )
     activity_id = str(uuid.uuid4())
+    final_text = result.stdout
+    if not final_text and result.vendor in ("claude", "openrouter"):
+        final_text = result.stderr
     payload = {
         "role": result.role,
         "vendor": result.vendor,
@@ -499,7 +502,7 @@ def record_lane_run(
         "usage": usage_payload,
         "tools": safe_tools,
         "tools_truncated": result.tools_truncated or len(result.tools) > 200,
-        "final_text": redact(result.stdout, limit=4000),
+        "final_text": redact(final_text, limit=4000),
     }
     store.write(  # type: ignore[attr-defined]
         "activity",

@@ -962,3 +962,70 @@ def test_invalid_pinned_models_end_in_a_clean_error(
         store.close()
     with pytest.raises(SystemExit, match="invalid models pinned on the task"):
         run(tmp_path, ["next", "--task", tid])
+
+
+def test_run_refuses_external_second_slot_without_launching_lane(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid = _bootstrap_resolve(tmp_path, capsys)
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        updated = {key: value for key, value in task.items() if not key.startswith("_")}
+        updated["models"] = {"first": "grok", "second": None}
+        store.write("task", "update", tid, updated)
+    finally:
+        store.close()
+
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    configure_accounts(tmp_path, ["sess-1"], login="ok")
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner: "abc1234",
+    )
+    run(tmp_path, ["run", "--task", tid, "--head", "abc1234"])
+    capsys.readouterr()
+    for dimension in ("quality", "logic"):
+        _record_pr_gate(
+            tmp_path,
+            tid,
+            capsys,
+            stage="grok-pr",
+            dimension=dimension,
+            vendor="grok",
+        )
+        run(tmp_path, ["run", "--task", tid])
+        capsys.readouterr()
+
+    spec = tmp_path / "second-review.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    launches = {"count": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        launches["count"] += 1
+        raise AssertionError(f"unexpected lane launch: {kwargs}")
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    agents_before = len(_agents(tmp_path, tid))
+    with pytest.raises(
+        SystemExit,
+        match="model slot second is external; no agent lane can be started",
+    ):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert launches["count"] == 0
+    assert len(_agents(tmp_path, tid)) == agents_before
