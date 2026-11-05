@@ -4016,6 +4016,36 @@ def test_a38_await_second_review_stops_on_a_closed_draft(
     assert comments == []
 
 
+@pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness"])
+def test_a38_human_merge_during_a_wait_phase_goes_to_the_merge_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000005"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "MERGED"
+    for name in ("phase_await_second_review", "phase_ci", "phase_readiness"):
+        monkeypatch.setattr(coordinator_runtime, name, lambda *args, **kwargs: ["handler ran"])
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [f"PR merged during {phase}; verifying the merge"]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

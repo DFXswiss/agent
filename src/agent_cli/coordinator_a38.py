@@ -115,6 +115,8 @@ def validate_second_review_payload(raw: Any) -> dict[str, Any]:
         raise CoordinatorError("second review findings must be text of at most 20000 characters")
     if defects >= 1 and not findings.strip():
         raise CoordinatorError("second review findings are required when defects >= 1")
+    if defects == 0 and findings.strip():
+        raise CoordinatorError("second review findings require defects >= 1")
     lanes = raw.get("lanes")
     if not isinstance(lanes, list) or len(lanes) != 2:
         raise CoordinatorError("second review requires conformity-b and logic-b lanes")
@@ -859,10 +861,10 @@ def fresh_pr_head(
     return head
 
 
-def pr_open_unmerged(
+def pr_state(
     store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner
-) -> bool | None:
-    """Return whether the task's pull request is still open, or None when unreadable."""
+) -> str | None:
+    """Return OPEN, CLOSED or MERGED for the task's pull request, or None when unreadable."""
     c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
@@ -885,9 +887,15 @@ def pr_open_unmerged(
     except CoordinatorError:
         return None
     state = str(view.get("state") or "").upper() if isinstance(view, dict) else ""
-    if state not in ("OPEN", "CLOSED", "MERGED"):
-        return None
-    return state == "OPEN"
+    return state if state in ("OPEN", "CLOSED", "MERGED") else None
+
+
+def pr_open_unmerged(
+    store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner
+) -> bool | None:
+    """Return whether the task's pull request is still open, or None when unreadable."""
+    state = pr_state(store, worker, task, runner)
+    return None if state is None else state == "OPEN"
 
 
 def _parse_iso(value: Any) -> datetime | None:

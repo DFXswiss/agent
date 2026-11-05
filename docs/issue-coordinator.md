@@ -604,8 +604,9 @@ the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;
 observe contexts never count. It advances after the guard has made the
 unchanged head Ready, then observes the human merge exactly like an ordinary
-worker. A pull request merged before the worker observed Ready goes straight to
-`await_merge`, which verifies the merge. A new head invalidates its report, both comment checkpoints, and
+worker. The guard may make the pull request Ready while the worker is still in
+`await_second_review`, `ci`, `readiness` or `await_ready`; a pull request merged
+in any of these phases goes straight to `await_merge`, which verifies the merge. A new head invalidates its report, both comment checkpoints, and
 external-review state.
 
 These A38 settings enter the task execution binding only for A38 workers, so
