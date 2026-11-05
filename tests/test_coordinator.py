@@ -4575,6 +4575,8 @@ def test_a38_saved_newest_block_routes_on_a_later_tick_after_a_crash(
         # Same second: a block wins whatever the processing order.
         ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t2"}], True),
         ([{"blocks_merge": False, "at": "t2"}, {"blocks_merge": True, "at": "t2"}], True),
+        ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t1"}], True),
+        ([{"blocks_merge": False, "at": "t2"}, {"blocks_merge": True, "at": "t1"}], False),
         ([{"blocks_merge": False}], False),
         ([], False),
     ],
@@ -4953,7 +4955,9 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     variant_reviews = blocked_variant["payload"]["coordinator"]["a38"]["second_review"].setdefault(
         "reviews", []
     )
-    variant_reviews.append({"reviewer": "outside-reviewer", "blocks_merge": True})
+    variant_reviews.append(
+        {"reviewer": "outside-reviewer", "blocks_merge": True, "at": "2999-01-01 00:00:00+00:00"}
+    )
     with monkeypatch.context() as variant_patch:
         variant_patch.setattr(coordinator_github, "save_task", lambda *_args: None)
         variant_patch.setattr(
@@ -5220,6 +5224,37 @@ def test_a38_second_review_pings_get_fresh_ids_after_a_blocking_review_on_the_sa
 
     for login in worker.second_reviewers:
         assert store.row("ping", _ping_id(task_id, fake.head, login, 3)) is not None
+
+
+def test_a38_forced_second_review_reping_keeps_posted_reviews_of_the_same_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import send_second_review_requests
+    from agent_cli.coordinator_common import coord
+
+    task_id = "aaaaaaaa-0000-4000-8000-000000000002"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    store.set_meta("github_login", "worker-bot")
+    c = coord(task)
+    c["head_sha"] = fake.head
+    reviews = [{"reviewer": "reviewer-one", "blocks_merge": True, "at": "2026-01-01T00:00:00Z"}]
+    c["a38"]["second_review"] = {
+        "head": fake.head,
+        "request_count": 1,
+        "status": "posted",
+        "reviews": reviews,
+        "requested_at": "2026-01-01T00:00:00Z",
+    }
+
+    assert send_second_review_requests(store, worker, task, force=True) is True
+
+    state = c["a38"]["second_review"]
+    assert state["status"] == "posted"
+    assert state["reviews"] == reviews
+    assert state["request_count"] == 2
+    assert state["requested_at"] == "2026-01-01T00:00:00Z"
 
 
 @pytest.mark.parametrize("missing_evidence", ["agent_id", "prompt"])

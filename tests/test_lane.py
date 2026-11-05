@@ -24,6 +24,7 @@ from agent_cli.lane import (
     grok_argv,
     launch,
     openrouter_argv,
+    hide_config_dir,
     parse_status,
     record_lane_run,
     tmux_wrap_argv,
@@ -441,6 +442,18 @@ def test_finalize_lane_output_drops_text_of_a_failed_result(result_fields) -> No
     assert out.text == ""
     assert parse_status(out.text, 0) == "partial"
     assert out.usage is not None and out.usage.input_tokens == 5
+
+
+def test_hide_config_dir_replaces_raw_and_resolved_paths(tmp_path: Path) -> None:
+    real = tmp_path / "real-profile"
+    real.mkdir()
+    link = tmp_path / "linked-profile"
+    link.symlink_to(real)
+    text = f"error reading {link}/settings.json and {real}/key"
+    assert hide_config_dir(text, str(link)) == (
+        "error reading <config_dir>/settings.json and <config_dir>/key"
+    )
+    assert hide_config_dir("unchanged", None) == "unchanged"
 
 
 def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:

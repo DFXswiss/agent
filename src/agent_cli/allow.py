@@ -210,8 +210,10 @@ def newest_reviews_block(reviews: list[Any]) -> bool:
     entries = [review for review in reviews if isinstance(review, dict)]
     if not entries:
         return False
-    newest_at = entries[-1].get("at") or ""
-    tied = [review for review in entries if (review.get("at") or "") == newest_at] if newest_at else [entries[-1]]
+    # Newest by recorded time, not by append order: a late delivery of an older
+    # review must not outvote a newer one.
+    newest_at = max(str(review.get("at") or "") for review in entries)
+    tied = [review for review in entries if str(review.get("at") or "") == newest_at] if newest_at else [entries[-1]]
     return any(review.get("blocks_merge") is True for review in tied)
 
 

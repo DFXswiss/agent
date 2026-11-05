@@ -238,6 +238,17 @@ def openrouter_argv(
     ]
 
 
+def hide_config_dir(text: str, config_dir: str | None) -> str:
+    """Replace the account directory in provider diagnostics, wherever it lives."""
+    if not config_dir:
+        return text
+    raw = str(Path(config_dir).expanduser())
+    resolved = str(Path(raw).resolve())
+    for path in sorted({raw, resolved}, key=len, reverse=True):
+        text = text.replace(path, "<config_dir>")
+    return text
+
+
 def openrouter_path_error(
     config_dir: str, cwd: str, read_dirs: tuple[str, ...] = ()
 ) -> str | None:
@@ -771,7 +782,7 @@ def launch(
             argv=argv,
             returncode=returncode,
             stdout=finalized.text,
-            stderr=stderr,
+            stderr=hide_config_dir(stderr, selected.account.config_dir),
             tmux_session=tmux_session,
             usage=finalized.usage,
             tools=finalized.tools,

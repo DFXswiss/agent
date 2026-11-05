@@ -1111,6 +1111,7 @@ def test_owner_scoped_accept_refuses_models_changed_since_task_creation(
         phase_accept(SimpleNamespace(home=tmp_path), worker, task, object())
     assert binding_calls == []
     assert "execution_binding" not in task["payload"]["coordinator"]
+    assert "repository_config" not in task["payload"]["coordinator"]["source"]
 
 
 def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_path):
