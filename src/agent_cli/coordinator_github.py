@@ -2279,7 +2279,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         snap["pull_opener"] = opener
         snap["trusted_pr_guard"] = config
         if worker.a38 and _a38_second_review_outcome(c, expected_head) == "blocking":
-            # Any posted blocking review of the merged head wins over an earlier pass.
+            # The newest posted review of the merged head blocks the merge.
             return _await_second_review_after_merge(
                 store, worker, task, runner, expected_head, blocking=True
             )
