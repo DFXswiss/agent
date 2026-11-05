@@ -5276,6 +5276,42 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertEqual(payload["completed"]["lifecycle"], {})
         self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
 
+    def test_step_cut_short_by_limit_is_recorded_in_writes_only(self) -> None:
+        assessment = Assessment(
+            ok=True,
+            status="pass",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+        )
+        limited = RateLimitError(
+            "GitHub API rate limited approving the second run",
+            retry_at=None,
+        )
+
+        def approve(_api: GitHubApi, current: Assessment, *, dry_run: bool) -> list[Any]:
+            current.writes.append("workflow:approve:17")
+            raise limited
+
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch(
+            "agent_cli.workflow_approval.approve_workflow_runs", side_effect=approve
+        ), mock.patch(
+            "agent_cli.environment_approval.approve_environment_deployments",
+            side_effect=lambda *_a, **_k: self.fail("later step ran after the limit"),
+        ):
+            with self.assertRaises(RateLimitError):
+                a38_guard._apply_guard_side_effects(api, assessment, dry_run=False)
+        completed = a38_guard._completed_steps(assessment)
+        self.assertEqual(completed["writes"], ["workflow:approve:17"])
+        self.assertEqual(completed["workflow_approvals"], [])
+        self.assertEqual(completed["environment_approvals"], [])
+
     def test_cost_line_on_success(self) -> None:
         fake = FakeAPI()
         fake.pull["state"] = "closed"
