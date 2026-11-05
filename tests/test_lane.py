@@ -433,6 +433,25 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
     assert out.tools_truncated is False
 
 
+@pytest.mark.parametrize(
+    "result_fields",
+    [{"is_error": True, "subtype": "success"}, {"is_error": False, "subtype": "error_max_turns"}],
+)
+def test_finalize_lane_output_drops_text_of_a_failed_result(result_fields) -> None:
+    event = {"type": "result", "result": "partial work\nSTATUS: complete",
+             "usage": {"input_tokens": 5, "output_tokens": 1}, **result_fields}
+    out = finalize_lane_output("claude", json.dumps(event), "", cwd="/work")
+    assert out.text == ""
+    assert parse_status(out.text, 0) == "partial"
+    assert out.usage is not None and out.usage.input_tokens == 5
+
+
+def test_finalize_lane_output_keeps_text_of_a_successful_result() -> None:
+    event = {"type": "result", "subtype": "success", "is_error": False, "result": "STATUS: complete"}
+    out = finalize_lane_output("openrouter", "", json.dumps(event), cwd="/work")
+    assert out.text == "STATUS: complete"
+
+
 def test_finalize_lane_output_fail_closed_and_bounds_tools() -> None:
     no_result = json.dumps({"type": "assistant", "message": {"content": []}})
     assert finalize_lane_output("claude", no_result, "", cwd="/work").text == ""

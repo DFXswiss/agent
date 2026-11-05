@@ -88,6 +88,44 @@ def test_second_review_schema_and_rendered_comment_pass_guard_validators() -> No
     assert len(body) < 65_536
 
 
+def _largest_accepted_second_review() -> dict:
+    payload = second_payload(defects=1)
+    findings_budget = 2_000
+    prompt_room = (56_000 - findings_budget) // 4 - 2 - len(COMPLIANCE_PROMPT) - 1
+    payload["findings"] = "f" * findings_budget
+    for lane in payload["lanes"]:
+        lane["prompt"] = COMPLIANCE_PROMPT + " " + "x" * prompt_room
+    return payload
+
+
+def test_largest_accepted_second_review_still_fits_one_comment() -> None:
+    payload = validate_second_review_payload(_largest_accepted_second_review())
+    declaration = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 1,
+        "set_aside": "none",
+        "blocks_merge": False,
+        "lanes": payload["lanes"],
+    }
+    task = {
+        "change_summary_en": "E" * 1_000 + ".",
+        "change_summary_de": "D" * 1_000 + ".",
+    }
+    body = _render_review_comment(
+        task, declaration, rules_bound=True, reviewer="r" * 39, findings=payload["findings"]
+    )
+    assert len(body) < 65_536
+
+
+def test_second_review_schema_refuses_text_too_long_for_one_comment() -> None:
+    payload = _largest_accepted_second_review()
+    payload["lanes"][0]["prompt"] += "x"
+    with pytest.raises(CoordinatorError, match="too long for one review comment"):
+        validate_second_review_payload(payload)
+
+
 def test_review_comment_refuses_github_oversize_body() -> None:
     prompt = COMPLIANCE_PROMPT + " " + "x" * 17_000
     declaration = {

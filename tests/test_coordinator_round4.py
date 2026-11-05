@@ -1066,6 +1066,53 @@ def test_failed_configuration_blocker_post_is_retried(monkeypatch, tmp_path):
     assert len(attempts) == 2
 
 
+def _patch_current_models(monkeypatch, models):
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.load_ai_accounts",
+        lambda *_a, **_k: SimpleNamespace(models=SimpleNamespace(as_dict=lambda: dict(models))),
+    )
+
+
+@pytest.mark.parametrize(
+    ("current_models", "a38"),
+    [({"first": "codex", "second": "grok"}, False), ({"first": "grok", "second": "codex"}, True)],
+)
+def test_owner_scoped_accept_refuses_models_changed_since_task_creation(
+    monkeypatch, tmp_path, current_models, a38
+):
+    _patch_accept_prerequisites(monkeypatch)
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-ready",),
+        a38=a38,
+    )
+    effective = RepositoryConfig(
+        "Example/owned", "main", "worker-bot/owned",
+        ("/operator/check",), ("/operator/owner-ready",),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._owner_repository_config",
+        lambda *_a, **_k: effective,
+    )
+    _patch_current_models(monkeypatch, current_models)
+    binding_calls: list[object] = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.execution_binding",
+        lambda *a, **_k: binding_calls.append(a) or "pinned-binding",
+    )
+    task = _accept_task()
+    task["models"] = {"first": "grok", "second": "codex"}
+    task["payload"]["coordinator"]["source"].update(
+        repo="Example/owned", owner_scoped=True
+    )
+
+    with pytest.raises(CoordinatorError, match="model configuration changed before acceptance"):
+        phase_accept(SimpleNamespace(home=tmp_path), worker, task, object())
+    assert binding_calls == []
+    assert "execution_binding" not in task["payload"]["coordinator"]
+
+
 def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_path):
     _patch_accept_prerequisites(monkeypatch)
     worker = replace(
@@ -1085,16 +1132,20 @@ def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_
         "agent_cli.coordinator_runtime.execution_binding",
         lambda *_a, **_k: "pinned-binding",
     )
+    _patch_current_models(monkeypatch, {"first": "grok", "second": "codex"})
     monkeypatch.setattr("agent_cli.coordinator_github.queue_activity", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_cli.coordinator_github.execute_github", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_cli.coordinator_github.set_checklist", lambda *_a, **_k: None)
 
     class AcceptedStore:
+        home = tmp_path
+
         def row(self, table, _row_id):
             assert table == "activity"
             return {"execution_status": "done"}
 
     task = _accept_task()
+    task["models"] = {"first": "grok", "second": "codex"}
     task["payload"]["coordinator"]["source"].update(
         repo="Example/owned", owner_scoped=True
     )

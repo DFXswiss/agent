@@ -583,7 +583,7 @@ class TestCloseAllowed(unittest.TestCase):
         evidence = f"external second review by reviewer at {head}: https://example.invalid/review"
         snapshot = {
             "models": {"first": "grok", "second": None},
-            "payload": {"coordinator": {"a38": {"enabled": True}}},
+            "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
             "gates": [
                 {
                     "stage": "grok-pr",
@@ -613,6 +613,26 @@ class TestCloseAllowed(unittest.TestCase):
             snapshot=snapshot,
         )
         self.assertFalse(stale.allowed)
+        for second_review in (
+            {"head": head, "status": "requested"},
+            {"head": head, "status": "posted", "reviews": []},
+            {"head": head, "status": "posted", "reviews": [{"blocks_merge": True, "at": "x"}]},
+            {"head": "b" * 40, "status": "posted", "reviews": [{"blocks_merge": False, "at": "x"}]},
+        ):
+            unposted = {
+                **snapshot,
+                "payload": {"coordinator": {"a38": {"enabled": True, "second_review": second_review}}},
+            }
+            self.assertFalse(
+                close_allowed(
+                    "review",
+                    "codex_pr_quality",
+                    checklist=cl,
+                    source="script",
+                    evidence=evidence,
+                    snapshot=unposted,
+                ).allowed
+            )
         without_marker = {**snapshot, "payload": {}}
         denied = close_allowed(
             "review",

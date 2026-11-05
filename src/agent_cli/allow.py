@@ -202,7 +202,27 @@ def external_second_review_evidence_ok(
             or gate.get("head_sha") != evidence_head
         ):
             return False
-    return True
+    second = a38.get("second_review") if isinstance(a38, Mapping) else None
+    reviews = second.get("reviews") if isinstance(second, Mapping) else None
+    return (
+        isinstance(second, Mapping)
+        and second.get("head") == evidence_head
+        and second.get("status") == "posted"
+        and isinstance(reviews, list)
+        and bool(reviews)
+        and not newest_reviews_block(reviews)
+    )
+
+
+def newest_reviews_block(reviews: list[Any]) -> bool:
+    """True when the newest posted review blocks; reviews sharing the newest
+    timestamp count as blocking if any of them blocks."""
+    entries = [review for review in reviews if isinstance(review, dict)]
+    if not entries:
+        return False
+    newest_at = entries[-1].get("at") or ""
+    tied = [review for review in entries if (review.get("at") or "") == newest_at] if newest_at else [entries[-1]]
+    return any(review.get("blocks_merge") is True for review in tied)
 
 
 def _tid(task: dict[str, Any]) -> str:

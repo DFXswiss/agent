@@ -434,7 +434,10 @@ def finalize_lane_output(
         return LaneOutput("", None, tuple(transcript), truncated)
 
     result_text = result_event.get("result")
-    text = result_text if isinstance(result_text, str) else ""
+    subtype = result_event.get("subtype")
+    failed = result_event.get("is_error") is True or (subtype is not None and subtype != "success")
+    # A failed run never reports its text, so a STATUS marker in it cannot pass as complete.
+    text = result_text if isinstance(result_text, str) and not failed else ""
     usage_raw = result_event.get("usage")
     usage: LaneUsage | None = None
     if isinstance(usage_raw, dict):

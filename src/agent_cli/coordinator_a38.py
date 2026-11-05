@@ -26,7 +26,12 @@ from .a38_review import (
     validate_review_record,
     validate_visible,
 )
-from .allow import EXTERNAL_SECOND_REVIEW_PREFIX, evaluate_allow, external_second_review_ok
+from .allow import (
+    EXTERNAL_SECOND_REVIEW_PREFIX,
+    evaluate_allow,
+    external_second_review_ok,
+    newest_reviews_block,
+)
 from .coordinator_common import (
     CoordinatorError,
     Runner,
@@ -70,6 +75,9 @@ PROVIDER_DISPLAY = {
 SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
 GITHUB_COMMENT_LIMIT = 65_536
+# Both prompts appear twice in the comment (record and machine block) and the findings once;
+# the rest of the comment (titles, summaries, model names) fits in the remaining margin.
+SECOND_REVIEW_TEXT_LIMIT = 56_000
 _SECOND_KEYS = frozenset(
     {"kind", "task_id", "head", "defects", "blocks_merge", "findings", "lanes"}
 )
@@ -152,6 +160,13 @@ def validate_second_review_payload(raw: Any) -> dict[str, Any]:
         )
     if validated_lanes[0]["model"] != validated_lanes[1]["model"]:
         raise CoordinatorError("both second review lanes must name the same model")
+    published = len(findings) + 2 * sum(
+        len(json.dumps(lane["prompt"], ensure_ascii=False)) for lane in validated_lanes
+    )
+    if published > SECOND_REVIEW_TEXT_LIMIT:
+        raise CoordinatorError(
+            "second review prompts and findings are too long for one review comment"
+        )
     return {
         "kind": SECOND_REVIEW_KIND,
         "task_id": task_id,
@@ -1138,17 +1153,6 @@ def intake_second_reviews(
     if routed is not None:
         lines.append(routed)
     return lines or None
-
-
-def newest_reviews_block(reviews: list[Any]) -> bool:
-    """True when the newest posted review blocks; reviews sharing the newest
-    timestamp count as blocking if any of them blocks."""
-    entries = [review for review in reviews if isinstance(review, dict)]
-    if not entries:
-        return False
-    newest_at = entries[-1].get("at") or ""
-    tied = [review for review in entries if (review.get("at") or "") == newest_at] if newest_at else [entries[-1]]
-    return any(review.get("blocks_merge") is True for review in tied)
 
 
 def _route_newest_blocking_review(
