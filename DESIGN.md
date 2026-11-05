@@ -742,7 +742,7 @@ the workflow is enabled on a deployment:
   making the unchanged head Ready, then waits for the verified human merge. If
   the human merge arrives during the A38 second-review, CI, readiness, or Ready
   wait, merge observation runs the same readiness closing on that merged head
-  before `task-done`. Non-A38
+  before `task-done`, unless readiness already ran on exactly that head. Non-A38
   workers retain the formal-review and leave-draft path described above.
 
 This section defines the required responsibility boundary. It does not claim

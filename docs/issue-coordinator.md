@@ -97,7 +97,10 @@ state endpoints.
 The owner-scoped A38 default without `owner_readiness_argv` always performs
 that hub-mandate verification even when `require_hub_assignment` is false.
 Without a matching hub row it cannot reach implementation; after the normal
-visibility grace it publishes the explicit-deviation blocker above.
+visibility grace it publishes the explicit-deviation blocker above. A matching
+row without the exact no-deviation statement blocks acceptance at once with the
+same blocker, drops the pinned mandate and resumes at `accept`, so the next
+query picks up a corrected hub assignment; readiness checks the statement again.
 
 A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
 is younger than 120 seconds. After that grace period it publishes `assignment
@@ -413,8 +416,9 @@ for worker in workers.values():
     open, posts no further second-review comments once the assignment is revoked. An A38 task in `await_second_review`,
     `ci`, `readiness` or `await_ready` whose pull request is merged or closed (a
     merge closes the issue) moves to `await_merge`, which verifies the human merge
-    or blocks a pull request closed without one. If the readiness keys are
-    still open, it first runs the owner hub-statement default or the configured
+    or blocks a pull request closed without one. Unless readiness already ran on
+    that exact merged head (`readiness_head`), even when its keys were closed on an
+    earlier head, it first runs the owner hub-statement default or the configured
     trusted readiness command and publishes its blocker with a reply checkpoint
     when those keys cannot be closed.
 
@@ -636,9 +640,10 @@ worker. The guard may make the pull request Ready while the worker is still in
 `await_second_review`, `ci`, `readiness` or `await_ready`; a pull request merged
 in any of these phases goes straight to `await_merge`, which verifies the merge;
 a pull request closed there also goes to `await_merge`, which publishes the
-`closed-unmerged` blocker. Before task completion, `await_merge` closes any
-still-open readiness keys against that merged head using the same readiness
-source as the ordinary phase. An unreadable pull request state is retried on the
+`closed-unmerged` blocker. Before task completion, `await_merge` runs readiness
+on that merged head with the same readiness source as the ordinary phase unless
+it already ran on exactly that head (`readiness_head`); keys closed on an earlier
+head do not count. An unreadable pull request state is retried on the
 next tick without taking in mail.
 Second-review intake runs while the pull request is open and, in `await_merge`,
 also after the merge, so a review of the merged head is still published; it never
