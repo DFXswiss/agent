@@ -46,16 +46,14 @@ def repo_cfg(
         pinned = source.get("repository_config") if isinstance(source, dict) else None
         if isinstance(pinned, dict) and pinned.get("repo") == repo:
             try:
-                check_argv = tuple(pinned["check_argv"])
-                readiness_argv = tuple(pinned["readiness_argv"])
-                if not all(isinstance(part, str) for part in check_argv + readiness_argv):
-                    raise TypeError
+                # The commands are device-local and never replicated; the execution
+                # binding pins their hash, so a changed command blocks the task.
                 return RepositoryConfig(
                     repo=repo,
                     base=str(pinned["base"]),
                     publication_repo=str(pinned["publication_repo"]),
-                    check_argv=check_argv,
-                    readiness_argv=readiness_argv,
+                    check_argv=tuple(worker.owner_check_argv),
+                    readiness_argv=tuple(worker.owner_readiness_argv or ()),
                 )
             except (KeyError, TypeError):
                 raise CoordinatorError(f"repository {repo} has invalid pinned configuration") from None

@@ -327,15 +327,16 @@ def test_hub_assignment_requires_matching_agent_actor_and_reply_login(
         }
 
 
-@pytest.mark.parametrize("corrected_first", [True, False])
-def test_hub_assignment_prefers_the_mandate_with_the_no_deviation_statement(
-    monkeypatch, corrected_first
-):
-    old = assignment_row(deviation={"declared": True})
-    old["row_id"] = "old-row"
-    corrected = assignment_row()
-    corrected["row_id"] = "corrected-row"
-    QueryHub.result = {"rows": [corrected, old] if corrected_first else [old, corrected]}
+@pytest.mark.parametrize("newer_first", [True, False])
+@pytest.mark.parametrize("newer_declares", [False, True])
+def test_hub_assignment_uses_the_newest_mandate_row(monkeypatch, newer_first, newer_declares):
+    older = assignment_row(deviation={"declared": True} if not newer_declares else None)
+    older["row_id"] = "older-row"
+    older["updated_at"] = "2026-01-01T00:00:00Z"
+    newer = assignment_row(deviation={"declared": True} if newer_declares else None)
+    newer["row_id"] = "newer-row"
+    newer["updated_at"] = "2026-01-02T00:00:00Z"
+    QueryHub.result = {"rows": [newer, older] if newer_first else [older, newer]}
     QueryHub.error = None
     monkeypatch.setattr("agent_cli.coordinator_github.Hub", QueryHub)
 
@@ -345,7 +346,8 @@ def test_hub_assignment_prefers_the_mandate_with_the_no_deviation_statement(
     )
 
     assert retry is None
-    assert mandate is not None and mandate.row_id == "corrected-row"
+    assert mandate is not None and mandate.row_id == "newer-row"
+    assert (mandate.deviation == {"declared": True}) is newer_declares
 
 
 def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
@@ -1184,7 +1186,9 @@ def test_owner_scoped_accept_pins_effective_repository_binding(monkeypatch, tmp_
     assert checkpoint["execution_binding"] == "pinned-binding"
     assert source["base"] == "main"
     assert source["publication_repo"] == "worker-bot/owned"
-    assert source["repository_config"]["check_argv"] == ["/operator/check"]
+    assert source["repository_config"] == {
+        "repo": "Example/owned", "base": "main", "publication_repo": "worker-bot/owned"
+    }
     assert checkpoint["phase"] == "checkout"
     assert "acceptance published" in lines[0]
 
@@ -1780,3 +1784,37 @@ def test_verify_draft_accepts_a_ready_pr_only_for_an_a38_push(
     else:
         with pytest.raises(CoordinatorError, match="Draft identity, route, head or state changed"):
             verify()
+
+
+def test_owner_scoped_commands_stay_local_and_out_of_evidence(tmp_path):
+    from agent_cli.coordinator_git import repo_cfg
+    from agent_cli.coordinator_github import _mandate_provenance
+
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_check_argv=("/secret/host/path/check", "--token=sentinel"),
+        owner_readiness_argv=("/secret/host/path/ready",),
+    )
+    source = {
+        "repo": "Example/owned",
+        "number": 7,
+        "assignment_actor": "human-owner",
+        "assignment_event_id": 11,
+        "repository_config": {
+            "repo": "Example/owned", "base": "main", "publication_repo": "worker-bot/owned"
+        },
+        "body": "issue text",
+    }
+    task = {"payload": {"coordinator": {"source": source}}}
+
+    cfg = repo_cfg(worker, "Example/owned", task)
+
+    assert cfg.check_argv == ("/secret/host/path/check", "--token=sentinel")
+    assert cfg.readiness_argv == ("/secret/host/path/ready",)
+    provenance = _mandate_provenance(source)
+    assert provenance == {
+        "repo": "Example/owned", "number": 7,
+        "assignment_actor": "human-owner", "assignment_event_id": 11,
+    }
+    assert "secret" not in str(provenance) and "sentinel" not in str(provenance)
