@@ -34,6 +34,9 @@ class RateLimitError(GuardError):
         self.retry_epoch = retry_epoch
         self.results: list[dict[str, Any]] | None = None
         self.completed: dict[str, Any] | None = None
+        # Set by a sweep or multi-PR event when an earlier pull request in the
+        # same run failed; the run then exits 1 although it stopped at a limit.
+        self.failed_before = False
 
 
 def is_guard_error(exc: BaseException) -> bool:

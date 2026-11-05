@@ -5220,7 +5220,7 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertEqual(fake.writes, [])
         self.assertEqual(fake.statuses, [])
 
-    def test_drain_rate_limit_overrides_earlier_sweep_failure(self) -> None:
+    def test_drain_rate_limit_keeps_earlier_sweep_failure(self) -> None:
         fake = FakeAPI()
         fake.open_pulls = [1]
         limited = RateLimitError(
@@ -5243,7 +5243,7 @@ class A38GuardRateLimitTests(unittest.TestCase):
                 env={"GH_TOKEN": "fake"},
             )
         payload = json.loads(stdout)
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(payload["status"], "rate_limited")
         self.assertEqual(payload["retry_at"], _utc_text(_RESET))
         self.assertEqual(payload["results"][0]["status"], "error")
@@ -5454,6 +5454,71 @@ class A38GuardRateLimitTests(unittest.TestCase):
                         "a38-guard: api cost"
                     )
                 )
+
+    def test_sweep_limit_after_failed_pull_request_exits_one(self) -> None:
+        limited = RateLimitError(
+            "GitHub API rate limited",
+            retry_at=datetime.fromtimestamp(_RESET, tz=timezone.utc),
+            retry_epoch=_RESET,
+        )
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard,
+            "reconcile_pull",
+            side_effect=[GuardError("first pull request failed"), limited],
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=AssertionError("held run drain must not start after a rate limit"),
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                FakeAPI().api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(
+            [item["status"] for item in payload["results"]], ["error", "rate_limited"]
+        )
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+
+    def test_multi_pull_event_limit_records_earlier_failure(self) -> None:
+        limited = RateLimitError("GitHub API rate limited", retry_at=None)
+        event = {
+            "workflow_run": {"path": ".github/workflows/test.yml", "head_sha": HEAD},
+            "repository": {"full_name": REPO},
+        }
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch.object(
+            a38_guard, "_open_pull_numbers_for_commit", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard,
+            "reconcile_pull",
+            side_effect=[GuardError("first pull request failed"), limited],
+        ):
+            with self.assertRaises(RateLimitError) as caught:
+                a38_guard._reconcile_workflow_run(
+                    api,
+                    payload=event,
+                    repo=None,
+                    pr=None,
+                    dry_run=False,
+                    publish=True,
+                    runtime_revision=None,
+                    runtime_env=None,
+                )
+        self.assertIs(caught.exception, limited)
+        self.assertTrue(caught.exception.failed_before)
+        self.assertEqual(
+            [item["status"] for item in caught.exception.results or []],
+            ["error", "rate_limited"],
+        )
 
     def test_event_rate_limit_does_not_continue(self) -> None:
         fake = FakeAPI()

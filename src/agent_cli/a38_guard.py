@@ -1009,9 +1009,6 @@ class GitHubApi:
         self.pool_first: dict[str, str] | None = None
         self.pool_last: dict[str, str] | None = None
         self._rate_limit: RateLimitError | None = None
-        # Set when a rate limit blocked the error status that should have
-        # invalidated a prior success; the run must then not end green.
-        self.invalidation_failed = False
 
     def _count_request(self, url: str) -> None:
         family = _endpoint_family(url)
@@ -3559,7 +3556,6 @@ def _invalidate_after_failure(api: GitHubApi, pull: PullSnapshot) -> None:
     except RuntimeError as exc:
         if not is_rate_limit_error(exc):
             raise
-        api.invalidation_failed = True
         print(
             "a38-guard: could not invalidate prior status "
             f"({_rate_limit_phrase(getattr(exc, 'retry_at', None))})",
@@ -3812,7 +3808,9 @@ def _reconcile_workflow_run(
             )
         except Exception as exc:  # noqa: BLE001 — per-PR isolation
             if is_rate_limit_error(exc):
-                _note_sweep_rate_limit(exc, results, repo=event_repo, pr=number)
+                _note_sweep_rate_limit(
+                    exc, results, repo=event_repo, pr=number, failed_before=not all_ok
+                )
                 raise
             results.append({
                 "ok": False, "status": "error", "repo": event_repo,
@@ -4035,9 +4033,11 @@ def _note_sweep_rate_limit(
     *,
     repo: str,
     pr: int,
+    failed_before: bool,
 ) -> None:
     results.append(_rate_limited_entry(exc, repo=repo, pr=pr))
     setattr(exc, "results", results)
+    setattr(exc, "failed_before", failed_before)
 
 
 def _emit_rate_limited(exc: BaseException, args: argparse.Namespace) -> None:
@@ -4125,8 +4125,9 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
         except RuntimeError as exc:
             if is_rate_limit_error(exc):
                 _emit_rate_limited(exc, args)
-                # A blocked invalidation can leave an old success standing.
-                return 1 if getattr(client, "invalidation_failed", False) else 0
+                # The limit itself is not a failure; an earlier real failure
+                # in the same run still is.
+                return 1 if getattr(exc, "failed_before", False) else 0
             if not _is_guard_error(exc):
                 raise
             print(f"a38-guard: {exc}", file=sys.stderr)
@@ -4175,7 +4176,11 @@ def _run(
                     except Exception as exc:  # noqa: BLE001 — per-PR isolation
                         if is_rate_limit_error(exc):
                             _note_sweep_rate_limit(
-                                exc, results, repo=args.repo, pr=number
+                                exc,
+                                results,
+                                repo=args.repo,
+                                pr=number,
+                                failed_before=any(exit_codes),
                             )
                             raise
                         results.append({
@@ -4201,6 +4206,7 @@ def _run(
                 except RuntimeError as exc:
                     if is_rate_limit_error(exc):
                         setattr(exc, "results", results)
+                        setattr(exc, "failed_before", any(exit_codes))
                         raise
                     if not _is_guard_error(exc):
                         raise
