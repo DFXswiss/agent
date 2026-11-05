@@ -53,6 +53,7 @@ from .store import Store, StoreError, utcnow
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
+PR_REVIEW_PROMPT_LIMIT = 20_000
 
 
 def write_spec(path: Path, role: str, body: str) -> None:
@@ -800,7 +801,6 @@ def _prepare_pr_review_agent(
     stage: str,
     head: str,
     spec_body: str,
-    review_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Insert working agent and build argv on the main thread (Store-safe)."""
     try:
@@ -825,15 +825,22 @@ def _prepare_pr_review_agent(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     ctrl = control_dir(worker, task["id"])
-    write = selected.access == "workspace-write"
-    read_dirs = () if write else (str(ctrl.resolve()),)
+    if selected.access != "read-only":
+        raise CoordinatorError("PR review lane requires read-only access")
+    write = False
+    read_dirs = (str(ctrl.resolve()),)
     if vendor == "openrouter":
         overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
         if overlap is not None:
             raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}-{head[:7]}.md"
-    write_spec(spec_path, role, spec_body)
-    spec_text = spec_path.read_text(encoding="utf-8")
+    spec_text = f"# Role: {role}\n\n{prompt_prohibitions()}\n{spec_body}".strip()
+    if len(spec_text) > PR_REVIEW_PROMPT_LIMIT:
+        raise CoordinatorError(
+            f"PR review prompt exceeds {PR_REVIEW_PROMPT_LIMIT} characters"
+        )
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(spec_text, encoding="utf-8")
     aid = str(uuid.uuid4())
     write = selected.access == "workspace-write"
     codex_output: str | None = None
@@ -1143,11 +1150,6 @@ def phase_pr_gates(
             pass
 
     diff_path = write_review_diff(store, worker, task, runner, head=head)
-    excerpt_path = diff_path.with_suffix(".excerpt.txt")
-    try:
-        excerpt = excerpt_path.read_text(encoding="utf-8")
-    except OSError:
-        excerpt = ""
     base_note = write_review_context(store, worker, task, runner)
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     prepared_list: list[dict[str, Any]] = []
@@ -1171,11 +1173,10 @@ def phase_pr_gates(
                         f"Independent of the author session.\n"
                         f"{scope}\n"
                         f"{base_note}"
-                        f"Script-generated diff artifact (full): {diff_path}\n"
-                        f"Script-generated diff excerpt follows; do not run Git.\n"
-                        f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
+                        f"Script-generated diff artifact (full, read-only): {diff_path}\n"
+                        "Read that artifact through the read-only directory attached "
+                        "to this lane. Do not run Git to re-derive the diff.\n"
                     ),
-                    review_prompt=scope,
                 )
             )
     except (StoreError, Exception) as exc:

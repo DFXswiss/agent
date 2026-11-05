@@ -143,7 +143,7 @@ def test_owner_repository_route_creates_and_verifies_fork(tmp_path):
         runner,
         repo="Example/project",
         login="worker-bot",
-        fork_already_requested=True,
+        fork_request_done=True,
     )
     assert cfg is not None
     assert cfg.publication_repo == "worker-bot/project"
@@ -448,10 +448,14 @@ def test_phase_accept_retries_fork_visibility_then_publishes_blocker(
         "agent_cli.coordinator_github._hub_assignment_row",
         lambda *_a, **_k: ("assignment-row", None),
     )
-    requested: list[bool] = []
+    request_done: list[bool] = []
 
     def pending_fork(*_args, **kwargs):
-        requested.append(kwargs["fork_already_requested"])
+        done = kwargs["fork_request_done"]
+        request_done.append(done)
+        if not done:
+            kwargs["before_fork_create"]()
+            kwargs["after_fork_create"]()
         return None
 
     monkeypatch.setattr(
@@ -468,34 +472,38 @@ def test_phase_accept_retries_fork_visibility_then_publishes_blocker(
     task["payload"]["coordinator"]["source"]["owner_scoped"] = True
     worker = _accept_worker(tmp_path)
 
-    assert phase_accept(object(), worker, task, object()) == [
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, "", "")
+
+    assert phase_accept(object(), worker, task, runner) == [
         "publication fork not yet visible; retrying accept"
     ]
     source = task["payload"]["coordinator"]["source"]
     assert source["fork_requested_at"] == "2026-01-01T00:00:00Z"
+    assert source["fork_request_done_at"] == "2026-01-01T00:00:00Z"
     assert task["payload"]["coordinator"]["phase"] == "accept"
-    assert requested == [False]
+    assert request_done == [False]
 
     clock["now"] = "2026-01-01T00:04:59Z"
-    assert phase_accept(object(), worker, task, object()) == [
+    assert phase_accept(object(), worker, task, runner) == [
         "publication fork not yet visible; retrying accept"
     ]
-    assert requested == [False, True]
+    assert request_done == [False, True]
     assert published == []
 
     clock["now"] = "2026-01-01T00:05:00Z"
-    assert phase_accept(object(), worker, task, object()) == ["published"]
+    assert phase_accept(object(), worker, task, runner) == ["published"]
     checkpoint = task["payload"]["coordinator"]
     assert checkpoint["phase"] == "blocked"
     assert checkpoint["resume_phase"] == "accept"
     assert checkpoint["blocker"] == (
         "publication fork did not become visible within 300 seconds"
     )
-    assert requested == [False, True, True]
+    assert request_done == [False, True, True]
     assert published == [{"kind": "publication-fork", "reply_checkpoint": True}]
 
 
-def test_phase_accept_persists_fork_intent_before_post_and_never_reposts(
+def test_phase_accept_reposts_when_request_completion_was_not_persisted(
     monkeypatch, tmp_path
 ):
     from agent_cli.coordinator_common import save_task as real_save_task
@@ -551,7 +559,127 @@ def test_phase_accept_persists_fork_intent_before_post_and_never_reposts(
     assert phase_accept(store, _accept_worker(tmp_path), persisted, runner) == [
         "publication fork not yet visible; retrying accept"
     ]
+    assert posts["n"] == 2
+    completed = store.row("task", task["id"])
+    assert completed is not None
+    assert completed["payload"]["coordinator"]["source"]["fork_request_done_at"] == (
+        "2026-01-01T00:00:00Z"
+    )
+    assert phase_accept(store, _accept_worker(tmp_path), completed, runner) == [
+        "publication fork not yet visible; retrying accept"
+    ]
+    assert posts["n"] == 2
+
+
+def test_phase_accept_crash_after_intent_save_retries_fork_post(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_common import save_task as real_save_task
+
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row",
+        lambda *_a, **_k: ("assignment-row", None),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.scoped",
+        lambda _store, _session_id, runner, **_kwargs: runner,
+    )
+    monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: "2026-01-01T00:00:00Z")
+    store = Store(tmp_path)
+    task = _accept_task()
+    task["id"] = "22222222-2222-4222-8222-222222222222"
+    task["payload"]["coordinator"]["source"]["owner_scoped"] = True
+    store.write("task", "insert", task["id"], task)
+    posts = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[-2:] == ["--jq", ".default_branch"]:
+            return Completed(0, "main", "")
+        if argv[-2:] == ["--jq", ".permissions.push"]:
+            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/worker-bot/project"]:
+            return Completed(1, "", "not found")
+        if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
+            posts["n"] += 1
+            return Completed(0, "{}", "")
+        raise AssertionError(argv)
+
+    def crash_after_intent(store_arg, task_arg):  # noqa: ANN001
+        real_save_task(store_arg, task_arg)
+        raise RuntimeError("crash after fork intent save")
+
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", crash_after_intent)
+    with pytest.raises(RuntimeError, match="crash after fork intent save"):
+        phase_accept(store, _accept_worker(tmp_path), store.row("task", task["id"]), runner)
+    persisted = store.row("task", task["id"])
+    assert persisted is not None
+    source = persisted["payload"]["coordinator"]["source"]
+    assert source["fork_requested_at"] == "2026-01-01T00:00:00Z"
+    assert "fork_request_done_at" not in source
+    assert posts["n"] == 0
+
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", real_save_task)
+    assert phase_accept(store, _accept_worker(tmp_path), persisted, runner) == [
+        "publication fork not yet visible; retrying accept"
+    ]
     assert posts["n"] == 1
+
+
+def test_phase_accept_retries_transient_fork_post_and_accepts_in_progress(
+    monkeypatch, tmp_path
+):
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row",
+        lambda *_a, **_k: ("assignment-row", None),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.scoped",
+        lambda _store, _session_id, runner, **_kwargs: runner,
+    )
+    monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: "2026-01-01T00:00:00Z")
+    store = Store(tmp_path)
+    task = _accept_task()
+    task["id"] = "33333333-3333-4333-8333-333333333333"
+    task["payload"]["coordinator"]["source"]["owner_scoped"] = True
+    store.write("task", "insert", task["id"], task)
+    posts = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[-2:] == ["--jq", ".default_branch"]:
+            return Completed(0, "main", "")
+        if argv[-2:] == ["--jq", ".permissions.push"]:
+            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/worker-bot/project"]:
+            return Completed(1, "", "not found")
+        if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
+            posts["n"] += 1
+            if posts["n"] == 1:
+                return Completed(1, "", "temporary service failure")
+            return Completed(1, "", "fork creation is in progress")
+        raise AssertionError(argv)
+
+    with pytest.raises(CoordinatorError, match="temporary service failure"):
+        phase_accept(store, _accept_worker(tmp_path), store.row("task", task["id"]), runner)
+    persisted = store.row("task", task["id"])
+    assert persisted is not None
+    source = persisted["payload"]["coordinator"]["source"]
+    assert source["fork_requested_at"] == "2026-01-01T00:00:00Z"
+    assert "fork_request_done_at" not in source
+
+    assert phase_accept(store, _accept_worker(tmp_path), persisted, runner) == [
+        "publication fork not yet visible; retrying accept"
+    ]
+    completed = store.row("task", task["id"])
+    assert completed is not None
+    assert completed["payload"]["coordinator"]["source"]["fork_request_done_at"] == (
+        "2026-01-01T00:00:00Z"
+    )
+    assert phase_accept(store, _accept_worker(tmp_path), completed, runner) == [
+        "publication fork not yet visible; retrying accept"
+    ]
+    assert posts["n"] == 2
 
 
 def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path):

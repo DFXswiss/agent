@@ -68,6 +68,7 @@ PROVIDER_DISPLAY = {
 }
 SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
+GITHUB_COMMENT_LIMIT = 65_536
 _SECOND_KEYS = frozenset(
     {"kind", "task_id", "head", "defects", "blocks_merge", "findings", "lanes"}
 )
@@ -573,6 +574,10 @@ def _render_review_comment(
     ]
     if reasons:
         raise CoordinatorError("A38 review comment validation failed: " + "; ".join(dict.fromkeys(reasons)))
+    if len(body) >= GITHUB_COMMENT_LIMIT:
+        raise CoordinatorError(
+            f"A38 review comment must be shorter than {GITHUB_COMMENT_LIMIT} characters"
+        )
     return body
 
 
@@ -1035,30 +1040,8 @@ def phase_await_ready(
         return ["PR head changed while awaiting guard Ready; invalidating evidence"]
     if str(view.get("state") or "").upper() != "OPEN":
         raise CoordinatorError("pull request is not open while awaiting guard Ready")
-    if view.get("isDraft") is False:
-        require_ready_evidence(store, task, head)
-        allowed = evaluate_allow(
-            "pr-ready",
-            session_id=worker.session_id,
-            task_id=str(task["id"]),
-            session_tasks=[
-                {
-                    "id": task["id"],
-                    "session_id": task.get("session_id"),
-                    "state": task.get("state"),
-                }
-            ],
-        )
-        if not allowed.allowed:
-            raise CoordinatorError(f"pr-ready denied: {allowed.reason}")
-        evidence = c.setdefault("evidence", {})
-        if isinstance(evidence, dict):
-            evidence["ready_head"] = head
-        c["phase"] = "await_merge"
-        task["state"] = "pr-review"
-        save_task(store, task)
-        return [f"guard set Ready on {head[:7]}; awaiting human merge"]
-    if view.get("isDraft") is not True:
+    is_draft = view.get("isDraft")
+    if is_draft is not True and is_draft is not False:
         raise CoordinatorError("pull request draft state is unavailable")
     try:
         status_data = gh_json(
@@ -1095,6 +1078,37 @@ def phase_await_ready(
         "description": newest.get("description") if isinstance(newest, dict) else "A38 / report status absent",
         "observed_at": utcnow(),
     }
+    if is_draft is False:
+        if not isinstance(newest, dict) or str(newest.get("state") or "").casefold() != "success":
+            observation = (
+                "PR left draft without a successful A38 status on "
+                f"{head[:7]}"
+            )
+            _observation(c, observation)
+            save_task(store, task)
+            return [observation]
+        require_ready_evidence(store, task, head)
+        allowed = evaluate_allow(
+            "pr-ready",
+            session_id=worker.session_id,
+            task_id=str(task["id"]),
+            session_tasks=[
+                {
+                    "id": task["id"],
+                    "session_id": task.get("session_id"),
+                    "state": task.get("state"),
+                }
+            ],
+        )
+        if not allowed.allowed:
+            raise CoordinatorError(f"pr-ready denied: {allowed.reason}")
+        evidence = c.setdefault("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["ready_head"] = head
+        c["phase"] = "await_merge"
+        task["state"] = "pr-review"
+        save_task(store, task)
+        return [f"guard set Ready on {head[:7]}; awaiting human merge"]
     save_task(store, task)
     description = a38["guard_status"]["description"] or "A38 / report status has no description"
     return [f"awaiting guard Ready on {head[:7]}: {redact(str(description), limit=500)}"]

@@ -85,6 +85,37 @@ def test_second_review_schema_and_rendered_comment_pass_guard_validators() -> No
     assert validate_visible(body, 1) == []
     assert validate_review_record(body, declaration, rules_bound=True) == []
     assert "Second review by @reviewer." in body
+    assert len(body) < 65_536
+
+
+def test_review_comment_refuses_github_oversize_body() -> None:
+    prompt = COMPLIANCE_PROMPT + " " + "x" * 17_000
+    declaration = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "lanes": [
+            {
+                "id": lane_id,
+                "provider": "OpenAI",
+                "model": "Reviewer Model",
+                "model_number": "reviewer-model",
+                "prompt": prompt,
+                "status": "complete",
+                "result": "pass",
+            }
+            for lane_id in ("conformity-a", "logic-a")
+        ],
+    }
+    task = {
+        "change_summary_en": "The change is complete.",
+        "change_summary_de": "Die Änderung ist vollständig.",
+    }
+
+    with pytest.raises(CoordinatorError, match="shorter than 65536 characters"):
+        _render_review_comment(task, declaration, rules_bound=True)
 
 
 @pytest.mark.parametrize(

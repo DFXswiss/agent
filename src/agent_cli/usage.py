@@ -390,13 +390,18 @@ def usage_poll_due(last: float | None, now: float, interval: float = USAGE_POLL_
     return last is None or now - last >= interval
 
 
-def _fetch_openrouter_key(token: str) -> dict[str, Any]:
+def _fetch_openrouter_key(
+    token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     try:
-        with httpx.Client(timeout=20.0, follow_redirects=False) as client:
+        if client is None:
+            with httpx.Client(timeout=20.0, follow_redirects=False) as owned:
+                response = owned.get(OPENROUTER_KEY_URL, headers=headers)
+        else:
             response = client.get(OPENROUTER_KEY_URL, headers=headers)
-    except httpx.HTTPError as exc:
-        raise StoreError(f"OpenRouter usage request failed: {exc}") from exc
+    except httpx.HTTPError:
+        raise StoreError("OpenRouter usage request failed") from None
     if response.status_code != 200:
         raise StoreError(f"OpenRouter usage returned HTTP {response.status_code}")
     try:

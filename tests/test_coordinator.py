@@ -2839,7 +2839,9 @@ def _checklist_status(store, tid: str) -> dict[str, str]:
 
 def _patch_pr_gate_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def fake_diff(store, worker, task, runner, *, head):  # noqa: ANN001
-        path = tmp_path / f"review-{head[:12]}.patch"
+        directory = worker.workspace_root / ".coordinator-control" / task["id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"review-{head[:12]}.patch"
         path.write_text("diff\n", encoding="utf-8")
         path.with_suffix(".excerpt.txt").write_text("excerpt\n", encoding="utf-8")
         return path
@@ -3729,6 +3731,42 @@ def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
     assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
     assert "--add-dir" in argv
     assert "Review this." in (prep.get("stdin_text") or "")
+    agent = store.row("agent", prep["agent_id"])
+    assert agent is not None
+    assert agent["prompt"] == prep["stdin_text"]
+    assert agent["prompt"].startswith("# Role: pr-reviewer-quality")
+    assert len(agent["prompt"]) <= 20_000
+
+
+def test_pr_review_agent_rejects_prompt_over_limit(tmp_path: Path) -> None:
+    from agent_cli.coordinator_lanes import _prepare_pr_review_agent
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = tmp_path / "wt-long-prompt"
+    worktree.mkdir()
+    task = {
+        "id": "t-claude-long-prompt",
+        "session_id": "worker-session",
+        "models": {"first": "claude", "second": "codex"},
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+
+    with pytest.raises(CoordinatorError, match="exceeds 20000 characters"):
+        _prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="claude",
+            head="a" * 40,
+            spec_body="x" * 20_000,
+        )
+
+    assert not store.rows("agent")
 
 
 def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
