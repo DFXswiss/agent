@@ -56,6 +56,7 @@ from .coordinator_common import (
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
     intake_second_reviews,
+    pr_open_unmerged,
     phase_await_ready as phase_a38_await_ready,
     phase_await_second_review,
     phase_first_comment as phase_a38_first_comment,
@@ -1514,7 +1515,14 @@ def advance_one(
             a38 = c.get("a38")
             second = a38.get("second_review") if isinstance(a38, dict) else None
             current = str(c.get("head_sha") or "")
-            if isinstance(second, dict) and second.get("head") == current:
+            # Once a human can merge (await_ready onward), a result that arrives after the
+            # merge or close must not reroute the task; intake only runs on an open PR.
+            mergeable_phase = phase in {"await_ready", "leave_draft", "await_merge"}
+            if (
+                isinstance(second, dict)
+                and second.get("head") == current
+                and (not mergeable_phase or pr_open_unmerged(store, worker, task, runner) is True)
+            ):
                 intake_lines = intake_second_reviews(store, worker, task, runner, current)
                 if coord(task).get("phase") == "implement":
                     return intake_lines or [

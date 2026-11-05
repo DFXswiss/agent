@@ -24,7 +24,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 
 | Topic | Decision |
 |---|---|
-| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings and website-created `assignment.created` / `assignment.reply` rows recorded by the hub with origin `web:<login>` when a signed-in human issues or answers a mandate through the website. For a human-issued mandate, the hub creates the GitHub issue and assignment with that human's own token. `web:` origins are reserved for the hub. |
+| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings and website-created `assignment.created` / `assignment.reply` rows recorded by the hub with origin `web:<login>` when a human owner issues or answers a mandate, either signed in on the website or through `agent assign` with the bearer of a device paired to that owner (never an agent's own device). In both cases the hub creates the GitHub issue and assignment with that human's own OAuth token, stored when the human signed in on the website. `web:` origins are reserved for the hub. |
 | Hub role | Full replica + fan-out + always-on website. Not a shared write database. |
 | Login | Any GitHub account may sign in. Membership is *not* the GitHub org. |
 | Authorization | Hardcoded teams in git. Change members with a pull request. |
@@ -100,8 +100,8 @@ Collides with an unrelated public ledger product. The name is **agent**. The pro
 **Hub-owned task lifecycle and leases.**  
 The hub does not assign work, grant leases, or move authorship when a laptop disappears. Write ownership stays on the origin device. A crashed session restarts on **that** device, or the work stays unread. Restore rebuilds a wiped device; it does not transfer authorship.
 Recording a human-issued mandate under the §2 website-origin exception is not
-the hub assigning or leasing work: the signed-in human assigns on GitHub
-through the website, and the execution device's coordinator still decides
+the hub assigning or leasing work: the human owner assigns on GitHub
+through the website or `agent assign`, and the execution device's coordinator still decides
 whether to accept the assignment.
 
 **Task as the product center.**  
