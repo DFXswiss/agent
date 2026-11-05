@@ -4401,6 +4401,74 @@ def test_a38_after_a_merge_every_waiting_review_is_taken_in_and_the_newest_decid
     assert _a38_second_review_outcome(saved["payload"]["coordinator"], fake.head) == "passed"
 
 
+def test_a38_open_pr_newer_pass_supersedes_an_older_block_in_the_same_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000011"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="older-block",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="newer-pass",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=2,
+    )
+
+    intake_second_reviews(store, worker, task, fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert saved["state"] != "implementing"
+
+
+def test_a38_tests_refuses_a_foreign_row_on_the_report_activity_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_a38
+
+    task_id = "abababab-0000-4000-8000-000000000012"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(coordinator_a38, "verify_signed_clean_head", lambda *_a: fake.head)
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task_id}:{fake.head}"))
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": activity_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": activity_id,
+                "session_id": worker.session_id,
+                "type": "comment.post",
+                "payload": {"repo": "example/project", "number": 42, "body": "x", "exact_body": True},
+                "execution_status": "done",
+                "result": {"url": "https://github.com/example/project/pull/42#issuecomment-1"},
+            },
+            "updated_at": "2026-01-01T00:00:03Z",
+        }
+    )
+
+    with pytest.raises(CoordinatorError, match="did not write"):
+        coordinator_a38.phase_tests(store, worker, task, fake)
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4852,7 +4920,7 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert len(
         [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     ) == comments_after_failure
-    assert "routing to implementer" in blocking_lines[0]
+    assert "routing to implementer" in blocking_lines[-1]
     blocked = store.row("task", blocking_tid)
     assert blocked["state"] == "implementing"
     assert blocked["payload"]["coordinator"]["phase"] == "implement"
