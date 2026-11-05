@@ -303,18 +303,9 @@ def launch_lane(
             tools=finalized.tools,
             tools_truncated=finalized.tools_truncated,
         )
-        try:
-            record_lane_run(
-                store,
-                session_id=worker.session_id,
-                result=result,
-                task_id=str(task["id"]),
-                agent_id=aid,
-                round_num=round_num,
-            )
-        except Exception as exc:  # noqa: BLE001 — audit failure cannot change verdict
-            result.activity_error = f"lane.run write failed: {redact(str(exc))}"
-            c.setdefault("lane_observations", []).append(result.activity_error)
+        _record_lane_audit(
+            store, worker, c, result, task_id=str(task["id"]), agent_id=aid, round_num=round_num
+        )
     finally:
         if lane_output is not None:
             try:
@@ -377,6 +368,31 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
                         sent, int(a38.get("second_review_next_occurrence") or 0)
                     )
                 a38.pop(key, None)
+
+
+def _record_lane_audit(
+    store: Store,
+    worker: WorkerConfig,
+    c: dict[str, Any],
+    result: LaneResult,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    round_num: int | None,
+) -> None:
+    """Record lane.run; an audit failure (including StoreError, a SystemExit) never changes the verdict."""
+    try:
+        record_lane_run(
+            store,
+            session_id=worker.session_id,
+            result=result,
+            task_id=task_id,
+            agent_id=agent_id,
+            round_num=round_num,
+        )
+    except (Exception, SystemExit) as exc:  # noqa: BLE001
+        result.activity_error = f"lane.run write failed: {redact(str(exc))}"
+        c.setdefault("lane_observations", []).append(result.activity_error)
 
 
 def record_gate(

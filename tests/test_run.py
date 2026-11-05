@@ -8,7 +8,7 @@ import pytest
 
 from agent_cli.lane import LaneResult, LaneUsage
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from test_cli import _last_agent_id, _last_task_id, run
 from github_support import configure_accounts
 
@@ -447,8 +447,12 @@ def test_cli_lane_run_records_usage_and_tools(
     assert payload["final_text"] != "secret=hidden\nSTATUS: complete\n"
 
 
+@pytest.mark.parametrize("error_type", [RuntimeError, StoreError])
 def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[BaseException],
 ) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", DEFAULT_SESSION, "--kind", "human"])
@@ -464,7 +468,7 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     )
     monkeypatch.setattr(
         "agent_cli.main.record_lane_run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("store unavailable")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error_type("store unavailable")),
     )
     run(
         tmp_path,
@@ -477,6 +481,39 @@ def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
     captured = capsys.readouterr()
     assert "STATUS=complete" in captured.out
     assert "lane.run write failed: store unavailable" in captured.err
+
+
+def test_run_store_error_on_lane_audit_keeps_the_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\n",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        "agent_cli.main.record_lane_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("store unavailable")),
+    )
+    run(
+        tmp_path,
+        ["run", "--task", tid, "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path)],
+    )
+    captured = capsys.readouterr()
+    assert "lane.run write failed: store unavailable" in captured.err
+    assert _checklist(tmp_path, tid)["implementer_done"] == "ja"
 
 
 def test_run_spec_file_implementer_complete(
