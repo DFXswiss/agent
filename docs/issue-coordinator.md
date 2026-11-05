@@ -59,7 +59,11 @@ mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
 In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
 the latest recorded first-slot quality gate (`grok-pr` / `quality`) is approved
 on the exact current head; it then records `conformity-a approved at <head>` and
-that no deviation was declared.
+that no deviation was declared. The deviation keys are recorded with source
+`human` because their evidence is the verified human assignment mandate (actor,
+assignment event id and, with the hub, the mandate row): the human who issued
+the work declared none. No grant is ever inferred; a declared deviation still
+needs an explicit grant through `owner_readiness_argv`.
 
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
