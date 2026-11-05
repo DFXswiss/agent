@@ -1042,6 +1042,24 @@ def intake_second_reviews(
             save_task(store, task)
             _mark_message_read(store, worker, message_id)
             continue
+        # The guard decides by the newest posted comment, so a review older than one
+        # already posted for this head is not posted: posting order stays time order.
+        posted_state = _a38_state(c).get("second_review")
+        posted_reviews = posted_state.get("reviews") if isinstance(posted_state, dict) else None
+        at = str(row.get("_updated_at") or "")
+        if (
+            isinstance(posted_state, dict)
+            and posted_state.get("head") == current
+            and isinstance(posted_reviews, list)
+            and any(
+                isinstance(review, dict) and str(review.get("at") or "") > at
+                for review in posted_reviews
+            )
+        ):
+            _observation(c, f"second review by @{login} superseded by a newer posted review")
+            save_task(store, task)
+            _mark_message_read(store, worker, message_id)
+            continue
         declaration = {
             "schema": "a38-review/v2",
             "head": current,

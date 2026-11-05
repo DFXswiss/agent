@@ -430,3 +430,17 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
     write_config(tmp_path, data)
     with pytest.raises(AccountError, match="duplicate account or"):
         load_ai_accounts(tmp_path)
+
+    for empty in (None, []):
+        data["usage_accounts"] = empty
+        write_config(tmp_path, data)
+        assert load_ai_accounts(tmp_path).usage_accounts == ()
+
+    data["usage_accounts"] = "or"
+    write_config(tmp_path, data)
+    with pytest.raises(AccountError, match="must be a list or null"):
+        load_ai_accounts(tmp_path)
+    from agent_cli.ai_accounts import load_model_slots
+
+    # Task creation reads only the models block, so a broken usage_accounts does not stop it.
+    assert load_model_slots(tmp_path).as_dict()["first"]

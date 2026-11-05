@@ -46,8 +46,8 @@ def repo_cfg(
         pinned = source.get("repository_config") if isinstance(source, dict) else None
         if isinstance(pinned, dict) and pinned.get("repo") == repo:
             try:
-                # The commands are device-local and never replicated; the execution
-                # binding pins their hash, so a changed command blocks the task.
+                # The commands come from the local worker config, not from the task; the
+                # execution binding pins their hash, so a changed command blocks the task.
                 return RepositoryConfig(
                     repo=repo,
                     base=str(pinned["base"]),

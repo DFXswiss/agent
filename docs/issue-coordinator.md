@@ -114,9 +114,11 @@ configuration blocker published once with a reply checkpoint. Other hub
 transport/protocol failures keep phase `accept`, retry,
 and publish a blocker at most once per hour according to
 `hub_assignment_retry_published_at`. The cap remains a defensive truncation
-check rather than a definite mismatch. Both blockers post fixed texts; the hub
-error detail, which can name the hub host, stays in the task as
-`hub_assignment_retry`.
+check rather than a definite mismatch. Both blockers post fixed texts, and the
+task records only a fixed `hub_assignment_retry` class; the hub error detail,
+which can name the hub host, appears only in the worker's local output line.
+An A38 worker takes its second review from people, so do not point one at a
+repository whose own rules require model slot `second`, such as this one.
 
 Example device configuration (illustrative values, **not installation defaults**):
 

@@ -4177,7 +4177,7 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
     assert saved["state"] != "implementing"
 
 
-def test_a38_pass_tied_with_a_block_routes_to_the_implementer(
+def test_a38_pass_posted_after_a_tied_block_decides_like_the_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_a38
@@ -4208,9 +4208,40 @@ def test_a38_pass_tied_with_a_block_routes_to_the_implementer(
     lines = intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
 
     saved = store.row("task", task_id)
-    assert saved["payload"]["coordinator"]["phase"] == "implement"
-    assert lines is not None and "routing to implementer" in lines[-1]
-    assert _checklist_status(store, task_id)["codex_pr_quality"] != "ja"
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert lines is not None and "posted" in lines[-1]
+    assert _checklist_status(store, task_id)["codex_pr_quality"] == "ja"
+
+
+def test_a38_older_review_delivered_after_a_newer_post_is_not_posted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000010"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store, worker, message_id="newer-pass", login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head), second=20,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    posted = len([row for row in store.rows("activity") if row.get("type") == "comment.post"])
+    _a38_review_mail(
+        store, worker, message_id="older-block", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True), second=5,
+    )
+
+    lines = intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    c = store.row("task", task_id)["payload"]["coordinator"]
+    assert len([row for row in store.rows("activity") if row.get("type") == "comment.post"]) == posted
+    assert c["phase"] == "ci"
+    assert any("superseded" in o["text"] for o in c["observations"])
+    assert lines is None or not any("routing to implementer" in line for line in lines)
 
 
 def test_a38_routing_a_block_keeps_the_review_history_of_the_head(
@@ -4734,16 +4765,14 @@ def test_a38_saved_newest_block_routes_on_a_later_tick_after_a_crash(
     [
         ([{"blocks_merge": True, "at": "t1"}, {"blocks_merge": False, "at": "t2"}], False),
         ([{"blocks_merge": False, "at": "t1"}, {"blocks_merge": True, "at": "t2"}], True),
-        # Same second: a block wins whatever the processing order.
-        ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t2"}], True),
+        # Same second: the last posted review decides, as the guard reads the comments.
+        ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t2"}], False),
         ([{"blocks_merge": False, "at": "t2"}, {"blocks_merge": True, "at": "t2"}], True),
-        ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t1"}], True),
-        ([{"blocks_merge": False, "at": "t2"}, {"blocks_merge": True, "at": "t1"}], False),
         ([{"blocks_merge": False}], False),
         ([], False),
     ],
 )
-def test_a38_newest_reviews_block_resolves_ties_conservatively(reviews, expected) -> None:
+def test_a38_newest_reviews_block_follows_the_posting_order(reviews, expected) -> None:
     from agent_cli.coordinator_a38 import newest_reviews_block
 
     assert newest_reviews_block(reviews) is expected

@@ -587,8 +587,13 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             canonical_repo=canonical_repo,
         )
         if retry is not None:
-            # The detail can name the hub host; only a fixed text goes to GitHub.
-            c["hub_assignment_retry"] = retry
+            # The detail can name the hub host; the task (replicated) and GitHub get only
+            # fixed texts, and the detail stays in this tick's local output line.
+            c["hub_assignment_retry"] = (
+                "hub configuration error"
+                if _hub_assignment_configuration_error(retry)
+                else "hub temporarily unavailable"
+            )
             if _hub_assignment_configuration_error(retry):
                 public = HUB_CONFIGURATION_BLOCKER
                 if c.get("blocker") != public:
