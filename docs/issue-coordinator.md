@@ -589,10 +589,12 @@ The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
 The worker never posts a formal approval and never calls `gh pr ready`. While
-the pull request remains draft it only records the newest `A38 / report` status
-description. It advances after the guard has made the unchanged head Ready,
-then observes the human merge exactly like an ordinary worker. A new head
-invalidates its report, both comment checkpoints, and external-review state.
+the pull request remains draft it only records the newest exact enforce context
+`A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;
+observe contexts never count. It advances after the guard has made the
+unchanged head Ready, then observes the human merge exactly like an ordinary
+worker. A new head invalidates its report, both comment checkpoints, and
+external-review state.
 
 These A38 settings enter the task execution binding only for A38 workers, so
 the binding hashes of existing non-A38 workers remain stable.

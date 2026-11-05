@@ -382,11 +382,24 @@ def cmd_init(args: list[str]) -> None:
         SERVICE_LABEL,
         agent_argv,
         install_and_start_service,
+        service_home,
+        service_path,
     )
 
     if any(arg != "--no-service" for arg in args) or args.count("--no-service") > 1:
         die("Usage: agent init [--no-service]")
     no_service = "--no-service" in args
+    if no_service:
+        unit = service_path(sys.platform, home())
+        try:
+            recorded = service_home(unit, sys.platform)
+        except StoreError as exc:
+            die(str(exc))
+        if recorded is not None and _same_home(recorded, home()):
+            die(
+                f"the device daemon is installed ({unit}) for this AGENT_HOME; "
+                "run agent daemon --uninstall first"
+            )
     external = pg_dsn_from_env()
     override = os.environ.get("AGENT_HOME")
     if override and not _same_home(home(), default_home()):

@@ -1210,6 +1210,10 @@ def phase_pr_gates(
             a38 = {}
             c["a38"] = a38
         a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
+        # The approved gates below are durable writes of their own. Persist the
+        # completed-pass count first so a crash after either gate cannot leave
+        # the subsequently posted review comment with a stale pass count.
+        save_task(store, task)
 
     for prep, outcome, status, model_result in parsed_outcomes:
         dimension = str(prep["dimension"])

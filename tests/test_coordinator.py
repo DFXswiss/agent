@@ -3320,13 +3320,14 @@ def test_a38_preflight_requires_null_second_and_excludes_worker_login(
         preflight_worker(store, own_reviewer, fake)
 
 
-def test_a38_unavailable_first_review_does_not_increment_passes(
+def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dataclasses import replace
 
     from agent_cli.allow import CHECKLIST_KEYS
     from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_common import save_task as real_save_task
     from agent_cli.coordinator_github import phase_blocked
     from agent_cli.coordinator_lanes import phase_pr_gates
 
@@ -3427,15 +3428,48 @@ def test_a38_unavailable_first_review_does_not_increment_passes(
     assert resumed["payload"]["coordinator"]["phase"] == "pr_gates_grok"
 
     fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: approved\n"
-    phase_pr_gates(
+
+    def crash_before_final_save(store_arg: Store, task_arg: dict[str, Any]) -> None:
+        phase = task_arg["payload"]["coordinator"].get("phase")
+        if phase == "a38_first_comment":
+            raise RuntimeError("simulated crash before final gate save")
+        real_save_task(store_arg, task_arg)
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.save_task", crash_before_final_save
+    )
+    with pytest.raises(RuntimeError, match="simulated crash before final gate save"):
+        phase_pr_gates(
+            store,
+            worker,
+            resumed,
+            fake,
+            lane_runner(fake),
+            vendor="grok",
+            stage="grok-pr",
+        )
+    monkeypatch.setattr("agent_cli.coordinator_lanes.save_task", real_save_task)
+
+    approved = store.row("task", tid)
+    assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+    assert approved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    approved_gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("verdict") == "approved"
+    ]
+    assert {gate.get("dimension") for gate in approved_gates} == {"quality", "logic"}
+
+    recovery_lines = phase_pr_gates(
         store,
         worker,
-        resumed,
+        approved,
         fake,
         lane_runner(fake),
         vendor="grok",
         stage="grok-pr",
     )
+    assert recovery_lines == ["grok-pr already complete on ccccccc"]
     approved = store.row("task", tid)
     assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
 
