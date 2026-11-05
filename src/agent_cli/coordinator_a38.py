@@ -917,7 +917,9 @@ def public_prompt(prompt: str, worker: WorkerConfig, task: Mapping[str, Any]) ->
     for raw, placeholder in replacements:
         if not raw or raw in ("/", "."):
             continue
-        for variant in {raw, str(Path(raw).resolve()) if Path(raw).is_absolute() else raw}:
+        variants = {raw, str(Path(raw).resolve()) if Path(raw).is_absolute() else raw}
+        # Longest first, so a resolved path is replaced before its shorter symlink form.
+        for variant in sorted(variants, key=len, reverse=True):
             text = text.replace(variant, placeholder)
     return text
 
