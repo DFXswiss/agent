@@ -482,6 +482,18 @@ def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(
                         "name": "Read",
                         "input": {"file_path": "/Users/someone/private.py"},
                     },
+                    {
+                        "type": "tool_use",
+                        "id": "outside-other-prefix",
+                        "name": "Read",
+                        "input": {"file_path": "/opt/openrouter-profile/openrouter-api-key"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "escape",
+                        "name": "Read",
+                        "input": {"path": "../outside.txt"},
+                    },
                 ]
             },
         },
@@ -495,6 +507,8 @@ def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(
     )
     assert out.tools == (
         {"tool": "Read", "target": "src/module.py", "error": False},
+        {"tool": "Read", "target": "[redacted]", "error": False},
+        {"tool": "Read", "target": "[redacted]", "error": False},
         {"tool": "Read", "target": "[redacted]", "error": False},
     )
 

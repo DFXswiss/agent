@@ -338,9 +338,13 @@ def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
             root = Path(cwd).expanduser().resolve()
             path = Path(raw).expanduser()
             resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
-            raw = str(resolved.relative_to(root))
         except (OSError, RuntimeError, ValueError):
-            pass
+            return "[redacted]"
+        try:
+            raw = str(resolved.relative_to(root))
+        except ValueError:
+            # Any path outside the worktree is a host detail, whatever its prefix.
+            return "[redacted]"
     return redact(raw[:300], limit=300)
 
 
