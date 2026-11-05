@@ -794,8 +794,14 @@ def _mark_message_read(store: Store, worker: WorkerConfig, message_id: str) -> N
 
 def _read_message_ids(store: Store, worker: WorkerConfig) -> set[str]:
     ids: set[str] = set()
+    device_id = store.device_id()
     for row in store.rows("activity"):
-        if row.get("type") != "message.read" or row.get("session_id") != worker.session_id:
+        if (
+            row.get("type") != "message.read"
+            or row.get("session_id") != worker.session_id
+            or row.get("execution_status") != "done"
+            or row.get("_origin_device_id") != device_id
+        ):
             continue
         payload = row.get("payload")
         if isinstance(payload, dict) and isinstance(payload.get("message_id"), str):
@@ -843,24 +849,19 @@ def _parse_iso(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def phase_await_second_review(
-    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
-) -> list[str]:
+def intake_second_reviews(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    current: str,
+) -> list[str] | None:
     if not worker.a38:
-        raise CoordinatorError("external second-review phase called for a non-A38 worker")
+        raise CoordinatorError("external second-review intake called for a non-A38 worker")
     c = coord(task)
-    current = _fresh_pr_head(store, worker, task, runner)
-    if current is None:
-        return ["PR state temporarily unavailable; retrying"]
-    expected = str(c.get("head_sha") or "")
-    if current != expected:
-        c["head_sha"] = current
-        invalidate_head_evidence(c, current)
-        c["phase"] = "tests"
-        save_task(store, task)
-        return ["PR head changed while awaiting second review; invalidating evidence"]
     read = _read_message_ids(store, worker)
     messages = list(reversed(store.rows("activity")))
+    lines: list[str] = []
     for row in messages:
         message_id = str(row.get("id") or "")
         if not message_id or message_id in read or row.get("type") != "message":
@@ -930,15 +931,45 @@ def phase_await_second_review(
         if not isinstance(state, dict) or state.get("head") != current:
             state = {"head": current, "pinged": list(worker.second_reviewers)}
             a38["second_review"] = state
-        state.update(
-            {
-                "status": "posted",
-                "reviewer": login,
-                "activity_id": activity_id,
-                "id": result.get("id"),
-                "url": result.get("url"),
-            }
-        )
+        reviews = state.get("reviews")
+        if not isinstance(reviews, list):
+            reviews = []
+            prior_activity_id = state.get("activity_id")
+            if state.get("status") == "posted" and isinstance(prior_activity_id, str):
+                reviews.append(
+                    {
+                        "reviewer": state.get("reviewer"),
+                        "activity_id": prior_activity_id,
+                        "id": state.get("id"),
+                        "url": state.get("url"),
+                        "blocks_merge": False,
+                    }
+                )
+            state["reviews"] = reviews
+        first_posted = state.get("status") != "posted"
+        if first_posted:
+            state.update(
+                {
+                    "status": "posted",
+                    "reviewer": login,
+                    "activity_id": activity_id,
+                    "id": result.get("id"),
+                    "url": result.get("url"),
+                }
+            )
+        if not any(
+            isinstance(review, dict) and review.get("activity_id") == activity_id
+            for review in reviews
+        ):
+            reviews.append(
+                {
+                    "reviewer": login,
+                    "activity_id": activity_id,
+                    "id": result.get("id"),
+                    "url": result.get("url"),
+                    "blocks_merge": payload["blocks_merge"],
+                }
+            )
         if payload["blocks_merge"]:
             c["findings"] = findings
             invalidate_head_evidence(c, "")
@@ -946,17 +977,42 @@ def phase_await_second_review(
             task["state"] = "implementing"
             save_task(store, task)
             _mark_message_read(store, worker, message_id)
-            return [f"blocking external second review by @{login}; routing to implementer"]
+            lines.append(f"blocking external second review by @{login}; routing to implementer")
+            return lines
         evidence = (
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
             f"{result['url']}"
         )
-        set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
-        set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
-        c["phase"] = "ci"
+        if first_posted:
+            set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
+            set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
+            if c.get("phase") == "await_second_review":
+                c["phase"] = "ci"
         save_task(store, task)
         _mark_message_read(store, worker, message_id)
-        return [f"external second review by @{login} posted on {current[:7]}"]
+        lines.append(f"external second review by @{login} posted on {current[:7]}")
+    return lines or None
+
+
+def phase_await_second_review(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    if not worker.a38:
+        raise CoordinatorError("external second-review phase called for a non-A38 worker")
+    c = coord(task)
+    current = _fresh_pr_head(store, worker, task, runner)
+    if current is None:
+        return ["PR state temporarily unavailable; retrying"]
+    expected = str(c.get("head_sha") or "")
+    if current != expected:
+        c["head_sha"] = current
+        invalidate_head_evidence(c, current)
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["PR head changed while awaiting second review; invalidating evidence"]
+    lines = intake_second_reviews(store, worker, task, runner, current)
+    if lines is not None:
+        return lines
 
     a38 = _a38_state(c)
     state = a38.get("second_review")

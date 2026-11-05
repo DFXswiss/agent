@@ -580,10 +580,13 @@ agent activity add --session OWN_SID --type message --payload-file result-mail.j
 The relay-authenticated sender login must be allowlisted. The worker validates
 the mail and guard declaration, publishes the `conformity-b` / `logic-b`
 comment as the pull request author, and marks both historical `codex_pr_*`
-checklist keys with external-review evidence. A blocking result returns to the
-implementer; stale, malformed, or unauthorized mail is acknowledged and
-recorded as an observation. Pending requests are re-pinged once per configured
-timeout and are never skipped.
+checklist keys with the first external-review evidence. It continues accepting
+unread reviews for that head through CI, readiness, Ready observation, and merge
+observation, and publishes one idempotent review comment for every valid mail.
+Any later blocking result returns the task to the implementer immediately;
+stale, malformed, or unauthorized mail is acknowledged and recorded as an
+observation. Pending requests are re-pinged once per configured timeout and are
+never skipped.
 
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →

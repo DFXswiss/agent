@@ -3545,6 +3545,278 @@ def test_a38_ci_and_readiness_route_to_guard_ready_wait(
     assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_ready"
 
 
+def _a38_second_review_payload(
+    task_id: str, head: str, *, blocks_merge: bool = False
+) -> dict[str, Any]:
+    from agent_cli.a38_review import COMPLIANCE_PROMPT
+
+    defects = 1 if blocks_merge else 0
+    return {
+        "kind": "a38.second-review/v1",
+        "task_id": task_id,
+        "head": head,
+        "defects": defects,
+        "blocks_merge": blocks_merge,
+        "findings": "A blocking defect." if defects else "",
+        "lanes": [
+            {
+                "id": lane_id,
+                "provider": "OpenAI",
+                "model": "Reviewer Model 2",
+                "model_number": "reviewer-model-2",
+                "prompt": COMPLIANCE_PROMPT,
+                "status": "complete",
+                "result": "pass",
+            }
+            for lane_id in ("conformity-b", "logic-b")
+        ],
+    }
+
+
+def _a38_review_mail(
+    store: Store,
+    worker: Any,
+    *,
+    message_id: str,
+    login: str,
+    payload: dict[str, Any],
+    second: int,
+) -> None:
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": message_id,
+            "origin_device_id": f"{message_id}-device",
+            "github_login": login,
+            "payload": {
+                "id": message_id,
+                "session_id": f"{login}-session",
+                "type": "message",
+                "payload": {"to_session": worker.session_id, "payload": payload},
+                "execution_status": "pending",
+            },
+            "updated_at": f"2026-01-01T00:00:{second:02d}Z",
+        }
+    )
+
+
+def _a38_external_review_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task_id: str,
+) -> tuple[Store, Any, FakeGh, dict[str, Any]]:
+    from dataclasses import replace
+
+    store, ordinary_worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    worker = replace(
+        ordinary_worker,
+        review_session=None,
+        a38=True,
+        second_reviewers=("reviewer-one", "reviewer-two"),
+    )
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=task_id,
+        phase="await_second_review",
+        checklist_codex={"codex_pr_quality": "pending", "codex_pr_logic": "pending"},
+        models={"first": "grok", "second": None},
+    )
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["a38"]["second_review"] = {
+        "head": fake.head,
+        "pinged": list(worker.second_reviewers),
+        "status": "requested",
+        "last_requested_at": "2026-01-01T00:00:00Z",
+    }
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    patch_execute_github(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_a38.review_rules_bound", lambda *a: True)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    return store, worker, fake, saved
+
+
+@pytest.mark.parametrize(
+    ("blocking", "expected_comments", "expected_phase"),
+    [
+        ((True,), 1, "implement"),
+        ((False, True), 2, "implement"),
+        ((False, False), 2, "ci"),
+    ],
+)
+def test_a38_intake_processes_all_reviews_for_one_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    blocking: tuple[bool, ...],
+    expected_comments: int,
+    expected_phase: str,
+) -> None:
+    from agent_cli import coordinator_a38
+
+    task_id = "55555555-5555-4555-8555-555555555555"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    for index, blocks_merge in enumerate(blocking, start=1):
+        message_id = f"review-mail-{index}"
+        _a38_review_mail(
+            store,
+            worker,
+            message_id=message_id,
+            login=f"reviewer-{'one' if index == 1 else 'two'}",
+            payload=_a38_second_review_payload(
+                task_id, fake.head, blocks_merge=blocks_merge
+            ),
+            second=index,
+        )
+    if blocking == (False, False):
+        store.apply_replica_row(
+            {
+                "table": "activity",
+                "row_id": "foreign-read",
+                "origin_device_id": "foreign-device",
+                "payload": {
+                    "id": "foreign-read",
+                    "session_id": worker.session_id,
+                    "type": "message.read",
+                    "payload": {"message_id": "review-mail-1"},
+                    "execution_status": "done",
+                },
+                "updated_at": "2026-01-01T00:00:03Z",
+            }
+        )
+        store.write(
+            "activity",
+            "insert",
+            "pending-local-read",
+            {
+                "id": "pending-local-read",
+                "session_id": worker.session_id,
+                "type": "message.read",
+                "payload": {"message_id": "review-mail-2"},
+                "execution_status": "pending",
+            },
+        )
+    checklist_calls: list[str] = []
+    real_set_checklist = coordinator_a38.set_checklist
+
+    def counted_set_checklist(*args, **kwargs):  # noqa: ANN002, ANN003
+        checklist_calls.append(str(args[2]))
+        return real_set_checklist(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_a38, "set_checklist", counted_set_checklist)
+
+    lines = coordinator_a38.intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == expected_comments
+    saved = store.row("task", task_id)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == expected_phase
+    if blocking[0]:
+        assert checklist_calls == []
+    else:
+        assert checklist_calls == ["codex_pr_quality", "codex_pr_logic"]
+    if expected_phase == "ci":
+        second_review = checkpoint["a38"]["second_review"]
+        assert second_review["reviewer"] == "reviewer-one"
+        assert [review["reviewer"] for review in second_review["reviews"]] == [
+            "reviewer-one",
+            "reviewer-two",
+        ]
+        assert all(
+            set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge"}
+            for review in second_review["reviews"]
+        )
+        assert all(review["blocks_merge"] is False for review in second_review["reviews"])
+        local_reads = [
+            row
+            for row in store.rows("activity")
+            if row.get("type") == "message.read"
+            and row.get("execution_status") == "done"
+            and row.get("_origin_device_id") == store.device_id()
+        ]
+        assert {
+            row["payload"]["message_id"] for row in local_reads
+        } >= {"review-mail-1", "review-mail-2"}
+        assert coordinator_a38.intake_second_reviews(
+            store, worker, saved, fake, fake.head
+        ) is None
+        assert len(
+            [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+        ) == expected_comments
+        stale = _a38_second_review_payload(task_id, "b" * 40)
+        _a38_review_mail(
+            store,
+            worker,
+            message_id="stale-later-mail",
+            login="reviewer-two",
+            payload=stale,
+            second=4,
+        )
+        assert coordinator_a38.intake_second_reviews(
+            store, worker, store.row("task", task_id), fake, fake.head
+        ) is None
+        stale_task = store.row("task", task_id)
+        assert stale_task is not None
+        observation = stale_task["payload"]["coordinator"]["observations"][-1]["text"]
+        assert "stale head" in observation
+
+
+def test_a38_later_phase_intake_routes_a_later_blocking_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "66666666-6666-4666-8666-666666666666"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "ci"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="later-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert any("routing to implementer" in line for line in lines)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["state"] == "implementing"
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 2
+
+
 def test_a38_first_comment_ping_and_external_mail_happy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

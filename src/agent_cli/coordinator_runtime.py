@@ -49,6 +49,7 @@ from .coordinator_common import (
 )
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
+    intake_second_reviews,
     phase_await_ready as phase_a38_await_ready,
     phase_await_second_review,
     phase_first_comment as phase_a38_first_comment,
@@ -481,12 +482,16 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
                 ],
             )
             if isinstance(search_result, dict):
+                if search_result.get("incomplete_results") is True:
+                    raise CoordinatorError("owner issue search returned incomplete results")
                 found = search_result.get("items")
             elif isinstance(search_result, list) and all(
                 isinstance(page, dict) for page in search_result
             ):
                 found = []
                 for page in search_result:
+                    if page.get("incomplete_results") is True:
+                        raise CoordinatorError("owner issue search returned incomplete results")
                     items = page.get("items")
                     if not isinstance(items, list):
                         raise CoordinatorError("owner issue search page has no items array")
@@ -1485,7 +1490,24 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
-        lines = handler()
+        intake_lines: list[str] | None = None
+        if worker.a38 and phase in {
+            "ci",
+            "readiness",
+            "await_ready",
+            "leave_draft",
+            "await_merge",
+        }:
+            a38 = c.get("a38")
+            second = a38.get("second_review") if isinstance(a38, dict) else None
+            current = str(c.get("head_sha") or "")
+            if isinstance(second, dict) and second.get("head") == current:
+                intake_lines = intake_second_reviews(store, worker, task, runner, current)
+                if coord(task).get("phase") == "implement":
+                    return intake_lines or [
+                        "blocking external second review; routing to implementer"
+                    ]
+        lines = [*(intake_lines or []), *handler()]
         lane_observations = c.pop("lane_observations", [])
         if isinstance(lane_observations, list) and lane_observations:
             save_task(store, task)

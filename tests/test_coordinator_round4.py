@@ -32,11 +32,15 @@ from test_coordinator_support import (
 
 
 class OwnerDiscoveryGh(FakeGh):
+    search_incomplete = False
+    search_as_dict = False
+
     def __call__(self, argv: list[str]) -> Completed:
         joined = " ".join(argv)
         if "search/issues?q=is:issue+is:open" in joined:
-            return Completed(0, json.dumps([
-                {"items": [
+            page = {
+                "incomplete_results": self.search_incomplete,
+                "items": [
                     {**self.issues[0], "repository_url": "https://api.github.com/repos/example/project"},
                     {
                         "number": 8, "state": "open", "title": "Owned issue", "body": "Do it",
@@ -56,8 +60,9 @@ class OwnerDiscoveryGh(FakeGh):
                         "number": 11, "state": "open", "repository": {"archived": True},
                         "repository_url": "https://api.github.com/repos/Example/archived",
                     },
-                ]},
-            ]), "")
+                ],
+            }
+            return Completed(0, json.dumps(page if self.search_as_dict else [page]), "")
         if argv[:2] == ["gh", "api"] and argv[-1] == "repos/Example/owned/issues/8":
             return Completed(0, json.dumps({
                 "number": 8, "state": "open", "title": "Owned issue", "body": "Do it",
@@ -87,6 +92,30 @@ def test_owner_discovery_filters_results_and_explicit_repository_wins(tmp_path, 
     assert "owner_scoped" not in explicit
     assert owned["owner_scoped"] is True
     assert not any(source["number"] in {9, 10, 11} for source in sources)
+    store.close()
+
+
+@pytest.mark.parametrize("as_dict", [False, True])
+def test_owner_discovery_rejects_incomplete_search_results(tmp_path, monkeypatch, as_dict):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_incomplete = True
+    fake.search_as_dict = as_dict
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert "discover owners: owner issue search returned incomplete results" in lines
+    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source["repo"] == "Example/owned" for source in sources)
     store.close()
 
 
