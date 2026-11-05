@@ -36,13 +36,10 @@ class RateLimitError(GuardError):
         self.completed: dict[str, Any] | None = None
 
 
-def _has_class_name(exc: BaseException, name: str) -> bool:
-    """Recognize equivalent errors loaded through another module identity."""
-    return any(base.__name__ == name for base in type(exc).__mro__)
-
-
 def is_guard_error(exc: BaseException) -> bool:
-    return isinstance(exc, GuardError) or _has_class_name(exc, "GuardError")
+    return isinstance(exc, GuardError) or (
+        isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
+    )
 
 
 def is_rate_limit_error(exc: BaseException) -> bool:
