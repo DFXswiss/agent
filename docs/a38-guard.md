@@ -203,8 +203,10 @@ run whose fresh check did not complete. The result reports `requests`. After
 all protection reads, the pass re-reads the run and its jobs a final time. It deletes, or plans in a dry run, only when the run is
 still held, unchanged in SHA and branch, still belongs to a fork, and still has
 no jobs. A run or jobs 404 is skipped; any other jobs failure aborts the pass.
-It deletes or plans at most 20 runs per sweep. A denied or rate-limited delete
-aborts the pass, while a drain failure never changes the guard's exit code.
+It deletes or plans at most 20 runs per sweep. A denied delete aborts the drain
+pass without changing the guard's exit code. A rate limit on a delete or any
+drain read stops the whole sweep with top-level `status: "rate_limited"` and
+exit 0.
 Once a run has been deleted, a later failure ends the pass with
 `aborted: "error"` and an `error` message while retaining the deleted ids; a
 failure before the first deletion still fails the pass. Deleting a
@@ -505,13 +507,31 @@ The bot marker is `<!-- PR-GUARD:A38:v1 -->`. Only comments owned by the numeric
 
 Before publication, the guard re-fetches head/base/branch/state/title/body, the trusted pr-guard configuration revision and bytes, the qualifying author report and any active migration approval. It checks again immediately before a success status and reassesses if evidence changed. GitHub offers no atomic transaction across comments, reviews and statuses: an edit after the final read is corrected by the next event or scheduled reconciliation.
 
-API or assessment errors terminate with failure. If the head is known and status writes remain available, the guard posts an `error` status to invalidate prior success. If GitHub denies or cannot perform that write, the CLI explicitly reports that invalidation failed; an old remote status may remain until a successful reconcile. Treat the failed guard run as an operational failure and rerun before merging. No implementation can invalidate remote state during a complete API outage.
+API or assessment errors terminate with failure, except a rate limit, which exits 0 and does not post that invalidation status. If the head is known and status writes remain available, the guard posts an `error` status to invalidate prior success. If GitHub denies or cannot perform that write, the CLI explicitly reports that invalidation failed; an old remote status may remain until a successful reconcile. Treat the failed guard run as an operational failure and rerun before merging. No implementation can invalidate remote state during a complete API outage.
 
-An all-open scan isolates errors per PR, continues reconciling later PRs, and returns aggregate failure after the full scan. Isolation covers any per-PR exception, including workflow-approval GuardError (fork workflow run cannot be uniquely associated with this pull request), not only inaccessible PRs. Its JSON includes an error entry for each failed PR, so one inaccessible PR cannot prevent other statuses from being refreshed.
+An all-open scan isolates errors per PR, continues reconciling later PRs, and returns aggregate failure after the full scan. Isolation covers any per-PR exception, including workflow-approval GuardError (fork workflow run cannot be uniquely associated with this pull request), not only inaccessible PRs. Its JSON includes an error entry for each failed PR, so one inaccessible PR cannot prevent other statuses from being refreshed. A rate limit is not one of those per-PR failures: the sweep stops, later pull requests are not processed, and the process exits 0. See [API cost and rate limits](#api-cost-and-rate-limits).
 
 The issue timeline for the Ready actor is walked newest-first and stops at the newest GitHub `User` `ready_for_review` event, so old PRs do not download thousands of older timeline events. The composite action runs the guard unbuffered; `--all-open` prints per-PR progress on stderr so GitHub Actions logs update during a long sweep.
 
 HTTP is restricted to `https://api.github.com`, redirects are refused, and safe GET retries are bounded. Comment/review pagination is complete up to its explicit 2000-item limit, with cycle/page limits; exceeding a bound fails instead of accepting partial evidence.
+
+## API cost and rate limits
+
+Every invocation prints one stderr line when it finishes, including `--help`, an argparse error, a run that ends with `GuardError` or a rate limit, a single pull request, an event, and an `--all-open` sweep. An invocation that made no measured requests reports zero:
+
+```
+a38-guard: api cost requests=12 families=actions/runs:1,git/trees:2,issues:3,pulls:4,statuses:2 pool_first=x-ratelimit-used=10,x-ratelimit-remaining=4990,x-ratelimit-limit=5000,x-ratelimit-reset=1700000000 pool_last=x-ratelimit-used=22,x-ratelimit-remaining=4978,x-ratelimit-limit=5000,x-ratelimit-reset=1700000000
+```
+
+`requests` is the number of HTTP calls this run made. Safe GET retries count. An immutable cache hit does not. `families` counts those calls by endpoint family (`pulls`, `issues`, `commits`, `git/trees`, `actions/runs`, `statuses`, and the same kind of name for any other path). `pool_first` and `pool_last` are the `x-ratelimit-used`, `x-ratelimit-remaining`, `x-ratelimit-limit`, and `x-ratelimit-reset` values on the first and the last response. A header that was absent is omitted. If none of the four were present, the field is `-`.
+
+A response of 429, or a 403 that is a rate limit (`x-ratelimit-remaining: 0`, a `retry-after` header, or a message that contains `rate limit`), is not an authorisation failure. The client raises `RateLimitError`, a `GuardError` that carries the time the limit lifts. A primary limit (`x-ratelimit-remaining: 0`) uses `x-ratelimit-reset` (epoch seconds) when present, then `retry-after` (seconds from now). A secondary limit prefers `retry-after`, even when `x-ratelimit-reset` is also present, and uses the reset only when there is no retry-after value. A primary limit is not retried: the reset can be up to an hour away, and the run makes no further requests. A secondary limit (`retry-after`, or a 429 or rate-limit message that has not exhausted the pool) keeps the existing short bounded GET retry. If it is still limited after that, the run stops the same way.
+
+The run logs a stderr line containing `rate limited until HH:MM UTC` (the time from those headers) and prints result JSON with `"status": "rate_limited"` and `retry_at`. The process exits 0. An authorisation 401 or 403 still exits 1 with `GitHub API denied (...)`. In an all-open sweep the remaining pull requests are not processed and the held-run drain does not start. A rate limit anywhere in the held-run drain ends the sweep with the same top-level status, retry time and exit 0, even when an earlier pull request failed. The next scheduled sweep (minutes 17 and 47) or any later event reconciles the pull request again after the reset. No manual workflow run is required.
+
+Before acceptance has been earned, a rate-limited run does not mark Ready (`markPullRequestReadyForReview`), approve held fork runs, post a `success` status, or post a comment that implies acceptance. It does not send another request to report the limit on the pull request; the stderr line is the record.
+
+GitHub writes are not transactional. If the run has already legitimately published its acceptance comment and `success` status and only a later held-fork-run approval or Ready step hits the limit, those completed writes remain earned and the run still ends as `rate_limited` with exit 0. The result JSON `completed` object lists the writes and later-step results that finished before the limit. It never lists or performs a step that had not been earned. The next sweep or event resumes reconciliation and completes the remaining approval or Ready work.
 
 ## CLI
 

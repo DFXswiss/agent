@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .a38_errors import is_rate_limit_error
+
 README = "README.md"
 GUARD_WORKFLOW_PATH = ".github/workflows/a38-guard.yml"
 MAX_FILES = 500
@@ -236,7 +238,9 @@ def list_pull_files(api: Any, repo: str, number: int) -> list[Mapping[str, Any]]
                 hard_limit=GITHUB_PR_FILES_CAP - 1,
             )
         )
-    except Exception:
+    except Exception as exc:
+        if is_rate_limit_error(exc):
+            raise
         return None
     if len(pages) >= GITHUB_PR_FILES_CAP:
         return None

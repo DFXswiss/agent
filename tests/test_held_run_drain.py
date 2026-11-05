@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import pytest
 
 from agent_cli import a38_guard, held_run_drain
-from agent_cli.a38_guard import GuardError
+from agent_cli.a38_guard import GuardError, RateLimitError
 from agent_cli.held_run_drain import (
     MAX_DELETIONS,
     MAX_EXAMINED,
@@ -1032,14 +1032,39 @@ def test_forbidden_delete_aborts_after_one_attempt() -> None:
     assert fake.deletes == [101]
 
 
-def test_rate_limited_delete_aborts_the_pass() -> None:
+def test_rate_limited_delete_propagates() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run()]
-    fake.delete_responses[101] = (429, {"message": "rate limited"}, {})
-    result = drain_held_runs(fake.api(), REPO)
-    assert result["aborted"] == "rate-limited"
-    assert result["deleted"] == []
+    fake.delete_responses[101] = (
+        429,
+        {"message": "rate limited"},
+        {"retry-after": "30"},
+    )
+    with pytest.raises(RateLimitError) as caught:
+        drain_held_runs(fake.api(), REPO)
+    assert caught.value.retry_at is not None
+    assert caught.value.completed is not None
+    assert caught.value.completed["held_run_drain"]["deleted"] == []
     assert fake.deletes == [101]
+
+
+def test_rate_limit_while_reading_drain_configuration_propagates() -> None:
+    fake = FakeDrain()
+    inner = fake.request_fn
+
+    def request_fn(method: str, url: str, body: bytes | None = None):
+        if urlparse(url).path == f"/repos/{REPO}":
+            return 403, {"message": "API rate limit exceeded"}, {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1700003600",
+            }
+        return inner(method, url, body)
+
+    fake.request_fn = request_fn  # type: ignore[method-assign]
+    with pytest.raises(RateLimitError) as caught:
+        drain_held_runs(fake.api(), REPO)
+    assert caught.value.retry_epoch == 1700003600
+    assert fake.deletes == []
 
 
 def test_later_delete_failure_preserves_deleted_ids() -> None:
