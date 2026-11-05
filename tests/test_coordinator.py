@@ -4347,6 +4347,8 @@ def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
         tmp_path, monkeypatch, task_id=task_id
     )
     task["payload"]["coordinator"]["phase"] = phase
+    if phase == "blocked":
+        task["payload"]["coordinator"]["resume_phase"] = "ci"
     store.write(
         "task", "update", task_id,
         {key: value for key, value in task.items() if not key.startswith("_")},
@@ -4357,6 +4359,47 @@ def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
 
     assert lines == [f"PR merged during {phase}; verifying the merge"]
     assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+@pytest.mark.parametrize(
+    "kind", ["merged-with-blocking-second-review", "merged-without-second-review", "closed-unmerged"]
+)
+def test_a38_final_merge_blocker_stays_blocked_on_later_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000015"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    c = task["payload"]["coordinator"]
+    c.update(phase="blocked", blocker=kind)
+    c.pop("resume_phase", None)
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    states: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime, "pr_state", lambda *a, **k: states.append("read") or "MERGED"
+    )
+    _a38_review_mail(
+        store, worker, message_id="late-pass", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head), second=50,
+    )
+
+    for _ in range(2):
+        advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "blocked"
+    assert not [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post" and row["payload"].get("target") == "pr"
+    ]
+    assert states == []
 
 
 def test_check_label_hides_owner_commands() -> None:

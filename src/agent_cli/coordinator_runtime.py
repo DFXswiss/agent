@@ -1101,7 +1101,7 @@ def phase_implement(
         "Implement assigned issue.",
     )
     draft_lines = []
-    if sha and worker.a38 and as_int(c.get("pr_number")) is not None:
+    if worker.a38 and as_int(c.get("pr_number")) is not None:
         # A merge during the lane keeps the published head and its review state.
         left = _a38_pr_left_open(store, worker, task, runner, "implement")
         if left is not None:
@@ -1467,9 +1467,16 @@ def advance_one(
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
-    if worker.a38 and as_int(c.get("pr_number")) is not None and phase not in ("await_merge", "done"):
+    final_blocker = phase == "blocked" and not c.get("resume_phase")
+    if (
+        worker.a38
+        and as_int(c.get("pr_number")) is not None
+        and phase not in ("await_merge", "done")
+        and not final_blocker
+    ):
         # Once the pull request exists the guard may make it Ready and a human may
-        # merge it in any phase, also while blocked or asking; check that first.
+        # merge it in any phase, also while asking or recoverably blocked; check that
+        # first. A non-recoverable blocker (no resume phase, e.g. after a merge) stays.
         live_state = pr_state(store, worker, task, runner)
         if live_state in ("MERGED", "CLOSED"):
             c["phase"] = "await_merge"
