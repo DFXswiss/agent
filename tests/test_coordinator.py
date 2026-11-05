@@ -3870,11 +3870,17 @@ def test_a38_await_merge_skips_second_review_intake_once_the_pr_is_not_open(
     assert len(comments) == 1
 
 
+@pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness", "await_ready"])
 @pytest.mark.parametrize(
-    ("pr_state", "expected_phase"), [("OPEN", "blocked"), ("MERGED", "await_merge")]
+    ("pr_state", "expected_phase"),
+    [("OPEN", "blocked"), ("MERGED", "await_merge"), ("CLOSED", "await_merge")],
 )
 def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, expected_phase: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    pr_state: str,
+    expected_phase: str,
 ) -> None:
     from agent_cli import coordinator_runtime
     from agent_cli.coordinator_runtime import advance_one
@@ -3883,7 +3889,7 @@ def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
     store, worker, fake, task = _a38_external_review_env(
         tmp_path, monkeypatch, task_id=task_id
     )
-    task["payload"]["coordinator"]["phase"] = "await_ready"
+    task["payload"]["coordinator"]["phase"] = phase
     store.write(
         "task",
         "update",
@@ -3892,9 +3898,8 @@ def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
     )
     fake.issues[0]["assignees"] = []
     fake.pr["state"] = pr_state
-    monkeypatch.setattr(
-        coordinator_runtime, "phase_a38_await_ready", lambda *args, **kwargs: ["ready handler"]
-    )
+    for name in ("phase_a38_await_ready", "phase_await_second_review", "phase_ci", "phase_readiness"):
+        monkeypatch.setattr(coordinator_runtime, name, lambda *args, **kwargs: ["ready handler"])
 
     lines = advance_one(store, worker, runner=fake, lane_runner=None)
 
@@ -3902,6 +3907,8 @@ def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
     saved = store.row("task", task_id)
     assert saved is not None
     assert saved["payload"]["coordinator"]["phase"] == expected_phase
+    if expected_phase == "await_merge":
+        assert lines == [f"PR left open state during {phase}; verifying the merge"]
 
 
 def test_a38_await_merge_posts_no_second_review_after_revocation(
