@@ -3746,7 +3746,7 @@ def test_a38_intake_processes_all_reviews_for_one_head(
             "reviewer-two",
         ]
         assert all(
-            set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge", "at"}
+            set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge", "at", "mail_id"}
             for review in second_review["reviews"]
         )
         assert all(review["blocks_merge"] is False for review in second_review["reviews"])
@@ -4242,6 +4242,79 @@ def test_a38_older_review_delivered_after_a_newer_post_is_not_posted(
     assert c["phase"] == "ci"
     assert any("superseded" in o["text"] for o in c["observations"])
     assert lines is None or not any("routing to implementer" in line for line in lines)
+
+
+def test_a38_same_time_review_arriving_later_is_superseded_by_mail_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000011"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    _a38_review_mail(
+        store, worker, message_id="b-pass", login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head), second=7,
+    )
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    _a38_review_mail(
+        store, worker, message_id="a-block", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True), second=7,
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    c = store.row("task", task_id)["payload"]["coordinator"]
+    assert [r["mail_id"] for r in c["a38"]["second_review"]["reviews"]] == ["b-pass"]
+    assert c["phase"] == "ci"
+
+
+@pytest.mark.parametrize(("pr_state", "phase"), [("MERGED", "await_merge"), ("OPEN", "implement")])
+def test_a38_implement_after_a_block_checks_for_a_merge_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000012"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    c = task["payload"]["coordinator"]
+    c["phase"] = "implement"
+    c["a38"]["second_review"] = {
+        "head": fake.head, "status": "posted", "reviews": [{"blocks_merge": True, "at": "t"}]
+    }
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: pr_state)
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_implement", lambda *a, **k: ["implementer started"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == phase
+    assert ("implementer started" in lines) is (pr_state == "OPEN")
+
+
+def test_a38_unchanged_head_after_a_block_asks_the_reviewers_again() -> None:
+    from agent_cli.coordinator_a38 import head_review_blocks
+
+    head = "a" * 40
+    blocked = {"a38": {"second_review": {"head": head, "reviews": [{"blocks_merge": True}]}}}
+    passed = {"a38": {"second_review": {"head": head, "reviews": [{"blocks_merge": False}]}}}
+    other_head = {"a38": {"second_review": {"head": "b" * 40, "reviews": [{"blocks_merge": True}]}}}
+
+    assert head_review_blocks(blocked, head) is True
+    assert head_review_blocks(passed, head) is False
+    assert head_review_blocks(other_head, head) is False
+    assert head_review_blocks({"a38": {}}, head) is False
 
 
 def test_a38_routing_a_block_keeps_the_review_history_of_the_head(

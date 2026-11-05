@@ -692,7 +692,7 @@ def phase_first_comment(
     if isinstance(existing, dict) and existing.get("head") == head:
         row = store.row("activity", str(existing.get("activity_id") or ""))
         if row is not None and row.get("execution_status") == "done":
-            send_second_review_requests(store, worker, task)
+            send_second_review_requests(store, worker, task, force=head_review_blocks(c, head))
             c["phase"] = "await_second_review"
             save_task(store, task)
             return [f"first A38 review comment already posted on {head[:7]}"]
@@ -743,7 +743,8 @@ def phase_first_comment(
         "id": result.get("id"),
         "url": result.get("url"),
     }
-    send_second_review_requests(store, worker, task)
+    # A head kept after a blocking review (an implementer without changes) asks again.
+    send_second_review_requests(store, worker, task, force=head_review_blocks(c, head))
     c["phase"] = "await_second_review"
     save_task(store, task)
     return [f"first A38 review comment posted on {head[:7]}"]
@@ -766,6 +767,17 @@ def _second_review_request_note(*, url: str, session_id: str) -> str:
     if len(rendered_url) > available:
         rendered_url = rendered_url[: max(0, available - 1)] + "…"
     return prefix + rendered_url + suffix
+
+
+def head_review_blocks(c: dict[str, Any], head: str) -> bool:
+    state = _a38_state(c).get("second_review")
+    reviews = state.get("reviews") if isinstance(state, dict) else None
+    return (
+        isinstance(state, dict)
+        and state.get("head") == head
+        and isinstance(reviews, list)
+        and newest_reviews_block(reviews)
+    )
 
 
 def send_second_review_requests(
@@ -999,8 +1011,8 @@ def intake_second_reviews(
         raise CoordinatorError("external second-review intake called for a non-A38 worker")
     c = coord(task)
     read = _read_message_ids(store, worker)
-    # Oldest first by replica time with a deterministic tie-break; reviews that share
-    # the newest second are resolved conservatively when deciding (a block wins).
+    # Oldest first by replica time with a deterministic tie-break; the last review
+    # posted for the head decides, as the guard reads the newest comment.
     messages = sorted(
         store.rows("activity"),
         key=lambda row: (str(row.get("_updated_at") or ""), str(row.get("id") or "")),
@@ -1052,7 +1064,9 @@ def intake_second_reviews(
             and posted_state.get("head") == current
             and isinstance(posted_reviews, list)
             and any(
-                isinstance(review, dict) and str(review.get("at") or "") > at
+                isinstance(review, dict)
+                and (str(review.get("at") or ""), str(review.get("mail_id") or ""))
+                > (at, str(message_id))
                 for review in posted_reviews
             )
         ):
@@ -1131,6 +1145,8 @@ def intake_second_reviews(
                     "url": result.get("url"),
                     "blocks_merge": payload["blocks_merge"],
                     "at": str(row.get("_updated_at") or ""),
+                    # Same sort key as intake, so equal times still compare in mail order.
+                    "mail_id": str(message_id),
                 }
             )
         if payload["blocks_merge"]:
@@ -1176,12 +1192,11 @@ def intake_second_reviews(
         )
         # Every passing review records its evidence, so a pass after an earlier
         # block on the same head (for example after the merge) still closes the keys.
-        # A pass tied with a block is not the deciding review; routing decides below.
-        if not newest_reviews_block(reviews):
-            set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
-            set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
-            if c.get("phase") == "await_second_review":
-                c["phase"] = "ci"
+        # This pass is now the last posted review, so it is the deciding one.
+        set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
+        set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
+        if c.get("phase") == "await_second_review":
+            c["phase"] = "ci"
         save_task(store, task)
         _mark_message_read(store, worker, message_id)
         lines.append(f"external second review by @{login} posted on {current[:7]}")
