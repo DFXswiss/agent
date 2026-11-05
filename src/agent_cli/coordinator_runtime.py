@@ -1511,14 +1511,17 @@ def advance_one(
         try:
             _verify_source_assigned(store, worker, c, runner)
         except CoordinatorError as exc:
-            if worker.a38 and phase in A38_MERGEABLE_WAIT_PHASES and pr_state(
-                store, worker, task, runner
-            ) in ("MERGED", "CLOSED"):
-                # A merge closes the issue; await_merge verifies the human merge
-                # (and blocks a pull request that was closed without one).
-                c["phase"] = "await_merge"
-                save_task(store, task)
-                return [f"PR left open state during {phase}; verifying the merge"]
+            if worker.a38 and phase in A38_MERGEABLE_WAIT_PHASES:
+                live_state = pr_state(store, worker, task, runner)
+                if live_state is None:
+                    # A merge also unassigns the closed issue; decide only on a readable state.
+                    return [f"PR state temporarily unavailable during {phase}; retrying"]
+                if live_state in ("MERGED", "CLOSED"):
+                    # A merge closes the issue; await_merge verifies the human merge
+                    # (and blocks a pull request that was closed without one).
+                    c["phase"] = "await_merge"
+                    save_task(store, task)
+                    return [f"PR left open state during {phase}; verifying the merge"]
             c["phase"] = "blocked"
             c["resume_phase"] = phase if phase not in ("blocked", "ask", "done") else "implement"
             c["blocker"] = str(exc)
