@@ -4274,6 +4274,34 @@ def test_a38_rejected_review_mail_stays_unread_when_the_observation_save_fails(
     assert "rejected-mail" not in _read_message_ids(store, worker)
 
 
+def test_a38_public_prompt_hides_local_paths(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import public_prompt
+    from agent_cli.coordinator_common import control_dir
+
+    worker = replace(make_worker(tmp_path), a38=True)
+    task = {
+        "id": "abababab-0000-4000-8000-00000000000d",
+        "payload": {"coordinator": {"worktree": str(worker.workspace_root / "task-tree")}},
+    }
+    ctrl = control_dir(worker, task["id"])
+    prompt = (
+        f"Diff artifact: {ctrl}/pr-diff.patch\n"
+        f"Worktree: {worker.workspace_root / 'task-tree'}\n"
+        f"Other: {worker.workspace_root}/cache and {Path.home()}/notes\n"
+    )
+
+    published = public_prompt(prompt, worker, task)
+
+    assert "<control-dir>/pr-diff.patch" in published
+    assert "<worktree>" in published
+    assert "<workspace>/cache" in published
+    assert "~/notes" in published
+    assert str(worker.workspace_root) not in published
+    assert str(Path.home()) not in published
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -660,7 +660,7 @@ def phase_first_comment(
             return [f"first review {dimension} prompt evidence missing; re-running gate"]
         provider = item["provider"]
         model = item["model"]
-        prompt = item["prompt"]
+        prompt = public_prompt(item["prompt"], worker, task)
         lanes.append(
             {
                 "id": lane_id,
@@ -896,6 +896,30 @@ def pr_open_unmerged(
     """Return whether the task's pull request is still open, or None when unreadable."""
     state = pr_state(store, worker, task, runner)
     return None if state is None else state == "OPEN"
+
+
+def public_prompt(prompt: str, worker: WorkerConfig, task: Mapping[str, Any]) -> str:
+    """Replace this host's local paths in a lane prompt before it is published.
+
+    The review comment quotes the prompt; the control directory, the task
+    worktree, the workspace root and the home directory are host details.
+    """
+    from pathlib import Path
+
+    c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
+    replacements = [
+        (str(control_dir(worker, str(task["id"]))), "<control-dir>"),
+        (str(c.get("worktree") or ""), "<worktree>"),
+        (str(worker.workspace_root), "<workspace>"),
+        (str(Path.home()), "~"),
+    ]
+    text = prompt
+    for raw, placeholder in replacements:
+        if not raw or raw in ("/", "."):
+            continue
+        for variant in {raw, str(Path(raw).resolve()) if Path(raw).is_absolute() else raw}:
+            text = text.replace(variant, placeholder)
+    return text
 
 
 def _parse_iso(value: Any) -> datetime | None:
