@@ -51,7 +51,6 @@ from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
     fresh_pr_head,
     intake_second_reviews,
-    pr_open_unmerged,
     pr_state,
     phase_await_ready as phase_a38_await_ready,
     phase_await_second_review,
@@ -1386,6 +1385,23 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
 A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness", "await_ready"})
 
 
+def _second_review_intake_allowed(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    c: dict[str, Any],
+    runner: Runner,
+    phase: str,
+) -> bool:
+    """Intake runs on an open PR (in await_merge only while still assigned), and in
+    await_merge also after the merge, which closes the issue; a blocking result
+    there never reopens work."""
+    state = pr_state(store, worker, task, runner)
+    if state == "OPEN":
+        return phase != "await_merge" or _source_still_assigned(store, worker, c, runner)
+    return phase == "await_merge" and state == "MERGED"
+
+
 def _verify_source_assigned(
     store: Store, worker: WorkerConfig, c: dict[str, Any], runner: Runner
 ) -> None:
@@ -1553,11 +1569,10 @@ def advance_one(
             if (
                 isinstance(second, dict)
                 and second.get("head") == current
-                and pr_open_unmerged(store, worker, task, runner) is True
-                and (phase != "await_merge" or _source_still_assigned(store, worker, c, runner))
+                and _second_review_intake_allowed(store, worker, task, c, runner, phase)
             ):
                 intake_lines = intake_second_reviews(store, worker, task, runner, current)
-                if coord(task).get("phase") == "implement":
+                if coord(task).get("phase") != phase:
                     return intake_lines or [
                         "blocking external second review; routing to implementer"
                     ]

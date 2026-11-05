@@ -3862,12 +3862,17 @@ def test_a38_await_merge_skips_second_review_intake_once_the_pr_is_not_open(
 
     lines = advance_one(store, worker, runner=fake, lane_runner=None)
 
-    assert lines == ["merge observed"]
     after = store.row("task", task_id)
     assert after is not None
     assert after["payload"]["coordinator"]["phase"] == "await_merge"
     comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
-    assert len(comments) == 1
+    if pr_state == "MERGED":
+        # The merged head's review is still taken in, but never reopens work.
+        assert any("arrived after the merge" in line for line in lines)
+        assert len(comments) == 2
+    else:
+        assert lines == ["merge observed"]
+        assert len(comments) == 1
 
 
 @pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness", "await_ready"])
@@ -4098,6 +4103,85 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
     assert saved is not None
     assert saved["payload"]["coordinator"]["phase"] == "await_merge"
     assert saved["state"] != "implementing"
+
+
+@pytest.mark.parametrize(
+    ("reviews", "expected"),
+    [
+        (None, "missing"),
+        ([{"blocks_merge": False}], "passed"),
+        ([{"blocks_merge": False}, {"blocks_merge": True}], "blocking"),
+    ],
+)
+def test_a38_second_review_outcome_for_a_merged_head(reviews, expected) -> None:
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    head = "a" * 40
+    c: dict = {"a38": {}}
+    if reviews is not None:
+        c["a38"]["second_review"] = {"head": head, "status": "posted", "reviews": reviews}
+    assert _a38_second_review_outcome(c, head) == expected
+    assert _a38_second_review_outcome(c, "b" * 40) == "missing"
+
+
+def test_a38_merge_without_second_review_waits_then_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_github
+
+    task_id = "abababab-0000-4000-8000-000000000008"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    worker = replace(worker, second_review_timeout_seconds=600)
+    published: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda _store, _worker, _task, _runner, message, *, kind="blocker", **_kw: (
+            published.append((kind, message)) or [f"blocker {kind}"]
+        ),
+    )
+    clock = iter(["2026-11-05T10:00:00Z", "2026-11-05T10:05:00Z", "2026-11-05T10:11:00Z"])
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
+
+    first = coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=False
+    )
+    second = coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=False
+    )
+    third = coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=False
+    )
+
+    assert "awaiting the external second review" in first[0]
+    assert "awaiting the external second review" in second[0]
+    assert third == ["blocker merged-without-second-review"]
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def test_a38_merge_with_blocking_second_review_blocks_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+
+    task_id = "abababab-0000-4000-8000-000000000009"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda _store, _worker, _task, _runner, message, *, kind="blocker", **_kw: [f"blocker {kind}"],
+    )
+
+    assert coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=True
+    ) == ["blocker merged-with-blocking-second-review"]
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
 
 
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(

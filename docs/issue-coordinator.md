@@ -388,10 +388,11 @@ for worker in workers.values():
     `implement`.
     Reassignment must not open a duplicate PR for a completed source.
     Revoked assignment stops new effects including formal approve / leave-draft;
-    `await_merge` may continue observation only and posts no further second-review
-    comments once the assignment is revoked. An A38 task in `await_ready` whose
-    pull request is no longer open (a merge closes the issue) moves to
-    `await_merge`, which verifies the human merge.
+    `await_merge` may continue observation only and, while the pull request is
+    open, posts no further second-review comments once the assignment is revoked. An A38 task in `await_second_review`,
+    `ci`, `readiness` or `await_ready` whose pull request is merged or closed (a
+    merge closes the issue) moves to `await_merge`, which verifies the human merge
+    or blocks a pull request closed without one.
 
 ### Trusted readiness JSON contract
 
@@ -607,8 +608,12 @@ unchanged head Ready, then observes the human merge exactly like an ordinary
 worker. The guard may make the pull request Ready while the worker is still in
 `await_second_review`, `ci`, `readiness` or `await_ready`; a pull request merged
 in any of these phases goes straight to `await_merge`, which verifies the merge.
-Second-review intake runs only while the pull request is open, and a blocking
-result that finds the pull request already merged does not reopen the work. A new head invalidates its report, both comment checkpoints, and
+Second-review intake runs while the pull request is open and, in `await_merge`,
+also after the merge, so a review of the merged head is still published; it never
+reopens work. A merged pull request completes only with a passing second review:
+`await_merge` waits up to `second_review_timeout_seconds` for it, publishes the
+non-recoverable blocker `merged-without-second-review` after that, and publishes
+`merged-with-blocking-second-review` at once when a posted review blocks the merge. A new head invalidates its report, both comment checkpoints, and
 external-review state.
 
 These A38 settings enter the task execution binding only for A38 workers, so
