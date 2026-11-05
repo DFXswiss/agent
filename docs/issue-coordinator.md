@@ -387,7 +387,10 @@ for worker in workers.values():
     `implement`.
     Reassignment must not open a duplicate PR for a completed source.
     Revoked assignment stops new effects including formal approve / leave-draft;
-    `await_merge` may continue observation only.
+    `await_merge` may continue observation only and posts no further second-review
+    comments once the assignment is revoked. An A38 task in `await_ready` whose
+    pull request is no longer open (a merge closes the issue) moves to
+    `await_merge`, which verifies the human merge.
 
 ### Trusted readiness JSON contract
 
@@ -596,7 +599,8 @@ the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;
 observe contexts never count. It advances after the guard has made the
 unchanged head Ready, then observes the human merge exactly like an ordinary
-worker. A new head invalidates its report, both comment checkpoints, and
+worker. A pull request merged before the worker observed Ready goes straight to
+`await_merge`, which verifies the merge. A new head invalidates its report, both comment checkpoints, and
 external-review state.
 
 These A38 settings enter the task execution binding only for A38 workers, so

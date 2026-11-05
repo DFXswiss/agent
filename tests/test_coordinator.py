@@ -3870,6 +3870,88 @@ def test_a38_await_merge_skips_second_review_intake_once_the_pr_is_not_open(
     assert len(comments) == 1
 
 
+@pytest.mark.parametrize(
+    ("pr_state", "expected_phase"), [("OPEN", "blocked"), ("MERGED", "await_merge")]
+)
+def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, expected_phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000001"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = "await_ready"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.issues[0]["assignees"] = []
+    fake.pr["state"] = pr_state
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_a38_await_ready", lambda *args, **kwargs: ["ready handler"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert "ready handler" not in lines
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == expected_phase
+
+
+def test_a38_await_merge_posts_no_second_review_after_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000002"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    saved["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "OPEN"
+    fake.issues[0]["assignees"] = []
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="late-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge observed"]
+    )
+
+    assert advance_one(store, worker, runner=fake, lane_runner=None) == ["merge observed"]
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 1
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
