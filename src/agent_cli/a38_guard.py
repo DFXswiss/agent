@@ -1009,6 +1009,9 @@ class GitHubApi:
         self.pool_first: dict[str, str] | None = None
         self.pool_last: dict[str, str] | None = None
         self._rate_limit: RateLimitError | None = None
+        # Set when a rate limit blocked the error status that should have
+        # invalidated a prior success; the run must then not end green.
+        self.invalidation_failed = False
 
     def _count_request(self, url: str) -> None:
         family = _endpoint_family(url)
@@ -3556,6 +3559,7 @@ def _invalidate_after_failure(api: GitHubApi, pull: PullSnapshot) -> None:
     except RuntimeError as exc:
         if not is_rate_limit_error(exc):
             raise
+        api.invalidation_failed = True
         print(
             "a38-guard: could not invalidate prior status "
             f"({_rate_limit_phrase(getattr(exc, 'retry_at', None))})",
@@ -4121,7 +4125,8 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
         except RuntimeError as exc:
             if is_rate_limit_error(exc):
                 _emit_rate_limited(exc, args)
-                return 0
+                # A blocked invalidation can leave an old success standing.
+                return 1 if getattr(client, "invalidation_failed", False) else 0
             if not _is_guard_error(exc):
                 raise
             print(f"a38-guard: {exc}", file=sys.stderr)

@@ -5090,6 +5090,55 @@ class A38GuardRateLimitTests(unittest.TestCase):
         )
         self.assertEqual(api.request_count, 1)
 
+    def test_sweep_with_blocked_invalidation_does_not_end_green(self) -> None:
+        api = self._limited(
+            403,
+            {"message": "API rate limit exceeded"},
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": str(_RESET),
+            },
+        )
+
+        def pull(_api: GitHubApi, repo: str, number: int) -> Any:
+            return a38_guard.PullSnapshot(
+                repo=repo,
+                number=number,
+                state="open",
+                head_sha=HEAD,
+                base_sha=BASE,
+                base_ref="develop",
+                private=False,
+                author_id=AUTHOR_ID,
+                author_login="author",
+            )
+
+        def drain(client: GitHubApi, repo: str, *, dry_run: bool) -> dict[str, Any]:
+            client.get_json(f"/repos/{repo}/actions/runs")
+            return {}
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard, "fetch_pull", side_effect=pull
+        ), mock.patch.object(
+            a38_guard, "assess_pull", side_effect=GuardError("assessment failed")
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", side_effect=drain
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "could not invalidate prior status "
+            f"(rate limited until {_utc_hm(_RESET)} UTC)",
+            stderr,
+        )
+        self.assertEqual(api.request_count, 1)
+
     def test_primary_limit_exits_zero_without_success_writes(self) -> None:
         fake = FakeAPI()
         calls: list[tuple[str, str]] = []
