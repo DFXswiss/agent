@@ -4678,6 +4678,8 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
 
     awaiting = store.row("task", tid)
     awaiting["payload"]["coordinator"]["phase"] = "await_ready"
+    # The test skips phase_readiness; record that readiness ran on this head.
+    awaiting["payload"]["coordinator"].setdefault("evidence", {})["readiness_head"] = fake.head
     store.write("task", "update", tid, {key: value for key, value in awaiting.items() if not key.startswith("_")})
     enforce_context = status_context_enforce("develop")
     observe_context = status_context_observe("develop")

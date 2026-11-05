@@ -637,6 +637,30 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             "issue_key": mandate.issue_key,
             "deviation": mandate.deviation,
         }
+        if owner_a38_default and not _mandate_states_no_deviation(
+            source, text(source.get("assignment_actor"))
+        ):
+            # Check the statement at accept, so a corrected hub assignment is found by
+            # the next query instead of failing only at readiness.
+            source.pop("hub_assignment_mandate", None)
+            source.pop("hub_assignment_row_id", None)
+            if c.get("blocker") != MANDATE_DEVIATION_BLOCKER:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = MANDATE_DEVIATION_BLOCKER
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "hub-assignment"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                MANDATE_DEVIATION_BLOCKER,
+                kind="hub-assignment",
+                reply_checkpoint=True,
+            )
         c.pop("hub_assignment_retry", None)
         c.pop("hub_assignment_retry_published_at", None)
         c.pop("blocker", None)
@@ -1267,24 +1291,7 @@ def _apply_readiness_checklist(
         mandate = source.get("hub_assignment_mandate")
         row_id = mandate.get("row_id") if isinstance(mandate, dict) else None
         mandate_actor = mandate.get("actor") if isinstance(mandate, dict) else None
-        origin = mandate.get("origin") if isinstance(mandate, dict) else None
-        issue_key = mandate.get("issue_key") if isinstance(mandate, dict) else None
-        deviation = mandate.get("deviation") if isinstance(mandate, dict) else None
-        expected_issue_key = f"{source.get('repo')}#{source.get('number')}"
-        explicit_no_deviation = (
-            isinstance(row_id, str)
-            and bool(row_id)
-            and row_id == source.get("hub_assignment_row_id")
-            and isinstance(mandate_actor, str)
-            and mandate_actor.casefold() == assignment_actor.casefold()
-            and origin == f"web:{mandate_actor}"
-            and isinstance(issue_key, str)
-            and issue_key.casefold() == expected_issue_key.casefold()
-            and isinstance(deviation, dict)
-            and set(deviation) == {"declared", "stated_by"}
-            and deviation.get("declared") is False
-            and deviation.get("stated_by") == mandate_actor
-        )
+        explicit_no_deviation = _mandate_states_no_deviation(source, assignment_actor)
         if not explicit_no_deviation:
             raise CoordinatorError(MANDATE_DEVIATION_BLOCKER)
         mandate_evidence = (
@@ -2269,7 +2276,38 @@ def _record_human_merge(
     )
 
 
-def _readiness_keys_closed(store: Store, task_id: str) -> bool:
+def _mandate_states_no_deviation(source: dict[str, Any], assignment_actor: str | None) -> bool:
+    """True when the pinned hub mandate carries the owner's explicit no-deviation statement."""
+    mandate = source.get("hub_assignment_mandate")
+    if not isinstance(mandate, dict) or not isinstance(assignment_actor, str):
+        return False
+    row_id = mandate.get("row_id")
+    mandate_actor = mandate.get("actor")
+    issue_key = mandate.get("issue_key")
+    deviation = mandate.get("deviation")
+    expected_issue_key = f"{source.get('repo')}#{source.get('number')}"
+    return (
+        isinstance(row_id, str)
+        and bool(row_id)
+        and row_id == source.get("hub_assignment_row_id")
+        and isinstance(mandate_actor, str)
+        and mandate_actor.casefold() == assignment_actor.casefold()
+        and mandate.get("origin") == f"web:{mandate_actor}"
+        and isinstance(issue_key, str)
+        and issue_key.casefold() == expected_issue_key.casefold()
+        and isinstance(deviation, dict)
+        and set(deviation) == {"declared", "stated_by"}
+        and deviation.get("declared") is False
+        and deviation.get("stated_by") == mandate_actor
+    )
+
+
+def _readiness_keys_closed(store: Store, task: dict[str, Any], head: str) -> bool:
+    """Readiness counts as closed only when it ran on this exact head."""
+    evidence = coord(task).get("evidence")
+    if not isinstance(evidence, dict) or evidence.get("readiness_head") != head:
+        return False
+    task_id = str(task["id"])
     statuses = {
         str(row.get("key")): str(row.get("status") or "")
         for row in store.rows("checklist_item")
@@ -2291,7 +2329,7 @@ def _close_readiness_after_merge(
     head: str,
 ) -> None:
     """Close readiness on an A38 head merged before the readiness phase ran."""
-    if _readiness_keys_closed(store, str(task["id"])):
+    if _readiness_keys_closed(store, task, head):
         return
     c = coord(task)
     cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
@@ -2427,7 +2465,7 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                     expected_head,
                     blocking=second_review == "blocking",
                 )
-            if not _readiness_keys_closed(store, str(task["id"])):
+            if not _readiness_keys_closed(store, task, expected_head):
                 try:
                     _close_readiness_after_merge(
                         store,
