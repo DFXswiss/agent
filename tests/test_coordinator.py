@@ -3268,6 +3268,7 @@ def test_parallel_openrouter_missing_key_records_reason(
     )
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     _patch_pr_gate_git(monkeypatch, tmp_path)
+    patch_execute_github(monkeypatch)
     reason = "STATUS: unavailable\nopenrouter key missing\n"
 
     def missing_key(argv, stdin=None):  # noqa: ANN001
