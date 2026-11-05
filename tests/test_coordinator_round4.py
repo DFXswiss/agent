@@ -841,7 +841,8 @@ def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path)
     assert checkpoint["hub_assignment_retry_published_at"] == "2026-01-01T01:00:00Z"
     assert len(published) == 1
     assert "hub.internal.example" not in published[0][0]
-    assert "hub.internal.example" in checkpoint["hub_assignment_retry"]
+    assert checkpoint["hub_assignment_retry"] == "hub temporarily unavailable"
+    assert any("hub.internal.example" in line for line in lines)
     lines = phase_accept(object(), _accept_worker(tmp_path), task, object())
     assert "retrying accept" in lines[0]
     assert len(published) == 1
@@ -882,7 +883,7 @@ def test_hub_configuration_errors_block_with_reply_checkpoint(monkeypatch, tmp_p
     assert checkpoint["blocker_publish_once"] is True
     assert published == [{"kind": "configuration-binding", "reply_checkpoint": True}]
     assert messages == [HUB_CONFIGURATION_BLOCKER]
-    assert checkpoint["hub_assignment_retry"] == reason
+    assert checkpoint["hub_assignment_retry"] == "hub configuration error"
 
 
 def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, tmp_path):

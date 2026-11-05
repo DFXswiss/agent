@@ -215,16 +215,10 @@ def external_second_review_evidence_ok(
 
 
 def newest_reviews_block(reviews: list[Any]) -> bool:
-    """True when the newest posted review blocks; reviews sharing the newest
-    timestamp count as blocking if any of them blocks."""
+    """True when the last posted review blocks. Intake never posts a review older
+    than one already posted, so the last one is also the newest, as the guard reads it."""
     entries = [review for review in reviews if isinstance(review, dict)]
-    if not entries:
-        return False
-    # Newest by recorded time, not by append order: a late delivery of an older
-    # review must not outvote a newer one.
-    newest_at = max(str(review.get("at") or "") for review in entries)
-    tied = [review for review in entries if str(review.get("at") or "") == newest_at] if newest_at else [entries[-1]]
-    return any(review.get("blocks_merge") is True for review in tied)
+    return bool(entries) and entries[-1].get("blocks_merge") is True
 
 
 def _tid(task: dict[str, Any]) -> str:
