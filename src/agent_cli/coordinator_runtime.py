@@ -1135,7 +1135,7 @@ def phase_implement(
         "Implement assigned issue.",
     )
     draft_lines = []
-    if sha and worker.a38 and as_int(c.get("pr_number")) is not None:
+    if worker.a38 and as_int(c.get("pr_number")) is not None:
         # A merge during the lane keeps the published head and its review state.
         left = _a38_pr_left_open(store, worker, task, runner, "implement")
         if left is not None:
