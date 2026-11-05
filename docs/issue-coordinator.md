@@ -630,7 +630,7 @@ also after the merge, so a review of the merged head is still published; it neve
 reopens work. A merged pull request completes only with a passing second review:
 `await_merge` waits up to `second_review_timeout_seconds` for it, publishes the
 non-recoverable blocker `merged-without-second-review` after that, and publishes
-`merged-with-blocking-second-review` at once when a posted review blocks the merge. A new head invalidates its report, both comment checkpoints, and
+`merged-with-blocking-second-review` at once when the newest posted review blocks the merge. A new head invalidates its report, both comment checkpoints, and
 external-review state.
 
 These A38 settings enter the task execution binding only for A38 workers, so

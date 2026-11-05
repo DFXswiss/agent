@@ -2358,15 +2358,15 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
 
 
 def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
-    """Return "blocking", "passed" or "missing" for the posted second reviews of head."""
+    """Return "blocking", "passed" or "missing" from the newest posted second review of head."""
     a38 = c.get("a38")
     state = a38.get("second_review") if isinstance(a38, dict) else None
     if not isinstance(state, dict) or state.get("head") != head or state.get("status") != "posted":
         return "missing"
-    reviews = state.get("reviews")
-    if isinstance(reviews, list) and any(
-        isinstance(review, dict) and review.get("blocks_merge") is True for review in reviews
-    ):
+    # The newest posted second review decides (docs/a38.md): a later clearing
+    # review lifts an earlier block, a later block overrides an earlier pass.
+    reviews = [review for review in state.get("reviews") or [] if isinstance(review, dict)]
+    if reviews and reviews[-1].get("blocks_merge") is True:
         return "blocking"
     return "passed"
 
