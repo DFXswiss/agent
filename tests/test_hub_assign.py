@@ -155,6 +155,8 @@ def test_assign_unpaired_device_has_clear_error(monkeypatch):
         (["--agent", "bot", "--repo", "bad", "--title", "Fix", "--body", "Details"], "Owner/Name"),
         (["--agent", "bot", "--repo", "x/y", "--title", "", "--body", "Details"], "--title is required"),
         (["--agent", "bot", "--repo", "x/y", "--title", "Fix", "--body", ""], "body must"),
+        (["--agent", "bot", "--repo", "x/y", "--title", "T" * 257, "--body", "Details"], "title must"),
+        (["--agent", "bot", "--repo", "x/y", "--title", "Fix", "--body", "B" * 60001], "body must"),
     ],
 )
 def test_assign_validates_before_http(monkeypatch, argv, error):
@@ -164,3 +166,19 @@ def test_assign_validates_before_http(monkeypatch, argv, error):
     )
     with pytest.raises(SystemExit, match=error):
         main(["assign", *argv])
+
+
+def test_assign_refuses_a_malformed_success_response(monkeypatch, capsys):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"repo": "Example/Project", "number": "42"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hub = Hub("https://hub.example", "secret-device-token", client=client)
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore())
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
+    with pytest.raises(SystemExit, match="invalid assignment response"):
+        main([
+            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "--title", "Fix widget", "--body", "Detailed mandate",
+        ])
+    client.close()

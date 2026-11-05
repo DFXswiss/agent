@@ -732,3 +732,31 @@ def test_scan_usage_no_auth_xai_entry(tmp_path: Path) -> None:
             auth_path=path,
         )
     assert store.rows("activity") == []
+
+
+def test_fetch_openrouter_key_default_client_has_timeout_and_no_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_cli import usage
+
+    seen: dict[str, Any] = {}
+
+    class RecordingClient:
+        def __init__(self, **kwargs: Any) -> None:
+            seen.update(kwargs)
+
+        def __enter__(self) -> "RecordingClient":
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, url: str, headers: dict[str, str]) -> httpx.Response:
+            seen["url"] = url
+            return httpx.Response(200, json=_openrouter_body(), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(usage.httpx, "Client", RecordingClient)
+    usage._fetch_openrouter_key("router-secret")
+    assert seen["timeout"] == 8.0
+    assert seen["follow_redirects"] is False
+    assert seen["url"] == usage.OPENROUTER_KEY_URL
