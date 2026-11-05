@@ -4143,6 +4143,37 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
     assert saved["state"] != "implementing"
 
 
+def test_a38_late_older_blocking_review_keeps_the_newer_block_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000c"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    newer = _a38_second_review_payload(task_id, fake.head, blocks_merge=True)
+    newer["findings"] = "Newer blocking finding."
+    _a38_review_mail(
+        store, worker, message_id="newer-block", login="reviewer-one", payload=newer, second=20
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    monkeypatch.setattr(coordinator_a38, "_route_newest_blocking_review", lambda *a, **k: None)
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    older = _a38_second_review_payload(task_id, fake.head, blocks_merge=True)
+    older["findings"] = "Older blocking finding."
+    _a38_review_mail(
+        store, worker, message_id="older-block", login="reviewer-two", payload=older, second=5
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    block = store.row("task", task_id)["payload"]["coordinator"]["second_review_block"]
+    assert "Newer blocking finding." in block["findings"]
+    assert block["reviewer"] == "reviewer-one"
+
+
 def test_a38_blocking_review_in_await_merge_on_an_open_pr_reopens_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
