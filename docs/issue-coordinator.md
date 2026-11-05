@@ -640,8 +640,9 @@ the newest passing review is recorded and a pass after a block on the same head
 (also after the merge) closes them. It continues accepting
 unread reviews for that head through CI, readiness, Ready observation, and merge
 observation, and publishes one idempotent review comment for every valid mail.
-Each tick takes in all queued unread mail for the head and the newest review
-decides: a blocking result returns the task to the implementer only when no newer
+Each tick takes in all queued unread mail for the head, ordered by the mail
+row's replica change time (`updated_at`, equal times by row id), and the newest
+review decides; reviews with the same newest time block if any of them blocks: a blocking result returns the task to the implementer only when no newer
 passing review of the same head follows it in that tick; stale, malformed, or
 unauthorized mail is acknowledged and recorded as an
 observation. Pending requests are re-pinged once per configured timeout and are
@@ -672,7 +673,9 @@ reopens work. After the merge every waiting review is taken in before
 `await_merge` decides by the newest one. A merged pull request completes only with a passing second review:
 `await_merge` waits up to `second_review_timeout_seconds` for it, publishes the
 non-recoverable blocker `merged-without-second-review` after that, and publishes
-`merged-with-blocking-second-review` at once when the newest posted review blocks the merge. A new head invalidates its report, both comment checkpoints, and
+`merged-with-blocking-second-review` at once when the newest posted review blocks the merge.
+Both merge blockers are final like `closed-unmerged`: the task stays blocked, and a
+review that arrives after that blocker is published is not taken in. A new head invalidates its report, both comment checkpoints, and
 external-review state.
 
 These A38 settings enter the task execution binding only for A38 workers, so

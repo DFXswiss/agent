@@ -798,14 +798,17 @@ def send_second_review_requests(
         if isinstance(prior, dict) and prior.get("head") == head
         else now
     )
-    a38["second_review"] = {
-        "head": head,
-        "requested_at": requested_at,
-        "last_requested_at": now,
-        "request_count": occurrence,
-        "pinged": list(worker.second_reviewers),
-        "status": "requested",
-    }
+    # A re-ping of the same head keeps every review already posted for it.
+    state = dict(prior) if isinstance(prior, dict) and prior.get("head") == head else {}
+    state.update(
+        head=head,
+        requested_at=requested_at,
+        last_requested_at=now,
+        request_count=occurrence,
+        pinged=list(worker.second_reviewers),
+    )
+    state.setdefault("status", "requested")
+    a38["second_review"] = state
     for login in worker.second_reviewers:
         pid = _ping_id(str(task["id"]), head, login, occurrence)
         if store.row("ping", pid) is not None:

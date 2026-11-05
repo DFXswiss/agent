@@ -45,6 +45,26 @@ def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
     assert pending[0]["origin_seq"] == 1
 
 
+def test_rows_expose_updated_at_and_break_ties_by_row_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    for row_id in ("a-row", "c-row", "b-row"):
+        store.write("activity", "insert", row_id, {"id": row_id})
+    store.conn.execute(
+        "UPDATE row_data SET updated_at = %s WHERE table_name = 'activity'",
+        ("2026-01-01T00:00:00+00:00",),
+    )
+    store.conn.execute(
+        "UPDATE row_data SET updated_at = %s WHERE table_name = 'activity' AND row_id = 'a-row'",
+        ("2026-01-02T00:00:00+00:00",),
+    )
+
+    rows = store.rows("activity")
+
+    assert [row["id"] for row in rows] == ["a-row", "c-row", "b-row"]
+    assert rows[0]["_updated_at"].startswith("2026-01-02")
+    assert all(row["_updated_at"] for row in rows)
+
+
 def test_last_own_activity_insert_applies_predicate_in_origin_seq_order(
     tmp_path: Path,
 ) -> None:

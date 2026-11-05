@@ -397,7 +397,7 @@ summary sentences.
 ## 16. CLI surface
 
 ```text
-agent init
+agent init [--no-service]                       # --no-service skips the user service install
 agent session register|heartbeat|list|close|start|stop|input|keep-working|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…

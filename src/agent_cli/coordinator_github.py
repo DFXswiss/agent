@@ -726,6 +726,15 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                 kind="publication-fork",
                 reply_checkpoint=True,
             )
+        from .coordinator_runtime import execution_binding
+
+        # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
+        ai = load_ai_accounts(store.home)
+        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
+            raise CoordinatorError("task model configuration changed before acceptance")
+        binding = execution_binding(
+            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
+        )
         source["repository_config"] = {
             "repo": cfg.repo,
             "base": cfg.base,
@@ -735,14 +744,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         }
         source["base"] = cfg.base
         source["publication_repo"] = cfg.publication_repo
-        from .coordinator_runtime import execution_binding
-
-        ai = load_ai_accounts(store.home)
-        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
-            raise CoordinatorError("task model configuration changed before acceptance")
-        c["execution_binding"] = execution_binding(
-            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
-        )
+        c["execution_binding"] = binding
     marker = acceptance_marker(repo, number, worker.session_id)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-accept:{worker.session_id}:{repo}:{number}"))
     body = f"{ACCEPT_BODY}\n{marker}"
