@@ -198,12 +198,14 @@ run. A pass run there that does not name one shared non-empty model in both
 titles is `review title model missing`. An `n_a` run names no model. A comment that contains both full runs is neither comment
 (reason `review runs must be separate comments`). Then mark the GitHub
 pull request Ready for review (`isDraft=false`). That leave-draft step is
-not merge and not pull-request completion.
+not merge and not pull-request completion. A coordinator A38 task never sets
+`isDraft=false`; the guard owns Ready (see docs/issue-coordinator.md).
 
 ## Approving
 
 Once both review runs on **this** head are `approved` and CI on this head is
 green, insert a `review.post` with `event: APPROVE` alongside the first review run comment.
+A coordinator A38 task posts no `APPROVE`; the guard owns Ready.
 One review is enough for that step only when the pull request opener is listed in
 `one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.
 That is a review this account submits on the pull request, not a merge and not
