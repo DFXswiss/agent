@@ -1197,7 +1197,12 @@ def _route_newest_blocking_review(
         return None
     c["findings"] = block.get("findings") or ""
     c.pop("second_review_block", None)
+    # Keep the review history of this head: a merge during the implementer's work must
+    # still be decided by it. A new head drops it with the rest of the evidence.
+    second_review = _a38_state(c).get("second_review")
     invalidate_head_evidence(c, "")
+    if isinstance(second_review, dict):
+        _a38_state(c)["second_review"] = second_review
     c["phase"] = "implement"
     task["state"] = "implementing"
     save_task(store, task)

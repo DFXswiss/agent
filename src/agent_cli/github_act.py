@@ -580,11 +580,11 @@ def _run_comment_post(
             matches = cbody == body if exact_body else marker in cbody
             if not matches:
                 continue
-            if exact_body:
-                user = comment.get("user")
-                login = user.get("login") if isinstance(user, dict) else None
-                if not isinstance(login, str) or login.casefold() != expected_login.casefold():
-                    continue
+            # Only the posting account's own comment proves the activity; a copied marker does not.
+            user = comment.get("user")
+            login = user.get("login") if isinstance(user, dict) else None
+            if not isinstance(login, str) or login.casefold() != expected_login.casefold():
+                continue
             cid = comment.get("id")
             url = comment.get("html_url") or comment.get("url")
             if not isinstance(url, str) or url == "":

@@ -629,7 +629,9 @@ review, then send it through the existing activity interface. The lane
 that redaction would change (a token, an authorization header, a private home
 path) rejects the mail. Both prompts are published twice (review record and
 machine block) and the findings once; together they may use at most 56,000
-characters, so every accepted review fits in one GitHub comment:
+characters, so every accepted review fits in one GitHub comment. The first
+review comment carries both slot-`first` prompts twice as well, so an A38 worker
+refuses a PR review prompt over 14,000 JSON characters before any lane runs:
 
 ```text
 agent activity add --session OWN_SID --type message --payload-file result-mail.json
