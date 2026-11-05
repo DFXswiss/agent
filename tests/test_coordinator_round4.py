@@ -629,7 +629,10 @@ def test_phase_accept_crash_after_intent_save_retries_fork_post(
 def test_phase_accept_retries_transient_fork_post_and_accepts_in_progress(
     monkeypatch, tmp_path
 ):
+    from agent_cli.coordinator_common import save_task as real_save_task
+
     _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", real_save_task)
     monkeypatch.setattr(
         "agent_cli.coordinator_github._hub_assignment_row",
         lambda *_a, **_k: ("assignment-row", None),
