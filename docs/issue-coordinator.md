@@ -56,6 +56,8 @@ coordinator publishes a blocker. An existing fork with another parent is
 refused. Outside A38 mode,
 `owner_check_argv` is required and nonempty for owner-scoped repositories; A38
 mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
+Both stay in the local worker config: the task stores only repository, base and
+publication target, and the execution binding pins the commands' hash.
 In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
 the latest recorded first-slot quality gate (`grok-pr` / `quality`) is approved
 on the exact current head; it then records `conformity-a approved at <head>` and
@@ -629,7 +631,8 @@ review, then send it through the existing activity interface. The lane
 that redaction would change (a token, an authorization header, a private home
 path) rejects the mail. Both prompts are published twice (review record and
 machine block) and the findings once; together they may use at most 56,000
-characters, so every accepted review fits in one GitHub comment. The first
+characters, which leaves room for the rest of the comment; the renderer still
+checks the whole comment against GitHub's limit and refuses it loudly. The first
 review comment carries both slot-`first` prompts twice as well, so an A38 worker
 refuses a PR review prompt over 14,000 JSON characters before any lane runs:
 

@@ -425,7 +425,7 @@ def _hub_assignment_row(
     if len(rows) >= HUB_ASSIGNMENT_QUERY_CAP:
         return None, "hub assignment query truncated"
     allowed = {login.casefold() for login in reply_logins}
-    first_match: HubAssignmentMandate | None = None
+    newest: tuple[tuple[str, str], HubAssignmentMandate] | None = None
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -458,11 +458,19 @@ def _hub_assignment_row(
                     issue_key=inner_issue_key,
                     deviation=inner.get("deviation"),
                 )
-                # A corrected mandate with the explicit statement wins over an older one.
-                if _states_no_deviation(mandate.deviation, envelope_login):
-                    return mandate, None
-                first_match = first_match or mandate
-    return first_match, None
+                # The newest hub row decides; its statement alone closes or blocks.
+                order = (str(row.get("updated_at") or ""), row_id)
+                if newest is None or order > newest[0]:
+                    newest = (order, mandate)
+    return (newest[1] if newest is not None else None), None
+
+
+def _mandate_provenance(source: Any) -> dict[str, Any]:
+    """Only the assignment's provenance goes into team-visible evidence."""
+    if not isinstance(source, dict):
+        return {}
+    keys = ("repo", "number", "assignment_actor", "assignment_event_id", "assignment_at", "hub_assignment_row_id")
+    return {key: source[key] for key in keys if key in source}
 
 
 def _states_no_deviation(deviation: Any, actor: str) -> bool:
@@ -760,8 +768,6 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             "repo": cfg.repo,
             "base": cfg.base,
             "publication_repo": cfg.publication_repo,
-            "check_argv": list(cfg.check_argv),
-            "readiness_argv": list(cfg.readiness_argv),
         }
         source["base"] = cfg.base
         source["publication_repo"] = cfg.publication_repo
@@ -1366,7 +1372,7 @@ def _apply_readiness_checklist(
             "n_a",
             (
                 "trusted readiness_argv reported no deviation; "
-                f"human assignment mandate {coord(task).get('source', {})}"
+                f"human assignment mandate {_mandate_provenance(coord(task).get('source', {}))}"
             ),
             source="human",
         )
