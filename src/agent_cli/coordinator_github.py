@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -278,6 +279,7 @@ def _fork_repository(
     repo: str,
     publication_repo: str,
     create_if_missing: bool = True,
+    before_create: Callable[[], None] | None = None,
 ) -> bool:
     """Check the publication fork once, optionally requesting it when absent."""
     lookup = ["gh", "api", f"repos/{publication_repo}"]
@@ -287,9 +289,17 @@ def _fork_repository(
         if "404" not in missing_detail and "not found" not in missing_detail:
             raise CoordinatorError(redact(missing_detail or "fork lookup failed"))
         if create_if_missing:
+            if before_create is not None:
+                before_create()
             created = runner(["gh", "api", "-X", "POST", f"repos/{repo}/forks"])
             if created.returncode != 0:
-                raise CoordinatorError(redact(created.stderr or created.stdout or "fork creation failed"))
+                detail = created.stderr or created.stdout or "fork creation failed"
+                folded = detail.casefold()
+                if not any(
+                    marker in folded
+                    for marker in ("already exists", "fork exists", "in progress")
+                ):
+                    raise CoordinatorError(redact(detail))
         return False
     try:
         data = json.loads((completed.stdout or "").strip())
@@ -309,6 +319,7 @@ def _owner_repository_config(
     repo: str,
     login: str,
     fork_already_requested: bool = False,
+    before_fork_create: Callable[[], None] | None = None,
 ) -> RepositoryConfig | None:
     base = validate_base(_gh_jq_text(
         runner,
@@ -330,6 +341,7 @@ def _owner_repository_config(
             repo=repo,
             publication_repo=publication,
             create_if_missing=not fork_already_requested,
+            before_create=before_fork_create,
         ):
             return None
     return RepositoryConfig(
@@ -590,14 +602,22 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         clear_reply_recovery(c)
     if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
         fork_requested_at = source.get("fork_requested_at")
+
+        def persist_fork_intent() -> None:
+            if source.get("fork_requested_at") is None:
+                source["fork_requested_at"] = utcnow()
+                save_task(store, task)
+
         cfg = _owner_repository_config(
             worker,
             scoped_runner,
             repo=repo,
             login=account.login.casefold(),
             fork_already_requested=fork_requested_at is not None,
+            before_fork_create=persist_fork_intent,
         )
         if cfg is None:
+            fork_requested_at = source.get("fork_requested_at")
             if fork_requested_at is None:
                 source["fork_requested_at"] = utcnow()
                 save_task(store, task)

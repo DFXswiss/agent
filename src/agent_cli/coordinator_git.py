@@ -358,6 +358,18 @@ def queue_activity(
         if existing.get("execution_status") == "done":
             return existing
         if existing.get("execution_status") == "error":
+            existing_payload = existing.get("payload")
+            if (
+                isinstance(existing_payload, dict)
+                and existing_payload.get("exact_body") is True
+            ):
+                if (
+                    existing.get("session_id") != session_id
+                    or existing.get("type") != typ
+                    or existing_payload != payload
+                ):
+                    raise CoordinatorError("refusing to replace an existing exact-body activity")
+                row["payload"] = existing_payload
             store.write("activity", "update", activity_id, row)
             return row
         return existing

@@ -3666,8 +3666,9 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert "blocking defects" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
 
     waiting = store.row("task", tid)
-    waiting["payload"]["coordinator"]["a38"]["second_review"]["last_requested_at"] = "2000-01-01T00:00:00Z"
+    waiting["payload"]["coordinator"]["a38"]["second_review"]["last_requested_at"] = "2026-01-01T00:00:00Z"
     store.write("task", "update", tid, {key: value for key, value in waiting.items() if not key.startswith("_")})
+    monkeypatch.setattr("agent_cli.coordinator_a38.utcnow", lambda: "2026-01-02T00:00:00Z")
     assert "re-sent" in phase_await_second_review(store, worker, store.row("task", tid), fake)[0]
     assert len(store.rows("ping")) == 2
 
@@ -4118,10 +4119,38 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
     assert any(row.get("name") == "a38" and row.get("result") == "pass" for row in checks)
 
+    errored = store.row("activity", report_rows[0]["id"])
+    assert errored is not None
+    errored = {key: value for key, value in errored.items() if not key.startswith("_")}
+    errored["execution_status"] = "error"
+    errored["execution_error"] = "temporary GitHub failure"
+    errored.pop("result", None)
+    store.write("activity", "update", errored["id"], errored)
+    retried_bodies: list[str] = []
+
+    def retry_github(store_arg, runner_arg, *, activity_ids):  # noqa: ANN001
+        assert callable(runner_arg)
+        assert activity_ids == (errored["id"],)
+        row = store_arg.row("activity", errored["id"])
+        assert row is not None and row["execution_status"] == "pending"
+        retried_bodies.append(row["payload"]["body"])
+        updated = {key: value for key, value in row.items() if not key.startswith("_")}
+        updated["execution_status"] = "done"
+        updated.pop("execution_error", None)
+        updated["result"] = {"id": 99, "url": "https://x"}
+        store_arg.write("activity", "update", errored["id"], updated)
+        return []
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.execute_github", retry_github)
+
     lines = phase_a38_tests(store, worker, store.row("task", tid), runner)
 
     assert calls == ["policy", "run", "verify"]
     assert len(prechecks) == 1
+    assert retried_bodies == [report_body]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 1
     assert "already posted" in lines[0]
     saved = store.row("task", tid)
     recovered_report = saved["payload"]["coordinator"]["a38"]["report"]
