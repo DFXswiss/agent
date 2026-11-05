@@ -4112,6 +4112,7 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
         (None, "missing"),
         ([{"blocks_merge": False}], "passed"),
         ([{"blocks_merge": False}, {"blocks_merge": True}], "blocking"),
+        ([{"blocks_merge": True}, {"blocks_merge": False}], "passed"),
     ],
 )
 def test_a38_second_review_outcome_for_a_merged_head(reviews, expected) -> None:
