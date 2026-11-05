@@ -257,13 +257,13 @@ def snapshot_from_payloads(
     }
 
 
-def pick_session_id(store: Store) -> str:
+def pick_session_id(store: Store, provider: str = "grok") -> str:
     """
     Among rows from store.rows('session') whose _origin_device_id == store.device_id():
-    1. first (rows is newest-first) with status=='active' and runtime dict provider=='grok'
+    1. first (rows is newest-first) with status=='active' and runtime dict provider==provider
     2. else first with status=='active'
     3. else first owned session of any status
-    Else StoreError('no owned session to record grok usage').
+    Else StoreError(f'no owned session to record {provider} usage').
     """
     origin = store.device_id()
     owned = [row for row in store.rows("session") if row.get("_origin_device_id") == origin]
@@ -271,7 +271,7 @@ def pick_session_id(store: Store) -> str:
         if row.get("status") != "active":
             continue
         runtime = row.get("runtime")
-        if isinstance(runtime, dict) and runtime.get("provider") == "grok":
+        if isinstance(runtime, dict) and runtime.get("provider") == provider:
             sid = row.get("id")
             if isinstance(sid, str) and sid != "":
                 return sid
@@ -285,7 +285,7 @@ def pick_session_id(store: Store) -> str:
         sid = row.get("id")
         if isinstance(sid, str) and sid != "":
             return sid
-    raise StoreError("no owned session to record grok usage")
+    raise StoreError(f"no owned session to record {provider} usage")
 
 
 def usage_unchanged(
@@ -489,7 +489,7 @@ def scan_openrouter_usage(
                 last_usage_snapshot(store, match), snapshot, compare_keys
             ):
                 continue
-            session_id = pick_session_id(store)
+            session_id = pick_session_id(store, "openrouter")
             activity_id = str(uuid.uuid4())
             event = store.write_with_advisory(
                 "activity",
