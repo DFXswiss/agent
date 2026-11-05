@@ -3333,6 +3333,11 @@ def cmd_query(args: list[str]) -> None:
 def cmd_assign(args: list[str]) -> None:
     from .hub_assign import AssignmentFailure, create_assignment
 
+    if "--no-deviation" not in args:
+        die(
+            "assign requires --no-deviation "
+            "(deviations need an explicit grant on the issue)"
+        )
     agent = require_flag(args, "--agent")
     repo = require_flag(args, "--repo")
     title = require_flag(args, "--title")
