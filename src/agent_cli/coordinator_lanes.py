@@ -371,6 +371,11 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
         for key in ("report", "first_comment", "second_review", "guard_status"):
             value = a38.get(key)
             if isinstance(value, dict) and value.get("head") != head:
+                if key == "second_review":
+                    sent = int(value.get("request_count") or 0) + 1
+                    a38["second_review_next_occurrence"] = max(
+                        sent, int(a38.get("second_review_next_occurrence") or 0)
+                    )
                 a38.pop(key, None)
 
 

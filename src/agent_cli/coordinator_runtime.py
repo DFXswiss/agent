@@ -1456,9 +1456,9 @@ def advance_one(
         c.pop("binding_blocker", None)
         c.pop("binding_blocker_activity_id", None)
         save_task(store, task)
-    # Stop new effects when assignment is revoked. await_merge may continue
-    # observation only; formal_approve / leave_draft must not proceed.
-    if phase not in ("await_merge", "done", "blocked", "ask"):
+    # Stop new effects when assignment is revoked. await_ready and await_merge only
+    # observe (a merge closes the issue); formal_approve / leave_draft must not proceed.
+    if phase not in ("await_ready", "await_merge", "done", "blocked", "ask"):
         try:
             source = c.get("source")
             if isinstance(source, dict):
