@@ -1183,11 +1183,13 @@ def phase_await_ready(
         save_task(store, task)
         return ["PR head changed while awaiting guard Ready; invalidating evidence"]
     pr_state = str(view.get("state") or "").upper()
-    if pr_state == "MERGED":
-        # A human may merge before this poll sees Ready; await_merge verifies the merge.
+    if pr_state in ("MERGED", "CLOSED"):
+        # A human may merge (or close) before this poll sees Ready; await_merge
+        # verifies the merge or publishes the closed-unmerged blocker.
         c["phase"] = "await_merge"
         save_task(store, task)
-        return ["PR merged while awaiting guard Ready; verifying the merge"]
+        verb = "merged" if pr_state == "MERGED" else "closed"
+        return [f"PR {verb} while awaiting guard Ready; verifying the merge"]
     if pr_state != "OPEN":
         raise CoordinatorError("pull request is not open while awaiting guard Ready")
     is_draft = view.get("isDraft")
