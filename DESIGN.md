@@ -434,6 +434,7 @@ agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
+agent assign --no-deviation --agent LOGIN --repo OWNER/NAME --title TEXT (--body TEXT|--body-file PATH)
 agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service
 agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
 agent watch pr-merged                          # one scan; device daemon covers the loop
@@ -510,7 +511,9 @@ only to the configured hub's `POST /api/assignments`; the hub authorizes the
 human owner, creates and verifies the GitHub issue assignment, and records
 `assignment.created` under origin `web:<login>`, as §2 describes. The client sends
 the repository exactly as supplied; the hub canonicalizes its repository
-spelling. The client does not print or persist the bearer anywhere new.
+spelling. `agent assign` requires `--no-deviation` and sends
+`deviation: {"declared": false}`; a deviation instead needs an explicit grant
+on the issue. The client does not print or persist the bearer anywhere new.
 
 ## 18. What “done” for the product still needs (operators)
 
@@ -739,12 +742,19 @@ the workflow is enabled on a deployment:
   review path the hub remains the sanctioned
   person-ping/session-mail relay; a required assignment mandate is separately
   verified from its website-origin `assignment.created` event with the envelope,
-  `web:<login>` origin, and inner actor all bound to the same login. Before the
+  `web:<login>` origin, issue key, and inner actor all bound to the same login.
+  The owner-scoped A38 default requires that mandate even when the general hub
+  assignment option is disabled, and closes the deviation keys only when its
+  inner payload is exactly `deviation: {"declared": false, "stated_by":
+  "<same actor>"}`. Before the
   owner-scoped A38 default writes `contributing_ok=ja` with `conformity-a
   approved at <head>`, it requires the recorded `grok-pr` quality gate to be
   approved on that exact head. The coordinator never posts a formal
   approval and never marks the pull request Ready; it observes the PR guard
-  making the unchanged head Ready, then waits for the verified human merge. Non-A38
+  making the unchanged head Ready, then waits for the verified human merge. If
+  the human merge arrives during the A38 second-review, CI, readiness, or Ready
+  wait, merge observation runs the same readiness closing on that merged head
+  before `task-done`. Non-A38
   workers retain the formal-review and leave-draft path described above.
 
 This section defines the required responsibility boundary. It does not claim

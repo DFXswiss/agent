@@ -29,7 +29,9 @@ def test_assign_success_prints_issue_without_token(monkeypatch, capsys):
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer secret-device-token"
         assert request.url.path == "/api/assignments"
-        assert json.loads(request.content)["repo"] == "Example/Project"
+        sent = json.loads(request.content)
+        assert sent["repo"] == "Example/Project"
+        assert sent["deviation"] == {"declared": False}
         return httpx.Response(
             201,
             json={
@@ -44,7 +46,7 @@ def test_assign_success_prints_issue_without_token(monkeypatch, capsys):
     monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore())
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
     main([
-        "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+        "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
         "--title", "Fix widget", "--body", "Detailed mandate",
     ])
     captured = capsys.readouterr()
@@ -77,7 +79,7 @@ def test_assign_body_file_reaches_assignment_api(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
 
     main([
-        "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+        "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
         "--title", "Fix widget", "--body-file", str(body_path),
     ])
 
@@ -94,7 +96,7 @@ def test_assign_unreadable_body_file_fails_before_store_or_http(monkeypatch, tmp
 
     with pytest.raises(SystemExit, match="cannot read body file"):
         main([
-            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
             "--title", "Fix widget", "--body-file", str(missing),
         ])
 
@@ -109,7 +111,7 @@ def test_assign_refuses_body_and_body_file_before_store_or_http(monkeypatch, tmp
 
     with pytest.raises(SystemExit, match="exactly one of --body or --body-file"):
         main([
-            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
             "--title", "Fix widget", "--body", "inline body",
             "--body-file", str(body_path),
         ])
@@ -128,7 +130,7 @@ def test_assign_failure_prints_detail_and_recovery_url_without_token(monkeypatch
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
     with pytest.raises(SystemExit) as info:
         main([
-            "assign", "--agent", "worker-bot", "--repo", "x/y",
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "x/y",
             "--title", "Fix", "--body", "Details",
         ])
     assert info.value.code == 1
@@ -139,11 +141,27 @@ def test_assign_failure_prints_detail_and_recovery_url_without_token(monkeypatch
     client.close()
 
 
+def test_assign_requires_no_deviation_before_store_or_http(monkeypatch):
+    monkeypatch.setattr(
+        "agent_cli.main.open_store",
+        lambda: (_ for _ in ()).throw(AssertionError("store/HTTP must not be reached")),
+    )
+
+    with pytest.raises(
+        SystemExit,
+        match=r"assign requires --no-deviation \(deviations need an explicit grant on the issue\)",
+    ):
+        main([
+            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "--title", "Fix widget", "--body", "Detailed mandate",
+        ])
+
+
 def test_assign_unpaired_device_has_clear_error(monkeypatch):
     monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore(paired=False))
     with pytest.raises(SystemExit, match="device is not paired"):
         main([
-            "assign", "--agent", "worker-bot", "--repo", "x/y",
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "x/y",
             "--title", "Fix", "--body", "Details",
         ])
 
@@ -165,7 +183,7 @@ def test_assign_validates_before_http(monkeypatch, argv, error):
         lambda: (_ for _ in ()).throw(AssertionError("HTTP/store must not be reached")),
     )
     with pytest.raises(SystemExit, match=error):
-        main(["assign", *argv])
+        main(["assign", "--no-deviation", *argv])
 
 
 def test_assign_refuses_a_malformed_success_response(monkeypatch, capsys):
@@ -178,7 +196,7 @@ def test_assign_refuses_a_malformed_success_response(monkeypatch, capsys):
     monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
     with pytest.raises(SystemExit, match="invalid assignment response"):
         main([
-            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "assign", "--no-deviation", "--agent", "worker-bot", "--repo", "Example/Project",
             "--title", "Fix widget", "--body", "Detailed mandate",
         ])
     client.close()

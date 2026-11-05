@@ -59,16 +59,23 @@ mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
 In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
 the latest recorded first-slot quality gate (`grok-pr` / `quality`) is approved
 on the exact current head; it then records `conformity-a approved at <head>` and
-that no deviation was declared. The deviation keys are recorded with source
-`human` because their evidence is the verified human assignment mandate (actor,
-assignment event id and, with the hub, the mandate row): the human who issued
-the work declared none. No grant is ever inferred; a declared deviation still
-needs an explicit grant through `owner_readiness_argv`.
+closes the deviation keys only from the accepted hub `assignment.created` row.
+That row must contain the exact inner statement
+`deviation: {"declared": false, "stated_by": "<same actor>"}`. Both deviation
+keys use source `human` and evidence `hub mandate <row id>: <actor> stated
+deviation declared=false`. A missing, true, differently attributed, or
+otherwise malformed statement closes neither deviation key and publishes
+`mandate has no explicit deviation statement; issue the assignment through the
+hub with "no deviation authorized"`. No grant is ever inferred; a declared
+deviation still needs an explicit grant through `owner_readiness_argv`.
 
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
-sends the repository spelling exactly as supplied, while the hub canonicalizes
-it; the coordinator therefore queries `payload.issue_key` with the configured
+sends the repository spelling exactly as supplied and requires
+`--no-deviation`; the request carries `deviation: {"declared": false}`. The hub
+records the actor as `stated_by` in the mandate while canonicalizing the
+repository spelling. The coordinator therefore queries `payload.issue_key`
+with the configured
 `<repository>#<number>` spelling, its case-folded form, and GitHub's canonical
 `<owner>/<name>#<number>` spelling from the issue or assignment-event response
 (deduplicated when equal), then compares the returned repository
@@ -78,18 +85,25 @@ and agent with all of these properties: the top-level query-row `github_login`
 equals the GitHub assignment-event actor and is listed in `reply_logins`;
 `origin_device_id` is
 exactly `web:<that envelope github_login>`; and the inner assignment payload's
-`actor` is case-insensitively equal to that envelope login. Thus a device-origin
-row is rejected even if the rest of its payload matches. This property requires
+`actor` is case-insensitively equal to that envelope login and its `issue_key`
+matches one of the queried issue spellings. Thus a device-origin row is rejected
+even if the rest of its payload matches. This property requires
 the hub to refuse device ids and pushed origins beginning with `web:`; only the
 hub may create that named website origin. The hub's
 `replica_out` query shape exposes `github_login` and `origin_device_id` at the
 row top level; it does not use the `_github_login` copy produced by other hub
 state endpoints.
 
+The owner-scoped A38 default without `owner_readiness_argv` always performs
+that hub-mandate verification even when `require_hub_assignment` is false.
+Without a matching hub row it cannot reach implementation; after the normal
+visibility grace it publishes the explicit-deviation blocker above.
+
 A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
 is younger than 120 seconds. After that grace period it publishes `assignment
-was not issued through the hub`, blocks acceptance, and pins the issue reply
-checkpoint without failing the task or starting a model. An unpaired device,
+was not issued through the hub`, or the explicit-deviation blocker above for
+the owner A38 default, blocks acceptance, and pins the issue reply checkpoint
+without failing the task or starting a model. An unpaired device,
 hub HTTP 400/401/403, or a query response with at least 500 rows is likewise a
 configuration blocker published once with a reply checkpoint. Other hub
 transport/protocol failures keep phase `accept`, retry,
@@ -357,7 +371,10 @@ for worker in workers.values():
    actual logs exist. A known mismatched head/author/base is distinct from an
    unavailable fetch. Close `contributing_ok` / deviation checklist keys from
    that JSON via
-   `chain.close_allowed` **before** Ready — never after human merge. Formal
+   `chain.close_allowed` before Ready in the normal route. If A38's guard and a
+   human merge move the task from `await_second_review`, `ci`, `readiness`, or
+   `await_ready` to `await_merge` first, `await_merge` runs the same trusted
+   readiness closing on the merged head before evaluating `task-done`. Formal
    `review.post` **APPROVE** from the separate review account with an
    explicitly validated full-SHA `commit_id` in the activity payload
    (executor discover-before-POST and POST both bind that head; verify
@@ -410,7 +427,10 @@ for worker in workers.values():
     open, posts no further second-review comments once the assignment is revoked. An A38 task in `await_second_review`,
     `ci`, `readiness` or `await_ready` whose pull request is merged or closed (a
     merge closes the issue) moves to `await_merge`, which verifies the human merge
-    or blocks a pull request closed without one.
+    or blocks a pull request closed without one. If the readiness keys are
+    still open, it first runs the owner hub-statement default or the configured
+    trusted readiness command and publishes its blocker with a reply checkpoint
+    when those keys cannot be closed.
 
 ### Trusted readiness JSON contract
 
@@ -535,7 +555,8 @@ default. The worker then requires a nonempty, distinct, lowercased
 `review_session` is unused and optional;
 `check_argv` may be empty, while `readiness_argv` remains required for
 configured repositories; owner-scoped repositories may omit
-`owner_readiness_argv` as described above. The device's
+`owner_readiness_argv` only with the explicit hub deviation statement described
+above. The device's
 models must pin a non-Codex first provider and `"second": null`. A null second
 slot is refused for every non-A38 worker.
 
@@ -629,7 +650,9 @@ worker. The guard may make the pull request Ready while the worker is still in
 `await_second_review`, `ci`, `readiness` or `await_ready`; a pull request merged
 in any of these phases goes straight to `await_merge`, which verifies the merge;
 a pull request closed there also goes to `await_merge`, which publishes the
-`closed-unmerged` blocker. An unreadable pull request state is retried on the
+`closed-unmerged` blocker. Before task completion, `await_merge` closes any
+still-open readiness keys against that merged head using the same readiness
+source as the ordinary phase. An unreadable pull request state is retried on the
 next tick without taking in mail.
 Second-review intake runs while the pull request is open and, in `await_merge`,
 also after the merge, so a review of the merged head is still published; it never

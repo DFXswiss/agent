@@ -65,7 +65,7 @@ its current value; it never prints the DSN itself.
 agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
-agent assign --agent LOGIN --repo OWNER/NAME --title TEXT --body TEXT
+agent assign --no-deviation --agent LOGIN --repo OWNER/NAME --title TEXT --body TEXT
 agent sync --follow   # foreground WebSocket; reconnects with backoff on a dropped connection (cap 30s, logs to stderr; not a silent poll; process stays up)
 agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is present
 # other commands refuse until you move ledger.sqlite aside
@@ -74,8 +74,10 @@ agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is 
 `AGENT_HUB` may replace `--hub`. There is no default hub URL. After `agent pair`, once `device.json` has token and hub URL, the user-service daemon starts `sync --follow`; a one-shot `agent sync` after pairing is enough for catch-up.
 `agent assign` uses the paired device credential to ask the hub to create and
 verify an agent-assigned GitHub issue. Use `--body-file PATH` instead of
-`--body TEXT` for longer mandates. The hub authorizes the human owner and
-records `assignment.created`; the client never prints the device token.
+`--body TEXT` for longer mandates. The required `--no-deviation` flag records
+the owner's explicit statement that no deviation is authorized; deviations
+instead need an explicit grant on the issue. The hub authorizes the human owner
+and records `assignment.created`; the client never prints the device token.
 
 ## Record work
 

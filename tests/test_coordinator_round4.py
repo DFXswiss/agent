@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli.coordinator_github import (
+    HubAssignmentMandate,
+    MANDATE_DEVIATION_BLOCKER,
     _apply_readiness_checklist,
     _fork_repository,
     _hub_assignment_row,
@@ -258,14 +260,26 @@ class MetaStore:
         return {"hub_url": "https://hub.example", "device_token": "token"}.get(key)
 
 
+def verified_mandate():
+    return HubAssignmentMandate(
+        "assignment-row",
+        "human-owner",
+        "web:human-owner",
+        "Example/project#7",
+        {"declared": False, "stated_by": "human-owner"},
+    )
+
+
 def assignment_row(
     *, actor="human-owner", payload_actor=None, agent="worker-bot", number=7,
-    repo="Example/project", origin_device_id=None,
+    repo="Example/project", origin_device_id=None, deviation=None,
 ):
     if payload_actor is None:
         payload_actor = actor
     if origin_device_id is None:
         origin_device_id = f"web:{actor}"
+    if deviation is None:
+        deviation = {"declared": False, "stated_by": actor}
     return {
         "row_id": "assignment-row",
         "github_login": actor,
@@ -274,6 +288,7 @@ def assignment_row(
             "type": "assignment.created",
             "payload": {
                 "repo": repo, "number": number, "agent": agent, "actor": payload_actor,
+                "issue_key": f"{repo}#{number}", "deviation": deviation,
             },
         },
     }
@@ -297,12 +312,18 @@ def test_hub_assignment_requires_matching_agent_actor_and_reply_login(
     QueryHub.result = {"rows": [row]}
     QueryHub.error = None
     monkeypatch.setattr("agent_cli.coordinator_github.Hub", QueryHub)
-    row_id, retry = _hub_assignment_row(
+    mandate, retry = _hub_assignment_row(
         MetaStore(), repo="Example/project", number=7, agent="worker-bot",
         assignment_actor="human-owner", reply_logins=reply_logins,
     )
     assert retry is None
-    assert (row_id == "assignment-row") is matched
+    assert (mandate is not None and mandate.row_id == "assignment-row") is matched
+    if matched:
+        assert mandate is not None
+        assert mandate.deviation == {
+            "declared": False,
+            "stated_by": mandate.actor,
+        }
 
 
 def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
@@ -319,12 +340,12 @@ def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
             return {"rows": rows}
 
     monkeypatch.setattr("agent_cli.coordinator_github.Hub", CaptureHub)
-    row_id, retry = _hub_assignment_row(
+    mandate, retry = _hub_assignment_row(
         MetaStore(), repo="example/project", number=7, agent="worker-bot",
         assignment_actor="human-owner", reply_logins=("human-owner",),
         canonical_repo="Example/project",
     )
-    assert row_id == "assignment-row"
+    assert mandate is not None and mandate.row_id == "assignment-row"
     assert retry is None
     assert seen == [{
         "type": "assignment.created",
@@ -334,26 +355,50 @@ def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
     }]
 
 
+@pytest.mark.parametrize("issue_key", [None, "Example/project#8"])
+def test_hub_assignment_requires_matching_inner_issue_key(monkeypatch, issue_key):
+    row = assignment_row()
+    if issue_key is None:
+        row["payload"]["payload"].pop("issue_key")
+    else:
+        row["payload"]["payload"]["issue_key"] = issue_key
+    QueryHub.result = {"rows": [row]}
+    QueryHub.error = None
+    monkeypatch.setattr("agent_cli.coordinator_github.Hub", QueryHub)
+
+    mandate, retry = _hub_assignment_row(
+        MetaStore(),
+        repo="Example/project",
+        number=7,
+        agent="worker-bot",
+        assignment_actor="human-owner",
+        reply_logins=("human-owner",),
+    )
+
+    assert mandate is None
+    assert retry is None
+
+
 def test_hub_assignment_query_cap_is_retry_not_definite_miss(monkeypatch):
     QueryHub.result = {"rows": [assignment_row()] * 500}
     QueryHub.error = None
     monkeypatch.setattr("agent_cli.coordinator_github.Hub", QueryHub)
-    row_id, retry = _hub_assignment_row(
+    mandate, retry = _hub_assignment_row(
         MetaStore(), repo="Example/project", number=7, agent="worker-bot",
         assignment_actor="human-owner", reply_logins=("human-owner",),
     )
-    assert row_id is None
+    assert mandate is None
     assert retry == "hub assignment query truncated"
 
 
 def test_hub_assignment_transport_error_requests_same_phase_retry(monkeypatch):
     QueryHub.error = HubError("temporarily unavailable")
     monkeypatch.setattr("agent_cli.coordinator_github.Hub", QueryHub)
-    row_id, retry = _hub_assignment_row(
+    mandate, retry = _hub_assignment_row(
         MetaStore(), repo="Example/project", number=7, agent="worker-bot",
         assignment_actor="human-owner", reply_logins=("human-owner",),
     )
-    assert row_id is None
+    assert mandate is None
     assert "temporarily unavailable" in (retry or "")
     QueryHub.error = None
 
@@ -469,13 +514,46 @@ def test_recent_missing_hub_assignment_retries_accept_during_grace(monkeypatch, 
     assert lines == ["hub assignment event not yet visible; retrying accept"]
 
 
+def test_owner_a38_default_requires_hub_mandate_without_configuration_flag(
+    monkeypatch, tmp_path
+):
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: "2026-01-01T00:02:01Z")
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row",
+        lambda *_a, **_k: (None, None),
+    )
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs)) or ["published"],
+    )
+    task = _accept_task()
+    task["payload"]["coordinator"]["source"]["owner_scoped"] = True
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        require_hub_assignment=False,
+    )
+
+    assert phase_accept(object(), worker, task, object()) == ["published"]
+    checkpoint = task["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["blocker"] == MANDATE_DEVIATION_BLOCKER
+    assert published == [
+        (MANDATE_DEVIATION_BLOCKER, {"kind": "hub-assignment", "reply_checkpoint": True})
+    ]
+
+
 def test_phase_accept_retries_fork_visibility_then_publishes_blocker(
     monkeypatch, tmp_path
 ):
     _patch_accept_prerequisites(monkeypatch)
     monkeypatch.setattr(
         "agent_cli.coordinator_github._hub_assignment_row",
-        lambda *_a, **_k: ("assignment-row", None),
+        lambda *_a, **_k: (verified_mandate(), None),
     )
     request_done: list[bool] = []
 
@@ -510,6 +588,10 @@ def test_phase_accept_retries_fork_visibility_then_publishes_blocker(
     source = task["payload"]["coordinator"]["source"]
     assert source["fork_requested_at"] == "2026-01-01T00:00:00Z"
     assert source["fork_request_done_at"] == "2026-01-01T00:00:00Z"
+    assert source["hub_assignment_mandate"]["deviation"] == {
+        "declared": False,
+        "stated_by": "human-owner",
+    }
     assert task["payload"]["coordinator"]["phase"] == "accept"
     assert request_done == [False]
 
@@ -540,7 +622,7 @@ def test_phase_accept_reposts_when_request_completion_was_not_persisted(
     _patch_accept_prerequisites(monkeypatch)
     monkeypatch.setattr(
         "agent_cli.coordinator_github._hub_assignment_row",
-        lambda *_a, **_k: ("assignment-row", None),
+        lambda *_a, **_k: (verified_mandate(), None),
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_github.scoped",
@@ -608,7 +690,7 @@ def test_phase_accept_crash_after_intent_save_retries_fork_post(
     _patch_accept_prerequisites(monkeypatch)
     monkeypatch.setattr(
         "agent_cli.coordinator_github._hub_assignment_row",
-        lambda *_a, **_k: ("assignment-row", None),
+        lambda *_a, **_k: (verified_mandate(), None),
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_github.scoped",
@@ -664,7 +746,7 @@ def test_phase_accept_retries_transient_fork_post_and_accepts_in_progress(
     monkeypatch.setattr("agent_cli.coordinator_github.save_task", real_save_task)
     monkeypatch.setattr(
         "agent_cli.coordinator_github._hub_assignment_row",
-        lambda *_a, **_k: ("assignment-row", None),
+        lambda *_a, **_k: (verified_mandate(), None),
     )
     monkeypatch.setattr(
         "agent_cli.coordinator_github.scoped",
@@ -1067,6 +1149,16 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
                 "assignment_actor": "human-owner",
                 "assignment_event_id": 70,
                 "hub_assignment_row_id": "assignment-row",
+                "hub_assignment_mandate": {
+                    "row_id": "assignment-row",
+                    "actor": "human-owner",
+                    "origin": "web:human-owner",
+                    "issue_key": "Example/owned#7",
+                    "deviation": {
+                        "declared": False,
+                        "stated_by": "human-owner",
+                    },
+                },
                 "repository_config": {
                     "repo": "Example/owned",
                     "base": "main",
@@ -1154,9 +1246,9 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
     for key in ("deviation_declared", "deviation_granted"):
         assert checklist[key]["status"] == "n_a"
         assert checklist[key]["source"] == "human"
-        assert "actor=human-owner" in checklist[key]["evidence"]
-        assert "event_id=70" in checklist[key]["evidence"]
-        assert "hub_assignment_row_id=assignment-row" in checklist[key]["evidence"]
+        assert checklist[key]["evidence"] == (
+            "hub mandate assignment-row: human-owner stated deviation declared=false"
+        )
 
 
 def test_owner_a38_default_readiness_without_verified_actor_requires_configuration(
@@ -1189,6 +1281,78 @@ def test_owner_a38_default_readiness_without_verified_actor_requires_configurati
         )
 
 
+@pytest.mark.parametrize(
+    "mandate",
+    [
+        None,
+        {
+            "row_id": "assignment-row",
+            "actor": "human-owner",
+            "origin": "web:human-owner",
+            "issue_key": "Example/project#7",
+        },
+        {
+            "row_id": "assignment-row",
+            "actor": "human-owner",
+            "origin": "web:human-owner",
+            "issue_key": "Example/project#7",
+            "deviation": {"declared": True, "stated_by": "human-owner"},
+        },
+        {
+            "row_id": "assignment-row",
+            "actor": "human-owner",
+            "origin": "web:human-owner",
+            "issue_key": "Example/project#7",
+            "deviation": {"declared": False, "stated_by": "different-owner"},
+        },
+    ],
+    ids=["no-hub-row", "missing-field", "declared-true", "stated-by-mismatch"],
+)
+def test_owner_a38_default_refuses_non_explicit_deviation_statements(
+    monkeypatch, tmp_path, mandate
+):
+    calls = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.set_checklist",
+        lambda _store, _task, key, status, evidence, **kwargs: calls.append(
+            (key, status, evidence, kwargs)
+        ),
+    )
+
+    class GateStore:
+        def rows(self, table):
+            assert table == "review_gate"
+            return [{
+                "task_id": "task-1",
+                "stage": "grok-pr",
+                "dimension": "quality",
+                "verdict": "approved",
+                "head_sha": "a" * 40,
+                "recorded_at": "2026-01-01T00:00:00Z",
+            }]
+
+    task = _accept_task()
+    source = task["payload"]["coordinator"]["source"]
+    source.update(
+        assignment_actor="human-owner",
+        assignment_event_id=70,
+        hub_assignment_row_id="assignment-row" if mandate is not None else None,
+    )
+    if mandate is not None:
+        source["hub_assignment_mandate"] = mandate
+
+    with pytest.raises(CoordinatorError, match=MANDATE_DEVIATION_BLOCKER):
+        _apply_readiness_checklist(
+            GateStore(),
+            replace(make_worker(tmp_path), a38=True, review_session=None),
+            task,
+            {"owner_a38_default": True, "deviation": {"declared": False}},
+            head="a" * 40,
+        )
+
+    assert [key for key, *_rest in calls] == ["contributing_ok"]
+
+
 @pytest.mark.parametrize("verdict,head", [("rejected", "a" * 40), ("approved", "b" * 40)])
 def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
     monkeypatch, tmp_path, verdict, head
@@ -1215,3 +1379,209 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
             {"owner_a38_default": True, "deviation": {"declared": False}},
             head="a" * 40,
         )
+
+
+def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
+    from agent_cli.allow import CHECKLIST_KEYS
+
+    head = "a" * 40
+    task_id = "55555555-5555-4555-8555-555555555555"
+    source = {
+        "repo": "Example/owned",
+        "number": 7,
+        "owner_scoped": True,
+        "assignment_actor": "human-owner",
+        "assignment_event_id": 70,
+        "hub_assignment_row_id": "assignment-row",
+        "repository_config": {
+            "repo": "Example/owned",
+            "base": "main",
+            "publication_repo": "worker-bot/owned",
+            "check_argv": [],
+            "readiness_argv": [],
+        },
+    }
+    if explicit_statement:
+        source["hub_assignment_mandate"] = {
+            "row_id": "assignment-row",
+            "actor": "human-owner",
+            "origin": "web:human-owner",
+            "issue_key": "Example/owned#7",
+            "deviation": {"declared": False, "stated_by": "human-owner"},
+        }
+    task = {
+        "id": task_id,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "pr-review",
+        "repo": "Example/owned",
+        "ref": "42",
+        "models": {"first": "grok", "second": None},
+        "change_summary_en": "The early merge retains trusted readiness evidence.",
+        "change_summary_de": "Der frühe Merge behält vertrauenswürdige Readiness-Evidenz.",
+        "payload": {"coordinator": {
+            "phase": "await_merge",
+            "head_sha": head,
+            "base_sha": "b" * 40,
+            "worktree": str(worker.workspace_root / task_id),
+            "pr_number": 42,
+            "source": source,
+            "a38": {
+                "enabled": True,
+                "second_review": {
+                    "head": head,
+                    "status": "posted",
+                    "reviews": [{"blocks_merge": False}],
+                },
+            },
+        }},
+    }
+    store.write("task", "insert", task_id, task)
+    for key in CHECKLIST_KEYS["implement"]:
+        status = (
+            "pending"
+            if key in {"contributing_ok", "deviation_declared", "deviation_granted"}
+            else "ja"
+        )
+        store.write(
+            "checklist_item",
+            "insert",
+            f"{task_id}-{key}",
+            {
+                "id": f"{task_id}-{key}",
+                "task_id": task_id,
+                "key": key,
+                "status": status,
+                "evidence": "seed" if status == "ja" else None,
+                "source": "human" if key == "spec_written" else "script",
+            },
+        )
+    store.write(
+        "review_gate",
+        "insert",
+        f"{task_id}-quality",
+        {
+            "id": f"{task_id}-quality",
+            "task_id": task_id,
+            "stage": "grok-pr",
+            "dimension": "quality",
+            "vendor": "grok",
+            "verdict": "approved",
+            "head_sha": head,
+            "recorded_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    return task_id, head
+
+
+def _patch_early_merge_readiness(monkeypatch, head):
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.scoped", lambda _store, _session, runner: runner
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.gh_json",
+        lambda *_args: {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main"},
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        },
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.verify_signed_clean_head",
+        lambda *_args: head,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._trusted_done_review",
+        lambda *_args: ("worker-bot", {}),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.evaluate_allow",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            allowed=True, reason="allow", blocking=[]
+        ),
+    )
+
+
+def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["human merge verified Example/owned#42; task done"]
+    saved = store.row("task", task_id)
+    assert saved["state"] == "done"
+    checklist = {
+        row["key"]: row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    assert checklist["contributing_ok"]["status"] == "ja"
+    for key in ("deviation_declared", "deviation_granted"):
+        assert checklist[key]["status"] == "n_a"
+        assert checklist[key]["evidence"] == (
+            "hub mandate assignment-row: human-owner stated deviation declared=false"
+        )
+
+
+def test_a38_early_merge_without_hub_statement_publishes_readiness_blocker(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=False
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs)) or ["published"],
+    )
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["published"]
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "await_merge"
+    assert checkpoint["blocker"] == MANDATE_DEVIATION_BLOCKER
+    checklist = {
+        row["key"]: row["status"]
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    assert checklist["contributing_ok"] == "ja"
+    assert checklist["deviation_declared"] == "pending"
+    assert checklist["deviation_granted"] == "pending"
+    assert published == [
+        (MANDATE_DEVIATION_BLOCKER, {"kind": "readiness", "reply_checkpoint": True})
+    ]

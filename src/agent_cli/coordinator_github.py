@@ -85,6 +85,19 @@ HUB_ASSIGNMENT_GRACE_SECONDS = 120
 HUB_ASSIGNMENT_QUERY_CAP = 500
 HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS = 3600
 FORK_VISIBILITY_GRACE_SECONDS = 300
+MANDATE_DEVIATION_BLOCKER = (
+    'mandate has no explicit deviation statement; issue the assignment through '
+    'the hub with "no deviation authorized"'
+)
+
+
+@dataclass(frozen=True)
+class HubAssignmentMandate:
+    row_id: str
+    actor: str
+    origin: str
+    issue_key: str
+    deviation: object
 
 
 def _task_models(task: dict[str, Any]) -> ModelSlots:
@@ -375,8 +388,8 @@ def _hub_assignment_row(
     assignment_actor: str,
     reply_logins: tuple[str, ...],
     canonical_repo: str | None = None,
-) -> tuple[str | None, str | None]:
-    """Return (matching row id, retry reason); neither means a definite no-match."""
+) -> tuple[HubAssignmentMandate | None, str | None]:
+    """Return (verified mandate, retry reason); neither means a definite no-match."""
     hub_url = store.meta("hub_url")
     token = store.meta("device_token")
     if not hub_url or not token:
@@ -386,6 +399,7 @@ def _hub_assignment_row(
     issue_keys = list(
         dict.fromkeys((issue_key, issue_key.casefold(), canonical_issue_key))
     )
+    folded_issue_keys = {candidate.casefold() for candidate in issue_keys}
     hub = Hub(hub_url, token)
     try:
         try:
@@ -415,12 +429,15 @@ def _hub_assignment_row(
         envelope_login = row.get("github_login")
         origin_device_id = row.get("origin_device_id")
         inner_actor = inner.get("actor") if isinstance(inner, dict) else None
+        inner_issue_key = inner.get("issue_key") if isinstance(inner, dict) else None
         if not isinstance(inner, dict) or not isinstance(envelope_login, str):
             continue
         if (
             str(inner.get("repo") or "").casefold() == repo.casefold()
             and as_int(inner.get("number")) == number
             and str(inner.get("agent") or "").casefold() == agent.casefold()
+            and isinstance(inner_issue_key, str)
+            and inner_issue_key.casefold() in folded_issue_keys
             and origin_device_id == f"web:{envelope_login}"
             and isinstance(inner_actor, str)
             and inner_actor.casefold() == envelope_login.casefold()
@@ -429,7 +446,13 @@ def _hub_assignment_row(
         ):
             row_id = row.get("row_id")
             if isinstance(row_id, str) and row_id:
-                return row_id, None
+                return HubAssignmentMandate(
+                    row_id=row_id,
+                    actor=envelope_login,
+                    origin=origin_device_id,
+                    issue_key=inner_issue_key,
+                    deviation=inner.get("deviation"),
+                ), None
     return None, None
 
 
@@ -523,7 +546,10 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
     source["assignment_actor"] = actor["login"]
     source["assignment_event_id"] = latest["id"]
     source["assignment_at"] = latest.get("created_at")
-    if worker.require_hub_assignment:
+    owner_a38_default = bool(
+        source.get("owner_scoped") and worker.a38 and not worker.owner_readiness_argv
+    )
+    if worker.require_hub_assignment or owner_a38_default:
         canonical_repo = _canonical_issue_repo(repo, issue, events)
         if canonical_repo is None:
             issue_response = gh_json(
@@ -532,7 +558,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             canonical_repo = _canonical_issue_repo(repo, issue_response)
         if canonical_repo is None:
             raise CoordinatorError("issue response has no canonical repository name")
-        row_id, retry = _hub_assignment_row(
+        mandate, retry = _hub_assignment_row(
             store,
             repo=repo,
             number=number,
@@ -581,13 +607,17 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                 ]
             save_task(store, task)
             return [line]
-        if row_id is None:
+        if mandate is None:
             age = _seconds_since(source.get("assignment_at"))
             if age is not None and age < HUB_ASSIGNMENT_GRACE_SECONDS:
                 c["hub_assignment_retry"] = "hub assignment event not yet visible"
                 save_task(store, task)
                 return ["hub assignment event not yet visible; retrying accept"]
-            message = "assignment was not issued through the hub"
+            message = (
+                MANDATE_DEVIATION_BLOCKER
+                if owner_a38_default
+                else "assignment was not issued through the hub"
+            )
             if c.get("blocker") != message:
                 c.pop("blocker_activity_id", None)
             c["blocker"] = message
@@ -605,7 +635,16 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
                 kind="hub-assignment",
                 reply_checkpoint=True,
             )
-        source["hub_assignment_row_id"] = row_id
+        if not isinstance(mandate, HubAssignmentMandate):
+            raise CoordinatorError("hub assignment verification returned invalid evidence")
+        source["hub_assignment_row_id"] = mandate.row_id
+        source["hub_assignment_mandate"] = {
+            "row_id": mandate.row_id,
+            "actor": mandate.actor,
+            "origin": mandate.origin,
+            "issue_key": mandate.issue_key,
+            "deviation": mandate.deviation,
+        }
         c.pop("hub_assignment_retry", None)
         c.pop("hub_assignment_retry_published_at", None)
         c.pop("blocker", None)
@@ -1225,16 +1264,6 @@ def _apply_readiness_checklist(
                 "owner A38 default requires a verified assignment actor and event; "
                 "configure owner_readiness_argv"
             )
-        mandate_evidence = (
-            "verified human GitHub assignment mandate: "
-            f"actor={assignment_actor}; event_id={assignment_event_id}"
-        )
-        hub_assignment_row_id_raw = text(source.get("hub_assignment_row_id"))
-        hub_assignment_row_id = (
-            hub_assignment_row_id_raw.strip() if hub_assignment_row_id_raw else None
-        )
-        if hub_assignment_row_id:
-            mandate_evidence += f"; hub_assignment_row_id={hub_assignment_row_id}"
         set_checklist(
             store,
             task,
@@ -1243,12 +1272,38 @@ def _apply_readiness_checklist(
             f"conformity-a approved at {head}",
             source="script",
         )
+        mandate = source.get("hub_assignment_mandate")
+        row_id = mandate.get("row_id") if isinstance(mandate, dict) else None
+        mandate_actor = mandate.get("actor") if isinstance(mandate, dict) else None
+        origin = mandate.get("origin") if isinstance(mandate, dict) else None
+        issue_key = mandate.get("issue_key") if isinstance(mandate, dict) else None
+        deviation = mandate.get("deviation") if isinstance(mandate, dict) else None
+        expected_issue_key = f"{source.get('repo')}#{source.get('number')}"
+        explicit_no_deviation = (
+            isinstance(row_id, str)
+            and bool(row_id)
+            and row_id == source.get("hub_assignment_row_id")
+            and isinstance(mandate_actor, str)
+            and mandate_actor.casefold() == assignment_actor.casefold()
+            and origin == f"web:{mandate_actor}"
+            and isinstance(issue_key, str)
+            and issue_key.casefold() == expected_issue_key.casefold()
+            and isinstance(deviation, dict)
+            and set(deviation) == {"declared", "stated_by"}
+            and deviation.get("declared") is False
+            and deviation.get("stated_by") == mandate_actor
+        )
+        if not explicit_no_deviation:
+            raise CoordinatorError(MANDATE_DEVIATION_BLOCKER)
+        mandate_evidence = (
+            f"hub mandate {row_id}: {mandate_actor} stated deviation declared=false"
+        )
         set_checklist(
             store,
             task,
             "deviation_declared",
             "n_a",
-            f"{mandate_evidence}; no deviation declared",
+            mandate_evidence,
             source="human",
         )
         set_checklist(
@@ -1256,7 +1311,7 @@ def _apply_readiness_checklist(
             task,
             "deviation_granted",
             "n_a",
-            f"{mandate_evidence}; no deviation declared; not claiming a grant",
+            mandate_evidence,
             source="human",
         )
         return
@@ -1319,6 +1374,46 @@ def _apply_readiness_checklist(
     )
 
 
+def _readiness_for_head(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    cfg: RepositoryConfig,
+    *,
+    head: str,
+    base_sha: str,
+) -> dict[str, Any]:
+    """Obtain owner-default or configured trusted readiness for one exact head."""
+    c = coord(task)
+    source = c["source"]
+    if source.get("owner_scoped") and worker.a38 and not cfg.readiness_argv:
+        return {
+            "head": head,
+            "base": base_sha,
+            "contributing_ok": True,
+            "deviation": {"declared": False},
+            "owner_a38_default": True,
+        }
+    completed = run_bounded(
+        list(cfg.readiness_argv),
+        timeout=worker.check_timeout,
+        cwd=str(c["worktree"]),
+        env=coordinator_env(c, worker, cfg),
+        clear_ambient_github=True,
+    )
+    if completed.returncode != 0:
+        raise CoordinatorError(
+            redact(
+                f"readiness failed: {(completed.stderr or completed.stdout or '')[:500]}"
+            )
+        )
+    return _parse_readiness_result(
+        completed.stdout or "",
+        head=head,
+        base=base_sha,
+        base_name=cfg.base,
+    )
+
+
 def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
@@ -1333,36 +1428,13 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         return ["head changed before readiness"]
 
     base_sha = str(c.get("base_sha") or "")
-    owner_a38_default = bool(
-        source.get("owner_scoped") and worker.a38 and not cfg.readiness_argv
+    readiness = _readiness_for_head(
+        worker,
+        task,
+        cfg,
+        head=head,
+        base_sha=base_sha,
     )
-    if owner_a38_default:
-        readiness = {
-            "head": head,
-            "base": base_sha,
-            "contributing_ok": True,
-            "deviation": {"declared": False},
-            "owner_a38_default": True,
-        }
-    else:
-        env = coordinator_env(c, worker, cfg)
-        completed = run_bounded(
-            list(cfg.readiness_argv),
-            timeout=worker.check_timeout,
-            cwd=worktree,
-            env=env,
-            clear_ambient_github=True,
-        )
-        if completed.returncode != 0:
-            raise CoordinatorError(
-                redact(f"readiness failed: {(completed.stderr or completed.stdout or '')[:500]}")
-            )
-        readiness = _parse_readiness_result(
-            completed.stdout or "",
-            head=head,
-            base=base_sha,
-            base_name=cfg.base,
-        )
 
     # Re-verify clean signed head AFTER readiness (command may have touched files).
     head_after = verify_signed_clean_head(store, worker, runner, worktree)
@@ -2203,6 +2275,81 @@ def _record_human_merge(
     )
 
 
+def _readiness_keys_closed(store: Store, task_id: str) -> bool:
+    statuses = {
+        str(row.get("key")): str(row.get("status") or "")
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    return (
+        statuses.get("contributing_ok") == "ja"
+        and statuses.get("deviation_declared") in {"ja", "n_a"}
+        and statuses.get("deviation_granted") in {"ja", "n_a"}
+    )
+
+
+def _close_readiness_after_merge(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+) -> None:
+    """Close readiness on an A38 head merged before the readiness phase ran."""
+    if _readiness_keys_closed(store, str(task["id"])):
+        return
+    c = coord(task)
+    cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
+    local_head = verify_signed_clean_head(
+        store, worker, runner, str(c.get("worktree") or "")
+    )
+    if local_head != head:
+        raise CoordinatorError("merged PR head does not match clean signed readiness head")
+    base_sha = str(c.get("base_sha") or "")
+    readiness = _readiness_for_head(
+        worker,
+        task,
+        cfg,
+        head=head,
+        base_sha=base_sha,
+    )
+    if verify_signed_clean_head(
+        store, worker, runner, str(c.get("worktree") or "")
+    ) != head:
+        raise CoordinatorError("head modified by merged-head readiness")
+    _apply_readiness_checklist(store, worker, task, readiness, head=head)
+    evidence = c.setdefault("evidence", {})
+    if isinstance(evidence, dict):
+        evidence["readiness_head"] = head
+        evidence["readiness_base"] = base_sha or cfg.base
+        evidence["readiness_at"] = utcnow()
+    save_task(store, task)
+
+
+def _block_merged_readiness(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    message: str,
+) -> list[str]:
+    c = coord(task)
+    c["phase"] = "blocked"
+    c["resume_phase"] = "await_merge"
+    c["blocker"] = message
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        message,
+        kind="readiness",
+        reply_checkpoint=True,
+    )
+
+
 def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     target = target_repo(task)
@@ -2250,14 +2397,13 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
             raise CoordinatorError("merged PR head differs from reviewed head")
         # Do not manufacture checklist values or boilerplate summaries here.
-        # Policy/deviation/implementer keys must already be closed with real evidence
-        # before Ready; merge only proves the human merge event.
+        # The ordinary route closes readiness before Ready; an early A38 merge
+        # closes it below from the same trusted source before task-done.
         if not (task.get("change_summary_en") and task.get("change_summary_de")):
             return [
                 "human merge observed; task-done blocked: missing change summaries "
                 "describing the actual result"
             ]
-        snap = _task_snapshot(store, task["id"])
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)
@@ -2276,13 +2422,33 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 pr_open_id=pr_open_id,
             )
             return ["trusted review list could not be read; retrying await_merge"]
+        if worker.a38:
+            second_review = _a38_second_review_outcome(c, expected_head)
+            if second_review != "passed":
+                return _await_second_review_after_merge(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    expected_head,
+                    blocking=second_review == "blocking",
+                )
+            if not _readiness_keys_closed(store, str(task["id"])):
+                try:
+                    _close_readiness_after_merge(
+                        store,
+                        worker,
+                        task,
+                        runner,
+                        head=expected_head,
+                    )
+                except (CoordinatorError, StoreError) as exc:
+                    return _block_merged_readiness(
+                        store, worker, task, runner, str(exc)
+                    )
+        snap = _task_snapshot(store, task["id"])
         snap["pull_opener"] = opener
         snap["trusted_pr_guard"] = config
-        if worker.a38 and _a38_second_review_outcome(c, expected_head) == "blocking":
-            # The newest posted review of the merged head blocks the merge.
-            return _await_second_review_after_merge(
-                store, worker, task, runner, expected_head, blocking=True
-            )
         allow = evaluate_allow(
             "task-done",
             session_id=worker.session_id,
@@ -2290,11 +2456,6 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             session_tasks=[snap],
         )
         if not allow.allowed:
-            outcome = _a38_second_review_outcome(c, expected_head) if worker.a38 else "passed"
-            if outcome != "passed":
-                return _await_second_review_after_merge(
-                    store, worker, task, runner, expected_head, blocking=outcome == "blocking"
-                )
             return [f"human merge observed; task-done blocked: {allow.reason} {allow.blocking}"]
 
         _record_human_merge(

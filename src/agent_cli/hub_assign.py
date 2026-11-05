@@ -26,7 +26,13 @@ def create_assignment(
         "POST",
         "/api/assignments",
         headers=hub.authenticated_headers(),
-        json={"agent": agent, "repo": repo, "title": title, "body": body},
+        json={
+            "agent": agent,
+            "repo": repo,
+            "title": title,
+            "body": body,
+            "deviation": {"declared": False},
+        },
     )
     try:
         payload = response.json()
