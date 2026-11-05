@@ -33,6 +33,7 @@ from .allow import (
     newest_reviews_block,
 )
 from .coordinator_common import (
+    check_label,
     CoordinatorError,
     Runner,
     as_int,
@@ -358,7 +359,7 @@ def phase_tests(
                 store,
                 task,
                 name="coordinator-check",
-                command=" ".join(cfg.check_argv),
+                command=check_label(c, cfg),
                 passed=False,
                 output=pre_output,
                 head=head,
@@ -377,7 +378,7 @@ def phase_tests(
             store,
             task,
             name="coordinator-check",
-            command=" ".join(cfg.check_argv),
+            command=check_label(c, cfg),
             passed=True,
             output=pre_output,
             head=head,
@@ -491,6 +492,13 @@ def phase_tests(
         report_body = report_path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise CoordinatorError("verified A38 report cannot be read") from exc
+    if as_int(c.get("pr_number") or task.get("ref")) is not None:
+        # A merge during the suite goes to the merge check instead of a draft error.
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            return [f"PR {live_state.lower()} during the A38 suite; verifying the merge"]
     draft_lines = ensure_draft(store, worker, task, runner)
     if str(coord(task).get("head_sha") or "") != head:
         raise CoordinatorError("published pull request head differs from verified A38 head")
