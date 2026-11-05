@@ -293,6 +293,7 @@ def launch_lane(
         result = LaneResult(
             role=role,
             vendor=vendor,
+            model=selected.model,
             status=parse_model_result(finalized.text, returncode)[0],
             argv=argv,
             returncode=returncode,
@@ -307,7 +308,6 @@ def launch_lane(
                 store,
                 session_id=worker.session_id,
                 result=result,
-                model=selected.model,
                 task_id=str(task["id"]),
                 agent_id=aid,
                 round_num=round_num,

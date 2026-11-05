@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5
 
+from .a38_guard import status_context_enforce
 from .a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
@@ -1062,11 +1063,17 @@ def phase_await_ready(
         statuses = [item for page in status_data for item in page]
     else:
         statuses = status_data
+    source = c.get("source")
+    base = source.get("base") if isinstance(source, dict) else None
+    if not isinstance(base, str) or not base:
+        raise CoordinatorError("await-ready requires the pinned base branch")
+    expected_context = status_context_enforce(base)
     newest = next(
         (
             item
             for item in statuses
-            if isinstance(item, dict) and str(item.get("context") or "").startswith("A38 / report")
+            if isinstance(item, dict)
+            and str(item.get("context") or "") == expected_context
         ),
         None,
     )

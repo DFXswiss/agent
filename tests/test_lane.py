@@ -13,6 +13,7 @@ import pytest
 from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
 from agent_cli.lane import (
     LANE_STRIP_ENV,
+    LANE_VENDORS,
     OPENROUTER_BASE_URL,
     LaneResult,
     _OPENROUTER_WRAPPER,
@@ -643,7 +644,6 @@ def test_launch_openrouter_missing_key_records_stderr_reason(tmp_path: Path) -> 
         store,
         session_id=DEFAULT_SESSION,
         result=result,
-        model=OPERATOR_OPENROUTER_MODEL,
     )
     assert store.row is not None
     assert store.row["payload"]["final_text"] == reason
@@ -1029,10 +1029,37 @@ def test_launch_dry_run_does_not_call_runner(tmp_path: Path) -> None:
     )
     assert result.status == ""
     assert result.returncode == 0
+    assert result.model == OPERATOR_GROK_MODEL
     assert OPERATOR_GROK_MODEL in result.argv
     _assert_nested_role_env_prefix(
         result.argv, config_dir=OPERATOR_GROK_HOME, provider="grok"
     )
+
+
+@pytest.mark.parametrize("vendor", LANE_VENDORS)
+def test_every_provider_unsets_ambient_openrouter_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-openrouter-token")
+
+    result = launch(
+        role="implementer",
+        vendor=vendor,
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    key_index = result.argv.index("OPENROUTER_API_KEY")
+    assert result.argv[key_index - 1] == "-u"
+    assert "ambient-openrouter-token" not in result.argv
+    assert os.environ["OPENROUTER_API_KEY"] == "ambient-openrouter-token"
 
 
 def test_launch_codex_dry_run_skips_mkstemp(
@@ -1485,6 +1512,7 @@ def test_cli_lane_run_prints_vendor_stdout(
         return LaneResult(
             role="pr-reviewer-quality",
             vendor="grok",
+            model=OPERATOR_GROK_MODEL,
             status="complete",
             argv=["grok"],
             returncode=0,
@@ -1530,6 +1558,7 @@ def test_cli_lane_run_prints_vendor_stderr(
         return LaneResult(
             role="pr-reviewer-quality",
             vendor="grok",
+            model=OPERATOR_GROK_MODEL,
             status="unavailable",
             argv=["grok"],
             returncode=1,

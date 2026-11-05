@@ -3525,8 +3525,8 @@ def cmd_run(args: list[str]) -> None:
                 round_num: int | None = None
                 if role in ("implementer", "reviewer"):
                     round_num = current_round
-                # Fail closed on AI lane binding before creating a working agent.
-                # launch() still resolves the same binding; no ambient fallback.
+                # Resolve once before creating a working agent, then launch with
+                # that exact binding so audit metadata cannot drift.
                 from .ai_accounts import load_ai_accounts
 
                 ai = load_ai_accounts(
@@ -3568,6 +3568,7 @@ def cmd_run(args: list[str]) -> None:
                     tmux=tmux,
                     config_home=store.home,
                     session_id=session_id,
+                    binding=selected_lane,
                 )
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
@@ -3577,7 +3578,6 @@ def cmd_run(args: list[str]) -> None:
                         store,
                         session_id=session_id,
                         result=result,
-                        model=selected_lane.model,
                         task_id=tid,
                         agent_id=str(working["id"]) if working is not None else None,
                         round_num=round_num,
@@ -3916,9 +3916,6 @@ def cmd_lane(args: list[str]) -> None:
         die(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
         die(f"vendor must be {PROVIDER_CHOICES}")
-    from .ai_accounts import load_ai_accounts
-
-    selected_lane = load_ai_accounts(home()).for_lane(session_id, role, vendor)
     result = launch(
         role=role,
         vendor=vendor,
@@ -3939,7 +3936,6 @@ def cmd_lane(args: list[str]) -> None:
             lane_store,
             session_id=session_id,
             result=result,
-            model=selected_lane.model,
         )
     except (Exception, SystemExit) as exc:  # audit failure cannot change verdict
         print(f"lane.run write failed: {exc}", file=sys.stderr)
