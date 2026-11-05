@@ -63,6 +63,7 @@ from .coordinator_lanes import (
     review_rules_bound,
     set_checklist,
 )
+from .github_act import ACTIVITY_MARKER
 from .local_ci import LocalCiError, parse_comment
 from .store import Store, utcnow
 
@@ -75,6 +76,8 @@ PROVIDER_DISPLAY = {
 SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
 GITHUB_COMMENT_LIMIT = 65_536
+# The executor appends "\n" plus the activity marker with a 36-character activity id.
+ACTIVITY_MARKER_LENGTH = len("\n" + ACTIVITY_MARKER.format(id="0" * 36))
 # Both prompts appear twice in the comment (record and machine block) and the findings once;
 # the rest of the comment (titles, summaries, model names) fits in the remaining margin.
 SECOND_REVIEW_TEXT_LIMIT = 56_000
@@ -625,7 +628,7 @@ def _render_review_comment(
     ]
     if reasons:
         raise CoordinatorError("A38 review comment validation failed: " + "; ".join(dict.fromkeys(reasons)))
-    if len(body) >= GITHUB_COMMENT_LIMIT:
+    if len(body) + ACTIVITY_MARKER_LENGTH >= GITHUB_COMMENT_LIMIT:
         raise CoordinatorError(
             f"A38 review comment must be shorter than {GITHUB_COMMENT_LIMIT} characters"
         )
@@ -1155,10 +1158,12 @@ def intake_second_reviews(
         )
         # Every passing review records its evidence, so a pass after an earlier
         # block on the same head (for example after the merge) still closes the keys.
-        set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
-        set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
-        if c.get("phase") == "await_second_review":
-            c["phase"] = "ci"
+        # A pass tied with a block is not the deciding review; routing decides below.
+        if not newest_reviews_block(reviews):
+            set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
+            set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
+            if c.get("phase") == "await_second_review":
+                c["phase"] = "ci"
         save_task(store, task)
         _mark_message_read(store, worker, message_id)
         lines.append(f"external second review by @{login} posted on {current[:7]}")

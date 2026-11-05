@@ -126,6 +126,36 @@ def test_second_review_schema_refuses_text_too_long_for_one_comment() -> None:
         validate_second_review_payload(payload)
 
 
+def test_review_comment_size_check_reserves_the_activity_marker(monkeypatch) -> None:
+    import uuid as uuid_module
+
+    from agent_cli import coordinator_a38
+    from agent_cli.github_act import _with_marker
+
+    marker_id = str(uuid_module.uuid4())
+    assert len(_with_marker("body", marker_id)) - len("body") == coordinator_a38.ACTIVITY_MARKER_LENGTH
+    payload = validate_second_review_payload(second_payload())
+    declaration = {
+        "schema": "a38-review/v2",
+        "head": HEAD,
+        "passes": 1,
+        "defects": 0,
+        "set_aside": "none",
+        "blocks_merge": False,
+        "lanes": payload["lanes"],
+    }
+    task = {"change_summary_en": "The change is complete.", "change_summary_de": "Die Änderung ist vollständig."}
+    size = len(_render_review_comment(task, declaration, rules_bound=True, reviewer="reviewer"))
+
+    monkeypatch.setattr(coordinator_a38, "GITHUB_COMMENT_LIMIT", size + 30)
+    with pytest.raises(CoordinatorError, match="must be shorter than"):
+        _render_review_comment(task, declaration, rules_bound=True, reviewer="reviewer")
+    monkeypatch.setattr(
+        coordinator_a38, "GITHUB_COMMENT_LIMIT", size + coordinator_a38.ACTIVITY_MARKER_LENGTH + 1
+    )
+    _render_review_comment(task, declaration, rules_bound=True, reviewer="reviewer")
+
+
 def test_review_comment_refuses_github_oversize_body() -> None:
     prompt = COMPLIANCE_PROMPT + " " + "x" * 17_000
     declaration = {
