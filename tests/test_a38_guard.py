@@ -5050,7 +5050,7 @@ class A38GuardRateLimitTests(unittest.TestCase):
                     FakeAPI().api(),
                 )
 
-    def test_rate_limited_status_invalidation_ends_run_as_rate_limited(self) -> None:
+    def test_rate_limited_status_invalidation_keeps_the_original_error(self) -> None:
         api = self._limited(
             403,
             {"message": "API rate limit exceeded"},
@@ -5080,11 +5080,15 @@ class A38GuardRateLimitTests(unittest.TestCase):
                 api,
                 env={"GH_TOKEN": "fake"},
             )
-        payload = json.loads(stdout)
-        self.assertEqual(code, 0)
-        self.assertEqual(payload["status"], "rate_limited")
-        self.assertEqual(payload["retry_epoch"], _RESET)
-        self.assertNotIn("could not invalidate prior status", stderr)
+        self.assertEqual(code, 1)
+        self.assertNotIn('"rate_limited"', stdout)
+        self.assertIn("assessment failed", stderr)
+        self.assertIn(
+            "could not invalidate prior status "
+            f"(rate limited until {_utc_hm(_RESET)} UTC)",
+            stderr,
+        )
+        self.assertEqual(api.request_count, 1)
 
     def test_primary_limit_exits_zero_without_success_writes(self) -> None:
         fake = FakeAPI()

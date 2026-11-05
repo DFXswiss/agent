@@ -3542,11 +3542,25 @@ def reconcile_pull(
                 last_err = exc
                 continue
             if publish and not dry_run and snap is not None:
-                invalidate_status(api, snap)
+                _invalidate_after_failure(api, snap)
             raise
     if publish and not dry_run and snap is not None:
-        invalidate_status(api, snap)
+        _invalidate_after_failure(api, snap)
     raise GuardError(f"assessment republish failed after retries: {last_err}")
+
+
+def _invalidate_after_failure(api: GitHubApi, pull: PullSnapshot) -> None:
+    """Invalidate after a real failure; a rate limit here must not hide that failure."""
+    try:
+        invalidate_status(api, pull)
+    except RuntimeError as exc:
+        if not is_rate_limit_error(exc):
+            raise
+        print(
+            "a38-guard: could not invalidate prior status "
+            f"({_rate_limit_phrase(getattr(exc, 'retry_at', None))})",
+            file=sys.stderr,
+        )
 
 
 def invalidate_status(api: GitHubApi, pull: PullSnapshot) -> None:
