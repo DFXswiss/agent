@@ -1558,8 +1558,8 @@ def advance_one(
             a38 = c.get("a38")
             second = a38.get("second_review") if isinstance(a38, dict) else None
             current = str(c.get("head_sha") or "")
-            # Intake only runs on an open PR: a result that arrives after a merge or
-            # close must not reroute the task.
+            # Intake runs on an open PR and, in await_merge, also after the merge;
+            # a result that arrives after a merge or close never reopens work.
             # Validate late mail against the live PR head: after a push the phase handler
             # invalidates evidence, and a result for the old head must not reroute the task.
             if isinstance(second, dict) and second.get("head") == current:
