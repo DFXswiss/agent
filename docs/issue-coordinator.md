@@ -655,8 +655,11 @@ unread reviews for that head through CI, readiness, Ready observation, and merge
 observation, and publishes one idempotent review comment for every valid mail.
 Each tick takes in all queued unread mail for the head, ordered by the mail
 row's replica change time (`updated_at`, equal times by row id), and the newest
-review decides; reviews with the same newest time block if any of them blocks: a blocking result returns the task to the implementer only when no newer
-passing review of the same head follows it in that tick; stale, malformed, or
+review decides. A review older than one already posted for the head is
+acknowledged as superseded and not posted, so the last posted review is also the
+newest, as the guard reads the comments. A blocking result returns the task to the
+implementer only when no newer passing review of the same head follows it in that
+tick; when the implementer leaves the head unchanged, the reviewers are asked again; stale, malformed, or
 unauthorized mail is acknowledged and recorded as an
 observation. Pending requests are re-pinged once per configured timeout and are
 never skipped. A pull request closed while the task awaits the second review

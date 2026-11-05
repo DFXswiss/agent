@@ -292,9 +292,9 @@ authenticated for that profile.
 and fails when that binding is absent or null. The loader may represent Codex
 and Claude/OpenRouter roles in the manifest. Interactive runtime support remains Grok-only;
 unsupported interactive providers are refused. The `claude` adapter is a
-headless lane (`claude --print`, spec on stdin, read tools only, plus
-`acceptEdits` (edits inside the worktree only) for a write lane; never Bash,
-subagents or the web). The OpenRouter adapter uses the same restricted file-tool
+headless lane (`claude --print`, spec on stdin, `Read,Grep,Glob` for a
+read-only lane, plus `Edit,Write` in permission mode `acceptEdits` for a write
+lane, edits inside the worktree only; never Bash, subagents or the web). The OpenRouter adapter uses the same restricted file-tool
 surface. The configured model is required,
 and a supplied `--model` must agree with it. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;

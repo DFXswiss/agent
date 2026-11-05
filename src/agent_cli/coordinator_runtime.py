@@ -55,6 +55,7 @@ from .coordinator_common import (
 )
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
+    head_review_blocks,
     fresh_pr_head,
     intake_second_reviews,
     pr_state,
@@ -1507,13 +1508,23 @@ def advance_one(
         c.pop("binding_blocker", None)
         c.pop("binding_blocker_activity_id", None)
         save_task(store, task)
+    # An A38 task sent back to the implementer by a blocking review still has an open,
+    # possibly Ready PR; a human merge then is checked like in the wait phases.
+    mergeable_wait = worker.a38 and (
+        phase in A38_MERGEABLE_WAIT_PHASES
+        or (
+            phase == "implement"
+            and as_int(c.get("pr_number")) is not None
+            and head_review_blocks(c, str(c.get("head_sha") or ""))
+        )
+    )
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
     if phase not in ("await_merge", "done", "blocked", "ask"):
         try:
             _verify_source_assigned(store, worker, c, runner)
         except CoordinatorError as exc:
-            if worker.a38 and phase in A38_MERGEABLE_WAIT_PHASES:
+            if mergeable_wait:
                 live_state = pr_state(store, worker, task, runner)
                 if live_state is None:
                     # A merge also unassigns the closed issue; decide only on a readable state.
@@ -1532,10 +1543,12 @@ def advance_one(
                 store, worker, task, runner, str(exc), kind="stopped", reply_checkpoint=True
             )
 
-    if worker.a38 and phase in A38_MERGEABLE_WAIT_PHASES and phase != "await_ready":
+    if mergeable_wait and phase != "await_ready":
         # The guard may make the PR Ready before these phases finish; a human merge
         # then goes straight to the merge check instead of a "not open" blocker.
         live_state = pr_state(store, worker, task, runner)
+        if live_state is None and phase == "implement":
+            return ["PR state temporarily unavailable before the implementer; retrying"]
         if live_state in ("MERGED", "CLOSED"):
             # await_merge verifies a merge or publishes the closed-unmerged blocker.
             c["phase"] = "await_merge"
