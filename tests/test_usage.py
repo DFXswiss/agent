@@ -10,9 +10,11 @@ import pytest
 from agent_cli.store import Store, StoreError
 from agent_cli.usage import (
     CREDITS_URL,
+    OPENROUTER_KEY_URL,
     SETTINGS_URL,
     AuthStale,
     OpenRouterUsageError,
+    _fetch_openrouter_key,
     fetch_credits_and_settings,
     last_usage_snapshot,
     scan_openrouter_usage,
@@ -386,6 +388,67 @@ def test_fetch_credits_and_settings_invalid_json_hides_token() -> None:
         with pytest.raises(StoreError, match="invalid JSON") as excinfo:
             fetch_credits_and_settings("test-token", client=client)
     assert "test-token" not in str(excinfo.value)
+
+
+def test_fetch_openrouter_key_success_via_mock_client() -> None:
+    requests: list[httpx.Request] = []
+    expected = _openrouter_body()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=expected)
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        body = _fetch_openrouter_key("router-secret", client=client)
+
+    assert body == expected
+    assert len(requests) == 1
+    assert str(requests[0].url) == OPENROUTER_KEY_URL
+    assert requests[0].headers["Authorization"] == "Bearer router-secret"
+    assert requests[0].headers["Accept"] == "application/json"
+
+
+def test_fetch_openrouter_key_network_error_hides_token() -> None:
+    token = "router-secret-network"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"connection failed for {token}", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        with pytest.raises(StoreError, match="request failed") as excinfo:
+            _fetch_openrouter_key(token, client=client)
+
+    assert token not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("response_kind", "message"),
+    [
+        ("non-200", "HTTP 503"),
+        ("invalid-json", "invalid JSON"),
+        ("non-object", "not an object"),
+    ],
+)
+def test_fetch_openrouter_key_invalid_response_hides_token(
+    response_kind: str, message: str
+) -> None:
+    token = f"router-secret-{response_kind}"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if response_kind == "non-200":
+            return httpx.Response(503, text=f"server echoed {token}")
+        if response_kind == "invalid-json":
+            return httpx.Response(200, text=f"not-json-{token}")
+        if response_kind == "non-object":
+            return httpx.Response(200, json=[token])
+        raise AssertionError(response_kind)
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        with pytest.raises(StoreError, match=message) as excinfo:
+            _fetch_openrouter_key(token, client=client)
+
+    assert token not in str(excinfo.value)
 
 
 def test_last_usage_snapshot_via_last_own_activity_insert(tmp_path: Path) -> None:

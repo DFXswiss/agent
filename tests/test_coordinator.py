@@ -2823,7 +2823,9 @@ def _checklist_status(store, tid: str) -> dict[str, str]:
 
 def _patch_pr_gate_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def fake_diff(store, worker, task, runner, *, head):  # noqa: ANN001
-        path = tmp_path / f"review-{head[:12]}.patch"
+        directory = worker.workspace_root / ".coordinator-control" / task["id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"review-{head[:12]}.patch"
         path.write_text("diff\n", encoding="utf-8")
         path.with_suffix(".excerpt.txt").write_text("excerpt\n", encoding="utf-8")
         return path
@@ -3010,11 +3012,15 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
     )
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     _patch_pr_gate_git(monkeypatch, tmp_path)
+    launched_prompts: dict[str, str] = {}
+    attached_dirs: dict[str, str] = {}
 
     def run(argv, stdin=None):  # noqa: ANN001
         wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
         output_file = Path(argv[wrapper_index + 2])
         role = "pr-reviewer-quality" if "pr-reviewer-quality" in (stdin or "") else "pr-reviewer-logic"
+        launched_prompts[role] = stdin or ""
+        attached_dirs[role] = str(argv[argv.index("--add-dir") + 1])
         events = [
             {"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": role, "name": "Grep", "input": {"pattern": role}}
@@ -3041,6 +3047,19 @@ def test_parallel_openrouter_lanes_record_usage_and_tools(
     assert len(rows) == 2
     assert all(row["payload"]["usage"]["input_tokens"] == 20 for row in rows)
     assert all(row["payload"]["tools"][0]["tool"] == "Grep" for row in rows)
+    agents = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == tid and row.get("vendor") == "openrouter"
+    ]
+    assert len(agents) == 2
+    for agent in agents:
+        launched = launched_prompts[str(agent["role"])]
+        assert agent["prompt"] == launched
+        assert "Script-generated diff artifact (full, read-only):" in launched
+        assert "diff excerpt" not in launched
+        assert attached_dirs[str(agent["role"])] in launched
+        assert len(launched) <= 20_000
 
 
 def test_parallel_openrouter_missing_key_records_reason(
@@ -3622,6 +3641,18 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     first_body = comments[0]["payload"]["body"]
     first_declaration = parse_review_block(first_body)
     assert {lane["id"] for lane in first_declaration["lanes"]} == {"conformity-a", "logic-a"}
+    assert len(first_body) < 65_536
+    prompt_by_dimension = {
+        str(row["dimension"]): row["prompt"]
+        for row in store.rows("agent")
+        if row.get("task_id") == tid
+    }
+    assert next(
+        lane["prompt"] for lane in first_declaration["lanes"] if lane["id"] == "conformity-a"
+    ) == prompt_by_dimension["quality"]
+    assert next(
+        lane["prompt"] for lane in first_declaration["lanes"] if lane["id"] == "logic-a"
+    ) == prompt_by_dimension["logic"]
     assert validate_visible(first_body, 1) == []
     assert len(store.rows("ping")) == 1
     ping_body = store.rows("ping")[0]["body"]
@@ -3716,7 +3747,28 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert waiting["payload"]["coordinator"]["a38"]["guard_status"]["description"] == "Waiting for guard policy"
     assert len(store.rows("activity")) == writes_before
     fake.pr["isDraft"] = False
+    assert phase_await_ready(store, worker, store.row("task", tid), fake) == [
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    ]
+    not_ready = store.row("task", tid)["payload"]["coordinator"]
+    assert not_ready["phase"] == "await_ready"
+    assert not_ready["observations"][-1]["text"] == (
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    )
+    fake.statuses = [
+        {"context": "A38 / report", "state": "success", "description": "A38 passed"}
+    ]
     assert "awaiting human merge" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
+    fake.pr["isDraft"] = True
+    assert "returned to draft" in phase_await_merge(
+        store, worker, store.row("task", tid), fake
+    )[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_ready"
+    fake.pr["isDraft"] = False
+    assert "awaiting human merge" in phase_await_ready(
+        store, worker, store.row("task", tid), fake
+    )[0]
     assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
     fake.pr["state"] = "MERGED"
     fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
@@ -4303,6 +4355,42 @@ def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
     assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
     assert "--add-dir" in argv
     assert "Review this." in (prep.get("stdin_text") or "")
+    agent = store.row("agent", prep["agent_id"])
+    assert agent is not None
+    assert agent["prompt"] == prep["stdin_text"]
+    assert agent["prompt"].startswith("# Role: pr-reviewer-quality")
+    assert len(agent["prompt"]) <= 20_000
+
+
+def test_pr_review_agent_rejects_prompt_over_limit(tmp_path: Path) -> None:
+    from agent_cli.coordinator_lanes import _prepare_pr_review_agent
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = tmp_path / "wt-long-prompt"
+    worktree.mkdir()
+    task = {
+        "id": "t-claude-long-prompt",
+        "session_id": "worker-session",
+        "models": {"first": "claude", "second": "codex"},
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+
+    with pytest.raises(CoordinatorError, match="exceeds 20000 characters"):
+        _prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="claude",
+            head="a" * 40,
+            spec_body="x" * 20_000,
+        )
+
+    assert not store.rows("agent")
 
 
 def test_sequential_claude_lane_records_usage_and_tools(

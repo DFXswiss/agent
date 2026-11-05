@@ -280,6 +280,7 @@ def _fork_repository(
     publication_repo: str,
     create_if_missing: bool = True,
     before_create: Callable[[], None] | None = None,
+    after_create: Callable[[], None] | None = None,
 ) -> bool:
     """Check the publication fork once, optionally requesting it when absent."""
     lookup = ["gh", "api", f"repos/{publication_repo}"]
@@ -300,6 +301,8 @@ def _fork_repository(
                     for marker in ("already exists", "fork exists", "in progress")
                 ):
                     raise CoordinatorError(redact(detail))
+            if after_create is not None:
+                after_create()
         return False
     try:
         data = json.loads((completed.stdout or "").strip())
@@ -318,8 +321,9 @@ def _owner_repository_config(
     *,
     repo: str,
     login: str,
-    fork_already_requested: bool = False,
+    fork_request_done: bool = False,
     before_fork_create: Callable[[], None] | None = None,
+    after_fork_create: Callable[[], None] | None = None,
 ) -> RepositoryConfig | None:
     base = validate_base(_gh_jq_text(
         runner,
@@ -340,8 +344,9 @@ def _owner_repository_config(
             runner,
             repo=repo,
             publication_repo=publication,
-            create_if_missing=not fork_already_requested,
+            create_if_missing=not fork_request_done,
             before_create=before_fork_create,
+            after_create=after_fork_create,
         ):
             return None
     return RepositoryConfig(
@@ -601,11 +606,14 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         c.pop("blocker_activity_id", None)
         clear_reply_recovery(c)
     if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
-        fork_requested_at = source.get("fork_requested_at")
-
         def persist_fork_intent() -> None:
             if source.get("fork_requested_at") is None:
                 source["fork_requested_at"] = utcnow()
+                save_task(store, task)
+
+        def persist_fork_request_done() -> None:
+            if source.get("fork_request_done_at") is None:
+                source["fork_request_done_at"] = utcnow()
                 save_task(store, task)
 
         cfg = _owner_repository_config(
@@ -613,16 +621,16 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
             scoped_runner,
             repo=repo,
             login=account.login.casefold(),
-            fork_already_requested=fork_requested_at is not None,
+            fork_request_done=source.get("fork_request_done_at") is not None,
             before_fork_create=persist_fork_intent,
+            after_fork_create=persist_fork_request_done,
         )
         if cfg is None:
-            fork_requested_at = source.get("fork_requested_at")
-            if fork_requested_at is None:
-                source["fork_requested_at"] = utcnow()
+            fork_request_done_at = source.get("fork_request_done_at")
+            if fork_request_done_at is None:
                 save_task(store, task)
-                return ["publication fork not yet visible; retrying accept"]
-            age = _seconds_since(fork_requested_at)
+                return ["publication fork request not completed; retrying accept"]
+            age = _seconds_since(fork_request_done_at)
             if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
                 save_task(store, task)
                 return ["publication fork not yet visible; retrying accept"]
@@ -2311,6 +2319,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         c["phase"] = "done"
         save_task(store, task)
         return [f"human merge verified {target}#{number}; task done"]
+    if worker.a38 and state == "OPEN" and info.get("draft") is True:
+        c["phase"] = "await_ready"
+        save_task(store, task)
+        return [f"pull request returned to draft on {expected_head[:7]}; awaiting guard Ready"]
     if state == "CLOSED":
         c["phase"] = "blocked"
         c["blocker"] = "Ready PR closed without merge"
