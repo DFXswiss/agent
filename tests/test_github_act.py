@@ -633,6 +633,33 @@ def test_comment_post_exact_body_does_not_append_activity_marker(tmp_path: Path)
     assert scan_github(store, runner) == [f"comment.post {act_id} done"]
 
 
+def test_comment_post_rejects_a_non_boolean_exact_body(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-report-bad-flag"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": "report",
+            "target": "pr",
+            "exact_body": "yes",
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} error"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "exact_body must be boolean" in str(row.get("error") or row.get("execution_error") or row)
+
+
 def test_comment_post_exact_body_reuses_identical_comment_by_expected_login(
     tmp_path: Path,
 ) -> None:
