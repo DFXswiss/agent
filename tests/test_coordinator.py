@@ -3727,10 +3727,12 @@ def test_a38_intake_processes_all_reviews_for_one_head(
     assert saved is not None
     checkpoint = saved["payload"]["coordinator"]
     assert checkpoint["phase"] == expected_phase
+    passing = [flag for flag in blocking if not flag]
     if blocking[0]:
         assert checklist_calls == []
     else:
-        assert checklist_calls == ["codex_pr_quality", "codex_pr_logic"]
+        # Every passing review records the evidence.
+        assert checklist_calls == ["codex_pr_quality", "codex_pr_logic"] * len(passing)
     if expected_phase == "ci":
         second_review = checkpoint["a38"]["second_review"]
         assert second_review["reviewer"] == "reviewer-one"
@@ -4318,6 +4320,48 @@ def test_a38_public_prompt_replaces_resolved_symlinked_paths_whole(tmp_path: Pat
     published = public_prompt(f"Cache: {real.resolve()}/cache and {link}/other", worker, task)
 
     assert published == "Cache: <workspace>/cache and <workspace>/other"
+
+
+def test_a38_passing_review_after_a_blocking_one_on_a_merged_head_closes_the_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    task_id = "abababab-0000-4000-8000-00000000000f"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "MERGED"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-blocking",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="later-pass",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=2,
+    )
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert _a38_second_review_outcome(saved["payload"]["coordinator"], fake.head) == "passed"
+    statuses = {
+        row["key"]: row["status"]
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    assert statuses["codex_pr_quality"] == "ja"
+    assert statuses["codex_pr_logic"] == "ja"
 
 
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(

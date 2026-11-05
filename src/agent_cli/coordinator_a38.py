@@ -1085,11 +1085,12 @@ def intake_second_reviews(
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
             f"{result['url']}"
         )
-        if first_posted:
-            set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
-            set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
-            if c.get("phase") == "await_second_review":
-                c["phase"] = "ci"
+        # Every passing review records its evidence, so a pass after an earlier
+        # block on the same head (for example after the merge) still closes the keys.
+        set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
+        set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
+        if c.get("phase") == "await_second_review":
+            c["phase"] = "ci"
         save_task(store, task)
         _mark_message_read(store, worker, message_id)
         lines.append(f"external second review by @{login} posted on {current[:7]}")
