@@ -4302,6 +4302,23 @@ def test_a38_public_prompt_hides_local_paths(tmp_path: Path) -> None:
     assert str(Path.home()) not in published
 
 
+def test_a38_public_prompt_replaces_resolved_symlinked_paths_whole(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import public_prompt
+
+    real = tmp_path / "real-workspace"
+    real.mkdir()
+    link = tmp_path / "ws"
+    link.symlink_to(real)
+    worker = replace(make_worker(tmp_path), a38=True, workspace_root=link)
+    task = {"id": "abababab-0000-4000-8000-00000000000e", "payload": {"coordinator": {}}}
+
+    published = public_prompt(f"Cache: {real.resolve()}/cache and {link}/other", worker, task)
+
+    assert published == "Cache: <workspace>/cache and <workspace>/other"
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
