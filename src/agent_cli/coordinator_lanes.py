@@ -37,6 +37,7 @@ from .lane import (
     SPEC_VIA_STDIN,
     LaneResult,
     finalize_lane_output,
+    hide_config_dir,
     openrouter_path_error,
     provider_argv,
     record_lane_run,
@@ -252,7 +253,9 @@ def launch_lane(
 
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
-        stderr = str(getattr(completed, "stderr") or "")
+        stderr = hide_config_dir(
+            str(getattr(completed, "stderr") or ""), selected.account.config_dir
+        )
         output_file_text = ""
         if lane_output is not None:
             try:
@@ -859,6 +862,7 @@ def _prepare_pr_review_agent(
         "output_file": lane_output,
         "worktree": worktree,
         "model": selected.model,
+        "config_dir": selected.account.config_dir,
         "dimension": "quality" if role.endswith("quality") else "logic",
     }
 
@@ -888,7 +892,9 @@ def _run_prepared(
         return prepared["agent_id"], exc
     output_file = prepared.get("output_file")
     stdout = str(getattr(completed, "stdout") or "")
-    stderr = str(getattr(completed, "stderr") or "")
+    stderr = hide_config_dir(
+        str(getattr(completed, "stderr") or ""), prepared.get("config_dir")
+    )
     returncode = int(getattr(completed, "returncode"))
     output_file_text = ""
     if output_file:

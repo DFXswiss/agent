@@ -3108,11 +3108,13 @@ def test_parallel_openrouter_missing_key_records_reason(
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     _patch_pr_gate_git(monkeypatch, tmp_path)
     patch_execute_github(monkeypatch)
-    reason = "STATUS: unavailable\nopenrouter key missing\n"
+    reason = "STATUS: unavailable\nopenrouter key missing at <config_dir>/openrouter-api-key\n"
 
     def missing_key(argv, stdin=None):  # noqa: ANN001
         assert any("openrouter-api-key" in str(value) for value in argv)
-        return Completed(2, "", reason)
+        return Completed(
+            2, "", "STATUS: unavailable\nopenrouter key missing at /test/openrouter/openrouter-api-key\n"
+        )
 
     lines = phase_pr_gates(
         store,
@@ -3138,6 +3140,7 @@ def test_parallel_openrouter_missing_key_records_reason(
     ]
     assert len(lane_runs) == 2
     assert all(row["payload"]["final_text"] == reason for row in lane_runs)
+    assert not any("/test/openrouter" in row["note"] for row in agents)
 
 
 def test_approved_retry_does_not_promote_a_pending_codex_key(
@@ -5631,6 +5634,58 @@ def test_coordinator_refuses_openrouter_config_overlapping_worktree(
             lane_runner=lambda argv, stdin: Completed(0, "", ""),
         )
     assert not [row for row in store.rows("agent") if row.get("task_id") == task["id"]]
+
+
+def test_sequential_openrouter_lane_hides_its_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "hidden"
+    worktree.mkdir()
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["accounts"]["router"] = {"provider": "openrouter", "config_dir": "/opt/profiles/router"}
+    data["roles"]["router-builder"] = {
+        "account": "router", "model": "vendor/model", "access": "workspace-write"
+    }
+    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    path.write_text(json.dumps(data))
+    task = {
+        "id": "aa000001-0000-4000-8000-0000000000e7",
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+    store.write("task", "insert", task["id"], task)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+
+    agent, result = launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="openrouter",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=lambda argv, stdin: Completed(
+            2, "", "cannot read /opt/profiles/router/openrouter-api-key"
+        ),
+    )
+
+    assert "/opt/profiles/router" not in result.stderr
+    assert "<config_dir>/openrouter-api-key" in result.stderr
+    runs = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
+    assert runs and "/opt/profiles/router" not in runs[0]["payload"]["final_text"]
 
 
 def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:

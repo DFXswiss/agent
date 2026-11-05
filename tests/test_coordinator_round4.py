@@ -326,6 +326,27 @@ def test_hub_assignment_requires_matching_agent_actor_and_reply_login(
         }
 
 
+@pytest.mark.parametrize("corrected_first", [True, False])
+def test_hub_assignment_prefers_the_mandate_with_the_no_deviation_statement(
+    monkeypatch, corrected_first
+):
+    old = assignment_row(deviation={"declared": True})
+    old["row_id"] = "old-row"
+    corrected = assignment_row()
+    corrected["row_id"] = "corrected-row"
+    QueryHub.result = {"rows": [corrected, old] if corrected_first else [old, corrected]}
+    QueryHub.error = None
+    monkeypatch.setattr("agent_cli.coordinator_github.Hub", QueryHub)
+
+    mandate, retry = _hub_assignment_row(
+        MetaStore(), repo="Example/project", number=7, agent="worker-bot",
+        assignment_actor="human-owner", reply_logins=("human-owner",),
+    )
+
+    assert retry is None
+    assert mandate is not None and mandate.row_id == "corrected-row"
+
+
 def test_hub_assignment_query_deduplicates_already_lowercase_repo(monkeypatch):
     seen = []
 
