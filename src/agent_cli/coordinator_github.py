@@ -2285,6 +2285,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             session_tasks=[snap],
         )
         if not allow.allowed:
+            outcome = _a38_second_review_outcome(c, expected_head) if worker.a38 else "passed"
+            if outcome != "passed":
+                return _await_second_review_after_merge(
+                    store, worker, task, runner, expected_head, blocking=outcome == "blocking"
+                )
             return [f"human merge observed; task-done blocked: {allow.reason} {allow.blocking}"]
 
         _record_human_merge(
@@ -2345,6 +2350,73 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             kind="closed-unmerged",
         )
     return [f"awaiting human merge of {target}#{number}"]
+
+
+def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
+    """Return "blocking", "passed" or "missing" for the posted second reviews of head."""
+    a38 = c.get("a38")
+    state = a38.get("second_review") if isinstance(a38, dict) else None
+    if not isinstance(state, dict) or state.get("head") != head or state.get("status") != "posted":
+        return "missing"
+    reviews = state.get("reviews")
+    if isinstance(reviews, list) and any(
+        isinstance(review, dict) and review.get("blocks_merge") is True for review in reviews
+    ):
+        return "blocking"
+    return "passed"
+
+
+def _await_second_review_after_merge(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    head: str,
+    *,
+    blocking: bool,
+) -> list[str]:
+    """A merge can land before the external second review (the guard sets Ready
+    without it). Keep accepting that review for the merged head for one review
+    timeout, then stop with a visible, non-recoverable blocker. A blocking review
+    of the merged head stops at once."""
+    c = coord(task)
+    if blocking:
+        c["phase"] = "blocked"
+        c["blocker"] = f"merged although the external second review blocks the merge on {head}"
+        clear_reply_recovery(c)
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
+            kind="merged-with-blocking-second-review",
+        )
+    a38 = c.setdefault("a38", {})
+    stamp = utcnow()
+    now = _parse_coordinator_time(stamp)
+    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
+    if now is None:
+        raise CoordinatorError("coordinator clock returned an invalid timestamp")
+    if since is None:
+        a38["merged_waiting_since"] = stamp
+        save_task(store, task)
+        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+    if (now - since).total_seconds() < worker.second_review_timeout_seconds:
+        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+    c["phase"] = "blocked"
+    c["blocker"] = f"merged without an external second review on {head}"
+    clear_reply_recovery(c)
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        f"Pull request was merged on {head[:7]} without an external second review.",
+        kind="merged-without-second-review",
+    )
 
 
 def phase_read_replies(
