@@ -231,6 +231,29 @@ def _run_cli(argv: list[str], *, worker: WorkerConfig, cwd: Path) -> Any:
     )
 
 
+def _own_report_activity(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], activity: dict[str, Any], head: str
+) -> bool:
+    """A recovered report activity counts only if this device wrote it for this task's PR.
+
+    The activity id is derived from the task and head, so origin, session and target
+    decide whether a replicated row on that id may be reused."""
+    payload = activity.get("payload")
+    c = coord(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    return (
+        activity.get("_origin_device_id") == store.device_id()
+        and activity.get("session_id") == worker.session_id
+        and activity.get("type") == "comment.post"
+        and isinstance(payload, dict)
+        and payload.get("exact_body") is True
+        and payload.get("repo") == target_repo(task)
+        and as_int(payload.get("number")) == number
+        and isinstance(payload.get("body"), str)
+        and bool(payload["body"])
+    )
+
+
 def phase_tests(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
@@ -246,6 +269,8 @@ def phase_tests(
     a38 = _a38_state(c)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task['id']}:{head}"))
     activity = store.row("activity", activity_id)
+    if isinstance(activity, dict) and not _own_report_activity(store, worker, task, activity, head):
+        raise CoordinatorError("A38 report activity id is held by a row this worker did not write")
     if isinstance(activity, dict):
         payload = activity.get("payload")
         if activity.get("execution_status") != "done":
@@ -947,6 +972,7 @@ def intake_second_reviews(
     read = _read_message_ids(store, worker)
     messages = list(reversed(store.rows("activity")))
     lines: list[str] = []
+    pending_block: tuple[str, str] | None = None
     for row in messages:
         message_id = str(row.get("id") or "")
         if not message_id or message_id in read or row.get("type") != "message":
@@ -1075,14 +1101,14 @@ def intake_second_reviews(
                 # Keep reading: after the merge every waiting review is taken in, and
                 # await_merge decides by the newest one.
                 continue
-            c["findings"] = findings
-            invalidate_head_evidence(c, "")
-            c["phase"] = "implement"
-            task["state"] = "implementing"
+            # Keep reading the queued mail first: a newer passing review of the same
+            # head supersedes this block; the newest review decides after the loop.
+            pending_block = (findings, login)
             save_task(store, task)
             _mark_message_read(store, worker, message_id)
-            lines.append(f"blocking external second review by @{login}; routing to implementer")
-            return lines
+            lines.append(f"blocking external second review by @{login} recorded")
+            continue
+        pending_block = None
         evidence = (
             f"{EXTERNAL_SECOND_REVIEW_PREFIX}{login} at {current}: "
             f"{result['url']}"
@@ -1096,6 +1122,14 @@ def intake_second_reviews(
         save_task(store, task)
         _mark_message_read(store, worker, message_id)
         lines.append(f"external second review by @{login} posted on {current[:7]}")
+    if pending_block is not None:
+        findings, login = pending_block
+        c["findings"] = findings
+        invalidate_head_evidence(c, "")
+        c["phase"] = "implement"
+        task["state"] = "implementing"
+        save_task(store, task)
+        lines.append(f"blocking external second review by @{login}; routing to implementer")
     return lines or None
 
 
