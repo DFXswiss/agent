@@ -587,6 +587,7 @@ def test_comment_post_first_then_idempotent(tmp_path: Path) -> None:
                             "id": 99,
                             "body": f"x\n{marker2}",
                             "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-99",
+                            "user": {"login": "theo-vane"},
                         }
                     ]
                 ),
@@ -769,10 +770,17 @@ def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     ]
     page2 = [
         {
+            "id": 30,
+            "body": f"copied by someone else\n{marker}",
+            "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-30",
+            "user": {"login": "someone-else"},
+        },
+        {
             "id": 31,
             "body": f"found\n{marker}",
             "html_url": "https://github.com/dfxswiss/agent/issues/3#issuecomment-31",
-        }
+            "user": {"login": "theo-vane"},
+        },
     ]
 
     def runner(argv: list[str]) -> Completed:

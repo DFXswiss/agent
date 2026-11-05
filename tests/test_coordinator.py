@@ -4213,6 +4213,34 @@ def test_a38_pass_tied_with_a_block_routes_to_the_implementer(
     assert _checklist_status(store, task_id)["codex_pr_quality"] != "ja"
 
 
+def test_a38_routing_a_block_keeps_the_review_history_of_the_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    task_id = "abababab-0000-4000-8000-00000000000f"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-kept",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=3,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    c = store.row("task", task_id)["payload"]["coordinator"]
+    assert c["phase"] == "implement"
+    assert _a38_second_review_outcome(c, fake.head) == "blocking"
+
+
 def test_a38_late_older_blocking_review_keeps_the_newer_block_findings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5179,7 +5207,9 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert blocked["state"] == "implementing"
     assert blocked["payload"]["coordinator"]["phase"] == "implement"
     assert blocked["payload"]["coordinator"]["findings"] == blocking_result["findings"]
-    assert "second_review" not in blocked["payload"]["coordinator"]["a38"]
+    kept = blocked["payload"]["coordinator"]["a38"]["second_review"]
+    assert kept["head"] == fake.head
+    assert kept["reviews"][-1]["blocks_merge"] is True
 
 
 def test_a38_await_second_review_retries_transient_pr_read(
