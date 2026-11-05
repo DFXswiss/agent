@@ -4053,6 +4053,53 @@ def test_a38_human_merge_during_a_wait_phase_goes_to_the_merge_check(
     assert saved["payload"]["coordinator"]["phase"] == "await_merge"
 
 
+def test_a38_await_second_review_hands_a_merged_pr_to_the_merge_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    task_id = "abababab-0000-4000-8000-000000000006"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "MERGED"
+
+    assert phase_await_second_review(store, worker, task, fake) == [
+        "PR merged while awaiting second review; verifying the merge"
+    ]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000007"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-after-merge",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    fake.pr["state"] = "MERGED"
+
+    lines = intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None and "arrived after the merge" in lines[-1]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "implementing"
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
