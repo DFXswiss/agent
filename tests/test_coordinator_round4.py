@@ -1543,6 +1543,89 @@ def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
         )
 
 
+def test_a38_early_merge_reruns_readiness_when_it_ran_on_an_older_head(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(store, worker, explicit_statement=True)
+    task = store.row("task", task_id)
+    # Readiness keys closed on an older head (before a blocking review produced this head).
+    for key, status in (
+        ("contributing_ok", "ja"),
+        ("deviation_declared", "n_a"),
+        ("deviation_granted", "n_a"),
+    ):
+        store.write(
+            "checklist_item",
+            "insert",
+            f"{task_id}:{key}:old",
+            {
+                "id": f"{task_id}:{key}:old",
+                "task_id": task_id,
+                "key": key,
+                "status": status,
+                "evidence": "closed on an older head",
+                "source": "human" if key != "contributing_ok" else "script",
+            },
+        )
+    task["payload"]["coordinator"].setdefault("evidence", {})["readiness_head"] = "b" * 40
+    store.write("task", "update", task_id, {k: v for k, v in task.items() if not k.startswith("_")})
+    _patch_early_merge_readiness(monkeypatch, head)
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == ["human merge verified Example/owned#42; task done"]
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["evidence"]["readiness_head"] == head
+
+
+def test_owner_a38_accept_blocks_a_hub_mandate_without_the_no_deviation_statement(
+    monkeypatch, tmp_path
+):
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: "2026-01-01T00:02:01Z")
+    mandate = verified_mandate()
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row",
+        lambda *_a, **_k: (
+            HubAssignmentMandate(
+                mandate.row_id, mandate.actor, mandate.origin, mandate.issue_key, None
+            ),
+            None,
+        ),
+    )
+    published = []
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.publish_blocker",
+        lambda *_args, **kwargs: published.append((_args[4], kwargs)) or ["published"],
+    )
+    task = _accept_task()
+    task["payload"]["coordinator"]["source"]["owner_scoped"] = True
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+        require_hub_assignment=False,
+    )
+
+    assert phase_accept(object(), worker, task, object()) == ["published"]
+    checkpoint = task["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "accept"
+    assert checkpoint["blocker"] == MANDATE_DEVIATION_BLOCKER
+    assert "hub_assignment_mandate" not in checkpoint["source"]
+
+
 def test_a38_early_merge_without_hub_statement_publishes_readiness_blocker(
     monkeypatch, tmp_path
 ):
