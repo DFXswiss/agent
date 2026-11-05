@@ -4143,6 +4143,42 @@ def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
     assert saved["state"] != "implementing"
 
 
+def test_a38_pass_tied_with_a_block_routes_to_the_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000d"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="a-blocking",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=9,
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="b-passing",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=9,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+
+    lines = intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert lines is not None and "routing to implementer" in lines[-1]
+    assert _checklist_status(store, task_id)["codex_pr_quality"] != "ja"
+
+
 def test_a38_late_older_blocking_review_keeps_the_newer_block_findings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5890,6 +5926,48 @@ def test_pr_review_agent_rejects_prompt_over_limit(tmp_path: Path) -> None:
         )
 
     assert not store.rows("agent")
+
+
+@pytest.mark.parametrize(("a38", "refused"), [(True, True), (False, False)])
+def test_a38_pr_review_prompt_is_bounded_so_the_first_comment_fits(
+    tmp_path: Path, a38: bool, refused: bool
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_lanes import _prepare_pr_review_agent
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    _claude_first_manifest(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), a38=a38)
+    worktree = tmp_path / "wt-a38-prompt"
+    worktree.mkdir()
+    task = {
+        "id": "t-claude-a38-prompt",
+        "session_id": "worker-session",
+        "models": {"first": "claude", "second": "codex"},
+        "payload": {"coordinator": {"worktree": str(worktree)}},
+    }
+
+    def prepare():
+        return _prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="claude",
+            head="a" * 40,
+            spec_body="x" * 15_000,
+        )
+
+    if refused:
+        with pytest.raises(CoordinatorError, match="exceeds 14000 JSON characters"):
+            prepare()
+        assert not store.rows("agent")
+    else:
+        prepare()
+        assert store.rows("agent")
 
 
 def test_sequential_claude_lane_records_usage_and_tools(

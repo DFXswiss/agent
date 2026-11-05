@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import os
 import tempfile
 import threading
@@ -49,6 +51,8 @@ from .store import Store, utcnow
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
 PR_REVIEW_PROMPT_LIMIT = 20_000
+# Two prompts, each written twice (record and JSON block), must fit one GitHub comment.
+A38_REVIEW_PROMPT_LIMIT = 14_000
 
 
 def write_spec(path: Path, role: str, body: str) -> None:
@@ -811,6 +815,11 @@ def _prepare_pr_review_agent(
     if len(spec_text) > PR_REVIEW_PROMPT_LIMIT:
         raise CoordinatorError(
             f"PR review prompt exceeds {PR_REVIEW_PROMPT_LIMIT} characters"
+        )
+    if worker.a38 and len(json.dumps(spec_text, ensure_ascii=False)) > A38_REVIEW_PROMPT_LIMIT:
+        # The A38 first review comment carries both prompts twice; refuse before any lane runs.
+        raise CoordinatorError(
+            f"A38 PR review prompt exceeds {A38_REVIEW_PROMPT_LIMIT} JSON characters"
         )
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(spec_text, encoding="utf-8")
