@@ -4746,6 +4746,51 @@ class A38GuardRateLimitTests(unittest.TestCase):
             api.paginate(f"/repos/{REPO}/issues/1/comments")
         self.assertEqual(len(calls), 1)
 
+    def test_out_of_range_reset_is_latched_without_later_request(self) -> None:
+        calls: list[str] = []
+        api = self._limited(
+            403,
+            {"message": "API rate limit exceeded"},
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1" + "0" * 400,
+            },
+            calls=calls,
+        )
+        with self.assertRaises(RateLimitError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertIsNone(caught.exception.retry_at)
+        self.assertIsNone(caught.exception.retry_epoch)
+        with self.assertRaises(RateLimitError) as latched:
+            api.request(
+                "POST",
+                f"/repos/{REPO}/statuses/{HEAD}",
+                body={"state": "error"},
+                retry=False,
+            )
+        self.assertIs(latched.exception, caught.exception)
+        self.assertEqual(len(calls), 1)
+
+    def test_invalid_reset_falls_back_to_valid_retry_after(self) -> None:
+        retry_at, epoch = a38_guard._rate_limit_deadline(
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1" + "0" * 400,
+                "retry-after": "30",
+            },
+            now=_NOW + 0.25,
+        )
+        self.assertEqual(epoch, _NOW + 31)
+        self.assertEqual(retry_at, datetime.fromtimestamp(_NOW + 31, tz=timezone.utc))
+
+    def test_fractional_retry_after_gives_no_time(self) -> None:
+        # The sleep reads retry-after as whole seconds only; the lift time
+        # must not read the same header differently.
+        self.assertEqual(
+            a38_guard._rate_limit_deadline({"retry-after": "1.5"}, now=_NOW),
+            (None, None),
+        )
+
     def test_primary_write_is_not_retried_or_reported_as_denied(self) -> None:
         calls: list[str] = []
 
@@ -4803,7 +4848,7 @@ class A38GuardRateLimitTests(unittest.TestCase):
             return 429, {"message": "secondary rate limit"}, {"retry-after": "120"}
 
         api = GitHubApi("t", request_fn=request_fn, sleep_fn=slept.append)
-        with mock.patch("agent_cli.a38_guard.time.time", return_value=float(_NOW)):
+        with mock.patch("agent_cli.a38_guard.time.time", return_value=_NOW + 0.25):
             code, stdout, stderr = _run_guard(
                 ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
                 api,
@@ -4814,11 +4859,29 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertEqual(slept, [60, 60])
         payload = json.loads(stdout)
         self.assertEqual(payload["status"], "rate_limited")
-        self.assertEqual(payload["retry_epoch"], _NOW + 120)
-        self.assertEqual(payload["retry_at"], _utc_text(_NOW + 120))
-        self.assertIn(f"rate limited until {_utc_hm(_NOW + 120)} UTC", stderr)
+        self.assertEqual(payload["retry_epoch"], _NOW + 121)
+        self.assertEqual(payload["retry_at"], _utc_text(_NOW + 121))
+        self.assertIn(f"rate limited until {_utc_hm(_NOW + 121)} UTC", stderr)
         self.assertIn(f"requests={a38_guard.GET_RETRIES}", stderr)
         self.assertIn("api cost", stderr)
+
+    def test_huge_retry_after_is_latched_without_later_request(self) -> None:
+        calls: list[str] = []
+        api = self._limited(
+            429,
+            {"message": "secondary rate limit"},
+            {"retry-after": "1" + "0" * 400},
+            calls=calls,
+        )
+        with self.assertRaises(RateLimitError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertIsNone(caught.exception.retry_at)
+        self.assertIsNone(caught.exception.retry_epoch)
+        self.assertEqual(len(calls), a38_guard.GET_RETRIES)
+        with self.assertRaises(RateLimitError) as latched:
+            api.get_optional(f"/repos/{REPO}/issues/1/comments")
+        self.assertIs(latched.exception, caught.exception)
+        self.assertEqual(len(calls), a38_guard.GET_RETRIES)
 
     def test_message_only_rate_limit_is_not_authorisation(self) -> None:
         calls: list[str] = []
@@ -4835,6 +4898,24 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertNotIn("denied", str(caught.exception))
         self.assertIsNone(caught.exception.retry_at)
         self.assertEqual(len(calls), a38_guard.GET_RETRIES)
+
+    def test_main_reports_rate_limit_without_retry_time(self) -> None:
+        api = self._limited(
+            403,
+            {"message": "You have exceeded a secondary rate limit"},
+            {},
+        )
+        code, stdout, stderr = _run_guard(
+            ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+            api,
+            env={"GH_TOKEN": "fake"},
+        )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertIsNone(payload["retry_at"])
+        self.assertIn("a38-guard: rate limited\n", stderr)
+        self.assertNotIn("rate limited until", stderr)
 
     def test_authorisation_403_is_unchanged(self) -> None:
         calls: list[str] = []
@@ -4952,7 +5033,7 @@ class A38GuardRateLimitTests(unittest.TestCase):
         self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr.getvalue())
         opener.open.assert_called_once()
 
-    def test_foreign_rate_limit_class_name_is_recognized(self) -> None:
+    def test_foreign_rate_limit_class_name_is_not_recognized(self) -> None:
         foreign_base = type("RateLimitError", (RuntimeError,), {})
         foreign_type = type("WrappedRateLimit", (foreign_base,), {})
         limited = foreign_type("rate limited from another module")
@@ -4961,17 +5042,13 @@ class A38GuardRateLimitTests(unittest.TestCase):
         limited.results = None
         limited.completed = None
 
+        self.assertFalse(a38_errors.is_rate_limit_error(limited))
         with mock.patch.object(a38_guard, "reconcile_pull", side_effect=limited):
-            code, stdout, stderr = _run_guard(
-                ["reconcile", "--repo", REPO, "--pr", "1"],
-                FakeAPI().api(),
-            )
-
-        self.assertEqual(code, 0)
-        payload = json.loads(stdout)
-        self.assertEqual(payload["status"], "rate_limited")
-        self.assertEqual(payload["retry_epoch"], _RESET)
-        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+            with self.assertRaises(foreign_type):
+                _run_guard(
+                    ["reconcile", "--repo", REPO, "--pr", "1"],
+                    FakeAPI().api(),
+                )
 
     def test_rate_limited_status_invalidation_ends_run_as_rate_limited(self) -> None:
         api = self._limited(

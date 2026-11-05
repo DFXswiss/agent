@@ -16,6 +16,7 @@ import argparse
 import base64
 import json
 import hashlib
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -716,9 +717,12 @@ def _reset_epoch(headers: Mapping[str, Any]) -> int | None:
     if whole is not None:
         return whole
     epoch = _epoch_seconds(reset)
-    if epoch is None:
+    if epoch is None or not math.isfinite(epoch) or epoch < 0:
         return None
-    return int(round(epoch))
+    try:
+        return int(round(epoch))
+    except (OverflowError, ValueError):
+        return None
 
 
 def _retry_after_epoch(headers: Mapping[str, Any], now_ts: float) -> int | None:
@@ -728,7 +732,10 @@ def _retry_after_epoch(headers: Mapping[str, Any], now_ts: float) -> int | None:
     seconds = _whole_nonneg_seconds(retry_after)
     if seconds is None:
         return None
-    return int(round(now_ts + seconds))
+    try:
+        return math.ceil(now_ts + seconds)
+    except (OverflowError, ValueError):
+        return None
 
 
 def _rate_limit_deadline(
@@ -741,17 +748,23 @@ def _rate_limit_deadline(
     only clock the response carried.
     """
     now_ts = time.time() if now is None else now
-    reset_epoch = _reset_epoch(headers)
-    after_epoch = _retry_after_epoch(headers, now_ts)
-    if _remaining_is_zero(headers) and reset_epoch is not None:
-        epoch: int | None = reset_epoch
-    elif after_epoch is not None:
-        epoch = after_epoch
-    else:
-        epoch = reset_epoch
+    reset = _utc_deadline(_reset_epoch(headers))
+    after = _utc_deadline(_retry_after_epoch(headers, now_ts))
+    if _remaining_is_zero(headers) and reset[0] is not None:
+        return reset
+    if after[0] is not None:
+        return after
+    return reset
+
+
+def _utc_deadline(epoch: int | None) -> tuple[datetime | None, int | None]:
+    """The epoch as a UTC time, or no time when it is not representable."""
     if epoch is None:
         return None, None
-    return datetime.fromtimestamp(epoch, tz=timezone.utc), epoch
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc), epoch
+    except (OSError, OverflowError, ValueError):
+        return None, None
 
 
 def _rate_limit_phrase(retry_at: datetime | None) -> str:
@@ -862,7 +875,10 @@ def _whole_nonneg_seconds(value: Any) -> int | None:
     if type(value) is int and value >= 0:
         return value
     if isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()) is not None:
-        return int(value.strip())
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
     return None
 
 
@@ -870,14 +886,17 @@ def _epoch_seconds(value: Any) -> float | None:
     if type(value) is bool:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            return float(value)
+        except OverflowError:
+            return None
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
             return None
         try:
             return float(stripped)
-        except ValueError:
+        except (OverflowError, ValueError):
             return None
     return None
 

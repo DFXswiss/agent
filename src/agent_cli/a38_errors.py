@@ -46,4 +46,4 @@ def is_guard_error(exc: BaseException) -> bool:
 
 
 def is_rate_limit_error(exc: BaseException) -> bool:
-    return isinstance(exc, RateLimitError) or _has_class_name(exc, "RateLimitError")
+    return isinstance(exc, RateLimitError)
