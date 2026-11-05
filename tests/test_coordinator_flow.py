@@ -17,7 +17,7 @@ import pytest
 
 from agent_cli.coordinator import tick
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     FakeGh,
     lane_runner,
@@ -202,8 +202,9 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
                if item.get("task_id") == task["id"])
 
 
+@pytest.mark.parametrize("error_type", [RuntimeError, StoreError])
 def test_lane_run_write_failure_is_a_coordinator_observation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]
 ) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -227,7 +228,7 @@ def test_lane_run_write_failure_is_a_coordinator_observation(
     monkeypatch.setattr(
         coordinator_lanes,
         "record_lane_run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit down")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error_type("audit down")),
     )
     fake.dirty = True
     lines = tick(store, worker, runner=fake, lane_runner=lane)

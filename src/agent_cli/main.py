@@ -3208,7 +3208,7 @@ def cmd_run(args: list[str]) -> None:
                         agent_id=str(working["id"]) if working is not None else None,
                         round_num=round_num,
                     )
-                except Exception as exc:  # noqa: BLE001 — audit failure cannot change verdict
+                except (Exception, SystemExit) as exc:  # noqa: BLE001 — StoreError is a SystemExit; audit failure cannot change verdict
                     print(f"lane.run write failed: {exc}", file=sys.stderr)
                 _print_lane_result(result)
                 if role == "implementer" and result.status == "complete":
