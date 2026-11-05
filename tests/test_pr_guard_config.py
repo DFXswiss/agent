@@ -1,4 +1,4 @@
-"""Schema coverage for optional environment-deployment approval."""
+"""Schema coverage for optional pr-guard configuration blocks."""
 
 from __future__ import annotations
 
@@ -25,6 +25,34 @@ BASE = {
 
 def _config(environment_approval: object) -> dict:
     return {**BASE, "environment_approval": environment_approval}
+
+
+def _drain_config(held_run_drain: object) -> dict:
+    return {**BASE, "held_run_drain": held_run_drain}
+
+
+def test_valid_held_run_drain_is_normalized() -> None:
+    config = load_pr_guard_config(
+        json.dumps(_drain_config({"enabled": True}))
+    )
+    assert config["held_run_drain"] == {"enabled": True}
+
+
+def test_omitted_held_run_drain_is_not_normalized() -> None:
+    config = load_pr_guard_config(json.dumps(BASE))
+    assert "held_run_drain" not in config
+
+
+@pytest.mark.parametrize(
+    "drain",
+    [
+        {"enabled": True, "extra": True},
+        {"enabled": "true"},
+    ],
+)
+def test_invalid_held_run_drain_fails_closed(drain: object) -> None:
+    with pytest.raises(PrGuardConfigError):
+        load_pr_guard_config(json.dumps(_drain_config(drain)))
 
 
 def test_omitted_environment_approval_is_not_normalized() -> None:

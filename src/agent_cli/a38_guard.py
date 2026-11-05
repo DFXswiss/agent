@@ -104,6 +104,10 @@ class GuardError(RuntimeError):
     """Loud failure of the guard (API, config, bounds). Not a soft report miss."""
 
 
+class PullCommitsTruncatedError(GuardError):
+    """A pull commit list reached GitHub's fixed API cap."""
+
+
 def _is_guard_error(exc: BaseException) -> bool:
     return isinstance(exc, GuardError) or (
         isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
@@ -1137,7 +1141,7 @@ def fetch_pull_commits(api: GitHubApi, repo: str, number: int) -> list[dict[str,
     repo = _validate_repo(repo)
     items = api.paginate(f"/repos/{repo}/pulls/{number}/commits")
     if len(items) >= PULL_COMMITS_API_CAP:
-        raise GuardError(
+        raise PullCommitsTruncatedError(
             "pull commit list truncated at GitHub 250-commit cap; refusing partial scan"
         )
     commits: list[dict[str, Any]] = []
@@ -3806,7 +3810,21 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                         continue
                     results.append(assessment.to_json())
                     exit_codes.append(_assessment_exit_code(assessment))
-                print(json.dumps({"results": results}, indent=2, sort_keys=True))
+                from .held_run_drain import drain_held_runs
+                # A maintenance pass that cannot delete must not turn the guard
+                # red for every pull request in the sweep.
+                try:
+                    drain = drain_held_runs(
+                        client, _validate_repo(args.repo), dry_run=dry
+                    )
+                except GuardError as exc:
+                    print(
+                        f"a38-guard: held run drain: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    drain = {"error": str(exc)}
+                print(json.dumps({"results": results, "held_run_drain": drain}, indent=2, sort_keys=True))
                 # Fail the process if any enforce assessment failed.
                 return 1 if any(exit_codes) else 0
 

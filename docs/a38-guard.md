@@ -147,6 +147,8 @@ This is an optional top-level object alongside `schema` and `a38`. Omission disa
 
 The bot approves every **initial** `pull_request` run waiting in `completed` / `action_required`, with `run_attempt: 1`, for this pull request on the fork repository and branch, regardless of `workflow_approval.workflows`. That includes an older commit of the pull request, the merge commit (`pull.merge_commit_sha`), and an older copy on the same head, when no newer run of that workflow is `queued`, `in_progress`, `waiting`, `requested`, or `pending`. Cancel does not change `action_required`, and the guard does not cancel. When an approval of a current-head or merge-commit run is recorded, the stored run_id for the path is the approved run, unless the newest run of that same path on the current head or the merge commit is strictly newer by (created_at, id) and is already completed with a conclusion other than action_required. A hold that is not required, not allowlisted, and never started a job is ignored when choosing that newest run. Then the stored run_id is that newest remaining run, which is the run auto-ready compares. A newer queued, in-progress, or still action_required run is not stored in its place, even if an intermediate run of the path already succeeded. workflow_approvals and workflow:approve:<run-id> still name the run that received POST /approve, including an older commit SHA. A newer run of the same path that is `queued`, `in_progress`, `waiting`, `requested`, or `pending` leaves older held runs for the next reconcile; approving the older copy can cancel the newer one through `cancel-in-progress`. A path that is not listed is still approved when it is an initial held `pull_request` run of this pull request, and it is not cancelled. `workflow_approval.workflows` stays required when approval is enabled and does not filter approval. An older commit SHA is not written into the CI-AUTH record; a run whose head SHA is the current head or `pull.merge_commit_sha` is, still one entry per workflow path. Approval follows the local report gate (accepted report or an existing waiver) on an open enforce pull request. A missing review record does not approve Ready and does not block this approval. Failed or incomplete local-report evidence, observe mode, excluded targets, closed PRs and same-repository PRs cannot trigger approval. Existing migration authorization remains required for policy/workflow/config changes.
 
+The branch-and-status listings for those in-flight states are deliberately limited to one page. A full 100-run first page fails approval closed without reading page two; the `action_required` and head-SHA listings retain bounded pagination and one retry when a shifting inventory changes its count or repeats an ID.
+
 The fork workflow-approval path never calls a rerun, dispatch, merge, review-approval, environment-approval, `/cancel`, or `/force-cancel` endpoint. Approval authorizes execution; it is not a test result or a Ready verdict. Ready uses a narrower rule for a hold this reconcile does not approve. While workflow approval is enabled, a hold that is not required, not allowlisted, and never started a job does not block Ready and does not hide an older same-head result of that workflow. A hold that this reconcile approves is queued, and Ready waits until that run finishes when its SHA is the current head or the merge commit. An older commit of the branch is not part of the Ready inventory. A run whose head repository is not this pull request's head repository is not either. A merge-commit run that does not name a head repository fails closed. When this pull request does not name its fork, a merge-commit run that names a repository is excluded. Ready reads check runs and commit statuses for the current head and for the merge commit when that SHA differs. A check that is not success on either SHA blocks. A success on one SHA does not hide a non-success of the same name on the other. The newest remaining run is judged by the existing rule: success is green, and failure, timeout, cancellation after a job started, and a run that is still going are not. Required workflows, allowlisted workflows, and the same hold while approval is disabled still block.
 
 The run's PR association must match this pull request. On the current head the linked head and base SHAs must match. An older commit from the pull request's commit list, or `pull.merge_commit_sha`, is not another pull request when the branch and fork repository match. A foreign, ambiguous, or head/base-mismatched pull-request link is not approved and does not stop the other approvals. For private forks whose API association array is empty, the fork branch must identify exactly one open PR, and the run must not predate the PR or a later recorded target/lifecycle change. An empty association that does not identify exactly one open pull request, incomplete pagination, API errors or denied permissions fail closed. Head/base, trusted config, the qualifying author report and maintainer authorization are refreshed before every POST. GitHub provides no atomic compare-and-approve operation; these checks minimize, but cannot eliminate, a change racing the final API call.
@@ -160,6 +162,56 @@ The first successful approve of a current-head or merge-commit run in a guard in
 A later reconcile reads the latest bot-owned `PR-GUARD:CI-AUTH:v1` comment for the current head and base. When every recorded run is completed with a conclusion of success, failure, cancelled, skipped, timed_out, neutral, startup_failure, or stale, the guard POSTs a new `PR-GUARD:CI-RESULT:v1` comment. The recorded id can already be that finished newer run, so the result comment can be posted in the same reconcile that approved the older held copy. It does not PATCH the authorization comment. All success: EN `The recorded CI runs finished successfully.` DE `Die dokumentierten CI-Läufe sind erfolgreich abgeschlossen.` Any other finished conclusion: EN `The recorded CI runs finished; not every run succeeded.` DE `Die dokumentierten CI-Läufe sind abgeschlossen; nicht jeder Lauf war erfolgreich.` Details JSON lists `run_id`, `workflow`, `status`, and `conclusion`. A still-running run, `action_required`, or an unreadable run produces no result comment. The next reconcile tries again. The same head, base, and `(run_id, conclusion)` multiset does not post a second comment. A new authorization comment waits until that new set finishes, then posts another result comment. `--dry-run` does not post. Assessment JSON includes `ci_results`. This follow-up runs even when lifecycle is disabled, because the authorization comment already does.
 
 The trusted default-branch workflow and config must be installed before optional fork workflow approval is active. A head-only proposal does not grant itself permissions or authorize its own runs. Scheduled reconciliation catches runs created after the author report event. After authorization, inspect the actual independent GitHub checks through completion, including blocked `action_required` workflow runs that may be absent from the PR check rollup.
+
+## Optional held workflow-run drain
+
+A repository may opt in with `"held_run_drain": {"enabled": true}` in the
+trusted default-branch `.github/pr-guard.json`; omission disables the pass. It
+runs only after the per-pull-request work in the repository-wide scheduled
+sweep. A candidate is a `pull_request` run with `run_attempt: 1` still in
+`completed` / `action_required`, whose valid 40-character hexadecimal head SHA
+is neither the current head, the merge commit, nor any commit of an open pull
+request whose head branch and fork match the run's, whose
+`head_repository.full_name` is a nonempty name
+different from the base repository, whose creation time is at least one hour
+old, and which is not protected at scan time. The reported candidate count is
+this full superseded set before the never-started proof, including candidates
+that the examined bound leaves unchecked.
+The scan-time check reads all open pulls before the held-run listing and stays
+the broader, conservative first filter. The final protection check validates
+the candidate fork and branch, then uses a head-filtered query for only the open
+pulls on that fork and branch: those are the pulls whose approval could release
+the run. Each result is re-read in full and, when its detail still names that
+fork and branch, checked against a fresh commit list. A matching open pull whose
+merge commit is still being computed protects the run. A detail naming another
+head is ignored. A candidate with an invalid fork or branch name is never
+deleted, and neither is a run with an empty head branch. In the scan-time
+check, a null merge SHA in the list is resolved with one single-pull read,
+protecting both the listed and re-read head SHAs. An unreadable or malformed matching open-pull head SHA fails the pass
+closed; a deleted fork simply has no branch to match. A pull request at GitHub's
+250-commit cap protects the run instead of aborting the pass. At the 1000-run
+listing cap, the pass processes that capped window; it may omit candidates, but
+never weakens protection.
+
+The examined window of at most 40 candidates advances each half-hour slot, so
+candidates that cannot be deleted do not block the rest while jobs reads stay
+bounded. Each pass is capped at 250 API requests after the three configuration
+reads, excluding the client's own GET retries, and the cap is enforced before
+each request and each pagination page. When the cap is reached the pass ends
+with `aborted: "budget"`, keeps any deletions already made, and never deletes a
+run whose fresh check did not complete. The result reports `requests`. After
+all protection reads, the pass re-reads the run and its jobs a final time. It deletes, or plans in a dry run, only when the run is
+still held, unchanged in SHA and branch, still belongs to a fork, and still has
+no jobs. A run or jobs 404 is skipped; any other jobs failure aborts the pass.
+It deletes or plans at most 20 runs per sweep. A denied or rate-limited delete
+aborts the pass, while a drain failure never changes the guard's exit code.
+Once a run has been deleted, a later failure ends the pass with
+`aborted: "error"` and an `error` message while retaining the deleted ids; a
+failure before the first deletion still fails the pass. Deleting a
+never-started hold is a distinct write class, not an exception to the rule that
+the guard never cancels: cancel cannot clear `action_required` on a run that is
+already `completed`, so only deletion shrinks the held-run listing. The pass
+never approves, cancels, reruns or dispatches a workflow.
 
 ## Optional environment deployment approval
 

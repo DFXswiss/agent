@@ -803,14 +803,18 @@ def _checks(api: Any, repo: str, head: str) -> list[Mapping]:
     raise GuardError("CI check inventory exceeds page bound")
 
 
-def _workflow_run_never_started(api: Any, assessment: Any, run: Mapping) -> bool:
+def _workflow_run_never_started(
+    api: Any, repo: str, run: Mapping, *, missing_ok: bool = False
+) -> bool:
     from .a38_guard import GuardError
     run_id = run.get("id")
     if type(run_id) is not int or run_id <= 0:
         raise GuardError("workflow job inventory invalid")
     status, body, _ = api.request(
-        "GET", f"/repos/{assessment.repo}/actions/runs/{run_id}/jobs"
+        "GET", f"/repos/{repo}/actions/runs/{run_id}/jobs"
     )
+    if missing_ok and status == 404:
+        return False
     if status != 200 or not isinstance(body, Mapping):
         raise GuardError("workflow job inventory invalid")
     total_count = body.get("total_count")
@@ -840,7 +844,7 @@ def _unstarted_non_allowlisted_hold(
         return False
     if run.get("conclusion") not in {"action_required", "cancelled"}:
         return False
-    return _workflow_run_never_started(api, assessment, run)
+    return _workflow_run_never_started(api, assessment.repo, run)
 
 
 def ci_state(

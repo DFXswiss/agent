@@ -2100,6 +2100,7 @@ def test_approval_disabled_cancelled_zero_job_hold_still_blocks_ready():
 
 @pytest.mark.parametrize("status,body", [
     (500, {}),
+    (404, {}),
     (200, {"total_count": "0", "jobs": []}),
     (200, {"total_count": -1, "jobs": []}),
     (200, {"total_count": 0, "jobs": {"id": 1}}),

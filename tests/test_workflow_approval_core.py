@@ -245,8 +245,8 @@ def test_private_fork_diverged_base_still_approves():
     assert fake.posts == [101]
 
 
-@pytest.mark.parametrize("inventory", [{"total_count": 1000, "workflow_runs": []},
-    {"total_count": 2, "workflow_runs": []}, {"total_count": True, "workflow_runs": []},
+@pytest.mark.parametrize("inventory", [{"total_count": True, "workflow_runs": []},
+    {"total_count": 2, "workflow_runs": []},
     {"total_count": 1, "workflow_runs": [{}]},
     {"total_count": 2, "workflow_runs": [ApprovalAPI.run(), ApprovalAPI.run()]}])
 def test_partial_or_malformed_inventory_cannot_authorize(inventory):
