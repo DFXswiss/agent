@@ -4240,6 +4240,40 @@ def test_a38_await_second_review_with_unknown_pr_state_takes_no_mail(
     assert [row for row in store.rows("activity") if row.get("type") == "comment.post"] == []
 
 
+@pytest.mark.parametrize("variant", ["no_login", "unauthorized", "malformed", "stale"])
+def test_a38_rejected_review_mail_stays_unread_when_the_observation_save_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000c"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    payload = _a38_second_review_payload(task_id, fake.head)
+    login = "reviewer-one"
+    if variant == "no_login":
+        login = ""
+    elif variant == "unauthorized":
+        login = "someone-else"
+    elif variant == "malformed":
+        payload = {**payload, "defects": -1}
+    else:
+        payload = _a38_second_review_payload(task_id, "b" * 40)
+    _a38_review_mail(
+        store, worker, message_id="rejected-mail", login=login, payload=payload, second=1
+    )
+
+    def fail_save(*_args, **_kwargs):
+        raise RuntimeError("save failed")
+
+    monkeypatch.setattr(coordinator_a38, "save_task", fail_save)
+    with pytest.raises(RuntimeError, match="save failed"):
+        intake_second_reviews(store, worker, task, fake, fake.head)
+    assert "rejected-mail" not in _read_message_ids(store, worker)
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
