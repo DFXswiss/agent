@@ -4364,6 +4364,43 @@ def test_a38_passing_review_after_a_blocking_one_on_a_merged_head_closes_the_key
     assert statuses["codex_pr_logic"] == "ja"
 
 
+def test_a38_after_a_merge_every_waiting_review_is_taken_in_and_the_newest_decides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    task_id = "abababab-0000-4000-8000-000000000010"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "MERGED"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="merged-block",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="merged-pass",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=2,
+    )
+
+    intake_second_reviews(store, worker, task, fake, fake.head)
+
+    read = _read_message_ids(store, worker)
+    assert {"merged-block", "merged-pass"} <= read
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert _a38_second_review_outcome(saved["payload"]["coordinator"], fake.head) == "passed"
+
+
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

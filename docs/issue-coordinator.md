@@ -615,7 +615,8 @@ a pull request closed there also goes to `await_merge`, which publishes the
 next tick without taking in mail.
 Second-review intake runs while the pull request is open and, in `await_merge`,
 also after the merge, so a review of the merged head is still published; it never
-reopens work. A merged pull request completes only with a passing second review:
+reopens work. After the merge every waiting review is taken in before
+`await_merge` decides by the newest one. A merged pull request completes only with a passing second review:
 `await_merge` waits up to `second_review_timeout_seconds` for it, publishes the
 non-recoverable blocker `merged-without-second-review` after that, and publishes
 `merged-with-blocking-second-review` at once when the newest posted review blocks the merge. A new head invalidates its report, both comment checkpoints, and
