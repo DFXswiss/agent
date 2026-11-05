@@ -726,7 +726,12 @@ def send_second_review_requests(
     prior = a38.get("second_review")
     if isinstance(prior, dict) and prior.get("head") == head and not force:
         return False
-    occurrence = int(prior.get("request_count") or 0) if isinstance(prior, dict) else 0
+    # After a blocking review drops the state, continue the counter so new ping ids are fresh.
+    occurrence = (
+        int(prior.get("request_count") or 0)
+        if isinstance(prior, dict)
+        else int(a38.get("second_review_next_occurrence") or 0)
+    )
     if force:
         occurrence += 1
     number = as_int(c.get("pr_number") or task.get("ref"))
@@ -1141,7 +1146,13 @@ def phase_await_ready(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting guard Ready; invalidating evidence"]
-    if str(view.get("state") or "").upper() != "OPEN":
+    pr_state = str(view.get("state") or "").upper()
+    if pr_state == "MERGED":
+        # A human may merge before this poll sees Ready; await_merge verifies the merge.
+        c["phase"] = "await_merge"
+        save_task(store, task)
+        return ["PR merged while awaiting guard Ready; verifying the merge"]
+    if pr_state != "OPEN":
         raise CoordinatorError("pull request is not open while awaiting guard Ready")
     is_draft = view.get("isDraft")
     if is_draft is not True and is_draft is not False:

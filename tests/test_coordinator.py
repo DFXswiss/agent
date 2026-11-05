@@ -4409,6 +4409,77 @@ def test_a38_await_ready_retries_transient_pr_and_status_reads(
         phase_await_ready(store, worker, task, malformed_draft)
 
 
+def test_a38_await_ready_hands_a_merged_pr_to_await_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_await_ready
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = replace(make_worker(tmp_path), a38=True)
+    head = "a" * 40
+    task = {
+        "id": "99999999-9999-4999-8999-999999999999",
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "await_ready",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7, "base": "develop"},
+            }
+        },
+    }
+
+    def merged(_argv: list[str]) -> Completed:
+        return Completed(
+            0, json.dumps({"headRefOid": head, "isDraft": False, "state": "MERGED"}), ""
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped", lambda _store, _session, runner: runner
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.save_task", lambda *_args: None)
+
+    assert phase_await_ready(store, worker, task, merged) == [
+        "PR merged while awaiting guard Ready; verifying the merge"
+    ]
+    assert task["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_second_review_pings_get_fresh_ids_after_a_blocking_review_on_the_same_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import _ping_id, send_second_review_requests
+    from agent_cli.coordinator_common import coord
+    from agent_cli.coordinator_lanes import invalidate_head_evidence
+
+    task_id = "aaaaaaaa-0000-4000-8000-000000000001"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    store.set_meta("github_login", "worker-bot")
+    c = coord(task)
+    c.setdefault("a38", {})["second_review"] = {
+        "head": fake.head,
+        "request_count": 2,
+        "status": "posted",
+    }
+    invalidate_head_evidence(c, "")
+    assert "second_review" not in c["a38"]
+    assert c["a38"]["second_review_next_occurrence"] == 3
+    c["head_sha"] = fake.head
+
+    assert send_second_review_requests(store, worker, task) is True
+
+    for login in worker.second_reviewers:
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 3)) is not None
+
+
 @pytest.mark.parametrize("missing_evidence", ["agent_id", "prompt"])
 def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
     tmp_path: Path,
