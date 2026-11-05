@@ -3301,6 +3301,138 @@ def test_a38_preflight_requires_null_second_and_excludes_worker_login(
         preflight_worker(store, own_reviewer, fake)
 
 
+def test_a38_unavailable_first_review_does_not_increment_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.allow import CHECKLIST_KEYS
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_github import phase_blocked
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    store.set_meta("github_login", "worker-bot")
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.verify_signed_clean_head",
+        lambda *args, **kwargs: _POSTED_HEAD,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.review_rules_bound",
+        lambda *args, **kwargs: True,
+    )
+    tid = "aa000001-0000-4000-8000-000000000062"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir(parents=True)
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "review",
+        "state": "pr-review",
+        "title": "A38 review retry",
+        "repo": "example/project",
+        "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "change_summary_en": "The unavailable launch is excluded from the pass count.",
+        "change_summary_de": "Der nicht verfügbare Start zählt nicht als Review-Durchlauf.",
+        "payload": {
+            "coordinator": {
+                "phase": "pr_gates_grok",
+                "worktree": str(worktree),
+                "base_sha": "b" * 40,
+                "head_sha": _POSTED_HEAD,
+                "pr_number": 42,
+                "pr_url": "https://github.com/example/project/pull/42",
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {"enabled": True},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for key in CHECKLIST_KEYS["review"]:
+        status = "ja" if key in {"session_registered", "contributing_read"} else "pending"
+        store.write(
+            "checklist_item",
+            "insert",
+            f"{tid}-{key}",
+            {
+                "id": f"{tid}-{key}",
+                "task_id": tid,
+                "key": key,
+                "status": status,
+                "evidence": "seed" if status == "ja" else None,
+                "source": "script",
+            },
+        )
+
+    fake.model_outputs["pr-reviewer-quality"] = "STATUS: unavailable\n"
+    fake.model_outputs["pr-reviewer-logic"] = "STATUS: complete\nRESULT: approved\n"
+    first_lines = phase_pr_gates(
+        store,
+        worker,
+        store.row("task", tid),
+        fake,
+        lane_runner(fake),
+        vendor="grok",
+        stage="grok-pr",
+    )
+    blocked = store.row("task", tid)
+    assert any("unavailable; blocked" in line for line in first_lines)
+    assert "first_review_passes" not in blocked["payload"]["coordinator"]["a38"]
+
+    question_id = blocked["payload"]["coordinator"]["question_activity_id"]
+    question = store.row("activity", question_id)
+    fake.comments = [
+        {"id": 1, "body": question["payload"]["body"], "user": {"login": "worker-bot"}},
+        {"id": 2, "body": "Provider restored; resume.", "user": {"login": "human-owner"}},
+    ]
+    resume_lines = phase_blocked(store, worker, blocked, fake)
+    resumed = store.row("task", tid)
+    assert any("resuming pr_gates_grok" in line for line in resume_lines)
+    assert resumed["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+
+    fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: approved\n"
+    phase_pr_gates(
+        store,
+        worker,
+        resumed,
+        fake,
+        lane_runner(fake),
+        vendor="grok",
+        stage="grok-pr",
+    )
+    approved = store.row("task", tid)
+    assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+
+    phase_first_comment(store, worker, approved, fake)
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and row.get("payload", {}).get("target") == "pr"
+    ]
+    assert len(comments) == 1
+    body = comments[0]["payload"]["body"]
+    assert "Ready after 1 review passes." in body
+    assert "Bereit nach 1 Review-Durchläufen." in body
+
+
 def test_a38_ci_and_readiness_route_to_guard_ready_wait(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

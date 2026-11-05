@@ -1045,13 +1045,6 @@ def phase_pr_gates(
         save_task(store, task)
         return lines
 
-    if worker.a38 and not second_stage:
-        a38 = c.setdefault("a38", {})
-        if not isinstance(a38, dict):
-            a38 = {}
-            c["a38"] = a38
-        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
-
     if c.get("pr_number") and head:
         try:
             set_checklist(
@@ -1174,6 +1167,7 @@ def phase_pr_gates(
             c.setdefault("lane_observations", []).append(outcome.activity_error)
         outcomes.append((prep, outcome))
 
+    parsed_outcomes: list[tuple[dict[str, Any], LaneResult, str, str | None]] = []
     for prep, outcome in outcomes:
         status, model_result = parse_model_result(outcome.stdout, outcome.returncode)
         dimension = str(prep["dimension"])
@@ -1207,6 +1201,17 @@ def phase_pr_gates(
             save_task(store, task)
             lines.append(f"{stage}/{dimension} unavailable; blocked")
             return lines
+        parsed_outcomes.append((prep, outcome, status, model_result))
+
+    if worker.a38 and not second_stage:
+        a38 = c.setdefault("a38", {})
+        if not isinstance(a38, dict):
+            a38 = {}
+            c["a38"] = a38
+        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
+
+    for prep, outcome, status, model_result in parsed_outcomes:
+        dimension = str(prep["dimension"])
         if not review_is_approved(status, model_result):
             evidence = redact(outcome.stdout or f"{status}/{model_result}")
             record_gate(

@@ -24,7 +24,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 
 | Topic | Decision |
 |---|---|
-| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings, which use the named origin `web:<login>`. |
+| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings and website-created `assignment.created` / `assignment.reply` rows recorded by the hub with origin `web:<login>` when a signed-in human issues or answers a mandate through the website. For a human-issued mandate, the hub creates the GitHub issue and assignment with that human's own token. `web:` origins are reserved for the hub. |
 | Hub role | Full replica + fan-out + always-on website. Not a shared write database. |
 | Login | Any GitHub account may sign in. Membership is *not* the GitHub org. |
 | Authorization | Hardcoded teams in git. Change members with a pull request. |
@@ -99,6 +99,10 @@ Collides with an unrelated public ledger product. The name is **agent**. The pro
 
 **Hub-owned task lifecycle and leases.**  
 The hub does not assign work, grant leases, or move authorship when a laptop disappears. Write ownership stays on the origin device. A crashed session restarts on **that** device, or the work stays unread. Restore rebuilds a wiped device; it does not transfer authorship.
+Recording a human-issued mandate under the §2 website-origin exception is not
+the hub assigning or leasing work: the signed-in human assigns on GitHub
+through the website, and the execution device's coordinator still decides
+whether to accept the assignment.
 
 **Task as the product center.**  
 A task exists only when the spine skill is attached. The durable unit is the session and its activity log.
@@ -599,13 +603,22 @@ Partial multi-step actions (push, then open a pull request) record each complete
 
 ### 19.5 What this does not change
 
-Write owner, hub role, opt-in skills, required session row, and the generic `activity` catalog stay as in §2. Spine task states stay the spine skill’s states. They are not replaced by a hub machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
+Write owner, hub role, the narrow website-origin exceptions, opt-in skills,
+required session row, and the generic `activity` catalog stay as in §2. Spine
+task states stay the spine skill’s states. They are not replaced by a hub
+machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
 
 ### 19.6 Ready for review
 
 Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md): open the draft as soon as the first signed task commit exists; full tests and reviews are Ready-for-review gates, not draft gates. A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft (Ready for review) needs two review runs. Each names this head, or a commit after the pull request base that this head still contains. CI on this head must be green. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences; ledger `task-done` is not pull-request completion.
 
 Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex`, `claude` or `openrouter`) fills a slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later check for that task uses the pinned value; the only provider order in code is the historical default `grok`, then `codex`, applied to tasks and devices without `models` so that existing ledger rows stay readable; the stored stage names `grok-pr` / `codex-pr` and the checklist keys `grok_pr_*` / `codex_pr_*` are the historical identifiers of the two slots. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+
+The only second-slot exception is a coordinator A38 task pinned with
+`models.second: null`. Its second review is an external review by a team member
+delivered as session mail, bound to the approved `grok-pr` head and recorded as
+`codex_pr_*` checklist evidence. The coordinator launches no second-slot model
+for that task. `models.second: null` is refused everywhere else.
 
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the newest author report that meets the requirements and was created after the head commit, falling back to an older qualifying report when a newer one does not meet them. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. One comment whose lanes are the first review run, and a later comment whose lanes are the second review run. The first comment stays valid when a later commit still contains that head and that head is after the pull request base. Then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
 
@@ -703,16 +716,19 @@ the workflow is enabled on a deployment:
   executor. Its existence alone does not establish that model lanes cannot
   access GitHub or execute tests or other agents.
 - An explicitly configured coordinator A38 worker keeps the same deterministic
-  boundary with a different readiness owner: the script runs and verifies the
-  repository A38 suite, publishes the author report and two validated author
-  review comments, and relays an allowlisted external second-review result from
-  session mail. For that review path the hub remains the sanctioned
+  boundary with a different readiness owner. Its tasks are pinned with
+  `models.second: null`: the script runs and verifies the repository A38 suite,
+  publishes the author report and two validated author review comments, and
+  relays an allowlisted external team-member second-review result from session
+  mail. That result is bound to the approved `grok-pr` head and recorded as
+  `codex_pr_*` checklist evidence; no second-slot model is launched. For that
+  review path the hub remains the sanctioned
   person-ping/session-mail relay; a required assignment mandate is separately
   verified from its website-origin `assignment.created` event with the envelope,
   `web:<login>` origin, and inner actor all bound to the same login. Before the
   owner-scoped A38 default writes `contributing_ok=ja` with `conformity-a
   approved at <head>`, it requires the recorded `grok-pr` quality gate to be
-  approved on that exact head. No second-slot model is launched. The coordinator never posts a formal
+  approved on that exact head. The coordinator never posts a formal
   approval and never marks the pull request Ready; it observes the PR guard
   making the unchanged head Ready, then waits for the verified human merge. Non-A38
   workers retain the formal-review and leave-draft path described above.
