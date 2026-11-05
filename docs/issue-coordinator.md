@@ -614,7 +614,7 @@ sent for it.
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
-The worker never posts a formal approval and never calls `gh pr ready`. While
+The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
 the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;
 observe contexts never count. It advances after the guard has made the
