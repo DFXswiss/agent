@@ -592,7 +592,9 @@ observation, and publishes one idempotent review comment for every valid mail.
 Any later blocking result returns the task to the implementer immediately;
 stale, malformed, or unauthorized mail is acknowledged and recorded as an
 observation. Pending requests are re-pinged once per configured timeout and are
-never skipped.
+never skipped. A pull request closed while the task awaits the second review
+stops the wait with a blocker; no further second-review comments or pings are
+sent for it.
 
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
