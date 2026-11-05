@@ -560,7 +560,8 @@ class Store:
     def rows(self, table: str) -> list[dict[str, Any]]:
         with self._lock:
             found = self.conn.execute(
-            "SELECT row_id, origin_device_id, payload FROM row_data WHERE table_name = %s ORDER BY updated_at DESC",
+            "SELECT row_id, origin_device_id, payload, updated_at FROM row_data WHERE table_name = %s "
+            "ORDER BY updated_at DESC, row_id DESC",
             (table,),
         ).fetchall()
         out: list[dict[str, Any]] = []
@@ -569,6 +570,7 @@ class Store:
             if not isinstance(payload, dict):
                 raise StoreError(f"{table} {row['row_id']} payload is not an object")
             payload["_origin_device_id"] = row["origin_device_id"]
+            payload["_updated_at"] = str(row["updated_at"] or "")
             out.append(payload)
         return out
 

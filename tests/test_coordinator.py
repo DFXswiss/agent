@@ -3741,7 +3741,7 @@ def test_a38_intake_processes_all_reviews_for_one_head(
             "reviewer-two",
         ]
         assert all(
-            set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge"}
+            set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge", "at"}
             for review in second_review["reviews"]
         )
         assert all(review["blocks_merge"] is False for review in second_review["reviews"])
@@ -4524,6 +4524,24 @@ def test_a38_saved_newest_block_routes_on_a_later_tick_after_a_crash(
     assert saved is not None
     assert saved["payload"]["coordinator"]["phase"] == "implement"
     assert saved["payload"]["coordinator"]["findings"] == "Fix it."
+
+
+@pytest.mark.parametrize(
+    ("reviews", "expected"),
+    [
+        ([{"blocks_merge": True, "at": "t1"}, {"blocks_merge": False, "at": "t2"}], False),
+        ([{"blocks_merge": False, "at": "t1"}, {"blocks_merge": True, "at": "t2"}], True),
+        # Same second: a block wins whatever the processing order.
+        ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t2"}], True),
+        ([{"blocks_merge": False, "at": "t2"}, {"blocks_merge": True, "at": "t2"}], True),
+        ([{"blocks_merge": False}], False),
+        ([], False),
+    ],
+)
+def test_a38_newest_reviews_block_resolves_ties_conservatively(reviews, expected) -> None:
+    from agent_cli.coordinator_a38 import newest_reviews_block
+
+    assert newest_reviews_block(reviews) is expected
 
 
 def test_a38_read_receipt_survives_a_foreign_row_on_its_id(

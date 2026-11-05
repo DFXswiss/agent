@@ -1559,24 +1559,14 @@ def test_a38_early_merge_reruns_readiness_when_it_ran_on_an_older_head(
     task_id, head = _owner_a38_early_merge_task(store, worker, explicit_statement=True)
     task = store.row("task", task_id)
     # Readiness keys closed on an older head (before a blocking review produced this head).
-    for key, status in (
-        ("contributing_ok", "ja"),
-        ("deviation_declared", "n_a"),
-        ("deviation_granted", "n_a"),
+    from agent_cli.coordinator_lanes import set_checklist
+
+    for key, status, source in (
+        ("contributing_ok", "ja", "script"),
+        ("deviation_declared", "n_a", "human"),
+        ("deviation_granted", "n_a", "human"),
     ):
-        store.write(
-            "checklist_item",
-            "insert",
-            f"{task_id}:{key}:old",
-            {
-                "id": f"{task_id}:{key}:old",
-                "task_id": task_id,
-                "key": key,
-                "status": status,
-                "evidence": "closed on an older head",
-                "source": "human" if key != "contributing_ok" else "script",
-            },
-        )
+        set_checklist(store, task, key, status, "closed on an older head", source=source)
     task["payload"]["coordinator"].setdefault("evidence", {})["readiness_head"] = "b" * 40
     store.write("task", "update", task_id, {k: v for k, v in task.items() if not k.startswith("_")})
     _patch_early_merge_readiness(monkeypatch, head)

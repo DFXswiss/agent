@@ -970,7 +970,12 @@ def intake_second_reviews(
         raise CoordinatorError("external second-review intake called for a non-A38 worker")
     c = coord(task)
     read = _read_message_ids(store, worker)
-    messages = list(reversed(store.rows("activity")))
+    # Oldest first by replica time with a deterministic tie-break; reviews that share
+    # the newest second are resolved conservatively when deciding (a block wins).
+    messages = sorted(
+        store.rows("activity"),
+        key=lambda row: (str(row.get("_updated_at") or ""), str(row.get("id") or "")),
+    )
     lines: list[str] = []
     for row in messages:
         message_id = str(row.get("id") or "")
@@ -1078,6 +1083,7 @@ def intake_second_reviews(
                     "id": result.get("id"),
                     "url": result.get("url"),
                     "blocks_merge": payload["blocks_merge"],
+                    "at": str(row.get("_updated_at") or ""),
                 }
             )
         if payload["blocks_merge"]:
@@ -1126,6 +1132,17 @@ def intake_second_reviews(
     return lines or None
 
 
+def newest_reviews_block(reviews: list[Any]) -> bool:
+    """True when the newest posted review blocks; reviews sharing the newest
+    timestamp count as blocking if any of them blocks."""
+    entries = [review for review in reviews if isinstance(review, dict)]
+    if not entries:
+        return False
+    newest_at = entries[-1].get("at") or ""
+    tied = [review for review in entries if (review.get("at") or "") == newest_at] if newest_at else [entries[-1]]
+    return any(review.get("blocks_merge") is True for review in tied)
+
+
 def _route_newest_blocking_review(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner, current: str
 ) -> str | None:
@@ -1141,9 +1158,7 @@ def _route_newest_blocking_review(
         not isinstance(state, dict)
         or state.get("head") != current
         or not isinstance(reviews, list)
-        or not reviews
-        or not isinstance(reviews[-1], dict)
-        or reviews[-1].get("blocks_merge") is not True
+        or not newest_reviews_block(reviews)
         or c.get("phase") == "await_merge"
         or not isinstance(block, dict)
         or block.get("head") != current
