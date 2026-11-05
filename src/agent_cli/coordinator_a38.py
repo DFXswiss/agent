@@ -475,6 +475,13 @@ def phase_tests(
         output=output,
         head=head,
     )
+    if as_int(c.get("pr_number") or task.get("ref")) is not None:
+        # A merge during the suite, passed or failed, goes to the merge check first.
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            return [f"PR {live_state.lower()} during the A38 suite; verifying the merge"]
     if not passed:
         details = _a38_failure_summary(report_path, logs_dir, output or "A38 failed")
         c["findings"] = f"A38 failed on {head[:7]}:\n{details}"
@@ -492,13 +499,6 @@ def phase_tests(
         report_body = report_path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise CoordinatorError("verified A38 report cannot be read") from exc
-    if as_int(c.get("pr_number") or task.get("ref")) is not None:
-        # A merge during the suite goes to the merge check instead of a draft error.
-        live_state = pr_state(store, worker, task, runner)
-        if live_state in ("MERGED", "CLOSED"):
-            c["phase"] = "await_merge"
-            save_task(store, task)
-            return [f"PR {live_state.lower()} during the A38 suite; verifying the merge"]
     draft_lines = ensure_draft(store, worker, task, runner)
     if str(coord(task).get("head_sha") or "") != head:
         raise CoordinatorError("published pull request head differs from verified A38 head")

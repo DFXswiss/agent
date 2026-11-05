@@ -5837,10 +5837,10 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
         assert calls == []
 
 
+@pytest.mark.parametrize("failing", ["none", "run"])
 def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
 ) -> None:
-    failing = "none"
     from dataclasses import replace
 
     from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
