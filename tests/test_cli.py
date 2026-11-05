@@ -4354,3 +4354,21 @@ def test_activity_add_validates_and_writes_second_review_session_mail(
             tmp_path,
             ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
         )
+
+    mail["to_session"] = "worker"
+    path.write_text(json.dumps(mail), encoding="utf-8")
+    store = Store(tmp_path)
+    try:
+        before = len(store.rows("activity"))
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="must use activity type message"):
+        run(
+            tmp_path,
+            ["activity", "add", "--session", "reviewer", "--type", "subscription.set", "--payload-file", str(path)],
+        )
+    store = Store(tmp_path)
+    try:
+        assert len(store.rows("activity")) == before
+    finally:
+        store.close()

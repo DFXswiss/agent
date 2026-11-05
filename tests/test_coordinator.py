@@ -3923,6 +3923,36 @@ def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
         assert lines == [f"PR left open state during {phase}; verifying the merge"]
 
 
+@pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness", "await_ready"])
+def test_a38_unassigned_source_with_unreadable_pr_state_retries_without_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000000b"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.issues[0]["assignees"] = []
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *args, **kwargs: None)
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [f"PR state temporarily unavailable during {phase}; retrying"]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == phase
+    assert "blocker" not in saved["payload"]["coordinator"]
+
+
 def test_a38_await_merge_posts_no_second_review_after_revocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5385,6 +5415,85 @@ def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
         stage="grok-pr",
     )
     assert launched == ["quality"]
+
+
+@pytest.mark.parametrize("failing", ["precheck", "policy", "run", "verify"])
+def test_a38_tests_failure_routes_to_implementer_without_a_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    tid = "33333333-3333-4333-8333-33333333333f"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+    }
+    store.write("task", "insert", tid, task)
+    store.write("checklist_item", "insert", "a38-fail-local", {"id": "a38-fail-local", "task_id": tid, "key": "local_check_pass", "status": "pending"})
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.run_bounded",
+        lambda argv, **_k: Completed(1 if failing == "precheck" else 0, "precheck output", ""),
+    )
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, "b" * 40 + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    calls: list[str] = []
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        calls.append(argv[0])
+        if argv[0] == "run":
+            Path(argv[argv.index("--output") + 1]).write_text("report", encoding="utf-8")
+        return Completed(1 if argv[0] == failing else 0, f"{argv[0]} output", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+
+    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+
+    saved = store.row("task", tid)
+    c = saved["payload"]["coordinator"]
+    prefix = "Trusted precheck failed" if failing == "precheck" else "A38 failed"
+    assert lines == [f"{prefix.lower() if failing == 'precheck' else prefix} on {head[:7]}; routing to implementer"]
+    assert c["phase"] == "implement"
+    assert saved["state"] == "implementing"
+    assert c["findings"].startswith(f"{prefix} on {head[:7]}")
+    if failing != "precheck":
+        assert c["evidence"]["tests_pass"] is False
+    assert "report" not in c.get("a38", {})
+    assert not [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post" and row["payload"].get("exact_body")
+    ]
+    if failing == "precheck":
+        assert calls == []
 
 
 def test_a38_tests_run_policy_run_verify_and_post_exact_report(
