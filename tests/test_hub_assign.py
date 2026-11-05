@@ -55,6 +55,66 @@ def test_assign_success_prints_issue_without_token(monkeypatch, capsys):
     client.close()
 
 
+def test_assign_body_file_reaches_assignment_api(monkeypatch, capsys, tmp_path):
+    body_path = tmp_path / "mandate.md"
+    body_path.write_text("Mandate from file\nwith details.\n", encoding="utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/assignments"
+        assert json.loads(request.content)["body"] == "Mandate from file\nwith details.\n"
+        return httpx.Response(
+            201,
+            json={
+                "repo": "Example/Project",
+                "number": 43,
+                "url": "https://github.com/Example/Project/issues/43",
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    hub = Hub("https://hub.example", "secret-device-token", client=client)
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: FakeStore())
+    monkeypatch.setattr("agent_cli.main._hub_from_store", lambda _store: hub)
+
+    main([
+        "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+        "--title", "Fix widget", "--body-file", str(body_path),
+    ])
+
+    assert "assigned Example/Project#43" in capsys.readouterr().out
+    client.close()
+
+
+def test_assign_unreadable_body_file_fails_before_store_or_http(monkeypatch, tmp_path):
+    missing = tmp_path / "missing.md"
+    monkeypatch.setattr(
+        "agent_cli.main.open_store",
+        lambda: (_ for _ in ()).throw(AssertionError("store/HTTP must not be reached")),
+    )
+
+    with pytest.raises(SystemExit, match="cannot read body file"):
+        main([
+            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "--title", "Fix widget", "--body-file", str(missing),
+        ])
+
+
+def test_assign_refuses_body_and_body_file_before_store_or_http(monkeypatch, tmp_path):
+    body_path = tmp_path / "mandate.md"
+    body_path.write_text("file body", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.open_store",
+        lambda: (_ for _ in ()).throw(AssertionError("store/HTTP must not be reached")),
+    )
+
+    with pytest.raises(SystemExit, match="exactly one of --body or --body-file"):
+        main([
+            "assign", "--agent", "worker-bot", "--repo", "Example/Project",
+            "--title", "Fix widget", "--body", "inline body",
+            "--body-file", str(body_path),
+        ])
+
+
 def test_assign_failure_prints_detail_and_recovery_url_without_token(monkeypatch, capsys):
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

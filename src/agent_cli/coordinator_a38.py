@@ -11,7 +11,7 @@ import json
 import shutil
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5
@@ -242,14 +242,35 @@ def phase_tests(
     a38 = _a38_state(c)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task['id']}:{head}"))
     activity = store.row("activity", activity_id)
-    result = activity.get("result") if isinstance(activity, dict) else None
-    if (
-        isinstance(activity, dict)
-        and activity.get("execution_status") == "done"
-        and isinstance(result, dict)
-        and isinstance(result.get("url"), str)
-        and result["url"]
-    ):
+    if isinstance(activity, dict):
+        payload = activity.get("payload")
+        if activity.get("execution_status") != "done":
+            if (
+                activity.get("type") != "comment.post"
+                or not isinstance(payload, dict)
+                or payload.get("exact_body") is not True
+                or not isinstance(payload.get("body"), str)
+                or not payload["body"]
+            ):
+                raise CoordinatorError("existing A38 report activity is invalid")
+            queue_activity(
+                store,
+                activity_id=activity_id,
+                session_id=worker.session_id,
+                typ="comment.post",
+                payload=payload,
+            )
+            execute_github(store, runner, activity_ids=(activity_id,))
+            activity = store.row("activity", activity_id)
+        result = activity.get("result") if isinstance(activity, dict) else None
+        if (
+            not isinstance(activity, dict)
+            or activity.get("execution_status") != "done"
+            or not isinstance(result, dict)
+            or not isinstance(result.get("url"), str)
+            or not result["url"]
+        ):
+            raise CoordinatorError("A38 report comment was not verified published")
         a38["report"] = {
             "head": head,
             "activity_id": activity_id,
@@ -810,9 +831,10 @@ def _parse_iso(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def phase_await_second_review(
@@ -933,7 +955,9 @@ def phase_await_second_review(
     a38 = _a38_state(c)
     state = a38.get("second_review")
     last = _parse_iso(state.get("last_requested_at")) if isinstance(state, dict) else None
-    now = datetime.now(timezone.utc)
+    now = _parse_iso(utcnow())
+    if now is None:
+        raise CoordinatorError("coordinator clock returned an invalid timestamp")
     if last is not None and (now - last).total_seconds() >= worker.second_review_timeout_seconds:
         if send_second_review_requests(store, worker, task, force=True):
             _observation(c, "second review request timed out; review-request pings re-sent")

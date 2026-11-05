@@ -633,6 +633,93 @@ def test_comment_post_exact_body_does_not_append_activity_marker(tmp_path: Path)
     assert scan_github(store, runner) == [f"comment.post {act_id} done"]
 
 
+def test_comment_post_exact_body_reuses_identical_comment_by_expected_login(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-report-reuse"
+    report = "verified exact report"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": report,
+            "target": "pr",
+            "exact_body": True,
+        },
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[1] == "api":
+            return Completed(
+                0,
+                json.dumps([{
+                    "id": 81,
+                    "body": report,
+                    "html_url": "https://github.com/dfxswiss/agent/pull/3#issuecomment-81",
+                    "user": {"login": "theo-vane"},
+                }]),
+                "",
+            )
+        raise AssertionError(f"comment must not post again: {argv}")
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    row = store.row("activity", act_id)
+    assert row is not None
+    assert row["result"]["id"] == 81
+
+
+def test_comment_post_exact_body_ignores_identical_comment_by_other_login(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "a38-report-other-author"
+    report = "verified exact report"
+    _pending(
+        store,
+        act_id,
+        "comment.post",
+        {
+            "repo": "dfxswiss/agent",
+            "number": 3,
+            "body": report,
+            "target": "pr",
+            "exact_body": True,
+        },
+    )
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[1] == "api":
+            return Completed(
+                0,
+                json.dumps([{
+                    "id": 82,
+                    "body": report,
+                    "html_url": "https://github.com/dfxswiss/agent/pull/3#issuecomment-82",
+                    "user": {"login": "someone-else"},
+                }]),
+                "",
+            )
+        if argv[:3] == ["gh", "pr", "comment"]:
+            assert argv[argv.index("--body") + 1] == report
+            return Completed(
+                0,
+                "https://github.com/dfxswiss/agent/pull/3#issuecomment-83\n",
+                "",
+            )
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"comment.post {act_id} done"]
+    assert sum(call[:3] == ["gh", "pr", "comment"] for call in calls) == 1
+
+
 def test_comment_post_paginate_finds_marker(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

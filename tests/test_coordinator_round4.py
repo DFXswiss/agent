@@ -186,6 +186,22 @@ def test_fork_creation_does_not_wait_or_repeat_request():
     assert posts == 1
 
 
+@pytest.mark.parametrize("detail", ["fork exists", "fork creation is in progress"])
+def test_fork_creation_existing_or_in_progress_response_is_pending(detail):
+    def runner(argv: list[str]) -> Completed:
+        if argv == ["gh", "api", "repos/worker-bot/project"]:
+            return Completed(1, "", "not found")
+        if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
+            return Completed(1, "", detail)
+        raise AssertionError(argv)
+
+    assert not _fork_repository(
+        runner,
+        repo="Example/project",
+        publication_repo="worker-bot/project",
+    )
+
+
 class QueryHub:
     result = {"rows": []}
     error: Exception | None = None
@@ -477,6 +493,65 @@ def test_phase_accept_retries_fork_visibility_then_publishes_blocker(
     )
     assert requested == [False, True, True]
     assert published == [{"kind": "publication-fork", "reply_checkpoint": True}]
+
+
+def test_phase_accept_persists_fork_intent_before_post_and_never_reposts(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_common import save_task as real_save_task
+
+    _patch_accept_prerequisites(monkeypatch)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github._hub_assignment_row",
+        lambda *_a, **_k: ("assignment-row", None),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_github.scoped",
+        lambda _store, _session_id, runner, **_kwargs: runner,
+    )
+    monkeypatch.setattr("agent_cli.coordinator_github.utcnow", lambda: "2026-01-01T00:00:00Z")
+    store = Store(tmp_path)
+    task = _accept_task()
+    task["id"] = "11111111-1111-4111-8111-111111111111"
+    task["payload"]["coordinator"]["source"]["owner_scoped"] = True
+    store.write("task", "insert", task["id"], task)
+    saves = {"n": 0}
+
+    def crash_on_second_save(store_arg, task_arg):  # noqa: ANN001
+        saves["n"] += 1
+        if saves["n"] == 2:
+            raise RuntimeError("crash after fork POST")
+        real_save_task(store_arg, task_arg)
+
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", crash_on_second_save)
+    posts = {"n": 0}
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[-2:] == ["--jq", ".default_branch"]:
+            return Completed(0, "main", "")
+        if argv[-2:] == ["--jq", ".permissions.push"]:
+            return Completed(0, "false", "")
+        if argv == ["gh", "api", "repos/worker-bot/project"]:
+            return Completed(1, "", "not found")
+        if argv == ["gh", "api", "-X", "POST", "repos/Example/project/forks"]:
+            posts["n"] += 1
+            return Completed(0, "{}", "")
+        raise AssertionError(argv)
+
+    with pytest.raises(RuntimeError, match="crash after fork POST"):
+        phase_accept(store, _accept_worker(tmp_path), store.row("task", task["id"]), runner)
+    persisted = store.row("task", task["id"])
+    assert persisted is not None
+    assert persisted["payload"]["coordinator"]["source"]["fork_requested_at"] == (
+        "2026-01-01T00:00:00Z"
+    )
+    assert posts["n"] == 1
+
+    monkeypatch.setattr("agent_cli.coordinator_github.save_task", real_save_task)
+    assert phase_accept(store, _accept_worker(tmp_path), persisted, runner) == [
+        "publication fork not yet visible; retrying accept"
+    ]
+    assert posts["n"] == 1
 
 
 def test_hub_error_retries_accept_and_rate_limits_blocker(monkeypatch, tmp_path):
