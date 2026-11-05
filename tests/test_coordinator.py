@@ -3920,7 +3920,8 @@ def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
     assert saved is not None
     assert saved["payload"]["coordinator"]["phase"] == expected_phase
     if expected_phase == "await_merge":
-        assert lines == [f"PR left open state during {phase}; verifying the merge"]
+        verb = "merged" if pr_state == "MERGED" else "closed"
+        assert lines == [f"PR {verb} during {phase}; verifying the merge"]
 
 
 @pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness", "await_ready"])
@@ -4332,6 +4333,39 @@ def test_a38_published_rerun_phases_check_for_a_merge_first(
         assert saved_phase == phase
     else:
         assert saved_phase == expected
+
+
+@pytest.mark.parametrize("phase", ["blocked", "ask", "await_second_review"])
+def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000014"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: "MERGED")
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [f"PR merged during {phase}; verifying the merge"]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_check_label_hides_owner_commands() -> None:
+    from agent_cli.coordinator_common import check_label
+    from agent_cli.coordinator_config import RepositoryConfig
+
+    cfg = RepositoryConfig("Example/repo", "main", "Example/repo", ("/opt/secret/check", "--token=x"), ())
+    assert check_label({"source": {"owner_scoped": True}}, cfg) == "owner_check_argv"
+    assert check_label({"source": {}}, cfg) == "/opt/secret/check --token=x"
 
 
 def test_a38_unchanged_head_after_a_block_asks_the_reviewers_again() -> None:
@@ -5758,6 +5792,92 @@ def test_a38_tests_failure_routes_to_implementer_without_a_report(
     ]
     if failing == "precheck":
         assert calls == []
+
+
+def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failing = "none"
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    tid = "33333333-3333-4333-8333-33333333334f"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+    }
+    store.write("task", "insert", tid, task)
+    store.write("checklist_item", "insert", "a38-fail-local", {"id": "a38-fail-local", "task_id": tid, "key": "local_check_pass", "status": "pending"})
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.run_bounded",
+        lambda argv, **_k: Completed(1 if failing == "precheck" else 0, "precheck output", ""),
+    )
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, "b" * 40 + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    calls: list[str] = []
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        calls.append(argv[0])
+        if argv[0] == "run":
+            Path(argv[argv.index("--output") + 1]).write_text("report", encoding="utf-8")
+        return Completed(1 if argv[0] == failing else 0, f"{argv[0]} output", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.pr_state", lambda *a, **k: "MERGED")
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.ensure_draft",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not push a merged PR")),
+    )
+
+    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+
+    saved = store.row("task", tid)
+    assert lines == ["PR merged during the A38 suite; verifying the merge"]
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_pr_left_open_routes_only_a_definite_merge_or_close(monkeypatch) -> None:
+    from agent_cli import coordinator_runtime
+
+    saved: list[str] = []
+    monkeypatch.setattr(coordinator_runtime, "save_task", lambda _store, task: saved.append(task["payload"]["coordinator"]["phase"]))
+    for state, expected in (("MERGED", "await_merge"), ("CLOSED", "await_merge"), ("OPEN", None), (None, None)):
+        task = {"payload": {"coordinator": {"phase": "implement"}}}
+        monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, _s=state, **k: _s)
+        lines = coordinator_runtime._a38_pr_left_open(object(), object(), task, object(), "implement")
+        assert (lines is None) is (expected is None)
+        if expected:
+            assert task["payload"]["coordinator"]["phase"] == expected
 
 
 def test_a38_tests_run_policy_run_verify_and_post_exact_report(

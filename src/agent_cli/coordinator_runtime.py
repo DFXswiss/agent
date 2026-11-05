@@ -22,6 +22,7 @@ from .ai_accounts import AIAccounts, load_ai_accounts
 from .model_slots import DEFAULT_MODEL_SLOTS, ModelSlotsError, models_from_snapshot
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
+    check_label,
     REQUIRED_LANE_SLOTS,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
@@ -1100,6 +1101,11 @@ def phase_implement(
         "Implement assigned issue.",
     )
     draft_lines = []
+    if sha and worker.a38 and as_int(c.get("pr_number")) is not None:
+        # A merge during the lane keeps the published head and its review state.
+        left = _a38_pr_left_open(store, worker, task, runner, "implement")
+        if left is not None:
+            return left
     if sha:
         c["head_sha"] = sha
         invalidate_head_evidence(c, sha)
@@ -1313,7 +1319,7 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
             "id": cid,
             "task_id": task["id"],
             "name": "coordinator-check",
-            "command": " ".join(cfg.check_argv),
+            "command": check_label(c, cfg),
             "result": "pass" if passed else "fail",
             "output": output,
             "ran_at": utcnow(),
@@ -1382,6 +1388,20 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
 
 # A38 phases in which the guard may already have made the PR Ready, so a human
 # can merge before the worker reaches await_merge.
+def _a38_pr_left_open(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner, phase: str
+) -> list[str] | None:
+    """Route an A38 task whose PR was merged or closed meanwhile to the merge check."""
+    live_state = pr_state(store, worker, task, runner)
+    # An unreadable state continues: the push path refuses a PR that is not open.
+    if live_state in ("MERGED", "CLOSED"):
+        coord(task)["phase"] = "await_merge"
+        save_task(store, task)
+        verb = "merged" if live_state == "MERGED" else "closed"
+        return [f"PR {verb} during {phase}; verifying the merge"]
+    return None
+
+
 A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness", "await_ready"})
 A38_PUBLISHED_RERUN_PHASES = frozenset(
     {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment"}
@@ -1447,6 +1467,17 @@ def advance_one(
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
+    if worker.a38 and as_int(c.get("pr_number")) is not None and phase not in ("await_merge", "done"):
+        # Once the pull request exists the guard may make it Ready and a human may
+        # merge it in any phase, also while blocked or asking; check that first.
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            verb = "merged" if live_state == "MERGED" else "closed"
+            return [f"PR {verb} during {phase}; verifying the merge"]
+        if live_state is None and phase in A38_PUBLISHED_RERUN_PHASES:
+            return [f"PR state temporarily unavailable before {phase}; retrying"]
     try:
         if (
             source.get("owner_scoped")
@@ -1528,18 +1559,6 @@ def advance_one(
                 store, worker, task, runner, str(exc), kind="stopped", reply_checkpoint=True
             )
 
-    if mergeable_wait and phase != "await_ready":
-        # The guard may make the PR Ready before these phases finish; a human merge
-        # then goes straight to the merge check instead of a "not open" blocker.
-        live_state = pr_state(store, worker, task, runner)
-        if live_state is None and phase in A38_PUBLISHED_RERUN_PHASES:
-            return [f"PR state temporarily unavailable before {phase}; retrying"]
-        if live_state in ("MERGED", "CLOSED"):
-            # await_merge verifies a merge or publishes the closed-unmerged blocker.
-            c["phase"] = "await_merge"
-            save_task(store, task)
-            verb = "merged" if live_state == "MERGED" else "closed"
-            return [f"PR {verb} during {phase}; verifying the merge"]
 
     handlers = {
         "accept": lambda: phase_accept(store, worker, task, runner),
