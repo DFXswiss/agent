@@ -276,7 +276,9 @@ def launch_lane(
 
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
-        stderr = str(getattr(completed, "stderr") or "")
+        stderr = hide_config_dir(
+            str(getattr(completed, "stderr") or ""), selected.account.config_dir
+        )
         output_file_text = ""
         if lane_output is not None:
             try:
@@ -924,6 +926,7 @@ def _prepare_pr_review_agent(
         "output_file": lane_output,
         "worktree": worktree,
         "model": selected.model,
+        "config_dir": selected.account.config_dir,
         "dimension": "quality" if role.endswith("quality") else "logic",
     }
 

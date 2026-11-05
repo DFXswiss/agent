@@ -421,6 +421,7 @@ def _hub_assignment_row(
     if len(rows) >= HUB_ASSIGNMENT_QUERY_CAP:
         return None, "hub assignment query truncated"
     allowed = {login.casefold() for login in reply_logins}
+    first_match: HubAssignmentMandate | None = None
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -446,14 +447,27 @@ def _hub_assignment_row(
         ):
             row_id = row.get("row_id")
             if isinstance(row_id, str) and row_id:
-                return HubAssignmentMandate(
+                mandate = HubAssignmentMandate(
                     row_id=row_id,
                     actor=envelope_login,
                     origin=origin_device_id,
                     issue_key=inner_issue_key,
                     deviation=inner.get("deviation"),
-                ), None
-    return None, None
+                )
+                # A corrected mandate with the explicit statement wins over an older one.
+                if _states_no_deviation(mandate.deviation, envelope_login):
+                    return mandate, None
+                first_match = first_match or mandate
+    return first_match, None
+
+
+def _states_no_deviation(deviation: Any, actor: str) -> bool:
+    return (
+        isinstance(deviation, dict)
+        and set(deviation) == {"declared", "stated_by"}
+        and deviation.get("declared") is False
+        and deviation.get("stated_by") == actor
+    )
 
 
 def _canonical_issue_repo(expected_repo: str, *responses: object) -> str | None:
@@ -2306,10 +2320,7 @@ def _mandate_states_no_deviation(source: dict[str, Any], assignment_actor: str |
         and mandate.get("origin") == f"web:{mandate_actor}"
         and isinstance(issue_key, str)
         and issue_key.casefold() == expected_issue_key.casefold()
-        and isinstance(deviation, dict)
-        and set(deviation) == {"declared", "stated_by"}
-        and deviation.get("declared") is False
-        and deviation.get("stated_by") == mandate_actor
+        and _states_no_deviation(deviation, mandate_actor)
     )
 
 
