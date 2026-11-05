@@ -3798,6 +3798,108 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert "second_review" not in blocked["payload"]["coordinator"]["a38"]
 
 
+def test_a38_await_second_review_retries_transient_pr_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = replace(make_worker(tmp_path), a38=True)
+    head = "a" * 40
+    task = {
+        "id": "77777777-7777-4777-8777-777777777777",
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "await_second_review",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+
+    def unavailable(_argv: list[str]) -> Completed:
+        return Completed(1, "", "connection reset")
+
+    def malformed_head(_argv: list[str]) -> Completed:
+        return Completed(0, json.dumps({"headRefOid": "not-a-sha"}), "")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped", lambda _store, _session, runner: runner
+    )
+    lines = phase_await_second_review(store, worker, task, unavailable)
+
+    assert lines == ["PR state temporarily unavailable; retrying"]
+    assert task["payload"]["coordinator"]["phase"] == "await_second_review"
+    with pytest.raises(CoordinatorError, match="cannot read current pull request head"):
+        phase_await_second_review(store, worker, task, malformed_head)
+
+
+def test_a38_await_ready_retries_transient_pr_and_status_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_await_ready
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = replace(make_worker(tmp_path), a38=True)
+    head = "a" * 40
+    task = {
+        "id": "88888888-8888-4888-8888-888888888888",
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "await_ready",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+
+    def unavailable(_argv: list[str]) -> Completed:
+        return Completed(1, "", "connection reset")
+
+    def statuses_unavailable(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps({"headRefOid": head, "isDraft": True, "state": "OPEN"}),
+                "",
+            )
+        return Completed(1, "", "connection reset")
+
+    def malformed_draft(_argv: list[str]) -> Completed:
+        return Completed(
+            0,
+            json.dumps({"headRefOid": head, "isDraft": "unknown", "state": "OPEN"}),
+            "",
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped", lambda _store, _session, runner: runner
+    )
+    assert phase_await_ready(store, worker, task, unavailable) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert phase_await_ready(store, worker, task, statuses_unavailable) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert task["payload"]["coordinator"]["phase"] == "await_ready"
+    with pytest.raises(CoordinatorError, match="draft state is unavailable"):
+        phase_await_ready(store, worker, task, malformed_draft)
+
+
 @pytest.mark.parametrize("missing_evidence", ["agent_id", "prompt"])
 def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
     tmp_path: Path,
@@ -3969,7 +4071,13 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
     monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
     monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
-    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", lambda *a, **k: Completed(0, "trusted check passed", ""))
+    prechecks: list[list[str]] = []
+
+    def fake_bounded(argv, **_kwargs):  # noqa: ANN001
+        prechecks.append(argv)
+        return Completed(0, "trusted check passed", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_bounded)
 
     def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
         if parts[0] == "fetch":
@@ -3991,18 +4099,45 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
         return Completed(0, "ok", "")
 
     monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
-    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+
+    def crash_before_task_save(*_args, **_kwargs):
+        raise RuntimeError("simulated task save failure")
+
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, "", "")
+
+    with monkeypatch.context() as crash_patch:
+        crash_patch.setattr("agent_cli.coordinator_a38.save_task", crash_before_task_save)
+        with pytest.raises(RuntimeError, match="task save failure"):
+            phase_a38_tests(store, worker, store.row("task", tid), runner)
     assert calls == ["policy", "run", "verify"]
-    assert "report posted" in lines[0]
+    assert len(prechecks) == 1
     report_rows = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     assert report_rows[0]["payload"]["body"] == report_body
     assert report_rows[0]["payload"]["exact_body"] is True
     checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
     assert any(row.get("name") == "a38" and row.get("result") == "pass" for row in checks)
-    saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["a38"]["report"]["head"] == head
-    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
 
+    lines = phase_a38_tests(store, worker, store.row("task", tid), runner)
+
+    assert calls == ["policy", "run", "verify"]
+    assert len(prechecks) == 1
+    assert "already posted" in lines[0]
+    saved = store.row("task", tid)
+    recovered_report = saved["payload"]["coordinator"]["a38"]["report"]
+    assert recovered_report["head"] == head
+    assert recovered_report["activity_id"] == report_rows[0]["id"]
+    assert recovered_report["url"] == "https://x"
+    assert saved["payload"]["coordinator"]["evidence"]["tests_pass"] is True
+    assert saved["payload"]["coordinator"]["evidence"]["tests_head"] == head
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    local_check = next(
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == tid and row.get("key") == "local_check_pass"
+    )
+    assert local_check["status"] == "ja"
+    assert local_check["evidence"] == f"A38 pass on {head}"
 
 
 def _claude_first_manifest(home: Path) -> None:

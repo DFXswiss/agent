@@ -32,7 +32,6 @@ from .coordinator_common import (
     as_int,
     coord,
     gh_json,
-    gh_list,
     is_sha,
     redact,
     save_task,
@@ -241,14 +240,31 @@ def phase_tests(
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head
     a38 = _a38_state(c)
-    prior = a38.get("report")
-    if isinstance(prior, dict) and prior.get("head") == head:
-        activity = store.row("activity", str(prior.get("activity_id") or ""))
-        if activity is not None and activity.get("execution_status") == "done":
-            c["phase"] = "pr_gates_grok"
-            task["state"] = "pr-review"
-            save_task(store, task)
-            return [f"A38 report already posted on {head[:7]}"]
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task['id']}:{head}"))
+    activity = store.row("activity", activity_id)
+    result = activity.get("result") if isinstance(activity, dict) else None
+    if (
+        isinstance(activity, dict)
+        and activity.get("execution_status") == "done"
+        and isinstance(result, dict)
+        and isinstance(result.get("url"), str)
+        and result["url"]
+    ):
+        a38["report"] = {
+            "head": head,
+            "activity_id": activity_id,
+            "id": result.get("id"),
+            "url": result["url"],
+        }
+        evidence = c.setdefault("evidence", {})
+        if isinstance(evidence, dict):
+            evidence["tests_pass"] = True
+            evidence["tests_head"] = head
+        set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
+        c["phase"] = "pr_gates_grok"
+        task["state"] = "pr-review"
+        save_task(store, task)
+        return [f"A38 report already posted on {head[:7]}"]
 
     if cfg.check_argv:
         from .coordinator_common import coordinator_env
@@ -414,7 +430,6 @@ def phase_tests(
             )
         except CoordinatorError:
             pass
-    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task['id']}:{head}"))
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 report comment requires a pull request number")
@@ -761,15 +776,30 @@ def _read_message_ids(store: Store, worker: WorkerConfig) -> set[str]:
     return ids
 
 
-def _fresh_pr_head(store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner) -> str:
+def _fresh_pr_head(
+    store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner
+) -> str | None:
     c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("second review intake requires pull request number")
-    view = gh_json(
-        scoped(store, worker.session_id, runner),
-        ["gh", "pr", "view", str(number), "--repo", target_repo(dict(task)), "--json", "headRefOid"],
-    )
+    api = scoped(store, worker.session_id, runner)
+    try:
+        view = gh_json(
+            api,
+            [
+                "gh",
+                "pr",
+                "view",
+                str(number),
+                "--repo",
+                target_repo(dict(task)),
+                "--json",
+                "headRefOid",
+            ],
+        )
+    except CoordinatorError:
+        return None
     head = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
     if not is_sha(head):
         raise CoordinatorError("cannot read current pull request head")
@@ -792,6 +822,8 @@ def phase_await_second_review(
         raise CoordinatorError("external second-review phase called for a non-A38 worker")
     c = coord(task)
     current = _fresh_pr_head(store, worker, task, runner)
+    if current is None:
+        return ["PR state temporarily unavailable; retrying"]
     expected = str(c.get("head_sha") or "")
     if current != expected:
         c["head_sha"] = current
@@ -952,19 +984,22 @@ def phase_await_ready(
     if number is None or not is_sha(head):
         raise CoordinatorError("await-ready requires pull request number and head")
     api = scoped(store, worker.session_id, runner)
-    view = gh_json(
-        api,
-        [
-            "gh",
-            "pr",
-            "view",
-            str(number),
-            "--repo",
-            target_repo(task),
-            "--json",
-            "isDraft,headRefOid,state",
-        ],
-    )
+    try:
+        view = gh_json(
+            api,
+            [
+                "gh",
+                "pr",
+                "view",
+                str(number),
+                "--repo",
+                target_repo(task),
+                "--json",
+                "isDraft,headRefOid,state",
+            ],
+        )
+    except CoordinatorError:
+        return ["PR state temporarily unavailable; retrying"]
     observed = str(view.get("headRefOid") or "").lower() if isinstance(view, dict) else ""
     if observed != head:
         if not is_sha(observed):
@@ -1001,16 +1036,25 @@ def phase_await_ready(
         return [f"guard set Ready on {head[:7]}; awaiting human merge"]
     if view.get("isDraft") is not True:
         raise CoordinatorError("pull request draft state is unavailable")
-    statuses = gh_list(
-        api,
-        [
-            "gh",
-            "api",
-            "--paginate",
-            "--slurp",
-            f"repos/{target_repo(task)}/commits/{head}/statuses",
-        ],
-    )
+    try:
+        status_data = gh_json(
+            api,
+            [
+                "gh",
+                "api",
+                "--paginate",
+                "--slurp",
+                f"repos/{target_repo(task)}/commits/{head}/statuses",
+            ],
+        )
+    except CoordinatorError:
+        return ["PR state temporarily unavailable; retrying"]
+    if not isinstance(status_data, list):
+        raise CoordinatorError("expected JSON array")
+    if status_data and all(isinstance(page, list) for page in status_data):
+        statuses = [item for page in status_data for item in page]
+    else:
+        statuses = status_data
     newest = next(
         (
             item

@@ -225,7 +225,7 @@ Rules:
 - **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin. The matcher runs only inside origins this login may see under §6.
 - Implicit **session mail** does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
 - Person pings this login **sent or received** are delivered the same way (snapshots on pull / WebSocket), independent of a subscription. Team-visible pings this login is not a party to stay on the website and on query; they are not laptop pull.
-- Every inbox, restore, and live-push replica snapshot carries the hub-authenticated owning login on the row envelope as `github_login`. `_github_login` exists only in API/query payload copies; the local replica apply strips sender-supplied `_github_login` and `github_login` payload fields before preserving the authenticated envelope login for mail policy.
+- Every inbox, restore, and live-push replica snapshot carries the hub-authenticated owning login on the row envelope as `github_login`. `_github_login` exists only in API/query payload copies. When the local replica applies a relayed `message` activity row, it drops any sender-supplied `_github_login` and `github_login` fields from the row payload, casefolds the envelope `github_login`, and stores that authenticated value as payload `_github_login` for mail policy to read. Other replica rows are unchanged.
 - `GET /sync/restore` returns `own_events`, `inbox` (each session-mail snapshot addressed to a session this device owns, plus the parent `session` snapshot for that activity’s `session_id`), and `pings` (person-ping snapshots this login sent or received).
 - `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dropped socket is logged and retried with capped exponential backoff, not a process exit and not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.
@@ -614,7 +614,8 @@ Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-l
 
 Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex`, `claude` or `openrouter`) fills a slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later check for that task uses the pinned value; the only provider order in code is the historical default `grok`, then `codex`, applied to tasks and devices without `models` so that existing ledger rows stay readable; the stored stage names `grok-pr` / `codex-pr` and the checklist keys `grok_pr_*` / `codex_pr_*` are the historical identifiers of the two slots. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
-The only second-slot exception is a coordinator A38 task pinned with
+Besides the `one_review_authors` one-review exception above, the only other
+second-slot exception is a coordinator A38 task pinned with
 `models.second: null`. Its second review is an external review by a team member
 delivered as session mail, bound to the approved `grok-pr` head and recorded as
 `codex_pr_*` checklist evidence. The coordinator launches no second-slot model
