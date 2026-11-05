@@ -159,6 +159,21 @@ def test_scan_openrouter_usage_snapshot_and_dedup(tmp_path: Path) -> None:
     ) == []
 
 
+def test_scan_openrouter_usage_without_owned_session_names_openrouter(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    _openrouter_config(store, config_dir)
+
+    with pytest.raises(StoreError, match="no owned session to record openrouter usage"):
+        scan_openrouter_usage(
+            store, fetch=lambda _token: _openrouter_body(), now=lambda: "2026-11-04T10:00:00Z"
+        )
+
+
 def test_scan_openrouter_usage_dedups_latest_snapshot_in_same_timestamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

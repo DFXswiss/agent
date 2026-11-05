@@ -49,7 +49,8 @@ open issues under those owners. An explicit `repositories` entry wins for the
 same repository. At acceptance, an owner-scoped task pins the repository's
 current default branch and its publication route: direct push when the worker
 has push permission, otherwise `<worker-login>/<repository-name>`. A missing
-fork is requested once. If it is not yet visible, acceptance stays in the same
+fork is requested once per persisted request (a crash before the request is
+recorded repeats it). If it is not yet visible, acceptance stays in the same
 phase and the worker's `poll_seconds` loop retries; after 300 seconds the
 coordinator publishes a blocker. An existing fork with another parent is
 refused. Outside A38 mode,
@@ -513,7 +514,9 @@ default. The worker then requires a nonempty, distinct, lowercased
 `second_reviewers` list that excludes its own configured GitHub login. Optional
 `second_review_timeout_seconds` (default `86400`) must be at least 600.
 `review_session` is unused and optional;
-`check_argv` may be empty, while `readiness_argv` remains required. The device's
+`check_argv` may be empty, while `readiness_argv` remains required for
+configured repositories; owner-scoped repositories may omit
+`owner_readiness_argv` as described above. The device's
 models must pin a non-Codex first provider and `"second": null`. A null second
 slot is refused for every non-A38 worker.
 
