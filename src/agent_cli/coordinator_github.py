@@ -2272,6 +2272,11 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             return ["trusted review list could not be read; retrying await_merge"]
         snap["pull_opener"] = opener
         snap["trusted_pr_guard"] = config
+        if worker.a38 and _a38_second_review_outcome(c, expected_head) == "blocking":
+            # Any posted blocking review of the merged head wins over an earlier pass.
+            return _await_second_review_after_merge(
+                store, worker, task, runner, expected_head, blocking=True
+            )
         allow = evaluate_allow(
             "task-done",
             session_id=worker.session_id,

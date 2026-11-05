@@ -4540,6 +4540,28 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
     fake.pr["mergeCommit"] = {"oid": "dddddddddddddddddddddddddddddddddddddddd"}
     fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    # A later blocking review of the merged head wins over the earlier passing one,
+    # even though task-done would already be allowed.
+    import copy
+
+    from agent_cli import coordinator_github
+
+    blocked_variant = copy.deepcopy(store.row("task", tid))
+    variant_reviews = blocked_variant["payload"]["coordinator"]["a38"]["second_review"].setdefault(
+        "reviews", []
+    )
+    variant_reviews.append({"reviewer": "outside-reviewer", "blocks_merge": True})
+    with monkeypatch.context() as variant_patch:
+        variant_patch.setattr(coordinator_github, "save_task", lambda *_args: None)
+        variant_patch.setattr(
+            coordinator_github,
+            "publish_blocker",
+            lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+        )
+        assert phase_await_merge(store, worker, blocked_variant, fake) == [
+            "blocker merged-with-blocking-second-review"
+        ]
+    assert blocked_variant["payload"]["coordinator"]["phase"] == "blocked"
     lines = phase_await_merge(store, worker, store.row("task", tid), fake)
     assert lines == ["human merge verified example/project#42; task done"]
     assert store.row("task", tid)["state"] == "done"
