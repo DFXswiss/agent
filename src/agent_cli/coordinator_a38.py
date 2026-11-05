@@ -1072,7 +1072,9 @@ def intake_second_reviews(
                     f"blocking external second review by @{login} arrived after the pull request "
                     "left the open state; verifying the merge"
                 )
-                return lines
+                # Keep reading: after the merge every waiting review is taken in, and
+                # await_merge decides by the newest one.
+                continue
             c["findings"] = findings
             invalidate_head_evidence(c, "")
             c["phase"] = "implement"
