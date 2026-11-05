@@ -760,3 +760,10 @@ def test_fetch_openrouter_key_default_client_has_timeout_and_no_redirects(
     assert seen["timeout"] == 8.0
     assert seen["follow_redirects"] is False
     assert seen["url"] == usage.OPENROUTER_KEY_URL
+
+
+def test_openrouter_number_refuses_an_integer_too_large_for_a_float() -> None:
+    from agent_cli.usage import _openrouter_number
+
+    with pytest.raises(StoreError, match="finite number"):
+        _openrouter_number(10**400, "usage")
