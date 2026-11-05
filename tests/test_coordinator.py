@@ -3529,7 +3529,9 @@ def test_a38_ci_and_readiness_route_to_guard_ready_wait(
         "enabled": True,
         "report": {"head": fake.head},
         "first_comment": {"head": fake.head},
-        "second_review": {"head": fake.head, "status": "posted"},
+        "second_review": {"head": fake.head, "status": "posted",
+            "reviews": [{"reviewer": "outside-reviewer", "blocks_merge": False, "at": "2026-01-01T00:00:00Z"}],
+        },
     }
     store.write(
         "task",

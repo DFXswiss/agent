@@ -402,7 +402,7 @@ def test_external_second_review_satisfies_done_gate_without_second_gate_rows() -
         "id": "task",
         "workflow": "review",
         "models": {"first": "grok", "second": None},
-        "payload": {"coordinator": {"a38": {"enabled": True}}},
+        "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
         "checklist": checklist,
         "checklist_evidence": {
             "codex_pr_quality": prefix + "https://example.invalid/comment",

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .ai_accounts import load_ai_accounts
 from .allow import GATE_PAIRS, both_codex_reviews_na, evaluate_allow
 from .model_slots import ModelSlots, ModelSlotsError, models_from_snapshot
 from .coordinator_common import (
@@ -729,8 +730,11 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
         source["publication_repo"] = cfg.publication_repo
         from .coordinator_runtime import execution_binding
 
+        ai = load_ai_accounts(store.home)
+        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
+            raise CoordinatorError("task model configuration changed before acceptance")
         c["execution_binding"] = execution_binding(
-            store, worker, repo, repository_config=cfg, owner_scoped=True
+            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
         )
     marker = acceptance_marker(repo, number, worker.session_id)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-accept:{worker.session_id}:{repo}:{number}"))

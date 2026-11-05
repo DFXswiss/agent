@@ -142,7 +142,9 @@ which carries no pin, also accepts a finished row of the second provider); `agen
 --stage S --vendor X` requires `X` to be the provider of the slot `S` stands for.
 For a task pinned with `second: null`, `gate record --stage codex-pr` is refused;
 the external result is recorded in the two `codex_pr_*` checklist keys with
-`external second review by ...` evidence.
+`external second review by ...` evidence. That evidence counts only on a
+coordinator A38 task whose stored second review for the evidence head is
+posted and whose newest review does not block the merge.
 
 ## Required fields
 
