@@ -12,6 +12,7 @@ from agent_cli.allow import (
     ready_for_done_blocking,
     requires_evidence,
 )
+from agent_cli.model_slots import ModelSlotsError
 
 
 def _approved_gates(head: str = "abc123") -> list[dict]:
@@ -94,6 +95,20 @@ class TestEvaluateAllow(unittest.TestCase):
             session_tasks=[task],
         )
         self.assertTrue(r.allowed)
+
+    def test_claim_done_rejects_an_implementer_pinned_to_models_second(self) -> None:
+        task = _ready_task()
+        task["models"] = {"first": "claude", "second": "codex"}
+        task["implementer"] = "codex"
+        with self.assertRaisesRegex(
+            ModelSlotsError, "implementer must differ from models.second"
+        ):
+            evaluate_allow(
+                "claim-done",
+                session_id="sess-a",
+                task_id=None,
+                session_tasks=[task],
+            )
 
     def test_claim_done_ignores_other_session(self) -> None:
         foreign = _ready_task(tid=9, session_id="other", state="implementing")

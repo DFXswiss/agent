@@ -36,3 +36,7 @@ leave-draft. Ready for review is still not merge and not completion. The
 authoring session does not sit those PR reviews. A human merges; claim
 completion only after that merge is verified. The local-CI comment schema for
 private product repositories is `docs/local-ci-v1.md`.
+
+An optional implementation provider is pinned separately on each task; when it
+is absent, implementation uses model slot `first`. The two PR review pairs
+remain model slots `first` and `second`.

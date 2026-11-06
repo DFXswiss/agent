@@ -686,6 +686,23 @@ class TestImplementerRowFromBeforeTheSlotBinding(unittest.TestCase):
         snapshot["agents"].append({"role": "implementer", "vendor": "grok", "status": "done"})
         self.assertEqual(_artifact_ok(impl, snapshot), "")
 
+    def test_a_separate_implementer_pin_closes_only_with_that_provider(self) -> None:
+        impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
+        snapshot = {
+            "agents": [
+                {"role": "implementer", "vendor": "grok", "status": "done"},
+            ],
+            "implementer_verdict": "done",
+            "models": {"first": "grok", "second": "codex"},
+            "implementer": "deepseek",
+            "models_pinned": True,
+        }
+        self.assertEqual(_artifact_ok(impl, snapshot), "no finished implementer agent")
+        snapshot["agents"].append(
+            {"role": "implementer", "vendor": "deepseek", "status": "done"}
+        )
+        self.assertEqual(_artifact_ok(impl, snapshot), "")
+
     def test_a_row_outside_the_slots_does_not_close_the_step(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
         snapshot = {

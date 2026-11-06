@@ -8,7 +8,12 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from .allow import GATE_PAIRS, both_codex_reviews_na, evaluate_allow
-from .model_slots import ModelSlots, ModelSlotsError, models_from_snapshot
+from .model_slots import (
+    ModelSlots,
+    ModelSlotsError,
+    implementer_from_snapshot,
+    models_from_snapshot,
+)
 from .coordinator_common import (
     ACCEPT_BODY,
     ACCEPT_MARKER_PREFIX,
@@ -1220,6 +1225,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
         "gates": gates,
         "local_checks": local_checks,
         "models": _task_models(task).as_dict(),
+        "implementer": implementer_from_snapshot(task),
     }
 
 

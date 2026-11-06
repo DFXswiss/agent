@@ -480,9 +480,39 @@ def test_find_or_create_pins_the_device_models(tmp_path: Path) -> None:
     _runner_session(store)
     _seen(store)
     (store.home / "ai-accounts.json").write_text(
-        _json.dumps({"models": {"first": "claude", "second": "codex"}}), encoding="utf-8"
+        _json.dumps(
+            {
+                "models": {"first": "claude", "second": "codex"},
+                "implementer": "deepseek",
+            }
+        ),
+        encoding="utf-8",
     )
     find_or_create_implement_task(store, "runner-1", "error-seen-12345678", "Fix observed error")
     tasks = store.rows("task")
     assert len(tasks) == 1
     assert tasks[0]["models"] == {"first": "claude", "second": "codex"}
+    assert tasks[0]["implementer"] == "deepseek"
+
+
+def test_find_or_create_omits_an_implementer_equal_to_models_first(
+    tmp_path: Path,
+) -> None:
+    import json as _json
+
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    (store.home / "ai-accounts.json").write_text(
+        _json.dumps(
+            {
+                "models": {"first": "claude", "second": "codex"},
+                "implementer": "claude",
+            }
+        ),
+        encoding="utf-8",
+    )
+    find_or_create_implement_task(store, "runner-1", "error-seen-12345678", "Fix observed error")
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    assert "implementer" not in tasks[0]
