@@ -523,7 +523,13 @@ def _run_review_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         return f"review.post {rid} error"
 
 
-def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
+def _run_comment_post(
+    store: Store,
+    runner: Runner,
+    row: dict[str, Any],
+    *,
+    expected_login: str,
+) -> str:
     rid = str(row["id"])
     payload = row.get("payload")
     if not isinstance(payload, dict):
@@ -541,6 +547,10 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
         )
         return f"comment.post {rid} error"
     target_raw = payload.get("target")
+    exact_body = payload.get("exact_body", False)
+    if not isinstance(exact_body, bool):
+        _mark(store, row, status="error", error="comment.post exact_body must be boolean")
+        return f"comment.post {rid} error"
     target = "issue"
     if target_raw is not None:
         if target_raw not in ("pr", "issue"):
@@ -565,7 +575,15 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
             if not isinstance(comment, dict):
                 continue
             cbody = comment.get("body")
-            if not isinstance(cbody, str) or marker not in cbody:
+            if not isinstance(cbody, str):
+                continue
+            matches = cbody == body if exact_body else marker in cbody
+            if not matches:
+                continue
+            # Only the posting account's own comment proves the activity; a copied marker does not.
+            user = comment.get("user")
+            login = user.get("login") if isinstance(user, dict) else None
+            if not isinstance(login, str) or login.casefold() != expected_login.casefold():
                 continue
             cid = comment.get("id")
             url = comment.get("html_url") or comment.get("url")
@@ -576,7 +594,7 @@ def _run_comment_post(store: Store, runner: Runner, row: dict[str, Any]) -> str:
                 result["id"] = cid
             _mark(store, row, status="done", result=result)
             return f"comment.post {rid} done"
-        post_body = _with_marker(body, rid)
+        post_body = body if exact_body else _with_marker(body, rid)
         if target == "pr":
             argv = [
                 "gh",
@@ -652,7 +670,14 @@ def scan_github(store: Store, runner: Runner) -> list[str]:
             elif typ == "issue.write":
                 lines.append(_run_issue_write(store, scoped_runner, row))
             elif typ == "comment.post":
-                lines.append(_run_comment_post(store, scoped_runner, row))
+                lines.append(
+                    _run_comment_post(
+                        store,
+                        scoped_runner,
+                        row,
+                        expected_login=account.login,
+                    )
+                )
             elif typ == "review.post":
                 lines.append(_run_review_post(store, scoped_runner, row))
         except (Exception, AccountError) as exc:  # noqa: BLE001 — per-row isolation

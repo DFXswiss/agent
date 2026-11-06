@@ -31,6 +31,8 @@ def required_lane_slots(models: ModelSlots) -> tuple[str, ...]:
     slots: list[str] = []
     for slot, kinds in SLOT_LANE_KINDS.items():
         vendor = models.for_slot(slot)
+        if vendor is None:
+            continue
         slots.extend(f"{vendor}:{kind}" for kind in kinds)
     return tuple(slots)
 
@@ -368,3 +370,12 @@ def prompt_prohibitions() -> str:
         "change and ending with a period. These describe the patch, never certify checks.\n"
         "Place the summary lines directly after RESULT and before the body.\n"
     )
+
+
+def check_label(c: dict[str, Any], cfg: Any) -> str:
+    """The replicated name of a check run: the command line for a configured
+    repository (as before), a fixed label for device-local owner commands."""
+    source = c.get("source") if isinstance(c, dict) else None
+    if isinstance(source, dict) and source.get("owner_scoped"):
+        return "owner_check_argv"
+    return " ".join(cfg.check_argv)

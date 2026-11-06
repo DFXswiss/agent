@@ -17,7 +17,7 @@ import pytest
 
 from agent_cli.coordinator import tick
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from test_coordinator_support import (
     FakeGh,
     lane_runner,
@@ -89,6 +89,11 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
     fake.dirty = True
     tick(store, worker, runner=fake, lane_runner=lane)
     assert "implementer" in fake.launched
+    sequential_runs = [
+        row for row in store.rows("activity") if row.get("type") == "lane.run"
+    ]
+    assert sequential_runs
+    assert sequential_runs[0]["payload"]["role"] == "implementer"
     assert fake.commit_used_S
     task = store.rows("task")[0]
     assert task["payload"]["coordinator"].get("head_sha")
@@ -195,6 +200,40 @@ def test_successive_ticks_to_human_merge(tmp_path: Path, monkeypatch: pytest.Mon
     assert any(r.get("type") == "issue.assigned.ack" for r in store.rows("activity"))
     assert all(item["status"] in {"ja", "n_a"} for item in store.rows("checklist_item")
                if item.get("task_id") == task["id"])
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, StoreError])
+def test_lane_run_write_failure_is_a_coordinator_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import coordinator_lanes, github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    lane = lane_runner(fake)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    tick(store, worker, runner=fake, lane_runner=lane)
+    for _ in range(3):
+        if _phase(store) == "implement":
+            break
+        tick(store, worker, runner=fake, lane_runner=lane)
+    assert _phase(store) == "implement"
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "record_lane_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error_type("audit down")),
+    )
+    fake.dirty = True
+    lines = tick(store, worker, runner=fake, lane_runner=lane)
+    assert any("lane.run write failed: audit down" in line for line in lines)
+    assert "implementer" in fake.launched
 
 
 def test_pr_body_is_read_with_the_account_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

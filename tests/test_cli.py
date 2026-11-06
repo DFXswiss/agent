@@ -9,7 +9,7 @@ import pytest
 
 from agent_cli.main import _latest_gates, load_task_dict, main
 from agent_cli.store import Store, StoreError, utcnow
-from agent_cli.usage import AuthStale
+from agent_cli.usage import AuthStale, OpenRouterUsageError
 
 
 def run(home: Path, argv: list[str]) -> None:
@@ -2017,6 +2017,42 @@ def test_watch_grok_usage_auth_stale_prints_skipped(
     assert "error" not in captured.err.lower()
 
 
+def test_watch_openrouter_usage_changed_unchanged_and_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        "agent_cli.main.scan_openrouter_usage",
+        lambda _store: ["11111111-1111-1111-1111-111111111111"],
+    )
+    run(tmp_path, ["watch", "openrouter-usage"])
+    captured = capsys.readouterr()
+    assert captured.out == "usage.snapshot 11111111-1111-1111-1111-111111111111\n"
+    assert captured.err == ""
+
+    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", lambda _store: [])
+    run(tmp_path, ["watch", "openrouter-usage"])
+    captured = capsys.readouterr()
+    assert captured.out == "usage.snapshot none\n"
+    assert captured.err == ""
+
+    def fail_scan(_store: object) -> list[str]:
+        raise OpenRouterUsageError(
+            ["router-a: unavailable"],
+            ["22222222-2222-2222-2222-222222222222"],
+        )
+
+    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fail_scan)
+    with pytest.raises(SystemExit) as info:
+        run(tmp_path, ["watch", "openrouter-usage"])
+    assert info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == "usage.snapshot 22222222-2222-2222-2222-222222222222\n"
+    assert captured.err == "usage.snapshot error: router-a: unavailable\n"
+
+
 def test_watch_errors_empty_scan_prints_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2123,6 +2159,114 @@ def test_knock_daemon_auth_stale_is_silent(
     captured = capsys.readouterr()
     assert "usage.snapshot error" not in captured.err
     assert "usage.snapshot" not in captured.out
+
+
+def test_knock_daemon_scans_configured_openrouter_usage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    calls: list[object] = []
+
+    class Accounts:
+        usage_accounts = ("router-a",)
+
+    def fake_scan(store: object) -> list[str]:
+        calls.append(store)
+        return ["33333333-3333-3333-3333-333333333333"]
+
+    def stop_listen(*_args: object, **_kwargs: object) -> None:
+        raise SystemExit("stop")
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home: Accounts())
+    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
+    monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.main.knock_listen", stop_listen)
+
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+
+    assert len(calls) == 1
+    assert "usage.snapshot 33333333-3333-3333-3333-333333333333" in capsys.readouterr().out
+
+
+def test_knock_daemon_skips_openrouter_without_usage_accounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+
+    class Accounts:
+        usage_accounts: tuple[str, ...] = ()
+
+    def forbidden_scan(_store: object) -> list[str]:
+        raise AssertionError("OpenRouter scan must be skipped")
+
+    def stop_listen(*_args: object, **_kwargs: object) -> None:
+        raise SystemExit("stop")
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home: Accounts())
+    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", forbidden_scan)
+    monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
+    monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.main.knock_listen", stop_listen)
+
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+
+
+def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    scan_calls = {"n": 0}
+    listen_calls = {"n": 0}
+
+    class Accounts:
+        usage_accounts = ("router-a",)
+
+    def fake_scan(_store: object) -> list[str]:
+        scan_calls["n"] += 1
+        if scan_calls["n"] == 1:
+            raise OpenRouterUsageError(
+                ["router-a: unavailable"],
+                ["44444444-4444-4444-4444-444444444444"],
+            )
+        return ["55555555-5555-5555-5555-555555555555"]
+
+    def fake_listen(*_args: object, **_kwargs: object) -> None:
+        listen_calls["n"] += 1
+        if listen_calls["n"] == 2:
+            raise SystemExit("stop")
+        return None
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+    monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home: Accounts())
+    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
+    monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
+    monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.main.knock_listen", fake_listen)
+
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+
+    captured = capsys.readouterr()
+    assert scan_calls["n"] == 2
+    assert "usage.snapshot 44444444-4444-4444-4444-444444444444" in captured.out
+    assert "usage.snapshot 55555555-5555-5555-5555-555555555555" in captured.out
+    assert "usage.snapshot error: router-a: unavailable" in captured.err
 
 
 def test_knock_once_does_not_poll_errors(
@@ -4496,3 +4640,77 @@ def test_implementer_done_n_a_still_refused(
                 "no finished implementer",
             ],
         )
+
+
+def test_activity_add_validates_and_writes_second_review_session_mail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "reviewer", "--kind", "human"])
+    capsys.readouterr()
+    task_id = "11111111-1111-4111-8111-111111111111"
+    head = "a" * 40
+    result = {
+        "kind": "a38.second-review/v1",
+        "task_id": task_id,
+        "head": head,
+        "defects": 0,
+        "blocks_merge": False,
+        "findings": "",
+        "lanes": [
+            {"id": "conformity-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
+            {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": "Read the change carefully without modifying it.", "status": "complete", "result": "pass"},
+        ],
+    }
+    mail = {"to_session": "worker", "payload": result}
+    path = tmp_path / "second-review-mail.json"
+    path.write_text(json.dumps(mail), encoding="utf-8")
+    run(
+        tmp_path,
+        ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
+    )
+    activity_id = capsys.readouterr().out.split()[1]
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", activity_id)
+        assert row["session_id"] == "reviewer"
+        assert row["type"] == "message"
+        assert row["execution_status"] == "pending"
+        assert row["payload"] == mail
+    finally:
+        store.close()
+
+    result["unknown"] = True
+    path.write_text(json.dumps(mail), encoding="utf-8")
+    with pytest.raises(SystemExit, match="documented keys"):
+        run(
+            tmp_path,
+            ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
+        )
+
+    result.pop("unknown")
+    mail.pop("to_session")
+    path.write_text(json.dumps(mail), encoding="utf-8")
+    with pytest.raises(SystemExit, match="payload.to_session"):
+        run(
+            tmp_path,
+            ["activity", "add", "--session", "reviewer", "--type", "message", "--payload-file", str(path)],
+        )
+
+    mail["to_session"] = "worker"
+    path.write_text(json.dumps(mail), encoding="utf-8")
+    store = Store(tmp_path)
+    try:
+        before = len(store.rows("activity"))
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="must use activity type message"):
+        run(
+            tmp_path,
+            ["activity", "add", "--session", "reviewer", "--type", "subscription.set", "--payload-file", str(path)],
+        )
+    store = Store(tmp_path)
+    try:
+        assert len(store.rows("activity")) == before
+    finally:
+        store.close()

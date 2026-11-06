@@ -17,6 +17,7 @@ from .allow import (
     N_A_ALLOWED,
     SECOND_REVIEW_NOT_POSTED,
     codex_second_review_na,
+    external_second_review_evidence_ok,
 )
 from .model_slots import DEFAULT_MODEL_SLOTS, SLOT_STAGES, ModelSlots, models_from_snapshot
 from .pr_guard_config import one_review_for
@@ -345,6 +346,18 @@ def close_allowed(
             )
         return CloseVerdict(True, "allow", step)
     snap = snapshot or {}
+    if (
+        status == "ja"
+        and key in CODEX_SECOND_REVIEW_KEYS
+        and models_from_snapshot(snap).second is None
+    ):
+        if not external_second_review_evidence_ok(snap, evidence):
+            return CloseVerdict(
+                False,
+                f"{key} requires coordinator A38 evidence at the approved grok-pr head",
+                step,
+            )
+        return CloseVerdict(True, "allow", step)
     if status == "unavailable":
         extra = _unavailable_gate_ok(step, snap)
     elif _late_inner_skip(key, status, evidence, snap):
@@ -486,7 +499,7 @@ def step_vendor_label(step: Step, models: ModelSlots | None) -> str:
     """Provider name for a pinned agent step, ``-`` otherwise."""
     if step.kind != "agent" or step.slot is None:
         return "-"
-    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
+    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot) or "external"
 
 
 def handoff_prompt(

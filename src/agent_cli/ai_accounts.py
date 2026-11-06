@@ -23,12 +23,15 @@ from .model_slots import (
 from .store import StoreError
 
 CONFIG_FILE = "ai-accounts.json"
-TOP_LEVEL_KEYS = frozenset({"accounts", "roles", "sessions", "usage_session", "models", "lanes"})
+TOP_LEVEL_KEYS = frozenset(
+    {"accounts", "roles", "sessions", "usage_session", "usage_accounts", "models", "lanes"}
+)
 # Provider CLI configuration-directory variable per supported provider.
 PROVIDER_HOME_ENV = {
     "grok": "GROK_HOME",
     "codex": "CODEX_HOME",
     "claude": "CLAUDE_CONFIG_DIR",
+    "openrouter": "CLAUDE_CONFIG_DIR",
 }
 ACCESS_VALUES = frozenset({"read-only", "workspace-write"})
 # Fixed workflow kinds that must resolve to read-only access. These are protocol
@@ -140,6 +143,8 @@ class AIAccounts:
     models: ModelSlots = DEFAULT_MODEL_SLOTS
     # Device-wide lane bindings (slot → role) used when a session binds none.
     lanes: dict[str, str] = field(default_factory=dict)
+    # OpenRouter accounts whose API-key usage is polled. Empty is unconfigured.
+    usage_accounts: tuple[str, ...] = ()
 
     def for_lane(self, session_id: str, role: str, vendor: str) -> AIRole:
         slot = f"{vendor}:{role}"
@@ -181,7 +186,7 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
-            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, and lanes"
+            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, usage_accounts, models, and lanes"
         )
     try:
         models = parse_model_slots(raw.get("models"))
@@ -279,6 +284,24 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         selected = roles[sessions[usage_session].interactive]
         if selected.account.provider != "grok":
             raise AccountError("usage_session currently supports the Grok billing adapter only")
+    usage_accounts_raw = raw.get("usage_accounts")
+    if usage_accounts_raw is None:
+        usage_accounts_raw = []
+    if not isinstance(usage_accounts_raw, list):
+        raise AccountError("usage_accounts must be a list or null")
+    usage_accounts: list[str] = []
+    for value in usage_accounts_raw:
+        account_name = _text(value, "usage_accounts entry")
+        account = accounts.get(account_name)
+        if account is None:
+            raise AccountError(f"usage_accounts references unknown account {account_name}")
+        if account.provider != "openrouter":
+            raise AccountError(
+                f"usage_accounts account {account_name} must use provider openrouter"
+            )
+        if account_name in usage_accounts:
+            raise AccountError(f"usage_accounts contains duplicate account {account_name}")
+        usage_accounts.append(account_name)
     return AIAccounts(
         accounts,
         roles,
@@ -286,6 +309,7 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         usage_session,
         models,
         device_lanes,
+        tuple(usage_accounts),
     )
 
 
@@ -293,8 +317,9 @@ def load_model_slots(home: Path) -> ModelSlots:
     """The device's model slot configuration (historical order when unset).
 
     Checks the file is readable JSON with known top-level keys and parses the
-    ``models`` block; errors inside ``accounts``, ``roles``, ``sessions`` or
-    ``lanes`` do not stop task creation. Launches still validate the whole file.
+    ``models`` block; errors inside ``accounts``, ``roles``, ``sessions``,
+    ``lanes`` or ``usage_accounts`` do not stop task creation. Launches still
+    validate the whole file.
     """
     path = home / CONFIG_FILE
     if not path.exists():
@@ -305,7 +330,7 @@ def load_model_slots(home: Path) -> ModelSlots:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
-            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, and lanes"
+            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, usage_accounts, models, and lanes"
         )
     try:
         return parse_model_slots(raw.get("models"))

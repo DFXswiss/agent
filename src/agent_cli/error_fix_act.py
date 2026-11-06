@@ -9,17 +9,21 @@ from pathlib import Path
 from typing import Any
 
 from .allow import CHECKLIST_KEYS
+from .model_slots import EXTERNAL_SECOND_TASK_CREATION_ERROR
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
 Runner = Callable[[list[str]], Completed]
 
 
-def _device_models(store: Store) -> dict[str, str]:
+def _device_models(store: Store) -> dict[str, str | None]:
     """Pin the device's model slots on a new task (historical order when unset)."""
     from .ai_accounts import load_model_slots
 
-    return load_model_slots(store.home).as_dict()
+    models = load_model_slots(store.home)
+    if models.second is None:
+        raise StoreError(EXTERNAL_SECOND_TASK_CREATION_ERROR)
+    return models.as_dict()
 
 
 
@@ -397,6 +401,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 "fingerprint mismatch",
                 "fingerprint is required",
                 "error_id is required",
+                EXTERNAL_SECOND_TASK_CREATION_ERROR,
             }:
                 _mark(store, row, status="error", error=str(exc))
             lines.append(f"error.fix {rid} error")

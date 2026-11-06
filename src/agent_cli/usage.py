@@ -1,11 +1,11 @@
-"""Record SuperGrok weekly quota snapshots as usage.snapshot activities."""
+"""Record configured provider usage as usage.snapshot activities."""
 
 from __future__ import annotations
 
 import json
 import math
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,8 @@ CREDITS_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings"
 USAGE_POLL_SECONDS = 60
 VENDOR = "grok"
-
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+OPENROUTER_VENDOR = "openrouter"
 _COMPARE_KEYS = (
     "vendor",
     "provider",
@@ -39,6 +40,15 @@ _COMPARE_KEYS = (
 
 class AuthStale(StoreError):
     """Grok login missing or expired. Not a runtime failure of this scan."""
+
+
+class OpenRouterUsageError(StoreError):
+    """One or more configured OpenRouter accounts could not be scanned."""
+
+    def __init__(self, errors: list[str], activity_ids: list[str]):
+        super().__init__("; ".join(errors))
+        self.errors = tuple(errors)
+        self.activity_ids = tuple(activity_ids)
 
 
 def load_grok_bearer(auth_path: Path | None = None) -> tuple[str, str]:
@@ -247,13 +257,13 @@ def snapshot_from_payloads(
     }
 
 
-def pick_session_id(store: Store) -> str:
+def pick_session_id(store: Store, provider: str = "grok") -> str:
     """
     Among rows from store.rows('session') whose _origin_device_id == store.device_id():
-    1. first (rows is newest-first) with status=='active' and runtime dict provider=='grok'
+    1. first (rows is newest-first) with status=='active' and runtime dict provider==provider
     2. else first with status=='active'
     3. else first owned session of any status
-    Else StoreError('no owned session to record grok usage').
+    Else StoreError(f'no owned session to record {provider} usage').
     """
     origin = store.device_id()
     owned = [row for row in store.rows("session") if row.get("_origin_device_id") == origin]
@@ -261,7 +271,7 @@ def pick_session_id(store: Store) -> str:
         if row.get("status") != "active":
             continue
         runtime = row.get("runtime")
-        if isinstance(runtime, dict) and runtime.get("provider") == "grok":
+        if isinstance(runtime, dict) and runtime.get("provider") == provider:
             sid = row.get("id")
             if isinstance(sid, str) and sid != "":
                 return sid
@@ -275,28 +285,44 @@ def pick_session_id(store: Store) -> str:
         sid = row.get("id")
         if isinstance(sid, str) and sid != "":
             return sid
-    raise StoreError("no owned session to record grok usage")
+    raise StoreError(f"no owned session to record {provider} usage")
 
 
-def usage_unchanged(previous: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
-    """Compare vendor, provider, account_email, tier, used_percent, period_type, period_start, period_end, products, prepaid_val, on_demand_cap_val, on_demand_used_val. Ignore fetched_at and any other keys."""
+def usage_unchanged(
+    previous: dict[str, Any] | None,
+    snapshot: dict[str, Any],
+    compare_keys: Collection[str] = _COMPARE_KEYS,
+) -> bool:
+    """Compare only ``compare_keys``; ignore fetched_at and any other keys."""
     if previous is None:
         return False
-    for key in _COMPARE_KEYS:
+    for key in compare_keys:
         if previous.get(key) != snapshot.get(key):
             return False
     return True
 
 
-def last_usage_snapshot(store: Store, vendor: str = VENDOR) -> dict[str, Any] | None:
-    """Newest owned activity with type=='usage.snapshot' and payload.vendor==vendor; return its payload dict or None."""
-    event = store.last_own_activity_insert("usage.snapshot")
+def last_usage_snapshot(
+    store: Store,
+    match: Callable[[dict[str, Any]], bool] | None = None,
+    *,
+    vendor: str = VENDOR,
+) -> dict[str, Any] | None:
+    """Return the newest owned usage payload accepted by ``match``."""
+    if match is None:
+        def matches(payload: dict[str, Any]) -> bool:
+            return payload.get("vendor") == vendor
+    else:
+        matches = match
+    event = store.last_own_activity_insert(
+        "usage.snapshot",
+        predicate=lambda row: isinstance(row.get("payload"), dict)
+        and matches(row["payload"]),
+    )
     if event is None:
         return None
     payload = event.get("payload")
-    if isinstance(payload, dict) and payload.get("vendor") == vendor:
-        return payload
-    return None
+    return payload if isinstance(payload, dict) else None
 
 
 def scan_usage(
@@ -362,3 +388,133 @@ def scan_usage(
 def usage_poll_due(last: float | None, now: float, interval: float = USAGE_POLL_SECONDS) -> bool:
     """True if last is None or now - last >= interval."""
     return last is None or now - last >= interval
+
+
+def _fetch_openrouter_key(
+    token: str, client: httpx.Client | None = None
+) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        if client is None:
+            with httpx.Client(timeout=8.0, follow_redirects=False) as owned:
+                response = owned.get(OPENROUTER_KEY_URL, headers=headers)
+        else:
+            response = client.get(OPENROUTER_KEY_URL, headers=headers)
+    except httpx.HTTPError:
+        raise StoreError("OpenRouter usage request failed") from None
+    if response.status_code != 200:
+        raise StoreError(f"OpenRouter usage returned HTTP {response.status_code}")
+    try:
+        body = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise StoreError("OpenRouter usage returned invalid JSON") from exc
+    if not isinstance(body, dict):
+        raise StoreError("OpenRouter usage response is not an object")
+    return body
+
+
+def _openrouter_number(value: Any, field: str, *, nullable: bool = False) -> int | float | None:
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise StoreError(f"OpenRouter {field} must be a number")
+    try:
+        finite = math.isfinite(float(value))
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise StoreError(f"OpenRouter {field} must be a finite number")
+    return value
+
+
+def _openrouter_snapshot(
+    account: str, body: dict[str, Any], fetched_at: str
+) -> dict[str, Any]:
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise StoreError("OpenRouter usage data is not an object")
+    limit_reset = data.get("limit_reset")
+    if isinstance(limit_reset, (dict, list, bool)):
+        raise StoreError("OpenRouter limit_reset has an invalid type")
+    return {
+        "vendor": OPENROUTER_VENDOR,
+        "provider": OPENROUTER_VENDOR,
+        "account": account,
+        "usage_usd": _openrouter_number(data.get("usage"), "usage"),
+        "usage_daily_usd": _openrouter_number(data.get("usage_daily"), "usage_daily"),
+        "usage_weekly_usd": _openrouter_number(data.get("usage_weekly"), "usage_weekly"),
+        "usage_monthly_usd": _openrouter_number(data.get("usage_monthly"), "usage_monthly"),
+        "limit_usd": _openrouter_number(data.get("limit"), "limit", nullable=True),
+        "limit_remaining_usd": _openrouter_number(
+            data.get("limit_remaining"), "limit_remaining", nullable=True
+        ),
+        "limit_reset": limit_reset,
+        "fetched_at": fetched_at,
+    }
+
+
+def scan_openrouter_usage(
+    store: Store,
+    *,
+    fetch: Callable[[str], dict[str, Any]] | None = None,
+    now: Callable[[], str] | None = None,
+) -> list[str]:
+    """Record changed OpenRouter key-usage snapshots for configured accounts."""
+    from .ai_accounts import load_ai_accounts
+
+    accounts = load_ai_accounts(store.home)
+    created: list[str] = []
+    errors: list[str] = []
+    for account_name in accounts.usage_accounts:
+        account = accounts.accounts[account_name]
+        key_path = Path(account.config_dir) / "openrouter-api-key"
+        try:
+            try:
+                token = key_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeError) as exc:
+                raise StoreError("openrouter key missing") from exc
+            if token == "":
+                raise StoreError("openrouter key missing")
+            body = (fetch or _fetch_openrouter_key)(token)
+            if not isinstance(body, dict):
+                raise StoreError("OpenRouter usage response is not an object")
+            snapshot = _openrouter_snapshot(
+                account_name, body, (now or utcnow)()
+            )
+            compare_keys = tuple(key for key in snapshot if key != "fetched_at")
+
+            def match(payload: dict[str, Any], name: str = account_name) -> bool:
+                return (
+                    payload.get("vendor") == OPENROUTER_VENDOR
+                    and payload.get("account") == name
+                )
+
+            if usage_unchanged(
+                last_usage_snapshot(store, match), snapshot, compare_keys
+            ):
+                continue
+            session_id = pick_session_id(store, "openrouter")
+            activity_id = str(uuid.uuid4())
+            event = store.write_with_advisory(
+                "activity",
+                "insert",
+                activity_id,
+                {
+                    "id": activity_id,
+                    "session_id": session_id,
+                    "type": "usage.snapshot",
+                    "payload": snapshot,
+                    "execution_status": "done",
+                },
+                lock_key=f"usage.snapshot:openrouter:{account_name}",
+                skip=lambda matcher=match, snap=snapshot, keys=compare_keys: (
+                    usage_unchanged(last_usage_snapshot(store, matcher), snap, keys)
+                ),
+            )
+            if event is not None:
+                created.append(activity_id)
+        except StoreError as exc:
+            errors.append(f"{account_name}: {exc}")
+    if errors:
+        raise OpenRouterUsageError(errors, created)
+    return created

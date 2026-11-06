@@ -24,7 +24,7 @@ The AI session talks **only** to the local database. Scripts perform every actio
 
 | Topic | Decision |
 |---|---|
-| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings, which use the named origin `web:<login>`. |
+| Write owner | The device that created a row. The hub never becomes the author of that row, except website-created person pings and website-created `assignment.created` / `assignment.reply` rows recorded by the hub with origin `web:<login>` when a human owner issues or answers a mandate, either signed in on the website or through `agent assign` with the bearer of a device paired to that owner (never an agent's own device). In both cases the hub creates the GitHub issue and assignment with that human's own OAuth token, stored when the human signed in on the website. `web:` origins are reserved for the hub. |
 | Hub role | Full replica + fan-out + always-on website. Not a shared write database. |
 | Login | Any GitHub account may sign in. Membership is *not* the GitHub org. |
 | Authorization | Hardcoded teams in git. Change members with a pull request. |
@@ -99,6 +99,10 @@ Collides with an unrelated public ledger product. The name is **agent**. The pro
 
 **Hub-owned task lifecycle and leases.**  
 The hub does not assign work, grant leases, or move authorship when a laptop disappears. Write ownership stays on the origin device. A crashed session restarts on **that** device, or the work stays unread. Restore rebuilds a wiped device; it does not transfer authorship.
+Recording a human-issued mandate under the §2 website-origin exception is not
+the hub assigning or leasing work: the human owner assigns on GitHub
+through the website or `agent assign`, and the execution device's coordinator still decides
+whether to accept the assignment.
 
 **Task as the product center.**  
 A task exists only when the spine skill is attached. The durable unit is the session and its activity log.
@@ -106,8 +110,8 @@ A task exists only when the spine skill is attached. The durable unit is the ses
 **Error-to-PR as the default platform workflow.**  
 Production-error ingestion is not the product core and not a default skill. The `error.*` spellings in §14 belong to the opt-in **error-fix** skill (§21). A hub `READY_FOR_PR` state is refused even as a skill: task state stays on this device (§2 Write owner, §20).
 
-**Worker capability ontology / scheduler.**  
-Providers remain the fixed adapter set `grok` | `codex` | `claude`; which one fills model slot `first` or `second` is device configuration, not a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
+**Worker capability ontology / scheduler.**
+Providers remain the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; which one fills model slot `first` or `second` is device configuration, not a scheduler. Scripts are not store workers. Do not add capability tables until two real workflows share them.
 
 **A second event envelope beside `activity`.**  
 Outside facts enter as scripts writing catalog rows. Do not add a parallel `external_events` store.
@@ -221,6 +225,7 @@ Rules:
 - **Pull of a subscription returns only matcher-passing snapshots**, never the rest of that origin. The matcher runs only inside origins this login may see under §6.
 - Implicit **session mail** does **not** require `PUT` of a subscription. The hub fans those snapshots to the device that owns `payload.to_session`.
 - Person pings this login **sent or received** are delivered the same way (snapshots on pull / WebSocket), independent of a subscription. Team-visible pings this login is not a party to stay on the website and on query; they are not laptop pull.
+- Every inbox, restore, and live-push replica snapshot carries the hub-authenticated owning login on the row envelope as `github_login`. `_github_login` exists only in API/query payload copies. When the local replica applies a relayed `message` activity row, it drops any sender-supplied `_github_login` and `github_login` fields from the row payload, casefolds the envelope `github_login`, and stores that authenticated value as payload `_github_login` for mail policy to read. Other replica rows are unchanged.
 - `GET /sync/restore` returns `own_events`, `inbox` (each session-mail snapshot addressed to a session this device owns, plus the parent `session` snapshot for that activity’s `session_id`), and `pings` (person-ping snapshots this login sent or received).
 - `agent sync` is one push + one pull. `agent sync --follow` keeps going (WebSocket when used; a dropped socket is logged and retried with capped exponential backoff, not a process exit and not a silent poll).
 - Missing hub URL or device token is a loud error. There is no default hub.
@@ -331,7 +336,8 @@ v1 types (mechanism only):
 | `message.read` | — | AI or script | — |
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
-| `usage.snapshot` | — | script | — (Grok billing GET on this device; no TUI knock; payload includes account email, provider, and subscription tier). Missing or expired Grok login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`; the knock daemon stays silent. |
+| `usage.snapshot` | — | script | — (configured Grok billing or OpenRouter key-usage GET on this device; no TUI knock). Missing or expired Grok login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`; OpenRouter account failures are reported and never stored as zero values. |
+| `lane.run` | — | script | — (one completed lane process; configured/reported model, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
@@ -391,7 +397,7 @@ summary sentences.
 ## 16. CLI surface
 
 ```text
-agent init
+agent init [--no-service]                       # --no-service skips the user service install
 agent session register|heartbeat|list|close|start|stop|input|keep-working|skill
 agent skills path
 agent session register --id ID --kind human|runner|other [--skill NAME]…
@@ -428,11 +434,13 @@ agent pair --hub URL [--name HOST] [--timeout SEC]
 agent sync [--follow]
 agent restore
 agent ping send|list|ack
+agent assign --no-deviation --agent LOGIN --repo OWNER/NAME --title TEXT (--body TEXT|--body-file PATH)
 agent daemon [--install|--uninstall]           # always-on supervisor; init installs the user service
 agent knock [--once]                           # --once drains; without --once is foreground; user service is the supported always-on path
 agent watch pr-merged                          # one scan; device daemon covers the loop
 agent watch pending                            # one scan; LISTEN agent_work / execute subscription.set and query.request
 agent watch grok-usage                         # one scan; knock child (under the device daemon) polls every 60s
+agent watch openrouter-usage                   # one scan of explicitly configured OpenRouter accounts
 agent watch assigned [--follow]                # allowlisted GitHub assignments → runner session + knock
 agent watch errors                             # one scan; $AGENT_HOME/error-fix.json; knock daemon polls with grok-usage
 agent watch error-fix                         # one scan; find-or-create implement task + isolated worktree; knock daemon polls with grok-usage
@@ -486,11 +494,21 @@ Provider credential environment variables are cleared in the child process,
 and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot
 be combined; `--model`, when supplied, must match the configured role.
 
-**Lane providers are the fixed adapter set `grok` | `codex` | `claude`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; a `claude` lane is the headless `claude --print` adapter, not this tmux pane. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
+**Lane providers are the fixed adapter set `grok` | `codex` | `claude` | `openrouter`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; `claude` and `openrouter` lanes are headless restricted `claude --print` adapters, not this tmux pane. The OpenRouter adapter supplies its Anthropic-compatible endpoint and reads its key only inside a shell wrapper; the key is not argv or lane evidence. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
 Local dashboard (`127.0.0.1`): sessions expose `can_control` when `_origin_device_id` is this device. `POST /api/sessions/{id}/control` applies the same actions locally and does not call the hub.
 
 The knock in §10 uses the **registered pane**, not `tmux_session` derived from the session id. `agent session input` remains argv-only (`send-keys -l` then a separate Enter).
+
+A human owner may issue work with `agent assign` from a device paired to that
+owner (never an agent's own device). The client sends the paired device bearer
+only to the configured hub's `POST /api/assignments`; the hub authorizes the
+human owner, creates and verifies the GitHub issue assignment, and records
+`assignment.created` under origin `web:<login>`, as §2 describes. The client sends
+the repository exactly as supplied; the hub canonicalizes its repository
+spelling. `agent assign` requires `--no-deviation` and sends
+`deviation: {"declared": false}`; a deviation instead needs an explicit grant
+on the issue. The client does not print or persist the bearer anywhere new.
 
 ## 18. What “done” for the product still needs (operators)
 
@@ -500,7 +518,7 @@ These are not silent defaults in code; they are human steps after merge:
 2. Create a GitHub OAuth App whose callback is `{public-url}/auth/github/callback`.
 3. Deploy `agent-core` with every `AGENT_CORE_*` variable set.
 4. Add GitHub logins to `teams.yaml` via pull request.
-5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, the local dashboard, and cli-bridge; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing.
+5. On each laptop: PostgreSQL 15+ (`initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN` / `AGENT_PG_DSN`), `pip install -e .`, `agent init` (installs and starts the user-service daemon for knock, usage, pending, github pending, mail pending, `pr.merged`, the local dashboard, and cli-bridge; daemon `sync --follow` starts only after pair, once `device.json` has token and hub URL), `agent pair --hub …`. Do not leave a separate `agent knock` or `agent sync --follow` as the always-on path; one-shot `agent sync` remains fine after pairing. On a headless host where the agent user never has a GUI login, use `agent init --no-service` and put the printed daemon argv and environment under an operator-provided system supervisor (for example a launchd LaunchDaemon with `UserName`).
 
 Later product work (not required to operate v1 after merge):
 
@@ -589,13 +607,23 @@ Partial multi-step actions (push, then open a pull request) record each complete
 
 ### 19.5 What this does not change
 
-Write owner, hub role, opt-in skills, required session row, and the generic `activity` catalog stay as in §2. Spine task states stay the spine skill’s states. They are not replaced by a hub machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
+Write owner, hub role, the narrow website-origin exceptions, opt-in skills,
+required session row, and the generic `activity` catalog stay as in §2. Spine
+task states stay the spine skill’s states. They are not replaced by a hub
+machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
 
 ### 19.6 Ready for review
 
 Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md): open the draft as soon as the first signed task commit exists; full tests and reviews are Ready-for-review gates, not draft gates. A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft (Ready for review) needs two review runs. Each names this head, or a commit after the pull request base that this head still contains. CI on this head must be green. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences; ledger `task-done` is not pull-request completion.
 
-Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex` or `claude`) fills a slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later check for that task uses the pinned value; the only provider order in code is the historical default `grok`, then `codex`, applied to tasks and devices without `models` so that existing ledger rows stay readable; the stored stage names `grok-pr` / `codex-pr` and the checklist keys `grok_pr_*` / `codex_pr_*` are the historical identifiers of the two slots. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex`, `claude` or `openrouter`) fills a slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later check for that task uses the pinned value; the only provider order in code is the historical default `grok`, then `codex`, applied to tasks and devices without `models` so that existing ledger rows stay readable; the stored stage names `grok-pr` / `codex-pr` and the checklist keys `grok_pr_*` / `codex_pr_*` are the historical identifiers of the two slots. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+
+Besides the `one_review_authors` one-review exception above, the only other
+second-slot exception is a coordinator A38 task pinned with
+`models.second: null`. Its second review is an external review by a team member
+delivered as session mail, bound to the approved `grok-pr` head and recorded as
+`codex_pr_*` checklist evidence. The coordinator launches no second-slot model
+for that task. `models.second: null` is refused everywhere else.
 
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the newest author report that meets the requirements and was created after the head commit, falling back to an older qualifying report when a newer one does not meet them. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. One comment whose lanes are the first review run, and a later comment whose lanes are the second review run. The first comment stays valid when a later commit still contains that head and that head is after the pull request base. Then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
 
@@ -606,9 +634,30 @@ agent account, and receives a pull request ready for human review and merge on
 GitHub. The static script runs on the configured execution device. Deployment
 hostnames belong in the deployment configuration, not this public repository.
 
-1. The script detects and accepts the assignment and confirms acceptance in the
-   GitHub issue. This acceptance and confirmation are script work, never model
-   work, and happen before the script starts the implementation lane.
+1. The script detects assignments in explicit repositories or repositories of
+   explicitly approved GitHub owners. For an owner-scoped repository it pins
+   the default branch and a direct-push or verified fork publication route at
+   acceptance. When configured to require a hub mandate, it accepts only a
+   matching `assignment.created` query row. It queries the configured
+   repository spelling plus issue number as `payload.issue_key`, its
+   case-folded form, and GitHub's canonical `<owner>/<name>#<number>` spelling
+   from the issue or assignment-event response, then compares repositories
+   case-insensitively. The compatible hub adds that canonical issue key to every
+   `assignment.created` payload. The row must have envelope `github_login`
+   equal to the GitHub assignment-event actor and an authorized reply login,
+   `origin_device_id` exactly equal to `web:<envelope github_login>`, and inner
+   payload `actor` case-insensitively equal to that envelope login. A matching
+   device-origin row is not a mandate. This property requires a hub that refuses
+   device ids and pushed origins beginning with `web:`; only the hub may create
+   that named website origin. A definite no-match retries for 120
+   seconds from `assignment_at`. A capped query (at least 500 rows) is never a
+   definite no-match; it is a recoverable configuration blocker published once
+   with a reply checkpoint, as are unpaired devices and hub HTTP 400/401/403
+   results. Other hub failures retry and publish at most one blocker per hour.
+   The script then
+   confirms acceptance in the GitHub issue. This acceptance and confirmation
+   are script work, never model work, and happen before the script starts the
+   implementation lane.
 2. The script starts the implementation lane with the assigned work. The model
    implements the change and returns its result to the script.
 3. The script starts the review lane. When improvements are needed, the script
@@ -630,8 +679,10 @@ hostnames belong in the deployment configuration, not this public repository.
 6. Publication and readiness follow the existing
    [pull-request lifecycle](docs/pull-request-lifecycle.md): the script publishes
    a draft immediately after the first signed task commit, while tests and
-   reviews may still be pending. The script marks Ready for review only after
-   the required checks and reviews hold on the final head. These steps do not
+   reviews may still be pending. The configured readiness owner marks Ready for
+   review only after the required checks and reviews hold on the final head: the
+   coordinator does so for the ordinary path, while the PR guard alone does so
+   for explicit coordinator A38 mode. These steps do not
    wait for this numbered list to finish before publishing the first draft.
 7. The human reviews and merges on GitHub. Completion requires verification of
    that human merge, as defined in the lifecycle.
@@ -647,6 +698,10 @@ the workflow is enabled on a deployment:
   --session ID` performs a bounded advancement; `--follow` is the script's loop.
   No worker, account or role is installed by default.
 
+- [`hub_assign.py`](src/agent_cli/hub_assign.py) implements the paired-device
+  `agent assign` request to the hub. The hub, not a model lane, owns GitHub issue
+  creation and the `assignment.created` web event.
+
 - [`watch.py`](src/agent_cli/watch.py) implements assignment scanning, a queue,
   workspace files, and session dispatch. `dispatch_assigned` does not publish an
   acceptance comment before starting the session.
@@ -655,6 +710,11 @@ the workflow is enabled on a deployment:
   the daemon's worker set require a daemon restart. It does not start the legacy
   `agent watch assigned --follow`. Legacy dispatch and `supervise` refuse
   sessions selected for the coordinator.
+- `agent init --no-service` creates the same local store and identity without
+  installing a user service, so a headless host's system supervisor can run the
+  unchanged `agent daemon` process with the printed argv and environment. It is
+  refused while a user service is installed for the same `AGENT_HOME`, and stops
+  when an existing unit cannot be read or records no `AGENT_HOME`.
 - The shipped `ask=False` path in
   [`supervise.py`](src/agent_cli/supervise.py) does not acknowledge completion of
   an assignment from verified PR results. Its optional closed-question path is
@@ -662,6 +722,30 @@ the workflow is enabled on a deployment:
 - [`github_act.py`](src/agent_cli/github_act.py) provides the GitHub activity
   executor. Its existence alone does not establish that model lanes cannot
   access GitHub or execute tests or other agents.
+- An explicitly configured coordinator A38 worker keeps the same deterministic
+  boundary with a different readiness owner. Its tasks are pinned with
+  `models.second: null`: the script runs and verifies the repository A38 suite,
+  publishes the author report and two validated author review comments, and
+  relays an allowlisted external team-member second-review result from session
+  mail. That result is bound to the approved `grok-pr` head and recorded as
+  `codex_pr_*` checklist evidence; no second-slot model is launched. For that
+  review path the hub remains the sanctioned
+  person-ping/session-mail relay; a required assignment mandate is separately
+  verified from its website-origin `assignment.created` event with the envelope,
+  `web:<login>` origin, issue key, and inner actor all bound to the same login.
+  The owner-scoped A38 default requires that mandate even when the general hub
+  assignment option is disabled, and closes the deviation keys only when its
+  inner payload is exactly `deviation: {"declared": false, "stated_by":
+  "<same actor>"}`. Before the
+  owner-scoped A38 default writes `contributing_ok=ja` with `conformity-a
+  approved at <head>`, it requires the recorded `grok-pr` quality gate to be
+  approved on that exact head. The coordinator never posts a formal
+  approval and never marks the pull request Ready; it observes the PR guard
+  making the unchanged head Ready, then waits for the verified human merge. If
+  the human merge arrives during the A38 second-review, CI, readiness, or Ready
+  wait, merge observation runs the same readiness closing on that merged head
+  before `task-done`, unless readiness already ran on exactly that head. Non-A38
+  workers retain the formal-review and leave-draft path described above.
 
 This section defines the required responsibility boundary. It does not claim
 that a sandbox or other technical enforcement has been implemented.
@@ -685,13 +769,13 @@ device's hub identity or transfer ownership of store rows.
 
 [AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
 profiles and roles, explicit models/access and session-to-role bindings. It is
-used by lane launches, interactive Grok starts and optional Grok usage reads.
+used by lane launches, interactive Grok starts and optional Grok/OpenRouter usage reads.
 Its `models` block names the provider of model slot `first` and `second`;
 device-wide `lanes` bind slots for every session. An unset `models` block
 pins the historical order `grok`, then `codex` on new tasks and is how tasks
 without a pin are read; it authorizes no launch, because lane bindings stay
 required. Task creation and `agent models` read the `models` block.
-Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude
+Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude/OpenRouter
 provider adapters are protocol capabilities, not installed account or role
 selections. A38 visibility lookup uses an explicitly bound GitHub
 session, or operator-supplied visibility without a GitHub lookup.
@@ -713,7 +797,7 @@ That draft is **not** this product. Hub authorship, hub leases, a hub task machi
 | Hub assigns, leases, and reassigns work | Hub is replica + fan-out, not author. A disappeared laptop is restore or unread, not a lease expiry that moves authorship. |
 | Formal `CREATED` → `READY_FOR_PR` machine as platform | Spine already has a local task machine. A second hub machine would be a second truth. |
 | Normalized `external_events` table + fingerprint service | Outside facts are script-written `activity` rows (`pr.merged`, …). |
-| Worker capability ontology and scheduler | Providers are the fixed adapter set `grok` \| `codex` \| `claude`; slots are device configuration. Scripts are not store workers. |
+| Worker capability ontology and scheduler | Providers are the fixed adapter set `grok` \| `codex` \| `claude` \| `openrouter`; slots are device configuration. Scripts are not store workers. |
 | Policy language (allowed repos, forbidden paths, cost budgets) as core | Team-specific rules stay outside this public client (§2 Runtime). |
 | Website as an operations console for leases, token cost, stuck coding tasks | Website is the visibility replica (§7). |
 | Autonomous merge | Already forbidden. Stays forbidden. |

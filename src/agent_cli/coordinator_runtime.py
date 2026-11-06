@@ -22,6 +22,7 @@ from .ai_accounts import AIAccounts, load_ai_accounts
 from .model_slots import DEFAULT_MODEL_SLOTS, ModelSlotsError, models_from_snapshot
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
+    check_label,
     REQUIRED_LANE_SLOTS,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
@@ -34,6 +35,7 @@ from .coordinator_common import (
     as_int,
     coord,
     coordinator_env,
+    gh_json,
     gh_list,
     harden_grok_write_argv,
     owned_session,
@@ -46,7 +48,16 @@ from .coordinator_common import (
     source_key,
     strip_row,
 )
-from .coordinator_config import WorkerConfig
+from .coordinator_config import RepositoryConfig, WorkerConfig
+from .coordinator_a38 import (
+    fresh_pr_head,
+    intake_second_reviews,
+    pr_state,
+    phase_await_ready as phase_a38_await_ready,
+    phase_await_second_review,
+    phase_first_comment as phase_a38_first_comment,
+    phase_tests as phase_a38_tests,
+)
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
     ensure_draft,
@@ -107,28 +118,39 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
     for skill in REQUIRED_WORKER_SKILLS:
         if not has_skill(session, skill):
             raise CoordinatorError(f"worker session missing skill {skill}")
-    review = owned_session(store, worker.review_session)
-    for skill in REQUIRED_REVIEW_SKILLS:
-        if not has_skill(review, skill):
-            raise CoordinatorError(f"review_session missing skill {skill}")
     try:
         accounts = load_accounts(store.home)
         worker_account = accounts.for_session(worker.session_id)
-        review_account = accounts.for_session(worker.review_session)
+        review_account = None
+        if not worker.a38:
+            if worker.review_session is None:
+                raise CoordinatorError("non-A38 worker requires review_session")
+            review = owned_session(store, worker.review_session)
+            for skill in REQUIRED_REVIEW_SKILLS:
+                if not has_skill(review, skill):
+                    raise CoordinatorError(f"review_session missing skill {skill}")
+            review_account = accounts.for_session(worker.review_session)
     except AccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if worker_account.login.casefold() == review_account.login.casefold():
+    if review_account is not None and worker_account.login.casefold() == review_account.login.casefold():
         raise CoordinatorError("formal review_session must use a different GitHub login")
+    if worker.a38 and worker_account.login.casefold() in worker.second_reviewers:
+        raise CoordinatorError("second_reviewers must not contain the worker GitHub login")
     if worker_account.git_identity is None:
         raise CoordinatorError("worker GitHub account requires git identity for signed commits")
     try:
         worker_account.runner(runner, require_git=True)
-        review_account.runner(runner)
+        if review_account is not None:
+            review_account.runner(runner)
     except AccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     try:
         ai = load_ai_accounts(store.home)
         _refuse_codex_first(ai.models.first)
+        if worker.a38 and ai.models.second is not None:
+            raise CoordinatorError("A38 workers require models.second = null")
+        if not worker.a38 and ai.models.second is None:
+            raise CoordinatorError("models.second = null is allowed only for A38 workers")
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(worker.session_id, role, vendor)
@@ -138,33 +160,62 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
                 raise CoordinatorError(f"{slot} requires read-only access")
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if not worker.repositories:
+    if not worker.repositories and not worker.repository_owners:
         raise CoordinatorError("worker has no repositories configured")
     if not worker.workspace_root.is_absolute():
         raise CoordinatorError("workspace_root must be absolute")
 
 
 def execution_binding(
-    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts | None = None
+    store: Store,
+    worker: WorkerConfig,
+    repo: str,
+    ai: AIAccounts | None = None,
+    repository_config: RepositoryConfig | None = None,
+    owner_scoped: bool = False,
 ) -> str:
     """Pin selected execution metadata, never credential contents or unrelated profiles.
 
     ``ai`` lets a caller hash the same manifest read it pins ``models`` from.
     """
-    cfg = repo_cfg(worker, repo)
+    cfg = repository_config or repo_cfg(worker, repo)
+    owner = repo.split("/", 1)[0].casefold() if "/" in repo else ""
+    if owner_scoped and owner not in worker.repository_owners:
+        raise CoordinatorError(f"repository owner {owner or '?'} is no longer configured")
     github = load_accounts(store.home)
     ai = ai if ai is not None else load_ai_accounts(store.home)
-    selected = {
-        "repository": asdict(cfg), "workspace": str(worker.workspace_root),
-        "worker_session": worker.session_id, "review_session": worker.review_session,
-        "reply_logins": worker.reply_logins,
-        "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
-        # Only a non-default models block enters the hash, so a device without one,
-        # or with the default written out, keeps the hash of earlier tasks.
-        **({"models": ai.models.as_dict()} if ai.models != DEFAULT_MODEL_SLOTS else {}),
-        "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
-                  for slot in required_lane_slots(ai.models)],
-    }
+    if worker.a38:
+        selected = {
+            "repository": asdict(cfg), "workspace": str(worker.workspace_root),
+            "worker_session": worker.session_id,
+            "reply_logins": worker.reply_logins,
+            **({"repository_owner": owner} if owner_scoped else {}),
+            **({"require_hub_assignment": True} if worker.require_hub_assignment else {}),
+            "github": [asdict(github.for_session(worker.session_id))],
+            "models": ai.models.as_dict(),
+            "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
+                      for slot in required_lane_slots(ai.models)],
+            "a38": {
+                "enabled": True,
+                "second_reviewers": worker.second_reviewers,
+                "second_review_timeout_seconds": worker.second_review_timeout_seconds,
+            },
+        }
+    else:
+        assert worker.review_session is not None
+        selected = {
+            "repository": asdict(cfg), "workspace": str(worker.workspace_root),
+            "worker_session": worker.session_id, "review_session": worker.review_session,
+            "reply_logins": worker.reply_logins,
+            **({"repository_owner": owner} if owner_scoped else {}),
+            **({"require_hub_assignment": True} if worker.require_hub_assignment else {}),
+            "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
+            # Only a non-default models block enters the hash, so a device without one,
+            # or with the default written out, keeps the hash of earlier tasks.
+            **({"models": ai.models.as_dict()} if ai.models != DEFAULT_MODEL_SLOTS else {}),
+            "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
+                      for slot in required_lane_slots(ai.models)],
+        }
     return hashlib.sha256(json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -267,8 +318,7 @@ def _create_implement_task(
     number: int,
     title: str,
     assigned_id: str,
-    publication_repo: str,
-    base: str,
+    repository_config: RepositoryConfig | None,
     body: str,
 ) -> dict[str, Any] | None:
     """Insert task under device-wide source admission lock. None if another owner won."""
@@ -280,21 +330,31 @@ def _create_implement_task(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(ai.models.first)
+    source = {
+        "repo": repo,
+        "number": number,
+        "assigned_id": assigned_id,
+        "title": title,
+        "body": redact(body, limit=2000),
+    }
+    if repository_config is not None:
+        source.update(
+            publication_repo=repository_config.publication_repo,
+            base=repository_config.base,
+        )
+    else:
+        source["owner_scoped"] = True
+        source["require_hub_assignment"] = worker.require_hub_assignment
     c = {
         "phase": "accept",
-        "source": {
-            "repo": repo,
-            "number": number,
-            "assigned_id": assigned_id,
-            "publication_repo": publication_repo,
-            "base": base,
-            "title": title,
-            "body": redact(body, limit=2000),
-        },
+        "source": source,
         "branch": f"task-{tid[:8]}",
-        "execution_binding": execution_binding(store, worker, repo, ai),
+        **({"execution_binding": execution_binding(
+            store, worker, repo, ai, repository_config
+        )} if repository_config is not None else {}),
         "worker_session": worker.session_id,
         "worker_login": account_for(store, worker.session_id).login.casefold(),
+        **({"a38": {"enabled": True}} if worker.a38 else {}),
     }
     held: dict[str, Any] = {"existing": None}
 
@@ -397,6 +457,8 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
     login = account.login
+    candidates: list[tuple[str, dict[str, Any], RepositoryConfig | None]] = []
+    explicit_names = {repo.casefold() for repo in worker.repositories}
     for repo, repo_cfg_item in worker.repositories.items():
         try:
             issues = gh_list(
@@ -412,77 +474,127 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
         except CoordinatorError as exc:
             lines.append(f"discover {repo}: {redact(str(exc))}")
             continue
-        for issue in issues:
-            if not isinstance(issue, dict):
-                continue
-            if issue.get("pull_request") is not None:
-                continue
-            number = as_int(issue.get("number"))
-            if number is None or number <= 0:
-                continue
-            # Device-wide admission: first session ownership wins.
-            existing = _find_task_for_issue_device_wide(store, repo, number)
-            if existing is not None:
-                if existing.get("session_id") != worker.session_id:
-                    lines.append(
-                        f"source owned by session {existing.get('session_id')} for {repo}#{number}"
-                    )
-                    continue
-                if not _terminal(existing):
-                    continue
-                if existing.get("state") == "done":
-                    lines.append(f"already completed {repo}#{number}")
-                    continue
-                if existing.get("state") == "failed":
-                    lines.append(
-                        f"failed task remains for {repo}#{number}; awaiting authorized recovery"
-                    )
-                    continue
-            try:
-                verified = verify_issue_assigned(scoped_runner, repo, number, login)
-            except CoordinatorError as exc:
-                lines.append(f"skip {repo}#{number}: {redact(str(exc))}")
-                continue
-            title = verified.get("title") if isinstance(verified.get("title"), str) else ""
-            body = verified.get("body") if isinstance(verified.get("body"), str) else ""
-            url = verified.get("html_url") if isinstance(verified.get("html_url"), str) else ""
-            # updated_at is not assigned_at — record observation honestly.
-            observed = utcnow()
-            assigned_id = _insert_assigned_activity(
-                store,
-                worker,
-                repo=repo,
-                number=number,
-                title=title or "",
-                body=body or "",
-                url=url or "",
-                assignee=login.casefold(),
-                assigned_at=observed,
+        candidates.extend((repo, issue, repo_cfg_item) for issue in issues if isinstance(issue, dict))
+    if worker.repository_owners:
+        try:
+            search_result = gh_json(
+                scoped_runner,
+                [
+                    "gh", "api", "--paginate", "--slurp",
+                    f"search/issues?q=is:issue+is:open+assignee:{login}+archived:false&per_page=100",
+                ],
             )
-            task = _create_implement_task(
-                store,
-                worker,
-                repo=repo,
-                number=number,
-                title=title or f"Issue {number}",
-                assigned_id=assigned_id,
-                publication_repo=repo_cfg_item.publication_repo,
-                base=repo_cfg_item.base,
-                body=body or "",
-            )
-            if task is None:
-                other = _find_task_for_issue_device_wide(store, repo, number)
-                if other is not None and other.get("session_id") != worker.session_id:
-                    lines.append(
-                        f"source owned by session {other.get('session_id')} for {repo}#{number}"
-                    )
+            if isinstance(search_result, dict):
+                if search_result.get("incomplete_results") is True:
+                    raise CoordinatorError("owner issue search returned incomplete results")
+                found = search_result.get("items")
+            elif isinstance(search_result, list) and all(
+                isinstance(page, dict) for page in search_result
+            ):
+                found = []
+                for page in search_result:
+                    if page.get("incomplete_results") is True:
+                        raise CoordinatorError("owner issue search returned incomplete results")
+                    items = page.get("items")
+                    if not isinstance(items, list):
+                        raise CoordinatorError("owner issue search page has no items array")
+                    found.extend(items)
+            else:
+                found = search_result
+            if not isinstance(found, list):
+                raise CoordinatorError("owner issue search returned no items array")
+        except CoordinatorError as exc:
+            lines.append(f"discover owners: {redact(str(exc))}")
+            found = []
+        for issue in found:
+            if not isinstance(issue, dict) or str(issue.get("state") or "").casefold() != "open":
                 continue
-            if task.get("session_id") != worker.session_id:
+            repository = issue.get("repository")
+            if isinstance(repository, dict) and repository.get("archived") is True:
+                continue
+            repository_url = issue.get("repository_url")
+            match = re.fullmatch(r"https://api\.github\.com/repos/([^/]+)/([^/]+)", str(repository_url or ""))
+            if match is None:
+                continue
+            repo = f"{match.group(1)}/{match.group(2)}"
+            if repo.casefold() in explicit_names:
+                continue
+            if match.group(1).casefold() not in worker.repository_owners:
+                continue
+            candidates.append((repo, issue, None))
+    seen: set[str] = set()
+    for repo, issue, repo_cfg_item in candidates:
+        source_id = f"{repo.casefold()}#{issue.get('number')}"
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        if issue.get("pull_request") is not None:
+            continue
+        number = as_int(issue.get("number"))
+        if number is None or number <= 0:
+            continue
+        # Device-wide admission: first session ownership wins.
+        existing = _find_task_for_issue_device_wide(store, repo, number)
+        if existing is not None:
+            if existing.get("session_id") != worker.session_id:
                 lines.append(
-                    f"source owned by session {task.get('session_id')} for {repo}#{number}"
+                    f"source owned by session {existing.get('session_id')} for {repo}#{number}"
                 )
                 continue
-            lines.append(f"accepted source {repo}#{number} task={task['id']}")
+            if not _terminal(existing):
+                continue
+            if existing.get("state") == "done":
+                lines.append(f"already completed {repo}#{number}")
+                continue
+            if existing.get("state") == "failed":
+                lines.append(
+                    f"failed task remains for {repo}#{number}; awaiting authorized recovery"
+                )
+                continue
+        try:
+            verified = verify_issue_assigned(scoped_runner, repo, number, login)
+        except CoordinatorError as exc:
+            lines.append(f"skip {repo}#{number}: {redact(str(exc))}")
+            continue
+        title = verified.get("title") if isinstance(verified.get("title"), str) else ""
+        body = verified.get("body") if isinstance(verified.get("body"), str) else ""
+        url = verified.get("html_url") if isinstance(verified.get("html_url"), str) else ""
+        # updated_at is not assigned_at — record observation honestly.
+        observed = utcnow()
+        assigned_id = _insert_assigned_activity(
+            store,
+            worker,
+            repo=repo,
+            number=number,
+            title=title or "",
+            body=body or "",
+            url=url or "",
+            assignee=login.casefold(),
+            assigned_at=observed,
+        )
+        task = _create_implement_task(
+            store,
+            worker,
+            repo=repo,
+            number=number,
+            title=title or f"Issue {number}",
+            assigned_id=assigned_id,
+            repository_config=repo_cfg_item,
+            body=body or "",
+        )
+        if task is None:
+            other = _find_task_for_issue_device_wide(store, repo, number)
+            if other is not None and other.get("session_id") != worker.session_id:
+                lines.append(
+                    f"source owned by session {other.get('session_id')} for {repo}#{number}"
+                )
+            continue
+        if task.get("session_id") != worker.session_id:
+            lines.append(
+                f"source owned by session {task.get('session_id')} for {repo}#{number}"
+            )
+            continue
+        lines.append(f"accepted source {repo}#{number} task={task['id']}")
     return lines
 
 
@@ -989,6 +1101,11 @@ def phase_implement(
         "Implement assigned issue.",
     )
     draft_lines = []
+    if worker.a38 and as_int(c.get("pr_number")) is not None:
+        # A merge during the lane keeps the published head and its review state.
+        left = _a38_pr_left_open(store, worker, task, runner, "implement")
+        if left is not None:
+            return left
     if sha:
         c["head_sha"] = sha
         invalidate_head_evidence(c, sha)
@@ -1166,9 +1283,11 @@ def phase_inner_review(
 
 
 def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
+    if worker.a38:
+        return phase_a38_tests(store, worker, task, runner)
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     worktree = str(c["worktree"])
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head
@@ -1200,7 +1319,7 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
             "id": cid,
             "task_id": task["id"],
             "name": "coordinator-check",
-            "command": " ".join(cfg.check_argv),
+            "command": check_label(c, cfg),
             "result": "pass" if passed else "fail",
             "output": output,
             "ran_at": utcnow(),
@@ -1267,6 +1386,73 @@ def _open_tasks(store: Store, session_id: str) -> list[dict[str, Any]]:
     return tasks
 
 
+# A38 phases in which the guard may already have made the PR Ready, so a human
+# can merge before the worker reaches await_merge.
+def _a38_pr_left_open(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner, phase: str
+) -> list[str] | None:
+    """Route an A38 task whose PR was merged or closed meanwhile to the merge check."""
+    live_state = pr_state(store, worker, task, runner)
+    # An unreadable state continues: the push path refuses a PR that is not open.
+    if live_state in ("MERGED", "CLOSED"):
+        coord(task)["phase"] = "await_merge"
+        save_task(store, task)
+        verb = "merged" if live_state == "MERGED" else "closed"
+        return [f"PR {verb} during {phase}; verifying the merge"]
+    return None
+
+
+A38_MERGEABLE_WAIT_PHASES = frozenset({"await_second_review", "ci", "readiness", "await_ready"})
+A38_PUBLISHED_RERUN_PHASES = frozenset(
+    {"implement", "inner_review", "tests", "publish_draft", "pr_gates_grok", "pr_gates_codex", "a38_first_comment"}
+)
+
+
+def _second_review_intake_allowed(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    c: dict[str, Any],
+    runner: Runner,
+    phase: str,
+) -> bool | None:
+    """Intake runs on an open PR (in await_merge only while still assigned), and in
+    await_merge also after the merge, which closes the issue; a blocking result
+    there never reopens work. None means the state is unreadable."""
+    state = pr_state(store, worker, task, runner)
+    if state is None:
+        return None
+    if state == "OPEN":
+        return phase != "await_merge" or _source_still_assigned(store, worker, c, runner)
+    return phase == "await_merge" and state == "MERGED"
+
+
+def _verify_source_assigned(
+    store: Store, worker: WorkerConfig, c: dict[str, Any], runner: Runner
+) -> None:
+    source = c.get("source")
+    if isinstance(source, dict):
+        scoped_runner = scoped(store, worker.session_id, runner)
+        account = account_for(store, worker.session_id)
+        verify_issue_assigned(
+            scoped_runner,
+            str(source["repo"]),
+            int(source["number"]),
+            account.login,
+        )
+
+
+def _source_still_assigned(
+    store: Store, worker: WorkerConfig, c: dict[str, Any], runner: Runner
+) -> bool:
+    """await_merge skips the revocation stop; a revoked task posts no new review comments."""
+    try:
+        _verify_source_assigned(store, worker, c, runner)
+    except CoordinatorError:
+        return False
+    return True
+
+
 def advance_one(
     store: Store,
     worker: WorkerConfig,
@@ -1281,27 +1467,97 @@ def advance_one(
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
+    final_blocker = phase == "blocked" and not c.get("resume_phase")
+    if (
+        worker.a38
+        and as_int(c.get("pr_number")) is not None
+        and phase not in ("await_merge", "done")
+        and not final_blocker
+    ):
+        # Once the pull request exists the guard may make it Ready and a human may
+        # merge it in any phase, also while asking or recoverably blocked; check that
+        # first. A non-recoverable blocker (no resume phase, e.g. after a merge) stays.
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            verb = "merged" if live_state == "MERGED" else "closed"
+            return [f"PR {verb} during {phase}; verifying the merge"]
+        if live_state is None and phase in A38_PUBLISHED_RERUN_PHASES:
+            return [f"PR state temporarily unavailable before {phase}; retrying"]
     try:
-        binding = execution_binding(store, worker, str(source.get("repo") or ""))
-        if c.get("execution_binding") != binding:
-            raise CoordinatorError("task execution configuration changed or is unpinned")
+        if (
+            source.get("owner_scoped")
+            and (
+                phase == "accept"
+                or (phase == "blocked" and c.get("resume_phase") == "accept")
+            )
+            and not c.get("execution_binding")
+        ):
+            if source.get("require_hub_assignment") is not worker.require_hub_assignment:
+                raise CoordinatorError("task hub-assignment requirement changed before acceptance")
+            binding = None
+        else:
+            cfg = repo_cfg(worker, str(source.get("repo") or ""), task)
+            binding = execution_binding(
+                store,
+                worker,
+                str(source.get("repo") or ""),
+                repository_config=cfg,
+                owner_scoped=bool(source.get("owner_scoped")),
+            )
+            if c.get("execution_binding") != binding:
+                raise CoordinatorError("task execution configuration changed or is unpinned")
     except (CoordinatorError, StoreError) as exc:
-        return publish_blocker(store, worker, task, runner, str(exc), kind="configuration-binding")
+        message = str(exc)
+        binding_blocker_activity_id = c.get("binding_blocker_activity_id")
+        if (
+            c.get("binding_blocker") == message
+            and isinstance(binding_blocker_activity_id, str)
+            and binding_blocker_activity_id
+        ):
+            return [f"blocked: {redact(message)}"]
+        if c.get("binding_blocker") != message:
+            c.pop("binding_blocker_activity_id", None)
+        c["binding_blocker"] = message
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            message,
+            kind="configuration-binding",
+            preserve_reply_checkpoint=True,
+            binding_notice=True,
+        )
+    if "binding_blocker" in c or "binding_blocker_activity_id" in c:
+        c.pop("binding_blocker", None)
+        c.pop("binding_blocker_activity_id", None)
+        save_task(store, task)
+    # Once an A38 pull request exists the guard may make it Ready (also before a rerun
+    # after a blocking review), so every later phase checks for a human merge first.
+    mergeable_wait = worker.a38 and (
+        phase in A38_MERGEABLE_WAIT_PHASES
+        or (phase in A38_PUBLISHED_RERUN_PHASES and as_int(c.get("pr_number")) is not None)
+    )
     # Stop new effects when assignment is revoked. await_merge may continue
     # observation only; formal_approve / leave_draft must not proceed.
     if phase not in ("await_merge", "done", "blocked", "ask"):
         try:
-            source = c.get("source")
-            if isinstance(source, dict):
-                scoped_runner = scoped(store, worker.session_id, runner)
-                account = account_for(store, worker.session_id)
-                verify_issue_assigned(
-                    scoped_runner,
-                    str(source["repo"]),
-                    int(source["number"]),
-                    account.login,
-                )
+            _verify_source_assigned(store, worker, c, runner)
         except CoordinatorError as exc:
+            if mergeable_wait:
+                live_state = pr_state(store, worker, task, runner)
+                if live_state is None:
+                    # A merge also unassigns the closed issue; decide only on a readable state.
+                    return [f"PR state temporarily unavailable during {phase}; retrying"]
+                if live_state in ("MERGED", "CLOSED"):
+                    # A merge closes the issue; await_merge verifies the human merge
+                    # (and blocks a pull request that was closed without one).
+                    c["phase"] = "await_merge"
+                    save_task(store, task)
+                    return [f"PR left open state during {phase}; verifying the merge"]
             c["phase"] = "blocked"
             c["resume_phase"] = phase if phase not in ("blocked", "ask", "done") else "implement"
             c["blocker"] = str(exc)
@@ -1309,6 +1565,7 @@ def advance_one(
             return publish_blocker(
                 store, worker, task, runner, str(exc), kind="stopped", reply_checkpoint=True
             )
+
 
     handlers = {
         "accept": lambda: phase_accept(store, worker, task, runner),
@@ -1319,8 +1576,11 @@ def advance_one(
         "publish_draft": lambda: phase_publish_draft(store, worker, task, runner),
         "pr_gates_grok": lambda: phase_pr_gates_grok(store, worker, task, runner, lane_runner),
         "pr_gates_codex": lambda: phase_pr_gates_codex(store, worker, task, runner, lane_runner),
+        "a38_first_comment": lambda: phase_a38_first_comment(store, worker, task, runner),
+        "await_second_review": lambda: phase_await_second_review(store, worker, task, runner),
         "ci": lambda: phase_ci(store, worker, task, runner),
         "readiness": lambda: phase_readiness(store, worker, task, runner),
+        "await_ready": lambda: phase_a38_await_ready(store, worker, task, runner),
         "formal_approve": lambda: phase_formal_approve(store, worker, task, runner),
         "leave_draft": lambda: phase_leave_draft(store, worker, task, runner),
         "await_merge": lambda: phase_await_merge(store, worker, task, runner),
@@ -1332,7 +1592,49 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
-        return handler()
+        intake_lines: list[str] | None = None
+        if worker.a38 and phase in {
+            "ci",
+            "readiness",
+            "await_ready",
+            "leave_draft",
+            "await_merge",
+        }:
+            a38 = c.get("a38")
+            second = a38.get("second_review") if isinstance(a38, dict) else None
+            current = str(c.get("head_sha") or "")
+            # Intake runs on an open PR and, in await_merge, also after the merge;
+            # a result that arrives after a merge or close never reopens work.
+            # Validate late mail against the live PR head: after a push the phase handler
+            # invalidates evidence, and a result for the old head must not reroute the task.
+            # An unreadable head or state retries the tick: skipping intake would let the
+            # phase decide on a stored review while a newer one is still waiting.
+            unreadable = [f"PR state temporarily unavailable before second-review intake in {phase}; retrying"]
+            if isinstance(second, dict) and second.get("head") == current:
+                live = fresh_pr_head(store, worker, task, runner)
+                if live is None:
+                    return unreadable
+                if live != current:
+                    second = None
+            allowed = (
+                _second_review_intake_allowed(store, worker, task, c, runner, phase)
+                if isinstance(second, dict) and second.get("head") == current
+                else False
+            )
+            if allowed is None:
+                return unreadable
+            if allowed:
+                intake_lines = intake_second_reviews(store, worker, task, runner, current)
+                if coord(task).get("phase") != phase:
+                    return intake_lines or [
+                        "blocking external second review; routing to implementer"
+                    ]
+        lines = [*(intake_lines or []), *handler()]
+        lane_observations = c.pop("lane_observations", [])
+        if isinstance(lane_observations, list) and lane_observations:
+            save_task(store, task)
+            return [*(str(item) for item in lane_observations), *lines]
+        return lines
     except CiObservedFailureError as exc:
         # Ready-side observed actual failed CI: hand off to script phase_ci.
         # Do not reply-gate on the Ready phase, and do not let same-phase retry
@@ -1346,7 +1648,15 @@ def advance_one(
         c["resume_phase"] = None
         c["blocker"] = None
         save_task(store, task)
-        return [str(exc) or "CI failed on recheck; returning to CI observation"]
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            str(exc) or "CI failed on recheck; returning to CI observation",
+        ]
     except (CoordinatorError, StoreError) as exc:
         # Task-specific failures must become GitHub-visible blockers when possible.
         c = coord(task)
@@ -1356,7 +1666,7 @@ def advance_one(
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
         save_task(store, task)
-        return publish_blocker(
+        blocker_lines = publish_blocker(
             store,
             worker,
             task,
@@ -1365,6 +1675,15 @@ def advance_one(
             kind="phase-error",
             reply_checkpoint=True,
         )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            *blocker_lines,
+        ]
     except Exception as exc:  # noqa: BLE001 — never escape as silent tick failure
         c = coord(task)
         if not c.get("resume_phase") and phase not in ("await_merge", "done", "blocked", "ask"):
@@ -1373,7 +1692,7 @@ def advance_one(
         if phase not in ("await_merge", "done"):
             c["phase"] = "blocked"
         save_task(store, task)
-        return publish_blocker(
+        blocker_lines = publish_blocker(
             store,
             worker,
             task,
@@ -1382,3 +1701,12 @@ def advance_one(
             kind="phase-error",
             reply_checkpoint=True,
         )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            *blocker_lines,
+        ]

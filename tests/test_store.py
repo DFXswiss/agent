@@ -45,6 +45,87 @@ def test_write_emits_seq_and_blocks_foreign(tmp_path: Path) -> None:
     assert pending[0]["origin_seq"] == 1
 
 
+def test_rows_expose_updated_at_and_break_ties_by_row_id(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    for row_id in ("a-row", "c-row", "b-row"):
+        store.write("activity", "insert", row_id, {"id": row_id})
+    store.conn.execute(
+        "UPDATE row_data SET updated_at = %s WHERE table_name = 'activity'",
+        ("2026-01-01T00:00:00+00:00",),
+    )
+    store.conn.execute(
+        "UPDATE row_data SET updated_at = %s WHERE table_name = 'activity' AND row_id = 'a-row'",
+        ("2026-01-02T00:00:00+00:00",),
+    )
+
+    rows = store.rows("activity")
+
+    assert [row["id"] for row in rows] == ["a-row", "c-row", "b-row"]
+    assert rows[0]["_updated_at"].startswith("2026-01-02")
+    assert all(row["_updated_at"] for row in rows)
+
+
+def test_last_own_activity_insert_applies_predicate_in_origin_seq_order(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    store.write(
+        "activity",
+        "insert",
+        "grok-snapshot",
+        {
+            "id": "grok-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "grok"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "openrouter-snapshot",
+        {
+            "id": "openrouter-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "openrouter"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "newer-grok-snapshot",
+        {
+            "id": "newer-grok-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "grok"},
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        "newest-openrouter-snapshot",
+        {
+            "id": "newest-openrouter-snapshot",
+            "type": "usage.snapshot",
+            "payload": {"vendor": "openrouter"},
+        },
+    )
+
+    event = store.last_own_activity_insert(
+        "usage.snapshot",
+        predicate=lambda row: row.get("payload", {}).get("vendor") == "grok",
+    )
+
+    assert event is not None
+    assert event["id"] == "newer-grok-snapshot"
+    assert (
+        store.last_own_activity_insert(
+            "usage.snapshot",
+            predicate=lambda row: row.get("payload", {}).get("vendor") == "other",
+        )
+        is None
+    )
+
+
 def test_remote_gap_fail_closed(tmp_path: Path) -> None:
     store = Store(tmp_path)
     with pytest.raises(StoreError, match="gap"):
@@ -119,6 +200,31 @@ def test_apply_replica_row_updates_own_ping_ack(tmp_path: Path) -> None:
         }
     )
     assert store.row("ping", pid)["acked_at"] == "2026-08-13T12:00:01Z"
+
+
+def test_replica_mail_preserves_only_relay_authenticated_github_login(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": "mail",
+            "origin_device_id": "reviewer-device",
+            "github_login": "Allowed-Reviewer",
+            "payload": {
+                "id": "mail",
+                "type": "message",
+                "session_id": "reviewer-session",
+                "payload": {"to_session": "worker", "payload": {"kind": "test"}},
+                "execution_status": "pending",
+                "_github_login": "spoofed",
+                "github_login": "also-spoofed",
+            },
+            "updated_at": "2026-08-13T12:00:01Z",
+        }
+    )
+    saved = store.row("activity", "mail")
+    assert saved["_github_login"] == "allowed-reviewer"
+    assert "github_login" not in saved
 
 
 def test_apply_replica_row_compares_updated_at_as_timestamptz(tmp_path: Path) -> None:

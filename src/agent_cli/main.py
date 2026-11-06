@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-from .ai_accounts import load_model_slots
+from .ai_accounts import load_ai_accounts, load_model_slots
 from .allow import (
     ACTIONS,
     CODEX_SECOND_REVIEW_KEYS,
@@ -50,9 +50,17 @@ from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
-from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
+from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch, record_lane_run
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
-from .model_slots import DEFAULT_MODEL_SLOTS, PROVIDER_CHOICES, STAGE_CHOICES, ModelSlots, ModelSlotsError, models_from_snapshot
+from .model_slots import (
+    DEFAULT_MODEL_SLOTS,
+    EXTERNAL_SECOND_TASK_CREATION_ERROR,
+    PROVIDER_CHOICES,
+    STAGE_CHOICES,
+    ModelSlots,
+    ModelSlotsError,
+    models_from_snapshot,
+)
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .runtime import (
@@ -66,7 +74,13 @@ from .runtime import (
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreConnectionError, StoreError, utcnow
-from .usage import AuthStale, scan_usage, usage_poll_due
+from .usage import (
+    AuthStale,
+    OpenRouterUsageError,
+    scan_openrouter_usage,
+    scan_usage,
+    usage_poll_due,
+)
 from .watch import (
     assigned_session_id,
     assigned_workspace_root,
@@ -164,6 +178,7 @@ ACTIVITY_TYPES = frozenset(
         "query.result",
         "subscription.set",
         "usage.snapshot",
+        "lane.run",
         "supervise.event",
     }
 )
@@ -175,6 +190,7 @@ SCRIPT_ONLY_ACTIVITY = frozenset(
         "query.result",
         "session.register",
         "usage.snapshot",
+        "lane.run",
         "error.seen",
         "supervise.event",
         "issue.assigned.ack",
@@ -361,35 +377,74 @@ def cmd_skills(args: list[str]) -> None:
     print(found)
 
 
-def cmd_init(_: list[str]) -> None:
+def cmd_init(args: list[str]) -> None:
     from .daemon import (
         SERVICE_LABEL,
         agent_argv,
         install_and_start_service,
+        service_home,
+        service_path,
     )
 
+    if any(arg != "--no-service" for arg in args) or args.count("--no-service") > 1:
+        die("Usage: agent init [--no-service]")
+    no_service = "--no-service" in args
+    if no_service:
+        unit = service_path(sys.platform, home())
+        try:
+            recorded = service_home(unit, sys.platform)
+        except StoreError as exc:
+            die(str(exc))
+        if recorded is not None and _same_home(recorded, home()):
+            die(
+                f"the device daemon is installed ({unit}) for this AGENT_HOME; "
+                "run agent daemon --uninstall first"
+            )
     external = pg_dsn_from_env()
     override = os.environ.get("AGENT_HOME")
     if override and not _same_home(home(), default_home()):
         if external is None:
-            print(
-                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init creates a separate postgres "
-                f"cluster and device identity there and repoints the user service {SERVICE_LABEL} at it; agent "
-                f"daemon --uninstall stops that cluster and removes the service again, the device.json stays",
-                file=sys.stderr,
-            )
+            if no_service:
+                warning = (
+                    f"init creates a separate postgres cluster and device identity there; "
+                    "no user service is installed"
+                )
+            else:
+                warning = (
+                    f"init creates a separate postgres cluster and device identity there and repoints the "
+                    f"user service {SERVICE_LABEL} at it; agent daemon --uninstall stops that cluster and "
+                    "removes the service again, the device.json stays"
+                )
         else:
-            print(
-                f"agent: AGENT_HOME={home()} is not the default {default_home()}; init writes a separate device "
-                f"identity there and repoints the user service {SERVICE_LABEL} at it; the cluster logic is "
-                f"bypassed by AGENT_PG_DSN",
-                file=sys.stderr,
+            service = (
+                "no user service is installed"
+                if no_service
+                else f"the user service {SERVICE_LABEL} is repointed at it"
             )
+            warning = (
+                f"init writes a separate device identity there and {service}; the cluster logic is "
+                "bypassed by AGENT_PG_DSN"
+            )
+        print(
+            f"agent: AGENT_HOME={home()} is not the default {default_home()}; {warning}",
+            file=sys.stderr,
+        )
     store = open_store(create=True)
     try:
-        install_and_start_service(home=store.home, program=[*agent_argv(), "daemon"])
-        daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
-        print(f"ok  device={store.device_id()} home={store.home} daemon={daemon_state}")
+        program = [*agent_argv(), "daemon"]
+        if no_service:
+            print(f"ok  device={store.device_id()} home={store.home} daemon=not-installed")
+            print(f"daemon argv: {shlex.join(program)}")
+            print(f"environment: AGENT_HOME={shlex.quote(str(store.home))}")
+            pg_bin = os.environ.get("AGENT_PG_BIN")
+            if pg_bin:
+                print(f"environment: AGENT_PG_BIN={shlex.quote(pg_bin)}")
+            if external:
+                print("environment: AGENT_PG_DSN (set; keep the current value)")
+        else:
+            install_and_start_service(home=store.home, program=program)
+            daemon_state = "installed" if os.environ.get("PYTEST_CURRENT_TEST") else "running"
+            print(f"ok  device={store.device_id()} home={store.home} daemon={daemon_state}")
     finally:
         store.close()
 
@@ -591,6 +646,20 @@ def cmd_activity(args: list[str]) -> None:
             die(f"session {sid} is not active")
         if typ in SCRIPT_ONLY_ACTIVITY:
             die(f"{typ} is written by a script, not agent activity add")
+        inner = raw.get("payload")
+        if isinstance(inner, dict) and inner.get("kind") == "a38.second-review/v1":
+            from .coordinator_a38 import validate_second_review_payload
+            from .coordinator_common import CoordinatorError
+
+            if typ != "message":
+                die("a38.second-review/v1 must use activity type message")
+            to_session = raw.get("to_session")
+            if not isinstance(to_session, str) or not to_session:
+                die("a38.second-review/v1 requires payload.to_session")
+            try:
+                raw["payload"] = validate_second_review_payload(inner)
+            except CoordinatorError as exc:
+                die(str(exc))
         if typ in ("error.skip", "error.fix"):
             from .error_fix_act import validate_conclusion
 
@@ -664,6 +733,9 @@ def cmd_task(args: list[str]) -> None:
                 )
                 print(f"task {tid}")
                 return
+            models = _store_models(store)
+            if models.second is None:
+                die(EXTERNAL_SECOND_TASK_CREATION_ERROR)
             tid = str(uuid.uuid4())
             store.write(
                 "task",
@@ -678,7 +750,7 @@ def cmd_task(args: list[str]) -> None:
                     "ref": flag(rest, "--ref"),
                     "state": "open",
                     "current_round": 0,
-                    "models": _store_models(store).as_dict(),
+                    "models": models.as_dict(),
                     "created_at": utcnow(),
                     "updated_at": utcnow(),
                     "change_summary_en": None,
@@ -1351,6 +1423,11 @@ def cmd_gate(args: list[str]) -> None:
     try:
         task = _need(store, "task", tid)
         models = models_from_snapshot(task)
+        if stage == "codex-pr" and models.second is None:
+            die(
+                "gate record --stage codex-pr is unavailable: the second review is external; "
+                "record it through the codex_pr_quality/codex_pr_logic checklist evidence"
+            )
         expected_vendor = models.for_stage(stage)
         if vendor != expected_vendor:
             die(f"stage {stage} requires vendor {expected_vendor} (model slot pinned on the task)")
@@ -2328,6 +2405,8 @@ def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
 def _all_gate_pairs_approved_same_head(
     latest: dict[tuple[str, str], dict], models: ModelSlots
 ) -> bool:
+    if models.second is None:
+        return False
     heads: set[str] = set()
     for stage, dim, slot in GATE_PAIRS:
         got = latest.get((stage, dim))
@@ -2396,6 +2475,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "checklist": checklist,
         "checklist_evidence": checklist_evidence,
         "summaries": {
@@ -3090,16 +3170,20 @@ def cmd_run(args: list[str]) -> None:
                 role = str(step.role or "")
                 models = models_from_snapshot(snap)
                 vendor = models.for_slot(str(step.slot)) if step.slot else models.first
+                if vendor is None:
+                    die("model slot second is external; no agent lane can be started")
                 session_id = str(snap.get("session_id") or "")
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
                 if role in ("implementer", "reviewer"):
                     round_num = current_round
-                # Fail closed on AI lane binding before creating a working agent.
-                # launch() still resolves the same binding; no ambient fallback.
+                # Resolve once before creating a working agent, then launch with
+                # that exact binding so audit metadata cannot drift.
                 from .ai_accounts import load_ai_accounts
 
-                load_ai_accounts(store.home).for_lane(session_id, role, vendor)
+                selected_lane = load_ai_accounts(store.home).for_lane(
+                    session_id, role, vendor
+                )
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )
@@ -3126,7 +3210,22 @@ def cmd_run(args: list[str]) -> None:
                     tmux=tmux,
                     config_home=store.home,
                     session_id=session_id,
+                    binding=selected_lane,
                 )
+                working = _find_working_agent(
+                    store, tid, role=role, vendor=vendor, round_num=round_num
+                )
+                try:
+                    record_lane_run(
+                        store,
+                        session_id=session_id,
+                        result=result,
+                        task_id=tid,
+                        agent_id=str(working["id"]) if working is not None else None,
+                        round_num=round_num,
+                    )
+                except (Exception, SystemExit) as exc:  # noqa: BLE001 — StoreError is a SystemExit; audit failure cannot change verdict
+                    print(f"lane.run write failed: {exc}", file=sys.stderr)
                 _print_lane_result(result)
                 if role == "implementer" and result.status == "complete":
                     working = _find_working_agent(
@@ -3245,6 +3344,62 @@ def cmd_query(args: list[str]) -> None:
             hub.close()
     finally:
         store.close()
+
+
+def cmd_assign(args: list[str]) -> None:
+    from .hub_assign import AssignmentFailure, create_assignment
+
+    if "--no-deviation" not in args:
+        die(
+            "assign requires --no-deviation "
+            "(deviations need an explicit grant on the issue)"
+        )
+    agent = require_flag(args, "--agent")
+    repo = require_flag(args, "--repo")
+    title = require_flag(args, "--title")
+    body_value = flag(args, "--body")
+    body_file = flag(args, "--body-file")
+    if (body_value is None) == (body_file is None):
+        die("assign requires exactly one of --body or --body-file")
+    if not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+",
+        repo,
+    ) or repo.split("/", 1)[1] in {".", ".."}:
+        die("repo must be Owner/Name")
+    if not 1 <= len(title) <= 256:
+        die("title must be 1..256 characters")
+    if body_file is not None:
+        path = Path(body_file)
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            die(f"cannot read body file {path}: {exc}")
+    else:
+        body = body_value or ""
+    if not 1 <= len(body) <= 60000:
+        die("body must be 1..60000 characters")
+    store = open_store()
+    try:
+        hub = _hub_from_store(store)
+        try:
+            try:
+                result = create_assignment(
+                    hub, agent=agent, repo=repo, title=title, body=body
+                )
+            except AssignmentFailure as exc:
+                print(exc.detail, file=sys.stderr)
+                if exc.url:
+                    print(exc.url, file=sys.stderr)
+                raise SystemExit(1) from None
+        finally:
+            hub.close()
+    finally:
+        store.close()
+    number = result.get("number")
+    url = result.get("url")
+    if isinstance(number, bool) or not isinstance(number, int) or not isinstance(url, str):
+        die("hub returned an invalid assignment response")
+    print(f"assigned {repo}#{number} {url}")
 
 
 def cmd_subscribe(args: list[str]) -> None:
@@ -3369,13 +3524,13 @@ def cmd_models(args: list[str]) -> None:
         if as_json:
             print(json.dumps({slot: models.for_slot(slot)}, sort_keys=True))
         else:
-            print(models.for_slot(slot))
+            print(models.for_slot(slot) or "external")
         return
     if as_json:
         print(json.dumps(models.as_dict(), sort_keys=True))
         return
     for slot, vendor in models.as_dict().items():
-        print(f"{slot}={vendor}")
+        print(f"{slot}={vendor or 'external'}")
 
 
 def cmd_lane(args: list[str]) -> None:
@@ -3409,6 +3564,19 @@ def cmd_lane(args: list[str]) -> None:
     if dry_run:
         print(" ".join(result.argv))
         return
+    lane_store: Store | None = None
+    try:
+        lane_store = open_store()
+        record_lane_run(
+            lane_store,
+            session_id=session_id,
+            result=result,
+        )
+    except (Exception, SystemExit) as exc:  # audit failure cannot change verdict
+        print(f"lane.run write failed: {exc}", file=sys.stderr)
+    finally:
+        if lane_store is not None:
+            lane_store.close()
     _print_lane_result(result)
     if result.status != "complete":
         raise SystemExit(2)
@@ -3435,6 +3603,17 @@ def cmd_knock(args: list[str]) -> None:
                         print(f"usage.snapshot {usage_id}")
                 except AuthStale:
                     pass
+                except StoreError as exc:
+                    print(f"usage.snapshot error: {exc}", file=sys.stderr)
+                try:
+                    if load_ai_accounts(store.home).usage_accounts:
+                        for activity_id in scan_openrouter_usage(store):
+                            print(f"usage.snapshot {activity_id}")
+                except OpenRouterUsageError as exc:
+                    for activity_id in exc.activity_ids:
+                        print(f"usage.snapshot {activity_id}")
+                    for message in exc.errors:
+                        print(f"usage.snapshot error: {message}", file=sys.stderr)
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 try:
@@ -3586,12 +3765,13 @@ def cmd_watch(args: list[str]) -> None:
         "pending",
         "assigned",
         "grok-usage",
+        "openrouter-usage",
         "errors",
         "error-fix",
     ):
         die(
             "Usage: agent watch "
-            "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+            "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|errors|error-fix"
         )
     store = open_store()
     try:
@@ -3617,6 +3797,20 @@ def cmd_watch(args: list[str]) -> None:
             else:
                 print("usage.snapshot none")
             return
+        if args[0] == "openrouter-usage":
+            try:
+                activity_ids = scan_openrouter_usage(store)
+            except OpenRouterUsageError as exc:
+                for activity_id in exc.activity_ids:
+                    print(f"usage.snapshot {activity_id}")
+                for message in exc.errors:
+                    print(f"usage.snapshot error: {message}", file=sys.stderr)
+                raise SystemExit(1) from None
+            for activity_id in activity_ids:
+                print(f"usage.snapshot {activity_id}")
+            if not activity_ids:
+                print("usage.snapshot none")
+            return
         if args[0] == "assigned":
             from .knock import deliver
             from .runtime import run_argv
@@ -3625,7 +3819,7 @@ def cmd_watch(args: list[str]) -> None:
             if extra not in ([], ["--follow"]):
                 die(
                     "Usage: agent watch "
-                    "pr-merged|pending|assigned [--follow]|grok-usage|errors|error-fix"
+                    "pr-merged|pending|assigned [--follow]|grok-usage|openrouter-usage|errors|error-fix"
                 )
             follow = extra == ["--follow"]
             while True:
@@ -3892,6 +4086,7 @@ COMMANDS = {
     "coordinate": cmd_coordinate,
     "github": cmd_github,
     "query": cmd_query,
+    "assign": cmd_assign,
     "subscribe": cmd_subscribe,
     "mail": cmd_mail,
 }
@@ -3903,7 +4098,7 @@ def main(argv: list[str] | None = None) -> None:
         die(
             "Usage: agent <init|session|skills|activity|task|checklist|round|agent|check|local-ci|a38|pr-guard|gate|work|"
             "allow|next|close-step|run|pair|sync|restore|ping|status|dashboard|cli-bridge|daemon|pg|knock|lane|models|watch|"
-            "github|query|subscribe|mail|supervise|coordinate> …"
+            "github|query|assign|subscribe|mail|supervise|coordinate> …"
         )
     cmd = args[0]
     if cmd not in COMMANDS:

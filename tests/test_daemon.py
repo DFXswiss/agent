@@ -670,6 +670,68 @@ def test_init_writes_daemon_service_under_pytest(
     assert (tmp_path / "daemon.service").is_file()
 
 
+def test_init_no_service_prints_supervisor_contract_without_writing_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AGENT_PG_BIN", "/opt/postgres/bin")
+    run(tmp_path, ["init", "--no-service"])
+    captured = capsys.readouterr()
+    assert "daemon=not-installed" in captured.out
+    assert "daemon argv:" in captured.out
+    assert " daemon" in captured.out
+    assert f"AGENT_HOME={tmp_path}" in captured.out
+    assert "AGENT_PG_BIN=/opt/postgres/bin" in captured.out
+    assert "AGENT_PG_DSN (set; keep the current value)" in captured.out
+    assert os.environ["AGENT_PG_DSN"] not in captured.out
+    assert not (tmp_path / "daemon.service").exists()
+
+
+@pytest.mark.no_pg
+def test_init_no_service_refuses_existing_unit_for_same_home(tmp_path: Path) -> None:
+    unit = tmp_path / "daemon.service"
+    unit.write_text(
+        service_unit_text(
+            program=["/usr/bin/agent", "daemon"],
+            home=tmp_path,
+            platform=sys.platform,
+            extra_env={},
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="agent daemon --uninstall"):
+        run(tmp_path, ["init", "--no-service"])
+
+
+@pytest.mark.no_pg
+def test_init_no_service_refuses_malformed_unit(tmp_path: Path) -> None:
+    unit = tmp_path / "daemon.service"
+    unit.write_text(
+        "[Service]\nEnvironment=AGENT_HOME='unterminated\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit, match="service unit"):
+        run(tmp_path, ["init", "--no-service"])
+
+
+@pytest.mark.no_pg
+def test_init_no_service_refuses_unreadable_unit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = tmp_path / "daemon.service"
+    unit.write_text("present", encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def denied(path: Path, *args: object, **kwargs: object) -> str:
+        if path == unit:
+            raise PermissionError("denied")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(SystemExit, match="cannot read service unit"):
+        run(tmp_path, ["init", "--no-service"])
+
+
 def test_knock_daemon_tick_skips_pr_merged_without_die(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

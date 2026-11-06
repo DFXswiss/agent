@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .ai_accounts import load_ai_accounts
 from .allow import GATE_PAIRS, both_codex_reviews_na, evaluate_allow
 from .model_slots import ModelSlots, ModelSlotsError, models_from_snapshot
 from .coordinator_common import (
@@ -37,7 +41,7 @@ from .coordinator_common import (
     target_repo,
     text,
 )
-from .coordinator_config import WorkerConfig
+from .coordinator_config import RepositoryConfig, WorkerConfig, validate_base
 from .coordinator_exec import run_bounded
 from .coordinator_git import (
     execute_github,
@@ -52,6 +56,7 @@ from .github_act import (
     REVIEW_APPROVE_NON_APPROVED,
 )
 from .github_accounts import AccountError
+from .hub import Hub, HubError
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .store import Store, StoreError, utcnow
 
@@ -69,6 +74,28 @@ READINESS_CONTRACT = (
     "|{\"declared\":true,\"granted\":true,\"granted_by\":\"<reply_login>\","
     '"evidence":"<human grant provenance>"}}'
 )
+
+HUB_ASSIGNMENT_GRACE_SECONDS = 120
+HUB_CONFIGURATION_BLOCKER = (
+    "Hub assignment verification is refused by the hub or the device is not paired; "
+    "fix the device pairing or hub configuration, then reply here."
+)
+HUB_ASSIGNMENT_QUERY_CAP = 500
+HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS = 3600
+FORK_VISIBILITY_GRACE_SECONDS = 300
+MANDATE_DEVIATION_BLOCKER = (
+    'mandate has no explicit deviation statement; issue the assignment through '
+    'the hub with "no deviation authorized"'
+)
+
+
+@dataclass(frozen=True)
+class HubAssignmentMandate:
+    row_id: str
+    actor: str
+    origin: str
+    issue_key: str
+    deviation: object
 
 
 def _task_models(task: dict[str, Any]) -> ModelSlots:
@@ -157,6 +184,9 @@ def publish_blocker(
     *,
     kind: str = "blocker",
     reply_checkpoint: bool = False,
+    preserve_reply_checkpoint: bool = False,
+    binding_notice: bool = False,
+    occurrence: str | None = None,
 ) -> list[str]:
     """Publish a source-issue blocker.
 
@@ -165,6 +195,10 @@ def publish_blocker(
     ``resume_phase`` so a missed boolean cannot silently wedge another
     recoverable path. Status re-publishes while waiting keep an existing
     checkpoint and must not reset consumed replies for that same checkpoint.
+    Execution-binding notices use ``preserve_reply_checkpoint`` because they
+    recover without an authorized reply when the pinned binding is restored.
+    ``binding_notice`` keeps their publication state separate from the phase
+    blocker publication state.
     """
     c = coord(task)
     source = c.get("source") if isinstance(c.get("source"), dict) else None
@@ -176,12 +210,18 @@ def publish_blocker(
     has_prior = isinstance(prior, str) and bool(prior)
     # Explicit request (re)pins when eligible; otherwise auto-pin only when a
     # recoverable resume_phase is set and no checkpoint exists yet.
-    should_pin = eligible and (reply_checkpoint or not has_prior)
-    occurrence = ""
-    if should_pin and c.get("resume_phase") == "formal_approve":
+    should_pin = (
+        not preserve_reply_checkpoint
+        and eligible
+        and (reply_checkpoint or not has_prior)
+    )
+    resolved_occurrence = occurrence or ""
+    if occurrence is None and should_pin and c.get("resume_phase") == "formal_approve":
         # Every invalidated approval needs a reply after its own blocker, even
         # when a later dismissal has the same wording as an earlier one.
-        occurrence = f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
+        resolved_occurrence = (
+            f"{task['id']}:{c.get('head_sha')}:{c.get('formal_approve_attempt', 0)}"
+        )
     try:
         activity_id = post_issue_comment(
             store,
@@ -191,8 +231,15 @@ def publish_blocker(
             number=int(source["number"]),
             body=f"Blocked: {redact(message)}",
             kind=kind,
-            occurrence=occurrence,
+            occurrence=resolved_occurrence,
         )
+        changed = False
+        if binding_notice:
+            c["binding_blocker_activity_id"] = activity_id
+            changed = True
+        elif c.get("blocker_publish_once"):
+            c["blocker_activity_id"] = activity_id
+            changed = True
         if should_pin:
             prior = c.get("question_activity_id")
             c["question_activity_id"] = activity_id
@@ -200,6 +247,8 @@ def publish_blocker(
             # replies; a new checkpoint activity starts a fresh reply window.
             if prior != activity_id:
                 c["replies_consumed_through"] = None
+            changed = True
+        if changed:
             save_task(store, task)
         lines.append(f"blocker published on {source['repo']}#{source['number']}")
     except (CoordinatorError, StoreError) as exc:
@@ -232,6 +281,261 @@ def verify_issue_assigned(runner: Runner, repo: str, number: int, login: str) ->
     return data
 
 
+def _gh_jq_text(runner: Runner, argv: list[str], label: str) -> str:
+    completed = runner(argv)
+    if completed.returncode != 0:
+        raise CoordinatorError(redact(completed.stderr or completed.stdout or f"{label} failed"))
+    value = (completed.stdout or "").strip()
+    if not value or any(char in value for char in "\0\r\n"):
+        raise CoordinatorError(f"{label} returned no usable value")
+    return value
+
+
+def _fork_repository(
+    runner: Runner,
+    *,
+    repo: str,
+    publication_repo: str,
+    create_if_missing: bool = True,
+    before_create: Callable[[], None] | None = None,
+    after_create: Callable[[], None] | None = None,
+) -> bool:
+    """Check the publication fork once, optionally requesting it when absent."""
+    lookup = ["gh", "api", f"repos/{publication_repo}"]
+    completed = runner(lookup)
+    if completed.returncode != 0:
+        missing_detail = (completed.stderr or completed.stdout or "").casefold()
+        if "404" not in missing_detail and "not found" not in missing_detail:
+            raise CoordinatorError(redact(missing_detail or "fork lookup failed"))
+        if create_if_missing:
+            if before_create is not None:
+                before_create()
+            created = runner(["gh", "api", "-X", "POST", f"repos/{repo}/forks"])
+            if created.returncode != 0:
+                detail = created.stderr or created.stdout or "fork creation failed"
+                folded = detail.casefold()
+                if not any(
+                    marker in folded
+                    for marker in ("already exists", "fork exists", "in progress")
+                ):
+                    raise CoordinatorError(redact(detail))
+            if after_create is not None:
+                after_create()
+        return False
+    try:
+        data = json.loads((completed.stdout or "").strip())
+    except json.JSONDecodeError as exc:
+        raise CoordinatorError("fork lookup returned invalid JSON") from exc
+    parent = data.get("parent") if isinstance(data, dict) else None
+    parent_name = parent.get("full_name") if isinstance(parent, dict) else None
+    if not isinstance(parent_name, str) or parent_name.casefold() != repo.casefold():
+        raise CoordinatorError("publication fork has a different parent repository")
+    return True
+
+
+def _owner_repository_config(
+    worker: WorkerConfig,
+    runner: Runner,
+    *,
+    repo: str,
+    login: str,
+    fork_request_done: bool = False,
+    before_fork_create: Callable[[], None] | None = None,
+    after_fork_create: Callable[[], None] | None = None,
+) -> RepositoryConfig | None:
+    base = validate_base(_gh_jq_text(
+        runner,
+        ["gh", "api", f"repos/{repo}", "--jq", ".default_branch"],
+        "default branch lookup",
+    ))
+    can_push = _gh_jq_text(
+        runner,
+        ["gh", "api", f"repos/{repo}", "--jq", ".permissions.push"],
+        "push permission lookup",
+    ).casefold()
+    if can_push not in {"true", "false"}:
+        raise CoordinatorError("push permission lookup returned neither true nor false")
+    publication = repo
+    if can_push == "false":
+        publication = f"{login}/{repo.split('/', 1)[1]}"
+        if not _fork_repository(
+            runner,
+            repo=repo,
+            publication_repo=publication,
+            create_if_missing=not fork_request_done,
+            before_create=before_fork_create,
+            after_create=after_fork_create,
+        ):
+            return None
+    return RepositoryConfig(
+        repo=repo,
+        base=base,
+        publication_repo=publication,
+        check_argv=worker.owner_check_argv,
+        readiness_argv=worker.owner_readiness_argv or (),
+    )
+
+
+def _hub_assignment_row(
+    store: Store,
+    *,
+    repo: str,
+    number: int,
+    agent: str,
+    assignment_actor: str,
+    reply_logins: tuple[str, ...],
+    canonical_repo: str | None = None,
+) -> tuple[HubAssignmentMandate | None, str | None]:
+    """Return (verified mandate, retry reason); neither means a definite no-match."""
+    hub_url = store.meta("hub_url")
+    token = store.meta("device_token")
+    if not hub_url or not token:
+        return None, "device is not paired with a hub"
+    issue_key = f"{repo}#{number}"
+    canonical_issue_key = f"{canonical_repo or repo}#{number}"
+    issue_keys = list(
+        dict.fromkeys((issue_key, issue_key.casefold(), canonical_issue_key))
+    )
+    folded_issue_keys = {candidate.casefold() for candidate in issue_keys}
+    hub = Hub(hub_url, token)
+    try:
+        try:
+            result = hub.query(
+                {
+                    "type": "assignment.created",
+                    "payload.issue_key": {"in": issue_keys},
+                }
+            )
+        except HubError as exc:
+            return None, redact(str(exc))
+        except Exception as exc:  # malformed/transport client responses retry acceptance
+            return None, redact(str(exc) or type(exc).__name__)
+    finally:
+        hub.close()
+    rows = result.get("rows") if isinstance(result, dict) else None
+    if not isinstance(rows, list):
+        return None, "hub assignment query returned an invalid response"
+    if len(rows) >= HUB_ASSIGNMENT_QUERY_CAP:
+        return None, "hub assignment query truncated"
+    allowed = {login.casefold() for login in reply_logins}
+    newest: tuple[tuple[str, str], HubAssignmentMandate] | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("payload")
+        inner = payload.get("payload") if isinstance(payload, dict) else None
+        envelope_login = row.get("github_login")
+        origin_device_id = row.get("origin_device_id")
+        inner_actor = inner.get("actor") if isinstance(inner, dict) else None
+        inner_issue_key = inner.get("issue_key") if isinstance(inner, dict) else None
+        if not isinstance(inner, dict) or not isinstance(envelope_login, str):
+            continue
+        if (
+            str(inner.get("repo") or "").casefold() == repo.casefold()
+            and as_int(inner.get("number")) == number
+            and str(inner.get("agent") or "").casefold() == agent.casefold()
+            and isinstance(inner_issue_key, str)
+            and inner_issue_key.casefold() in folded_issue_keys
+            and origin_device_id == f"web:{envelope_login}"
+            and isinstance(inner_actor, str)
+            and inner_actor.casefold() == envelope_login.casefold()
+            and envelope_login.casefold() == assignment_actor.casefold()
+            and envelope_login.casefold() in allowed
+        ):
+            row_id = row.get("row_id")
+            if isinstance(row_id, str) and row_id:
+                mandate = HubAssignmentMandate(
+                    row_id=row_id,
+                    actor=envelope_login,
+                    origin=origin_device_id,
+                    issue_key=inner_issue_key,
+                    deviation=inner.get("deviation"),
+                )
+                # The newest hub row decides; its statement alone closes or blocks.
+                order = (str(row.get("updated_at") or ""), row_id)
+                if newest is None or order > newest[0]:
+                    newest = (order, mandate)
+    return (newest[1] if newest is not None else None), None
+
+
+def _mandate_provenance(source: Any) -> dict[str, Any]:
+    """Only the assignment's provenance goes into team-visible evidence."""
+    if not isinstance(source, dict):
+        return {}
+    keys = ("repo", "number", "assignment_actor", "assignment_event_id", "assignment_at", "hub_assignment_row_id")
+    return {key: source[key] for key in keys if key in source}
+
+
+def _states_no_deviation(deviation: Any, actor: str) -> bool:
+    return (
+        isinstance(deviation, dict)
+        and set(deviation) == {"declared", "stated_by"}
+        and deviation.get("declared") is False
+        and deviation.get("stated_by") == actor
+    )
+
+
+def _canonical_issue_repo(expected_repo: str, *responses: object) -> str | None:
+    """Return GitHub's canonical owner/name from issue or event responses."""
+    for response in responses:
+        items = response if isinstance(response, list) else [response]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            repository = item.get("repository")
+            candidate = (
+                repository.get("full_name") if isinstance(repository, dict) else None
+            )
+            if not isinstance(candidate, str) or not candidate:
+                repository_url = item.get("repository_url")
+                match = re.fullmatch(
+                    r"https://api\.github\.com/repos/([^/]+)/([^/]+)",
+                    str(repository_url or ""),
+                )
+                candidate = (
+                    f"{match.group(1)}/{match.group(2)}" if match is not None else None
+                )
+            if candidate is None:
+                continue
+            if candidate.casefold() != expected_repo.casefold():
+                raise CoordinatorError(
+                    "issue response repository does not match configured repository"
+                )
+            return candidate
+    return None
+
+
+def _parse_coordinator_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _seconds_since(value: object) -> float | None:
+    then = _parse_coordinator_time(value)
+    now = _parse_coordinator_time(utcnow())
+    if then is None or now is None:
+        return None
+    return (now - then).total_seconds()
+
+
+def _hub_assignment_configuration_error(reason: str) -> bool:
+    folded = reason.casefold()
+    return (
+        reason == "device is not paired with a hub"
+        or reason == "hub assignment query truncated"
+        or "http 400" in folded
+        or "http 401" in folded
+        or "http 403" in folded
+    )
+
+
 def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
@@ -240,7 +544,7 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
     scoped_runner = scoped(store, worker.session_id, runner)
     account = account_for(store, worker.session_id)
     try:
-        verify_issue_assigned(scoped_runner, repo, number, account.login)
+        issue = verify_issue_assigned(scoped_runner, repo, number, account.login)
     except CoordinatorError as exc:
         c["phase"] = "blocked"
         c["resume_phase"] = "accept"
@@ -261,6 +565,211 @@ def phase_accept(store: Store, worker: WorkerConfig, task: dict[str, Any], runne
     source["assignment_actor"] = actor["login"]
     source["assignment_event_id"] = latest["id"]
     source["assignment_at"] = latest.get("created_at")
+    owner_a38_default = bool(
+        source.get("owner_scoped") and worker.a38 and not worker.owner_readiness_argv
+    )
+    if worker.require_hub_assignment or owner_a38_default:
+        canonical_repo = _canonical_issue_repo(repo, issue, events)
+        if canonical_repo is None:
+            issue_response = gh_json(
+                scoped_runner, ["gh", "api", f"repos/{repo}/issues/{number}"]
+            )
+            canonical_repo = _canonical_issue_repo(repo, issue_response)
+        if canonical_repo is None:
+            raise CoordinatorError("issue response has no canonical repository name")
+        mandate, retry = _hub_assignment_row(
+            store,
+            repo=repo,
+            number=number,
+            agent=account.login,
+            assignment_actor=str(actor["login"]),
+            reply_logins=worker.reply_logins,
+            canonical_repo=canonical_repo,
+        )
+        if retry is not None:
+            # The detail can name the hub host; the task (replicated) and GitHub get only
+            # fixed texts, and the detail stays in this tick's local output line.
+            c["hub_assignment_retry"] = (
+                "hub configuration error"
+                if _hub_assignment_configuration_error(retry)
+                else "hub temporarily unavailable"
+            )
+            if _hub_assignment_configuration_error(retry):
+                public = HUB_CONFIGURATION_BLOCKER
+                if c.get("blocker") != public:
+                    c.pop("blocker_activity_id", None)
+                c["phase"] = "blocked"
+                c["resume_phase"] = "accept"
+                c["blocker"] = public
+                c["blocker_publish_once"] = True
+                c["blocker_publish_kind"] = "configuration-binding"
+                save_task(store, task)
+                return publish_blocker(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    public,
+                    kind="configuration-binding",
+                    reply_checkpoint=True,
+                )
+            elapsed = _seconds_since(c.get("hub_assignment_retry_published_at"))
+            line = f"hub assignment query unavailable; retrying accept: {retry}"
+            if elapsed is None or elapsed >= HUB_ASSIGNMENT_RETRY_PUBLISH_SECONDS:
+                published_at = utcnow()
+                c["hub_assignment_retry_published_at"] = published_at
+                save_task(store, task)
+                return [
+                    line,
+                    *publish_blocker(
+                        store,
+                        worker,
+                        task,
+                        runner,
+                        "Hub assignment verification is temporarily unavailable; "
+                        "the worker retries acceptance.",
+                        kind="hub-assignment-retry",
+                        occurrence=published_at,
+                    ),
+                ]
+            save_task(store, task)
+            return [line]
+        if mandate is None:
+            age = _seconds_since(source.get("assignment_at"))
+            if age is not None and age < HUB_ASSIGNMENT_GRACE_SECONDS:
+                c["hub_assignment_retry"] = "hub assignment event not yet visible"
+                save_task(store, task)
+                return ["hub assignment event not yet visible; retrying accept"]
+            message = (
+                MANDATE_DEVIATION_BLOCKER
+                if owner_a38_default
+                else "assignment was not issued through the hub"
+            )
+            if c.get("blocker") != message:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = message
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "hub-assignment"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="hub-assignment",
+                reply_checkpoint=True,
+            )
+        if not isinstance(mandate, HubAssignmentMandate):
+            raise CoordinatorError("hub assignment verification returned invalid evidence")
+        source["hub_assignment_row_id"] = mandate.row_id
+        source["hub_assignment_mandate"] = {
+            "row_id": mandate.row_id,
+            "actor": mandate.actor,
+            "origin": mandate.origin,
+            "issue_key": mandate.issue_key,
+            "deviation": mandate.deviation,
+        }
+        if owner_a38_default and not _mandate_states_no_deviation(
+            source, text(source.get("assignment_actor"))
+        ):
+            # Check the statement at accept, so a corrected hub assignment is found by
+            # the next query instead of failing only at readiness.
+            source.pop("hub_assignment_mandate", None)
+            source.pop("hub_assignment_row_id", None)
+            if c.get("blocker") != MANDATE_DEVIATION_BLOCKER:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = MANDATE_DEVIATION_BLOCKER
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "hub-assignment"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                MANDATE_DEVIATION_BLOCKER,
+                kind="hub-assignment",
+                reply_checkpoint=True,
+            )
+        c.pop("hub_assignment_retry", None)
+        c.pop("hub_assignment_retry_published_at", None)
+        c.pop("blocker", None)
+        c.pop("blocker_publish_once", None)
+        c.pop("blocker_publish_kind", None)
+        c.pop("blocker_activity_id", None)
+        clear_reply_recovery(c)
+    if source.get("owner_scoped") and not isinstance(source.get("repository_config"), dict):
+        def persist_fork_intent() -> None:
+            if source.get("fork_requested_at") is None:
+                source["fork_requested_at"] = utcnow()
+                save_task(store, task)
+
+        def persist_fork_request_done() -> None:
+            if source.get("fork_request_done_at") is None:
+                source["fork_request_done_at"] = utcnow()
+                save_task(store, task)
+
+        cfg = _owner_repository_config(
+            worker,
+            scoped_runner,
+            repo=repo,
+            login=account.login.casefold(),
+            fork_request_done=source.get("fork_request_done_at") is not None,
+            before_fork_create=persist_fork_intent,
+            after_fork_create=persist_fork_request_done,
+        )
+        if cfg is None:
+            fork_request_done_at = source.get("fork_request_done_at")
+            if fork_request_done_at is None:
+                save_task(store, task)
+                return ["publication fork request not completed; retrying accept"]
+            age = _seconds_since(fork_request_done_at)
+            if age is not None and age < FORK_VISIBILITY_GRACE_SECONDS:
+                save_task(store, task)
+                return ["publication fork not yet visible; retrying accept"]
+            message = (
+                "publication fork did not become visible within "
+                f"{FORK_VISIBILITY_GRACE_SECONDS} seconds"
+            )
+            if c.get("blocker") != message:
+                c.pop("blocker_activity_id", None)
+            c["blocker"] = message
+            c["resume_phase"] = "accept"
+            c["phase"] = "blocked"
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "publication-fork"
+            save_task(store, task)
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                message,
+                kind="publication-fork",
+                reply_checkpoint=True,
+            )
+        from .coordinator_runtime import execution_binding
+
+        # Check and bind before pinning anything, so a refusal leaves accept re-runnable.
+        ai = load_ai_accounts(store.home)
+        if ai.models.as_dict() != task.get("models") or worker.a38 != bool(c.get("a38")):
+            raise CoordinatorError("task model configuration changed before acceptance")
+        binding = execution_binding(
+            store, worker, repo, ai, repository_config=cfg, owner_scoped=True
+        )
+        source["repository_config"] = {
+            "repo": cfg.repo,
+            "base": cfg.base,
+            "publication_repo": cfg.publication_repo,
+        }
+        source["base"] = cfg.base
+        source["publication_repo"] = cfg.publication_repo
+        c["execution_binding"] = binding
     marker = acceptance_marker(repo, number, worker.session_id)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-accept:{worker.session_id}:{repo}:{number}"))
     body = f"{ACCEPT_BODY}\n{marker}"
@@ -680,7 +1189,7 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
         if isinstance(evidence, dict):
             evidence["ci_green"] = False
             evidence["ci_head"] = head
-        invalidate_head_evidence(c, head)
+        invalidate_head_evidence(c, "" if worker.a38 else head)
         save_task(store, task)
         return [f"CI failed on {head[:7]}; routing to implementer"]
     if obs.kind != "green":
@@ -784,6 +1293,65 @@ def _apply_readiness_checklist(
     head: str,
 ) -> None:
     """Close contributing/deviation from trusted readiness before Ready. No inferred grants."""
+    if readiness.get("owner_a38_default") is True:
+        gate = latest_gates(store, task["id"]).get(("grok-pr", "quality"))
+        if (
+            gate is None
+            or gate.get("verdict") != "approved"
+            or gate.get("head_sha") != head
+        ):
+            raise CoordinatorError(
+                "owner A38 readiness requires approved grok-pr/quality gate on current head"
+            )
+        source_raw = coord(task).get("source")
+        source = source_raw if isinstance(source_raw, dict) else {}
+        assignment_actor_raw = text(source.get("assignment_actor"))
+        assignment_actor = assignment_actor_raw.strip() if assignment_actor_raw else None
+        assignment_event_id = source.get("assignment_event_id")
+        if (
+            assignment_actor is None
+            or not isinstance(assignment_event_id, int)
+            or isinstance(assignment_event_id, bool)
+            or assignment_event_id <= 0
+        ):
+            raise CoordinatorError(
+                "owner A38 default requires a verified assignment actor and event; "
+                "configure owner_readiness_argv"
+            )
+        set_checklist(
+            store,
+            task,
+            "contributing_ok",
+            "ja",
+            f"conformity-a approved at {head}",
+            source="script",
+        )
+        mandate = source.get("hub_assignment_mandate")
+        row_id = mandate.get("row_id") if isinstance(mandate, dict) else None
+        mandate_actor = mandate.get("actor") if isinstance(mandate, dict) else None
+        explicit_no_deviation = _mandate_states_no_deviation(source, assignment_actor)
+        if not explicit_no_deviation:
+            raise CoordinatorError(MANDATE_DEVIATION_BLOCKER)
+        mandate_evidence = (
+            f"hub mandate {row_id}: {mandate_actor} stated deviation declared=false"
+        )
+        set_checklist(
+            store,
+            task,
+            "deviation_declared",
+            "n_a",
+            mandate_evidence,
+            source="human",
+        )
+        set_checklist(
+            store,
+            task,
+            "deviation_granted",
+            "n_a",
+            mandate_evidence,
+            source="human",
+        )
+        return
     set_checklist(
         store,
         task,
@@ -802,7 +1370,7 @@ def _apply_readiness_checklist(
             "n_a",
             (
                 "trusted readiness_argv reported no deviation; "
-                f"human assignment mandate {coord(task).get('source', {})}"
+                f"human assignment mandate {_mandate_provenance(coord(task).get('source', {}))}"
             ),
             source="human",
         )
@@ -843,10 +1411,50 @@ def _apply_readiness_checklist(
     )
 
 
+def _readiness_for_head(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    cfg: RepositoryConfig,
+    *,
+    head: str,
+    base_sha: str,
+) -> dict[str, Any]:
+    """Obtain owner-default or configured trusted readiness for one exact head."""
+    c = coord(task)
+    source = c["source"]
+    if source.get("owner_scoped") and worker.a38 and not cfg.readiness_argv:
+        return {
+            "head": head,
+            "base": base_sha,
+            "contributing_ok": True,
+            "deviation": {"declared": False},
+            "owner_a38_default": True,
+        }
+    completed = run_bounded(
+        list(cfg.readiness_argv),
+        timeout=worker.check_timeout,
+        cwd=str(c["worktree"]),
+        env=coordinator_env(c, worker, cfg),
+        clear_ambient_github=True,
+    )
+    if completed.returncode != 0:
+        raise CoordinatorError(
+            redact(
+                f"readiness failed: {(completed.stderr or completed.stdout or '')[:500]}"
+            )
+        )
+    return _parse_readiness_result(
+        completed.stdout or "",
+        head=head,
+        base=base_sha,
+        base_name=cfg.base,
+    )
+
+
 def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     worktree = str(c["worktree"])
     head = verify_signed_clean_head(store, worker, runner, worktree)
     if head != str(c.get("head_sha") or "").lower():
@@ -856,24 +1464,13 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return ["head changed before readiness"]
 
-    env = coordinator_env(c, worker, cfg)
-    completed = run_bounded(
-        list(cfg.readiness_argv),
-        timeout=worker.check_timeout,
-        cwd=worktree,
-        env=env,
-        clear_ambient_github=True,
-    )
-    if completed.returncode != 0:
-        raise CoordinatorError(
-            redact(f"readiness failed: {(completed.stderr or completed.stdout or '')[:500]}")
-        )
     base_sha = str(c.get("base_sha") or "")
-    readiness = _parse_readiness_result(
-        completed.stdout or "",
+    readiness = _readiness_for_head(
+        worker,
+        task,
+        cfg,
         head=head,
-        base=base_sha,
-        base_name=cfg.base,
+        base_sha=base_sha,
     )
 
     # Re-verify clean signed head AFTER readiness (command may have touched files).
@@ -917,8 +1514,11 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         raise CoordinatorError("PR is not open")
     if str(pr.get("mergeable") or "").upper() != "MERGEABLE":
         raise CoordinatorError(f"PR not mergeable ({pr.get('mergeable')})")
-    if pr.get("isDraft") is not True:
-        raise CoordinatorError("PR must still be draft before formal approve")
+    if worker.a38:
+        if pr.get("isDraft") not in (True, False):
+            raise CoordinatorError("PR draft state is unavailable before readiness completes")
+    elif pr.get("isDraft") is not True:
+        raise CoordinatorError("PR must still be draft before readiness completes")
 
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
     if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
@@ -931,13 +1531,20 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return [retry]
     latest = latest_gates(store, task["id"])
-    skip_codex = _codex_skip(store, worker, task, runner, phase="readiness", head=head)
-    if isinstance(skip_codex, list):
-        return skip_codex
     models = _task_models(task)
-    for stage, dimension, slot in GATE_PAIRS:
-        if stage == "codex-pr" and skip_codex:
-            continue
+    if worker.a38:
+        from .coordinator_a38 import require_ready_evidence
+
+        require_ready_evidence(store, task, head)
+        gate_pairs = tuple(pair for pair in GATE_PAIRS if pair[0] == "grok-pr")
+    else:
+        skip_codex = _codex_skip(store, worker, task, runner, phase="readiness", head=head)
+        if isinstance(skip_codex, list):
+            return skip_codex
+        gate_pairs = tuple(
+            pair for pair in GATE_PAIRS if not (pair[0] == "codex-pr" and skip_codex)
+        )
+    for stage, dimension, slot in gate_pairs:
         vendor = models.for_slot(slot)
         g = latest.get((stage, dimension))
         if g is None or g.get("verdict") != "approved" or g.get("head_sha") != head or g.get("vendor") != vendor:
@@ -949,7 +1556,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         evidence["readiness_head"] = head
         evidence["readiness_base"] = base_sha or cfg.base
         evidence["readiness_at"] = utcnow()
-    c["phase"] = "formal_approve"
+    c["phase"] = "await_ready" if worker.a38 else "formal_approve"
     save_task(store, task)
     return [f"readiness ok on {head[:7]}"]
 
@@ -1034,6 +1641,10 @@ def phase_formal_approve(
     runner: Runner,
 ) -> list[str]:
     """APPROVE via review.post activity + commit_id transport; verify strictly."""
+    if worker.a38:
+        raise CoordinatorError("A38 mode never posts a formal APPROVE")
+    if worker.review_session is None:
+        raise CoordinatorError("formal approve requires review_session")
     fresh = phase_readiness(store, worker, task, runner)
     if coord(task).get("phase") != "formal_approve":
         return fresh
@@ -1211,6 +1822,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "checklist": checklist,
         "checklist_evidence": checklist_evidence,
         "summaries": {
@@ -1338,6 +1950,8 @@ def _fresh_formal_still_approved(
     number = as_int(c.get("pr_number"))
     if number is None:
         raise CoordinatorError("formal recheck requires PR number")
+    if worker.review_session is None:
+        raise CoordinatorError("formal recheck requires review_session")
     try:
         review_account = account_for(store, worker.review_session)
         scoped_review = review_account.runner(runner)
@@ -1471,6 +2085,8 @@ def _raise_revoked_one_review(
 
 
 def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
+    if worker.a38:
+        raise CoordinatorError("A38 mode never leaves draft; the guard owns Ready")
     c = coord(task)
     target = target_repo(task)
     number = as_int(c.get("pr_number"))
@@ -1478,7 +2094,7 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     head = verify_signed_clean_head(store, worker, runner, worktree)
     if number is None:
         raise CoordinatorError("leave-draft requires PR number")
-    cfg = repo_cfg(worker, str(c["source"]["repo"]))
+    cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
 
     # Recheck allow pr-ready and fresh evidence before transition.
     task["state"] = "pr-review"
@@ -1698,6 +2314,109 @@ def _record_human_merge(
     )
 
 
+def _mandate_states_no_deviation(source: dict[str, Any], assignment_actor: str | None) -> bool:
+    """True when the pinned hub mandate carries the owner's explicit no-deviation statement."""
+    mandate = source.get("hub_assignment_mandate")
+    if not isinstance(mandate, dict) or not isinstance(assignment_actor, str):
+        return False
+    row_id = mandate.get("row_id")
+    mandate_actor = mandate.get("actor")
+    issue_key = mandate.get("issue_key")
+    deviation = mandate.get("deviation")
+    expected_issue_key = f"{source.get('repo')}#{source.get('number')}"
+    return (
+        isinstance(row_id, str)
+        and bool(row_id)
+        and row_id == source.get("hub_assignment_row_id")
+        and isinstance(mandate_actor, str)
+        and mandate_actor.casefold() == assignment_actor.casefold()
+        and mandate.get("origin") == f"web:{mandate_actor}"
+        and isinstance(issue_key, str)
+        and issue_key.casefold() == expected_issue_key.casefold()
+        and _states_no_deviation(deviation, mandate_actor)
+    )
+
+
+def _readiness_keys_closed(store: Store, task: dict[str, Any], head: str) -> bool:
+    """Readiness counts as closed only when it ran on this exact head."""
+    evidence = coord(task).get("evidence")
+    if not isinstance(evidence, dict) or evidence.get("readiness_head") != head:
+        return False
+    task_id = str(task["id"])
+    statuses = {
+        str(row.get("key")): str(row.get("status") or "")
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    return (
+        statuses.get("contributing_ok") == "ja"
+        and statuses.get("deviation_declared") in {"ja", "n_a"}
+        and statuses.get("deviation_granted") in {"ja", "n_a"}
+    )
+
+
+def _close_readiness_after_merge(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+) -> None:
+    """Close readiness on an A38 head merged before the readiness phase ran."""
+    if _readiness_keys_closed(store, task, head):
+        return
+    c = coord(task)
+    cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
+    local_head = verify_signed_clean_head(
+        store, worker, runner, str(c.get("worktree") or "")
+    )
+    if local_head != head:
+        raise CoordinatorError("merged PR head does not match clean signed readiness head")
+    base_sha = str(c.get("base_sha") or "")
+    readiness = _readiness_for_head(
+        worker,
+        task,
+        cfg,
+        head=head,
+        base_sha=base_sha,
+    )
+    if verify_signed_clean_head(
+        store, worker, runner, str(c.get("worktree") or "")
+    ) != head:
+        raise CoordinatorError("head modified by merged-head readiness")
+    _apply_readiness_checklist(store, worker, task, readiness, head=head)
+    evidence = c.setdefault("evidence", {})
+    if isinstance(evidence, dict):
+        evidence["readiness_head"] = head
+        evidence["readiness_base"] = base_sha or cfg.base
+        evidence["readiness_at"] = utcnow()
+    save_task(store, task)
+
+
+def _block_merged_readiness(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    message: str,
+) -> list[str]:
+    c = coord(task)
+    c["phase"] = "blocked"
+    c["resume_phase"] = "await_merge"
+    c["blocker"] = message
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        message,
+        kind="readiness",
+        reply_checkpoint=True,
+    )
+
+
 def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     target = target_repo(task)
@@ -1739,20 +2458,19 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 f"Merge was not by a human User (got {merged_type or 'missing type'})",
                 kind="nonhuman-merge",
             )
-        cfg = repo_cfg(worker, str(c["source"]["repo"]))
+        cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
             raise CoordinatorError("merged PR head differs from reviewed head")
         # Do not manufacture checklist values or boilerplate summaries here.
-        # Policy/deviation/implementer keys must already be closed with real evidence
-        # before Ready; merge only proves the human merge event.
+        # The ordinary route closes readiness before Ready; an early A38 merge
+        # closes it below from the same trusted source before task-done.
         if not (task.get("change_summary_en") and task.get("change_summary_de")):
             return [
                 "human merge observed; task-done blocked: missing change summaries "
                 "describing the actual result"
             ]
-        snap = _task_snapshot(store, task["id"])
         pr_open_id = c.get("pr_open_activity_id")
         try:
             opener, config = _trusted_done_review(store, worker, task, runner)
@@ -1771,6 +2489,31 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
                 pr_open_id=pr_open_id,
             )
             return ["trusted review list could not be read; retrying await_merge"]
+        if worker.a38:
+            second_review = _a38_second_review_outcome(c, expected_head)
+            if second_review != "passed":
+                return _await_second_review_after_merge(
+                    store,
+                    worker,
+                    task,
+                    runner,
+                    expected_head,
+                    blocking=second_review == "blocking",
+                )
+            if not _readiness_keys_closed(store, task, expected_head):
+                try:
+                    _close_readiness_after_merge(
+                        store,
+                        worker,
+                        task,
+                        runner,
+                        head=expected_head,
+                    )
+                except (CoordinatorError, StoreError) as exc:
+                    return _block_merged_readiness(
+                        store, worker, task, runner, str(exc)
+                    )
+        snap = _task_snapshot(store, task["id"])
         snap["pull_opener"] = opener
         snap["trusted_pr_guard"] = config
         allow = evaluate_allow(
@@ -1820,6 +2563,10 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         c["phase"] = "done"
         save_task(store, task)
         return [f"human merge verified {target}#{number}; task done"]
+    if worker.a38 and state == "OPEN" and info.get("draft") is True:
+        c["phase"] = "await_ready"
+        save_task(store, task)
+        return [f"pull request returned to draft on {expected_head[:7]}; awaiting guard Ready"]
     if state == "CLOSED":
         c["phase"] = "blocked"
         c["blocker"] = "Ready PR closed without merge"
@@ -1836,6 +2583,75 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             kind="closed-unmerged",
         )
     return [f"awaiting human merge of {target}#{number}"]
+
+
+def _a38_second_review_outcome(c: dict[str, Any], head: str) -> str:
+    """Return "blocking", "passed" or "missing" from the newest posted second review of head."""
+    a38 = c.get("a38")
+    state = a38.get("second_review") if isinstance(a38, dict) else None
+    if not isinstance(state, dict) or state.get("head") != head or state.get("status") != "posted":
+        return "missing"
+    # The newest posted second review decides (docs/a38.md): a later clearing
+    # review lifts an earlier block, a later block overrides an earlier pass.
+    from .coordinator_a38 import newest_reviews_block
+
+    reviews = [review for review in state.get("reviews") or [] if isinstance(review, dict)]
+    if newest_reviews_block(reviews):
+        return "blocking"
+    return "passed"
+
+
+def _await_second_review_after_merge(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    head: str,
+    *,
+    blocking: bool,
+) -> list[str]:
+    """A merge can land before the external second review (the guard sets Ready
+    without it). Keep accepting that review for the merged head for one review
+    timeout, then stop with a visible, non-recoverable blocker. A blocking review
+    of the merged head stops at once."""
+    c = coord(task)
+    if blocking:
+        c["phase"] = "blocked"
+        c["blocker"] = f"merged although the external second review blocks the merge on {head}"
+        clear_reply_recovery(c)
+        save_task(store, task)
+        return publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            f"Pull request was merged on {head[:7]} although the external second review blocks the merge.",
+            kind="merged-with-blocking-second-review",
+        )
+    a38 = c.setdefault("a38", {})
+    stamp = utcnow()
+    now = _parse_coordinator_time(stamp)
+    since = _parse_coordinator_time(a38.get("merged_waiting_since"))
+    if now is None:
+        raise CoordinatorError("coordinator clock returned an invalid timestamp")
+    if since is None:
+        a38["merged_waiting_since"] = stamp
+        save_task(store, task)
+        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+    if (now - since).total_seconds() < worker.second_review_timeout_seconds:
+        return [f"human merge observed on {head[:7]}; awaiting the external second review"]
+    c["phase"] = "blocked"
+    c["blocker"] = f"merged without an external second review on {head}"
+    clear_reply_recovery(c)
+    save_task(store, task)
+    return publish_blocker(
+        store,
+        worker,
+        task,
+        runner,
+        f"Pull request was merged on {head[:7]} without an external second review.",
+        kind="merged-without-second-review",
+    )
 
 
 def phase_read_replies(
@@ -1945,6 +2761,9 @@ def phase_read_replies(
     resume = str(c.get("resume_phase") or "")
     c["phase"] = resume
     c.pop("resume_phase", None)
+    c.pop("blocker_publish_once", None)
+    c.pop("blocker_publish_kind", None)
+    c.pop("blocker_activity_id", None)
     if resume == "implement":
         task["state"] = "implementing"
     save_task(store, task)
@@ -1968,11 +2787,25 @@ def phase_blocked(
             str(c.get("blocker") or "uncertain lane outcome"),
             kind="uncertain-lane",
         )
+    blocker = redact(str(c.get("blocker") or "blocked"))
+    if c.get("blocker_publish_once"):
+        blocker_activity_id = c.get("blocker_activity_id")
+        if not isinstance(blocker_activity_id, str) or not blocker_activity_id:
+            return publish_blocker(
+                store,
+                worker,
+                task,
+                runner,
+                blocker,
+                kind=str(c.get("blocker_publish_kind") or "blocker"),
+                reply_checkpoint=True,
+            )
     # Try authorized reply recovery without starting a model blindly.
     prior_phase = str(c.get("phase") or "blocked")
     lines = phase_read_replies(store, worker, task, runner)
     resumed = str(coord(task).get("phase") or "")
     if resumed not in ("ask", "blocked", prior_phase) and resumed:
         return lines
-    blocker = redact(str(c.get("blocker") or "blocked"))
+    if c.get("blocker_publish_once"):
+        return lines
     return publish_blocker(store, worker, task, runner, blocker, kind="status")

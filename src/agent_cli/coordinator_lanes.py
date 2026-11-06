@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import os
 import tempfile
 import threading
@@ -32,12 +34,25 @@ from .coordinator_common import (
 from .coordinator_config import WorkerConfig
 from .coordinator_exec import run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
-from .lane import OUTPUT_FILE_VENDORS, SPEC_VIA_STDIN, LaneResult, provider_argv
+from .lane import (
+    OUTPUT_FILE_VENDORS,
+    SPEC_VIA_STDIN,
+    LaneResult,
+    finalize_lane_output,
+    hide_config_dir,
+    openrouter_path_error,
+    provider_argv,
+    record_lane_run,
+)
+from .allow import CODEX_SECOND_REVIEW_KEYS, EXTERNAL_SECOND_REVIEW_PREFIX
 from .model_slots import SLOT_STAGES, ModelSlots, ModelSlotsError, models_from_snapshot
 from .store import Store, utcnow
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
+PR_REVIEW_PROMPT_LIMIT = 20_000
+# Two prompts, each written twice (record and JSON block), must fit one GitHub comment.
+A38_REVIEW_PROMPT_LIMIT = 14_000
 
 
 def write_spec(path: Path, role: str, body: str) -> None:
@@ -154,6 +169,12 @@ def launch_lane(
         raise CoordinatorError(str(exc)) from exc
 
     ctrl = control_dir(worker, task["id"])
+    write = selected.access == "workspace-write"
+    read_dirs = () if write else (str(ctrl.resolve()),)
+    if vendor == "openrouter":
+        overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
+        if overlap is not None:
+            raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}.md"
     write_spec(spec_path, role, spec_body)
     spec_text = spec_path.read_text(encoding="utf-8")
@@ -179,11 +200,10 @@ def launch_lane(
     c["lane"] = {"agent_id": aid, "role": role, "vendor": vendor, "state": "running"}
     save_task(store, task)
 
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    lane_output: str | None = None
     try:
         if vendor in OUTPUT_FILE_VENDORS:
-            fd, codex_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
+            fd, lane_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
             os.close(fd)
         argv = [
             *selected.env_prefix(),
@@ -193,7 +213,8 @@ def launch_lane(
                 cwd=worktree,
                 write=write,
                 model=selected.model,
-                output_file=codex_output,
+                output_file=lane_output,
+                read_dirs=read_dirs,
             ),
         ]
         if vendor == "grok" and role == "implementer":
@@ -236,27 +257,43 @@ def launch_lane(
 
         returncode = int(getattr(completed, "returncode"))
         stdout = str(getattr(completed, "stdout") or "")
-        stderr = str(getattr(completed, "stderr") or "")
-        if codex_output is not None:
+        stderr = hide_config_dir(
+            str(getattr(completed, "stderr") or ""), selected.account.config_dir
+        )
+        output_file_text = ""
+        if lane_output is not None:
             try:
-                file_text = Path(codex_output).read_text(encoding="utf-8")
+                output_file_text = Path(lane_output).read_text(encoding="utf-8")
             except OSError:
-                file_text = ""
-            if file_text:
-                stdout = file_text
+                output_file_text = ""
+        finalized = finalize_lane_output(
+            vendor,
+            stdout,
+            output_file_text,
+            cwd=worktree,
+            stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+            config_dir=selected.account.config_dir,
+        )
         result = LaneResult(
             role=role,
             vendor=vendor,
-            status=parse_model_result(stdout, returncode)[0],
+            model=selected.model,
+            status=parse_model_result(finalized.text, returncode)[0],
             argv=argv,
             returncode=returncode,
-            stdout=stdout,
+            stdout=finalized.text,
             stderr=stderr,
+            usage=finalized.usage,
+            tools=finalized.tools,
+            tools_truncated=finalized.tools_truncated,
+        )
+        _record_lane_audit(
+            store, worker, c, result, task_id=str(task["id"]), agent_id=aid, round_num=round_num
         )
     finally:
-        if codex_output is not None:
+        if lane_output is not None:
             try:
-                os.unlink(codex_output)
+                os.unlink(lane_output)
             except OSError:
                 pass
 
@@ -304,6 +341,45 @@ def invalidate_head_evidence(c: dict[str, Any], head: str) -> None:
     evidence.pop("formal_head", None)
     evidence.pop("ready_head", None)
     c["evidence"] = evidence
+    a38 = c.get("a38")
+    if isinstance(a38, dict):
+        block = c.get("second_review_block")
+        if isinstance(block, dict) and block.get("head") != head:
+            c.pop("second_review_block", None)
+        for key in ("report", "first_comment", "second_review", "guard_status"):
+            value = a38.get(key)
+            if isinstance(value, dict) and value.get("head") != head:
+                if key == "second_review":
+                    sent = int(value.get("request_count") or 0) + 1
+                    a38["second_review_next_occurrence"] = max(
+                        sent, int(a38.get("second_review_next_occurrence") or 0)
+                    )
+                a38.pop(key, None)
+
+
+def _record_lane_audit(
+    store: Store,
+    worker: WorkerConfig,
+    c: dict[str, Any],
+    result: LaneResult,
+    *,
+    task_id: str,
+    agent_id: str | None,
+    round_num: int | None,
+) -> None:
+    """Record lane.run; an audit failure (including StoreError, a SystemExit) never changes the verdict."""
+    try:
+        record_lane_run(
+            store,
+            session_id=worker.session_id,
+            result=result,
+            task_id=task_id,
+            agent_id=agent_id,
+            round_num=round_num,
+        )
+    except (Exception, SystemExit) as exc:  # noqa: BLE001
+        result.activity_error = f"lane.run write failed: {redact(str(exc))}"
+        c.setdefault("lane_observations", []).append(result.activity_error)
 
 
 def record_gate(
@@ -338,6 +414,42 @@ def record_gate(
     )
     if verdict == "rejected" and task.get("workflow") == "implement":
         task["state"] = "implementing"
+
+
+def gate_prompt_evidence(
+    store: Store,
+    gate: dict[str, Any] | None,
+    *,
+    head: str,
+    dimension: str,
+    vendor: str,
+) -> dict[str, str] | None:
+    """Read durable A38 prompt provenance from the agent that produced a gate."""
+    if not isinstance(gate, dict):
+        return None
+    agent_id = gate.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    agent = store.row("agent", agent_id)
+    if agent is None:
+        return None
+    provider = agent.get("provider")
+    model = agent.get("model")
+    prompt = agent.get("prompt")
+    if (
+        provider != vendor
+        or agent.get("vendor") != vendor
+        or agent.get("task_id") != gate.get("task_id")
+        or agent.get("role") != f"pr-reviewer-{dimension}"
+        or agent.get("head_sha") != head
+        or agent.get("dimension") != dimension
+        or not isinstance(model, str)
+        or not model
+        or not isinstance(prompt, str)
+        or not prompt
+    ):
+        return None
+    return {"provider": provider, "model": model, "prompt": prompt}
 
 
 def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
@@ -396,6 +508,7 @@ def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
         "session_id": task.get("session_id"),
         "workflow": task.get("workflow"),
         "state": task.get("state"),
+        "payload": task.get("payload"),
         "session_active": bool(session and session.get("status") == "active"),
         "checklist": checklist,
         "agents": agents,
@@ -424,6 +537,21 @@ def set_checklist(
     snap = checklist_snapshot(store, task)
     current = (snap.get("checklist") or {}).get(key)
     if current == status:
+        if (
+            status == "ja"
+            and key in CODEX_SECOND_REVIEW_KEYS
+            and models_from_snapshot(task).second is None
+            and evidence.startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
+        ):
+            for item in store.rows("checklist_item"):
+                if item.get("task_id") == task["id"] and item.get("key") == key:
+                    if item.get("evidence") == evidence and item.get("source") == source:
+                        return
+                    item["evidence"] = evidence
+                    item["source"] = source
+                    item["updated_at"] = utcnow()
+                    store.write("checklist_item", "update", item["id"], strip_row(item))
+                    return
         return
     workflow = str(task.get("workflow") or "")
     verdict = close_allowed(
@@ -674,9 +802,27 @@ def _prepare_pr_review_agent(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     ctrl = control_dir(worker, task["id"])
+    if selected.access != "read-only":
+        raise CoordinatorError("PR review lane requires read-only access")
+    write = False
+    read_dirs = (str(ctrl.resolve()),)
+    if vendor == "openrouter":
+        overlap = openrouter_path_error(selected.account.config_dir, worktree, read_dirs)
+        if overlap is not None:
+            raise CoordinatorError(overlap)
     spec_path = ctrl / f"{role}-{vendor}-{head[:7]}.md"
-    write_spec(spec_path, role, spec_body)
-    spec_text = spec_path.read_text(encoding="utf-8")
+    spec_text = f"# Role: {role}\n\n{prompt_prohibitions()}\n{spec_body}".strip()
+    if len(spec_text) > PR_REVIEW_PROMPT_LIMIT:
+        raise CoordinatorError(
+            f"PR review prompt exceeds {PR_REVIEW_PROMPT_LIMIT} characters"
+        )
+    if worker.a38 and len(json.dumps(spec_text, ensure_ascii=False)) > A38_REVIEW_PROMPT_LIMIT:
+        # The A38 first review comment carries both prompts twice; refuse before any lane runs.
+        raise CoordinatorError(
+            f"A38 PR review prompt exceeds {A38_REVIEW_PROMPT_LIMIT} JSON characters"
+        )
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(spec_text, encoding="utf-8")
     aid = str(uuid.uuid4())
     store.write(
         "agent",
@@ -689,16 +835,20 @@ def _prepare_pr_review_agent(
             "round": None,
             "role": role,
             "vendor": vendor,
+            "provider": vendor,
+            "model": selected.model,
+            "prompt": spec_text,
+            "head_sha": head,
+            "dimension": "quality" if role.endswith("quality") else "logic",
             "status": "working",
             "started_at": utcnow(),
             "finished_at": None,
             "note": None,
         },
     )
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    lane_output: str | None = None
     if vendor in OUTPUT_FILE_VENDORS:
-        fd, codex_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
+        fd, lane_output = tempfile.mkstemp(prefix=f"agent-coord-{vendor}-", suffix=".txt")
         os.close(fd)
     argv = [
         *selected.env_prefix(),
@@ -708,7 +858,8 @@ def _prepare_pr_review_agent(
             cwd=worktree,
             write=write,
             model=selected.model,
-            output_file=codex_output,
+            output_file=lane_output,
+            read_dirs=read_dirs,
         ),
     ]
     stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
@@ -718,8 +869,10 @@ def _prepare_pr_review_agent(
         "vendor": vendor,
         "argv": argv,
         "stdin_text": stdin_text,
-        "codex_output": codex_output,
+        "output_file": lane_output,
         "worktree": worktree,
+        "model": selected.model,
+        "config_dir": selected.account.config_dir,
         "dimension": "quality" if role.endswith("quality") else "logic",
     }
 
@@ -740,30 +893,49 @@ def _run_prepared(
         else:
             completed = run_bounded(argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text)
     except Exception as exc:  # noqa: BLE001
+        output_file = prepared.get("output_file")
+        if output_file:
+            try:
+                os.unlink(str(output_file))
+            except OSError:
+                pass
         return prepared["agent_id"], exc
-    codex_output = prepared.get("codex_output")
+    output_file = prepared.get("output_file")
     stdout = str(getattr(completed, "stdout") or "")
-    stderr = str(getattr(completed, "stderr") or "")
+    stderr = hide_config_dir(
+        str(getattr(completed, "stderr") or ""), prepared.get("config_dir")
+    )
     returncode = int(getattr(completed, "returncode"))
-    if codex_output:
+    output_file_text = ""
+    if output_file:
         try:
-            file_text = Path(str(codex_output)).read_text(encoding="utf-8")
+            output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
         except OSError:
-            file_text = ""
-        if file_text:
-            stdout = file_text
+            output_file_text = ""
         try:
-            os.unlink(str(codex_output))
+            os.unlink(str(output_file))
         except OSError:
             pass
+    finalized = finalize_lane_output(
+        str(prepared["vendor"]),
+        stdout,
+        output_file_text,
+        cwd=str(worktree),
+        stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
+        config_dir=prepared.get("config_dir"),
+    )
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),
         vendor=str(prepared["vendor"]),
-        status=parse_model_result(stdout, returncode)[0],
+        model=str(prepared["model"]),
+        status=parse_model_result(finalized.text, returncode)[0],
         argv=argv,
         returncode=returncode,
-        stdout=stdout,
+        stdout=finalized.text,
         stderr=stderr,
+        usage=finalized.usage,
+        tools=finalized.tools,
+        tools_truncated=finalized.tools_truncated,
     )
 
 
@@ -864,17 +1036,31 @@ def phase_pr_gates(
         raise CoordinatorError("uncertain prior lane outcome for vendor stage")
     latest = latest_gates(store, task["id"])
     second_stage = stage == SLOT_STAGES["second"]
-    next_phase = "ci" if second_stage else "pr_gates_codex"
+    next_phase = "ci" if second_stage else (
+        "a38_first_comment" if worker.a38 else "pr_gates_codex"
+    )
     first_vendor = _task_models(task).first
 
     def _approved(gate: dict[str, Any] | None, want_vendor: str) -> bool:
         # A gate counts only from the provider pinned on the task for that slot.
-        return (
+        approved = (
             gate is not None
             and gate.get("verdict") == "approved"
             and gate.get("head_sha") == head
             and gate.get("vendor") == want_vendor
         )
+        if not approved:
+            return False
+        if worker.a38 and not second_stage:
+            dimension = str(gate.get("dimension") or "")
+            return gate_prompt_evidence(
+                store,
+                gate,
+                head=head,
+                dimension=dimension,
+                vendor=want_vendor,
+            ) is not None
+        return True
 
     if second_stage:
         for dim in ("quality", "logic"):
@@ -922,11 +1108,6 @@ def phase_pr_gates(
             pass
 
     diff_path = write_review_diff(store, worker, task, runner, head=head)
-    excerpt_path = diff_path.with_suffix(".excerpt.txt")
-    try:
-        excerpt = excerpt_path.read_text(encoding="utf-8")
-    except OSError:
-        excerpt = ""
     base_note = write_review_context(store, worker, task, runner)
     source = c.get("source") if isinstance(c.get("source"), dict) else {}
     prepared_list: list[dict[str, Any]] = []
@@ -949,9 +1130,9 @@ def phase_pr_gates(
                         f"Independent of the author session.\n"
                         f"{scope}\n"
                         f"{base_note}"
-                        f"Script-generated diff artifact (full): {diff_path}\n"
-                        f"Script-generated diff excerpt follows; do not run Git.\n"
-                        f"---- diff excerpt ----\n{excerpt}\n---- end excerpt ----\n"
+                        f"Script-generated diff artifact (full, read-only): {diff_path}\n"
+                        "Read that artifact through the read-only directory attached "
+                        "to this lane. Do not run Git to re-derive the diff.\n"
                     ),
                 )
             )
@@ -1014,8 +1195,18 @@ def phase_pr_gates(
         agent["finished_at"] = utcnow()
         agent["note"] = redact(outcome.stdout or outcome.stderr or "")
         store.write("agent", "update", agent["id"], strip_row(agent))
+        _record_lane_audit(
+            store,
+            worker,
+            c,
+            outcome,
+            task_id=str(task["id"]),
+            agent_id=str(prep["agent_id"]),
+            round_num=None,
+        )
         outcomes.append((prep, outcome))
 
+    parsed_outcomes: list[tuple[dict[str, Any], LaneResult, str, str | None]] = []
     for prep, outcome in outcomes:
         status, model_result = parse_model_result(outcome.stdout, outcome.returncode)
         dimension = str(prep["dimension"])
@@ -1049,6 +1240,21 @@ def phase_pr_gates(
             save_task(store, task)
             lines.append(f"{stage}/{dimension} unavailable; blocked")
             return lines
+        parsed_outcomes.append((prep, outcome, status, model_result))
+
+    if worker.a38 and not second_stage:
+        a38 = c.setdefault("a38", {})
+        if not isinstance(a38, dict):
+            a38 = {}
+            c["a38"] = a38
+        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
+        # The approved gates below are durable writes of their own. Persist the
+        # completed-pass count first so a crash after either gate cannot leave
+        # the subsequently posted review comment with a stale pass count.
+        save_task(store, task)
+
+    for prep, outcome, status, model_result in parsed_outcomes:
+        dimension = str(prep["dimension"])
         if not review_is_approved(status, model_result):
             evidence = redact(outcome.stdout or f"{status}/{model_result}")
             record_gate(
@@ -1130,13 +1336,16 @@ def _phase_pr_gates_slot(
     slot: str,
 ) -> list[str]:
     models = _task_models(task)
+    vendor = models.for_slot(slot)
+    if vendor is None:
+        raise CoordinatorError(f"model slot {slot} is external and has no lane")
     return phase_pr_gates(
         store,
         worker,
         task,
         runner,
         lane_runner,
-        vendor=models.for_slot(slot),
+        vendor=vendor,
         stage=SLOT_STAGES[slot],
     )
 

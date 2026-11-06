@@ -10,11 +10,16 @@ import pytest
 from agent_cli.store import Store, StoreError
 from agent_cli.usage import (
     CREDITS_URL,
+    OPENROUTER_KEY_URL,
     SETTINGS_URL,
     AuthStale,
+    OpenRouterUsageError,
+    _fetch_openrouter_key,
     fetch_credits_and_settings,
     last_usage_snapshot,
+    scan_openrouter_usage,
     scan_usage,
+    usage_unchanged,
     usage_poll_due,
 )
 
@@ -79,6 +84,147 @@ def _owned_grok_session(store: Store, session_id: str = "s-grok") -> str:
         },
     )
     return session_id
+
+
+def _openrouter_config(store: Store, config_dir: Path) -> None:
+    (store.home / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "accounts": {
+                    "router-a": {
+                        "provider": "openrouter",
+                        "config_dir": str(config_dir),
+                    }
+                },
+                "roles": {},
+                "sessions": {},
+                "usage_accounts": ["router-a"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _openrouter_body(*, usage: float = 1.25) -> dict[str, Any]:
+    return {
+        "data": {
+            "usage": usage,
+            "usage_daily": 0.25,
+            "usage_weekly": 0.75,
+            "usage_monthly": 1.0,
+            "limit": 10.0,
+            "limit_remaining": 8.75,
+            "limit_reset": "2026-12-01T00:00:00Z",
+            "label": "must-not-be-stored",
+            "id": "must-not-be-stored",
+        }
+    }
+
+
+def test_scan_openrouter_usage_snapshot_and_dedup(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    session_id = _owned_grok_session(store)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    _openrouter_config(store, config_dir)
+
+    def fetch(token: str) -> dict[str, Any]:
+        assert token == "router-secret"
+        return _openrouter_body()
+
+    created = scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    )
+    assert len(created) == 1
+    row = store.row("activity", created[0])
+    assert row is not None and row["session_id"] == session_id
+    payload = row["payload"]
+    assert payload == {
+        "vendor": "openrouter",
+        "provider": "openrouter",
+        "account": "router-a",
+        "usage_usd": 1.25,
+        "usage_daily_usd": 0.25,
+        "usage_weekly_usd": 0.75,
+        "usage_monthly_usd": 1.0,
+        "limit_usd": 10.0,
+        "limit_remaining_usd": 8.75,
+        "limit_reset": "2026-12-01T00:00:00Z",
+        "fetched_at": "2026-11-04T10:00:00Z",
+    }
+    assert "router-secret" not in json.dumps(payload)
+    assert scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:01:00Z"
+    ) == []
+
+
+def test_scan_openrouter_usage_without_owned_session_names_openrouter(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    _openrouter_config(store, config_dir)
+
+    with pytest.raises(StoreError, match="no owned session to record openrouter usage"):
+        scan_openrouter_usage(
+            store, fetch=lambda _token: _openrouter_body(), now=lambda: "2026-11-04T10:00:00Z"
+        )
+
+
+def test_scan_openrouter_usage_dedups_latest_snapshot_in_same_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    _openrouter_config(store, config_dir)
+    monkeypatch.setattr("agent_cli.store.utcnow", lambda: "2026-11-04T10:00:00Z")
+    usage = {"value": 1.25}
+
+    def fetch(_token: str) -> dict[str, Any]:
+        return _openrouter_body(usage=usage["value"])
+
+    first = scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    )
+    usage["value"] = 2.5
+    second = scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    )
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert scan_openrouter_usage(
+        store, fetch=fetch, now=lambda: "2026-11-04T10:00:00Z"
+    ) == []
+    snapshots = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "usage.snapshot"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("vendor") == "openrouter"
+    ]
+    assert len(snapshots) == 2
+
+
+def test_scan_openrouter_usage_missing_key_and_malformed_data(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _owned_grok_session(store)
+    config_dir = tmp_path / "router"
+    config_dir.mkdir()
+    _openrouter_config(store, config_dir)
+    with pytest.raises(OpenRouterUsageError, match="openrouter key missing"):
+        scan_openrouter_usage(store, fetch=lambda _token: _openrouter_body())
+    assert not [r for r in store.rows("activity") if r.get("type") == "usage.snapshot"]
+
+    (config_dir / "openrouter-api-key").write_text("router-secret", encoding="utf-8")
+    with pytest.raises(OpenRouterUsageError, match="data is not an object"):
+        scan_openrouter_usage(store, fetch=lambda _token: {"data": []})
 
 
 def test_scan_usage_inserts_snapshot(tmp_path: Path) -> None:
@@ -259,6 +405,67 @@ def test_fetch_credits_and_settings_invalid_json_hides_token() -> None:
     assert "test-token" not in str(excinfo.value)
 
 
+def test_fetch_openrouter_key_success_via_mock_client() -> None:
+    requests: list[httpx.Request] = []
+    expected = _openrouter_body()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=expected)
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        body = _fetch_openrouter_key("router-secret", client=client)
+
+    assert body == expected
+    assert len(requests) == 1
+    assert str(requests[0].url) == OPENROUTER_KEY_URL
+    assert requests[0].headers["Authorization"] == "Bearer router-secret"
+    assert requests[0].headers["Accept"] == "application/json"
+
+
+def test_fetch_openrouter_key_network_error_hides_token() -> None:
+    token = "router-secret-network"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"connection failed for {token}", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        with pytest.raises(StoreError, match="request failed") as excinfo:
+            _fetch_openrouter_key(token, client=client)
+
+    assert token not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("response_kind", "message"),
+    [
+        ("non-200", "HTTP 503"),
+        ("invalid-json", "invalid JSON"),
+        ("non-object", "not an object"),
+    ],
+)
+def test_fetch_openrouter_key_invalid_response_hides_token(
+    response_kind: str, message: str
+) -> None:
+    token = f"router-secret-{response_kind}"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if response_kind == "non-200":
+            return httpx.Response(503, text=f"server echoed {token}")
+        if response_kind == "invalid-json":
+            return httpx.Response(200, text=f"not-json-{token}")
+        if response_kind == "non-object":
+            return httpx.Response(200, json=[token])
+        raise AssertionError(response_kind)
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        with pytest.raises(StoreError, match=message) as excinfo:
+            _fetch_openrouter_key(token, client=client)
+
+    assert token not in str(excinfo.value)
+
+
 def test_last_usage_snapshot_via_last_own_activity_insert(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_grok_session(store)
@@ -278,7 +485,88 @@ def test_last_usage_snapshot_via_last_own_activity_insert(tmp_path: Path) -> Non
     assert snapshot is not None
     assert snapshot["vendor"] == "grok"
     assert snapshot["used_percent"] == 11.0
-    assert last_usage_snapshot(store, vendor="other") is None
+    assert last_usage_snapshot(
+        store, lambda payload: payload.get("vendor") == "other"
+    ) is None
+
+
+def test_usage_helpers_accept_compare_keys_and_payload_match(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    session_id = _owned_grok_session(store)
+    store.write(
+        "activity",
+        "insert",
+        "00000000-0000-4000-8000-000000000002",
+        {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "session_id": session_id,
+            "type": "usage.snapshot",
+            "payload": {
+                "vendor": "openrouter",
+                "account": "router-a",
+                "usage_usd": 1.25,
+                "fetched_at": "2026-11-04T10:00:00Z",
+            },
+            "execution_status": "done",
+        },
+    )
+    snapshot = last_usage_snapshot(
+        store,
+        lambda payload: payload.get("vendor") == "openrouter"
+        and payload.get("account") == "router-a",
+    )
+    assert snapshot is not None
+    assert usage_unchanged(
+        snapshot,
+        {**snapshot, "fetched_at": "2026-11-04T10:01:00Z"},
+        ("vendor", "account", "usage_usd"),
+    )
+    assert not usage_unchanged(
+        snapshot,
+        {**snapshot, "usage_usd": 2.5},
+        ("vendor", "account", "usage_usd"),
+    )
+
+
+def test_unchanged_grok_snapshot_ignores_newer_openrouter_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    session_id = _owned_grok_session(store)
+    auth = _auth_file(tmp_path)
+    first = scan_usage(
+        store,
+        fetch=lambda token: (_credits(), SETTINGS),
+        auth_path=auth,
+        now=lambda: "2026-08-20T12:00:00Z",
+    )
+    assert isinstance(first, str)
+    store.write(
+        "activity",
+        "insert",
+        "00000000-0000-4000-8000-000000000001",
+        {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "session_id": session_id,
+            "type": "usage.snapshot",
+            "payload": {"vendor": "openrouter", "account": "router-a"},
+            "execution_status": "done",
+        },
+    )
+    assert scan_usage(
+        store,
+        fetch=lambda token: (_credits(), SETTINGS),
+        auth_path=auth,
+        now=lambda: "2026-08-20T12:01:00Z",
+    ) is None
+    grok_rows = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "usage.snapshot"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("vendor") == "grok"
+    ]
+    assert len(grok_rows) == 1
 
 
 def test_scan_usage_missing_auth_file(tmp_path: Path) -> None:
@@ -444,3 +732,38 @@ def test_scan_usage_no_auth_xai_entry(tmp_path: Path) -> None:
             auth_path=path,
         )
     assert store.rows("activity") == []
+
+
+def test_fetch_openrouter_key_default_client_has_timeout_and_no_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_cli import usage
+
+    seen: dict[str, Any] = {}
+
+    class RecordingClient:
+        def __init__(self, **kwargs: Any) -> None:
+            seen.update(kwargs)
+
+        def __enter__(self) -> "RecordingClient":
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, url: str, headers: dict[str, str]) -> httpx.Response:
+            seen["url"] = url
+            return httpx.Response(200, json=_openrouter_body(), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(usage.httpx, "Client", RecordingClient)
+    usage._fetch_openrouter_key("router-secret")
+    assert seen["timeout"] == 8.0
+    assert seen["follow_redirects"] is False
+    assert seen["url"] == usage.OPENROUTER_KEY_URL
+
+
+def test_openrouter_number_refuses_an_integer_too_large_for_a_float() -> None:
+    from agent_cli.usage import _openrouter_number
+
+    with pytest.raises(StoreError, match="finite number"):
+        _openrouter_number(10**400, "usage")
