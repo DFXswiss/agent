@@ -42,6 +42,88 @@ _ERROR_LEVEL = re.compile(r"\b(?:ERROR|FATAL|PANIC|CRITICAL)\b")
 _UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+# The blockchain and payment-rail names the platform already exposes as transfer
+# options, current as of 2026-08-31 — masked in the template signature so a
+# per-chain error variant ("Timeout updating balances for Ethereum" vs "...for
+# Polygon") groups under one coarser template instead of fragmenting one
+# fingerprint per chain. Refresh when that list changes; there is no automated sync.
+_KNOWN_CHAINS = frozenset(
+    {
+        "DeFiChain", "Ethereum", "Arbitrum", "Polygon", "BinanceSmartChain", "Binance",
+        "Kraken", "Base", "Optimism", "Citrea", "MEXC", "XT", "Railgun", "Sumixx",
+        "InternetComputer", "Scrypt", "Sepolia", "MaerkiBaumann", "Checkout", "Kaleido",
+        "Solana", "Zano", "Frick", "Tron", "Yapeal", "Talium", "OlkyFrozen", "Haqq",
+        "Bitcoin", "CitreaTestnet", "Gnosis", "KucoinPay", "Spark", "Lightning", "Firo",
+        "Olkypay", "BitcoinTestnet4", "BinancePay", "Arkade", "Cardano", "Monero",
+    }
+)
+
+
+def _token_pattern(names: frozenset[str]) -> re.Pattern[str]:
+    """Alternation over known names, longest-first, anchored on both sides.
+
+    The anchors alone settle names made only of word characters: "Bitcoin"
+    inside "BitcoinTestnet4" fails its own trailing look-ahead, so the engine
+    backtracks to the longer alternative whatever the order. Ordering is what
+    settles the rest — "USDC" inside "USDC.e" is followed by ".", which is not a
+    word character, so the short alternative would match and strip the ticker
+    down to the wrong asset unless the longer one is tried first.
+
+    Anchored on both sides with a word-character look-around so a name only
+    matches as a whole token. That class is Unicode-aware, so a ticker glued to
+    non-Latin letters or to an underscore is not a ticker either:
+    without that, "Base" matches inside "Based", "SOL" inside "RESOLVE", "COMP"
+    inside "COMPLETE" and "DAI" inside "DAILY", which would mask unrelated words
+    and label an unrelated error as a chain/asset variant. The anchors are
+    explicit look-arounds rather than \b because several names are not
+    word-character-only ("USDC.e"). Matching stays case-sensitive on purpose:
+    lowercase prose words like "usd" in "token tether -> usd" are not tickers."""
+    ordered = sorted(names, key=len, reverse=True)
+    alternatives: list[str] = []
+    for name in ordered:
+        # A shorter name that merely prefixes a longer one is normally settled by
+        # trying the longer one first. That breaks when the longer one continues
+        # with a non-word character: "USDC.e" glued to more text fails its own
+        # trailing boundary, and the engine falls back to "USDC", whose boundary
+        # passes because "." is not a word character. Block those continuations
+        # so the short name loses too, exactly as it would inside "USDC_balance".
+        blockers = "".join(
+            f"(?!{re.escape(longer[len(name):])})"
+            for longer in ordered
+            if longer.startswith(name)
+            and len(longer) > len(name)
+            # Word characters, not just alphanumerics: an underscore continuation
+            # is already handled by the trailing boundary below, so the predicate
+            # has to mean the same thing that boundary does.
+            and re.match(r"\w", longer[len(name)]) is None
+        )
+        alternatives.append(re.escape(name) + blockers)
+    return re.compile(rf"(?<!\w)(?:{'|'.join(alternatives)})(?!\w)")
+
+
+_CHAIN_TOKEN = _token_pattern(_KNOWN_CHAINS)
+# Asset tickers the platform lists, current as of 2026-08-31, masked the same way
+# as chains — e.g. "Balance for Arbitrum/USDC went..." vs ".../WBTC went..." would
+# otherwise stay separate templates. Kept to tickers available on 2+ chains (a
+# defensible cut against one-off and legacy stock-tokenization artifacts), plus two
+# single-chain tickers (GMX, TGT) that the 2+-chains cut would otherwise have
+# missed even though real balance-check errors named them. Refresh when the listed
+# assets change; there is no automated sync.
+_KNOWN_ASSETS = frozenset(
+    {
+        "1INCH", "AAVE", "ADA", "APE", "ARB", "AXS",
+        "BAT", "BNB", "BTC", "CHF", "CHZ", "COMP",
+        "CRV", "DAI", "DEPS", "DFI", "ENJ", "ETH",
+        "EUR", "EURC", "EURS", "EURt", "GRT", "JUSD",
+        "LINK", "MANA", "MATIC", "MKR", "ONDO", "POL",
+        "QNT", "REALU", "RPL", "SAND", "SNX", "SOL",
+        "SUSHI", "TRX", "TUSD", "UNI", "USD", "USDC",
+        "USDC.e", "USDT", "WBTC", "WETH", "WFPS", "XCHF",
+        "XMR", "ZANO", "ZCHF", "cBTC", "dEURO", "GMX",
+        "TGT",
+    }
+)
+_ASSET_TOKEN = _token_pattern(_KNOWN_ASSETS)
 _DIGITS = re.compile(r"\d+")
 _SPACE = re.compile(r"\s+")
 _CREDENTIAL_KEYS = frozenset(
@@ -206,6 +288,61 @@ def stack_sig(line: str) -> str:
     norm = _DIGITS.sub("", norm)
     norm = _SPACE.sub(" ", norm).strip().lower()
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def template_signature(line: str) -> str:
+    """Coarser than stack_sig: also masks known blockchain and payment-rail
+    names and asset tickers (see _KNOWN_CHAINS/_KNOWN_ASSETS), so a per-chain or
+    per-token error variant groups under one coarser template instead of
+    fragmenting into one fingerprint per chain/token pair. error.seen identity
+    keeps using the finer-grained fingerprint()/stack_sig() so per-variant
+    count/last_seen tracking stays exact."""
+    norm = redact(strip_ansi(line))
+    norm = _UUID.sub("", norm)
+    norm = _CHAIN_TOKEN.sub("<CHAIN>", norm)
+    norm = _ASSET_TOKEN.sub("<ASSET>", norm)
+    norm = _DIGITS.sub("", norm)
+    norm = _SPACE.sub(" ", norm).strip().lower()
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def _escape_field(value: str) -> str:
+    """Make a field safe to join with "|".
+
+    service, error_class and environment are free text from the log source, so
+    an unescaped join is ambiguous: service="a", error_class="b|c" and
+    service="a|b", error_class="c" would produce the same fingerprint and group
+    two unrelated errors under one template. Percent-escaping "%" first and then
+    "|" is reversible, so distinct field tuples stay distinct."""
+    return value.replace("%", "%25").replace("|", "%7C")
+
+
+def template_fingerprint(
+    *, service: str, error_class: str, template_sig: str, environment: str
+) -> str:
+    return "|".join(
+        (
+            _escape_field(service),
+            _escape_field(error_class),
+            template_sig,
+            _escape_field(environment),
+        )
+    )
+
+
+def known_chain_in(line: str) -> str | None:
+    """The first known chain or payment-rail name present in the line, if any.
+    _KNOWN_CHAINS covers both, since the platform exposes them as one set of
+    transfer options. Most error lines name neither; those return None."""
+    match = _CHAIN_TOKEN.search(line)
+    return match.group(0) if match is not None else None
+
+
+def known_asset_in(line: str) -> str | None:
+    """The first known asset ticker present in the line, if any — same purpose
+    as known_chain_in, for the token half of a chain/token variant label."""
+    match = _ASSET_TOKEN.search(line)
+    return match.group(0) if match is not None else None
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -472,6 +609,12 @@ def _apply_lines(
             stack_sig=stack_sig(redacted),
             environment=environment,
         )
+        template_fp = template_fingerprint(
+            service=service,
+            error_class=cls,
+            template_sig=template_signature(redacted),
+            environment=environment,
+        )
         server = item.get("server")
         container = item.get("container")
         line_fp = None
@@ -490,6 +633,7 @@ def _apply_lines(
             payload_obj["count"] = count + 1
             payload_obj["last_seen"] = ts
             payload_obj["excerpt"] = excerpt
+            payload_obj["template_fingerprint"] = template_fp
             if line_fp is not None:
                 payload_obj["line_fingerprint"] = line_fp
             else:
@@ -503,6 +647,7 @@ def _apply_lines(
         aid = str(uuid.uuid4())
         payload_obj = {
             "fingerprint": fp,
+            "template_fingerprint": template_fp,
             "service": service,
             "environment": environment,
             "class": cls,
