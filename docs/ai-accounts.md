@@ -116,7 +116,9 @@ the field stays absent when both are equal. Every later check for that task (`ag
 `implementer`,
 `gate record`, `allow`, `next`, `run`, the coordinator gates) uses the pinned
 values, so changing `models` or `implementer` affects only tasks created
-afterwards, whether by the CLI, the issue coordinator or error-fix. The issue coordinator also hashes the device's non-default `models` into each accepted
+afterwards, whether by the CLI or error-fix. The issue coordinator is the exception: it refuses a
+separate implementer at preflight, so setting one stops every coordinator tick, including for
+tasks it has already accepted, until `implementer` is removed or set to `models.first`. It also hashes the device's non-default `models` into each accepted
 task's execution binding: after a change, tasks it already accepted stop with
 "task execution configuration changed" until the configuration is restored. For the PR reviewer roles,
 `agent agent start` accepts any supported provider and `gate record` enforces the
