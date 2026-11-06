@@ -3083,6 +3083,24 @@ def test_preflight_refuses_codex_as_first_model(tmp_path: Path, monkeypatch: pyt
         preflight_worker(store, worker, fake)
 
 
+def test_preflight_refuses_a_separate_implementer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["implementer"] = "deepseek"
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
+        preflight_worker(store, worker, fake)
+
+
 
 def _claude_first_manifest(home: Path) -> None:
     path = home / "ai-accounts.json"
@@ -3204,6 +3222,13 @@ def test_first_slot_vendor_refuses_a_codex_pin() -> None:
 
     with pytest.raises(CoordinatorError, match="models.first = codex"):
         _first_slot_vendor({"models": {"first": "codex", "second": "grok"}})
+    with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
+        _first_slot_vendor(
+            {
+                "models": {"first": "grok", "second": "codex"},
+                "implementer": "deepseek",
+            }
+        )
     assert _first_slot_vendor({}) == "grok"
 
 

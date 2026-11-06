@@ -961,8 +961,8 @@ def test_implementer_start_requires_the_first_slot(
     tid = _last_task_id(capsys.readouterr().out)
     run(tmp_path, ["round", "start", "--task", tid])
     capsys.readouterr()
-    # The coordinator binds an implementer lane only for slot first.
-    with pytest.raises(SystemExit, match=r"implementer requires --vendor grok \(configured model slot first\)"):
+    # Without a separate pin, the task resolves its implementer to slot first.
+    with pytest.raises(SystemExit, match=r"implementer requires --vendor grok \(configured implementer\)"):
         run(
             tmp_path,
             [
@@ -3245,6 +3245,69 @@ def _start_pr_reviewer(
         ],
     )
     return _last_agent_id(capsys.readouterr().out)
+
+
+def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "models": {"first": "grok", "second": "codex"},
+                "implementer": "deepseek",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tid = _spine_session_task(tmp_path, capsys)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "deepseek", "--round", "1",
+        ],
+    )
+    implementer_id = _last_agent_id(capsys.readouterr().out)
+    with pytest.raises(
+        SystemExit,
+        match="implementer requires --vendor deepseek \\(configured implementer\\)",
+    ):
+        run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "implementer", "--vendor", "grok", "--round", "1",
+            ],
+        )
+    run(tmp_path, ["agent", "finish", "--id", implementer_id, "--verdict", "done"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "reviewer", "--vendor", "grok", "--round", "1",
+        ],
+    )
+    assert _last_agent_id(capsys.readouterr().out)
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+        run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "reviewer", "--vendor", "deepseek", "--round", "1",
+            ],
+        )
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+        run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid, "--stage", "grok-pr",
+                "--dimension", "quality", "--vendor", "deepseek",
+                "--verdict", "approved", "--head", "abcdef0", "--agent", "missing",
+            ],
+        )
 
 
 def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

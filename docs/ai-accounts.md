@@ -5,16 +5,17 @@ user-defined roles from `$AGENT_HOME/ai-accounts.json`. Installation creates no
 accounts, roles, or session selections. A missing file, `{}`, or null/empty
 `accounts`, `roles`, `sessions` and `lanes` leaves the configuration empty. An
 absent `models` block pins the historical order `grok`, then `codex` on new tasks
-and is how tasks without a pin are read; it authorizes no launch without lane
-bindings. There is no
+and is how tasks without a pin are read. An absent `implementer` uses
+`models.first`; neither selection authorizes a launch without lane bindings.
+There is no
 implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
 This device-local manifest is used by `agent lane run`, the lane steps of
 `agent run`, interactive Grok session starts, optional Grok usage polling,
-and, for its `models` block only, by every task creation (`agent task create`,
+and, for its `models` and `implementer` keys only, by every task creation (`agent task create`,
 the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, an
-unknown top-level key or a malformed `models` block therefore stops task
+unknown top-level key or a malformed model selection therefore stops task
 creation. `agent task create` and error-fix tasks ignore errors inside
 `accounts`, `roles`, `sessions` or `lanes`; the issue coordinator validates the
 whole manifest before it accepts a task.
@@ -79,13 +80,27 @@ roles.
 
 ## Model slots
 
-The lane chain has two logical slots. Model slot `first` implements, reviews the
+The lane chain has two logical review slots. Model slot `first` reviews the
 inner loop and runs the first PR review pair; model slot `second` runs the
 second PR review pair. The optional top-level `models` block names the provider
-of each slot:
+of each review slot:
 
 - `first`: `grok`, `codex` or `claude`
 - `second`: `grok`, `codex` or `claude`, different from `first`
+
+The optional top-level `implementer` names the implementation provider. It may
+be `grok`, `codex`, `claude`, or `deepseek`. It must differ from
+`models.second`; matching `models.first` is allowed and means there is no
+separate implementation provider. When the key is absent, the implementer is
+`models.first`. `deepseek` is an implementer value only and remains invalid in
+either `models` slot. For example, a device may configure:
+
+```json
+{
+  "models": {"first": "codex", "second": "grok"},
+  "implementer": "deepseek"
+}
+```
 
 Which provider a person works with is this device-local choice; no provider
 name is fixed in the chain. The stored ledger identifiers keep their historical
@@ -95,20 +110,24 @@ names and now mean the slot, not a provider: gate stages `grok-pr` (slot
 without a `models` block keeps the historical order `grok`, then `codex`.
 
 A task pins the device's `models` when it is created (`task create`, the issue
-coordinator, error-fix tasks). Every later check for that task (`agent agent start` for `reviewer` and
+coordinator, error-fix tasks). When the configured implementer differs from
+`models.first`, the task also pins it in its own top-level `implementer` field;
+the field stays absent when both are equal. Every later check for that task (`agent agent start` for `reviewer` and
 `implementer`,
 `gate record`, `allow`, `next`, `run`, the coordinator gates) uses the pinned
-value, so changing `models` affects only tasks created afterwards, whether by the
-CLI, the issue coordinator or error-fix. The issue coordinator also hashes the device's non-default `models` into each accepted
+values, so changing `models` or `implementer` affects only tasks created
+afterwards, whether by the CLI, the issue coordinator or error-fix. The issue coordinator also hashes the device's non-default `models` into each accepted
 task's execution binding: after a change, tasks it already accepted stop with
 "task execution configuration changed" until the configuration is restored. For the PR reviewer roles,
 `agent agent start` accepts any supported provider and `gate record` enforces the
-pinned slot provider. Tasks without a pin keep
-`grok`, then `codex`.
+pinned slot provider. Older tasks without an `implementer` field use their
+pinned `models.first`; tasks without `models` keep `grok`, then `codex`.
 
 The issue coordinator refuses `models.first = codex`: its implementer must not
 execute software, and the codex lane (`codex exec --sandbox workspace-write`)
-cannot be kept from running commands. `agent lane run` and `agent run` accept it.
+cannot be kept from running commands. It also refuses a configured implementer
+that differs from `models.first`; separate implementers are not supported by
+the coordinator yet. `agent lane run` and `agent run` accept `models.first = codex`.
 
 The `claude` adapter runs with `--setting-sources user` and `--strict-mcp-config`,
 so a worktree's `.claude/settings.json` hooks and `.mcp.json` never reach a lane.
@@ -118,11 +137,13 @@ accepted: the operator configured them on this device, and the lane model has no
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;
-`--role implementer` requires the provider of slot `first`, like the coordinator
-and the chain, which pin the implementer to `models.first` (closing
+`--role implementer` requires the task's resolved implementer. The chain uses
+that same provider (closing
 `implementer_done` or `conflicts_resolved` of a task created before model slots,
 which carries no pin, also accepts a finished row of the second provider); `agent gate record
 --stage S --vendor X` requires `X` to be the provider of the slot `S` stands for.
+`agent models implementer [--task <uuid>]` prints the device selection or task
+pin by the same rules as `agent models first|second`.
 
 ## Required fields
 

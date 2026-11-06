@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-from .ai_accounts import load_model_slots
+from .ai_accounts import load_model_configuration
 from .allow import (
     ACTIONS,
     CODEX_SECOND_REVIEW_KEYS,
@@ -43,6 +43,7 @@ from .chain import (
     handoff_prompt,
     next_steps,
     required_source,
+    step_vendor,
     step_vendor_label,
     to_json as step_to_json,
 )
@@ -52,7 +53,18 @@ from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
 from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
-from .model_slots import DEFAULT_MODEL_SLOTS, PROVIDER_CHOICES, STAGE_CHOICES, ModelSlots, ModelSlotsError, models_from_snapshot
+from .model_slots import (
+    DEFAULT_MODEL_SLOTS,
+    IMPLEMENTER_PROVIDER_CHOICES,
+    IMPLEMENTER_PROVIDERS,
+    PROVIDER_CHOICES,
+    STAGE_CHOICES,
+    ModelSlots,
+    ModelSlotsError,
+    implementer_from_snapshot,
+    model_pins,
+    models_from_snapshot,
+)
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .runtime import (
@@ -209,10 +221,13 @@ def _same_home(a: Path, b: Path) -> bool:
     return a.expanduser().resolve() == b.expanduser().resolve()
 
 
-def _store_models(store: Any) -> ModelSlots:
-    """Model slots of the device that owns this store (its home, else the CLI home)."""
+def _store_model_pins(store: Any) -> dict[str, Any]:
+    """Task model fields of the device that owns this store (its home, else CLI home)."""
     store_home = getattr(store, "home", None)
-    return load_model_slots(store_home if isinstance(store_home, Path) else home())
+    models, implementer = load_model_configuration(
+        store_home if isinstance(store_home, Path) else home()
+    )
+    return model_pins(models, implementer)
 
 
 def home() -> Path:
@@ -678,7 +693,7 @@ def cmd_task(args: list[str]) -> None:
                     "ref": flag(rest, "--ref"),
                     "state": "open",
                     "current_round": 0,
-                    "models": _store_models(store).as_dict(),
+                    **_store_model_pins(store),
                     "created_at": utcnow(),
                     "updated_at": utcnow(),
                     "change_summary_en": None,
@@ -923,7 +938,10 @@ def cmd_agent(args: list[str]) -> None:
             vendor = require_flag(rest, "--vendor")
             if role not in AGENT_ROLES:
                 die(f"role must be {'|'.join(AGENT_ROLES)}")
-            if vendor not in VENDORS:
+            if role == "implementer":
+                if vendor not in IMPLEMENTER_PROVIDERS:
+                    die(f"vendor must be {IMPLEMENTER_PROVIDER_CHOICES}")
+            elif vendor not in VENDORS:
                 die(f"vendor must be {PROVIDER_CHOICES}")
             round_raw = flag(rest, "--round")
             round_num: int | None = None
@@ -935,8 +953,9 @@ def cmd_agent(args: list[str]) -> None:
             models = models_from_snapshot(store.row("task", tid))
             if role == "reviewer" and vendor != models.first:
                 die(f"reviewer requires --vendor {models.first} (configured model slot first)")
-            if role == "implementer" and vendor != models.first:
-                die(f"implementer requires --vendor {models.first} (configured model slot first)")
+            implementer = implementer_from_snapshot(store.row("task", tid))
+            if role == "implementer" and vendor != implementer:
+                die(f"implementer requires --vendor {implementer} (configured implementer)")
             if round_raw is not None and round_raw != "":
                 if not round_raw.isdigit():
                     die("--round must be an integer")
@@ -2391,6 +2410,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         "pull_opener": "",
         "trusted_pr_guard": None,
         "models": models_from_snapshot(task).as_dict(),
+        "implementer": implementer_from_snapshot(task),
     }
 
 
@@ -2429,6 +2449,7 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
         "session_active": bool(session is not None and session.get("status") == "active"),
         "agents": agents,
         "models": task.get("models") or DEFAULT_MODEL_SLOTS.as_dict(),
+        "implementer": implementer_from_snapshot(task),
         "models_pinned": (store.row("task", tid) or {}).get("models") is not None,
         "gates": task.get("gates") or [],
         "local_checks": task.get("local_checks") or [],
@@ -2647,13 +2668,14 @@ def cmd_next(args: list[str]) -> None:
                     {
                         "task": tid,
                         "workflow": wf,
-                        "next": [step_to_json(s, models) for s in ready],
+                        "next": [step_to_json(s, models, snapshot=snap) for s in ready],
                         "handoff": (
                             handoff_prompt(
                                 ready[0],
                                 task_id=str(tid),
                                 session_id=str(snap.get("session_id")),
                                 models=models,
+                                snapshot=snap,
                             )
                             if len(ready) == 1 and ready[0].kind == "agent"
                             else None
@@ -2671,7 +2693,9 @@ def cmd_next(args: list[str]) -> None:
                 f"next task={tid} {s.key} kind={s.kind} source={required_source(s)}"
             )
             if s.role:
-                line += f" role={s.role} vendor={step_vendor_label(s, models)}"
+                line += (
+                    f" role={s.role} vendor={step_vendor_label(s, models, snapshot=snap)}"
+                )
             print(line)
         if len(ready) == 1 and ready[0].kind == "agent":
             sys.stdout.write(
@@ -2680,6 +2704,7 @@ def cmd_next(args: list[str]) -> None:
                     task_id=str(tid),
                     session_id=str(snap.get("session_id")),
                     models=models,
+                    snapshot=snap,
                 )
             )
     finally:
@@ -2906,8 +2931,22 @@ def _find_working_agent(
     return None
 
 
-def _agent_handoff_exit(step, tid: str, session_id: str | None, models: ModelSlots | None = None) -> None:
-    sys.stdout.write(handoff_prompt(step, task_id=str(tid), session_id=session_id, models=models))
+def _agent_handoff_exit(
+    step,
+    tid: str,
+    session_id: str | None,
+    models: ModelSlots | None = None,
+    snapshot: dict[str, Any] | None = None,
+) -> None:
+    sys.stdout.write(
+        handoff_prompt(
+            step,
+            task_id=str(tid),
+            session_id=session_id,
+            models=models,
+            snapshot=snapshot,
+        )
+    )
     print(
         f"agent: agent step. After the lane: close-step --task {tid} "
         f"--key {step.key} --source script --evidence …",
@@ -2951,6 +2990,7 @@ def cmd_run(args: list[str]) -> None:
                         task_id=str(tid),
                         session_id=str(snap.get("session_id")),
                         models=models_from_snapshot(snap),
+                        snapshot=snap,
                     )
                 )
             return
@@ -3073,7 +3113,9 @@ def cmd_run(args: list[str]) -> None:
                 tmux = "--no-tmux" not in args
                 role = str(step.role or "")
                 models = models_from_snapshot(snap)
-                vendor = models.for_slot(str(step.slot)) if step.slot else models.first
+                vendor = step_vendor(step, models, snapshot=snap)
+                if vendor is None:
+                    die(f"{step.key} has no model provider")
                 session_id = str(snap.get("session_id") or "")
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
@@ -3133,11 +3175,19 @@ def cmd_run(args: list[str]) -> None:
                     task = _need(store, "task", tid)
                 else:
                     _agent_handoff_exit(
-                        step, tid, str(snap.get("session_id")), models_from_snapshot(snap)
+                        step,
+                        tid,
+                        str(snap.get("session_id")),
+                        models_from_snapshot(snap),
+                        snap,
                     )
             else:
                 _agent_handoff_exit(
-                    step, tid, str(snap.get("session_id")), models_from_snapshot(snap)
+                    step,
+                    tid,
+                    str(snap.get("session_id")),
+                    models_from_snapshot(snap),
+                    snap,
                 )
         if close_key is None:
             close_ev = (
@@ -3324,11 +3374,11 @@ def _print_lane_result(result: LaneResult) -> None:
 
 
 def cmd_models(args: list[str]) -> None:
-    """Print model slots: the device's, or with ``--task`` the ones pinned on that task.
+    """Print model slots or implementer: device setting, or the selection pinned on a task.
 
-    ``agent models [first|second] [--task UUID] [--json]``
+    ``agent models [first|second|implementer] [--task UUID] [--json]``
     """
-    usage = "Usage: agent models [first|second] [--task UUID] [--json]"
+    usage = "Usage: agent models [first|second|implementer] [--task UUID] [--json]"
     as_json = "--json" in args
     tid = flag(args, "--task")
     rest = [a for a in args if a != "--json"]
@@ -3339,21 +3389,24 @@ def cmd_models(args: list[str]) -> None:
     if len(positional) > 1 or any(a.startswith("--") for a in rest) or tid == "":
         die(usage)
     if tid is None:
-        models = load_model_slots(home())
+        models, implementer = load_model_configuration(home())
     else:
         store = open_store()
         try:
-            models = models_from_snapshot(_need(store, "task", tid))
+            task = _need(store, "task", tid)
+            models = models_from_snapshot(task)
+            implementer = implementer_from_snapshot(task)
         finally:
             store.close()
     if positional:
         slot = positional[0]
-        if slot not in ("first", "second"):
+        if slot not in ("first", "second", "implementer"):
             die(usage)
+        vendor = implementer if slot == "implementer" else models.for_slot(slot)
         if as_json:
-            print(json.dumps({slot: models.for_slot(slot)}, sort_keys=True))
+            print(json.dumps({slot: vendor}, sort_keys=True))
         else:
-            print(models.for_slot(slot))
+            print(vendor)
         return
     if as_json:
         print(json.dumps(models.as_dict(), sort_keys=True))

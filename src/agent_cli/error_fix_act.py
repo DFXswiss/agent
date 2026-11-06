@@ -15,11 +15,13 @@ from .store import Store, StoreError, utcnow
 Runner = Callable[[list[str]], Completed]
 
 
-def _device_models(store: Store) -> dict[str, str]:
-    """Pin the device's model slots on a new task (historical order when unset)."""
-    from .ai_accounts import load_model_slots
+def _device_model_pins(store: Store) -> dict[str, Any]:
+    """Pin the device's review slots and any separate implementer on a new task."""
+    from .ai_accounts import load_model_configuration
+    from .model_slots import model_pins
 
-    return load_model_slots(store.home).as_dict()
+    models, implementer = load_model_configuration(store.home)
+    return model_pins(models, implementer)
 
 
 
@@ -234,7 +236,7 @@ def _find_or_create_implement_task(
             "payload": {"error_id": error_id, "repo": repo},
             "state": "open",
             "current_round": 0,
-            "models": _device_models(store),
+            **_device_model_pins(store),
             "created_at": utcnow(),
             "updated_at": utcnow(),
             "change_summary_en": None,

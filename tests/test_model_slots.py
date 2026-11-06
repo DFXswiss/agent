@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.ai_accounts import AccountError, load_ai_accounts, load_model_slots
+from agent_cli.ai_accounts import (
+    AccountError,
+    load_ai_accounts,
+    load_model_configuration,
+    load_model_slots,
+)
 from agent_cli.allow import GATE_PAIRS, ready_for_done_blocking
 from agent_cli.chain import handoff_prompt, step_vendor_label, steps_for, to_json
 from agent_cli.coordinator_common import (
@@ -20,10 +25,13 @@ from agent_cli.lane import claude_argv, launch, provider_argv
 from agent_cli.main import main
 from agent_cli.model_slots import (
     DEFAULT_MODEL_SLOTS,
+    IMPLEMENTER_PROVIDERS,
     SUPPORTED_PROVIDERS,
     ModelSlots,
     ModelSlotsError,
+    implementer_from_snapshot,
     models_from_snapshot,
+    parse_implementer,
     parse_model_slots,
 )
 
@@ -33,7 +41,13 @@ CLAUDE_MODEL = "operator-claude-model"
 CODEX_MODEL = "operator-codex-model"
 
 
-def write_claude_first(home: Path, *, device_lanes: bool = True, session: str = "s") -> None:
+def write_claude_first(
+    home: Path,
+    *,
+    device_lanes: bool = True,
+    session: str = "s",
+    implementer: str | None = None,
+) -> None:
     """Operator configuration: model slot first = claude, second = codex."""
     lanes = {
         "claude:implementer": "first-builder",
@@ -55,6 +69,8 @@ def write_claude_first(home: Path, *, device_lanes: bool = True, session: str = 
             "second-reader": {"account": "codex-a", "model": CODEX_MODEL, "access": "read-only"},
         },
     }
+    if implementer is not None:
+        data["implementer"] = implementer
     if device_lanes:
         data["lanes"] = lanes
         data["sessions"] = {}
@@ -69,12 +85,32 @@ def write_claude_first(home: Path, *, device_lanes: bool = True, session: str = 
 @pytest.mark.no_pg
 def test_supported_providers_and_default_order() -> None:
     assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
+    assert IMPLEMENTER_PROVIDERS == frozenset({"grok", "codex", "claude", "deepseek"})
     assert DEFAULT_MODEL_SLOTS == ModelSlots("grok", "codex")
     assert parse_model_slots(None) == DEFAULT_MODEL_SLOTS
     assert models_from_snapshot({}) == DEFAULT_MODEL_SLOTS
     assert models_from_snapshot({"models": {"first": "claude", "second": "grok"}}) == ModelSlots(
         "claude", "grok"
     )
+    assert implementer_from_snapshot({}) == "grok"
+
+
+@pytest.mark.no_pg
+def test_implementer_parsing_and_snapshot_fallback() -> None:
+    models = ModelSlots("claude", "codex")
+    assert parse_implementer(None, models) == "claude"
+    assert parse_implementer("claude", models) == "claude"
+    assert parse_implementer("deepseek", models) == "deepseek"
+    assert implementer_from_snapshot({"models": models.as_dict()}) == "claude"
+    assert implementer_from_snapshot(
+        {"models": models.as_dict(), "implementer": "deepseek"}
+    ) == "deepseek"
+    with pytest.raises(ModelSlotsError, match="implementer must be one of"):
+        parse_implementer("gemini", models)
+    with pytest.raises(ModelSlotsError, match="implementer must differ from models.second"):
+        parse_implementer("codex", models)
+    with pytest.raises(ModelSlotsError, match="models.first must be one of"):
+        parse_model_slots({"first": "deepseek", "second": "codex"})
 
 
 @pytest.mark.no_pg
@@ -113,10 +149,15 @@ def test_models_block_is_validated(raw: object) -> None:
 
 @pytest.mark.no_pg
 def test_manifest_models_and_device_lanes(tmp_path: Path) -> None:
-    write_claude_first(tmp_path)
+    write_claude_first(tmp_path, implementer="deepseek")
     loaded = load_ai_accounts(tmp_path)
     assert loaded.models == ModelSlots("claude", "codex")
+    assert loaded.implementer == "deepseek"
     assert load_model_slots(tmp_path) == ModelSlots("claude", "codex")
+    assert load_model_configuration(tmp_path) == (
+        ModelSlots("claude", "codex"),
+        "deepseek",
+    )
     # Device-wide lanes serve any session that binds nothing of its own.
     implementer = loaded.for_lane("never-bound-session", "implementer", "claude")
     assert implementer.name == "first-builder"
@@ -185,6 +226,24 @@ def test_malformed_models_and_lanes_rejected(tmp_path: Path, change: str) -> Non
     (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(AccountError):
         load_ai_accounts(tmp_path)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(
+    ("implementer", "message"),
+    [
+        ("gemini", "implementer must be one of"),
+        ("codex", "implementer must differ from models.second"),
+    ],
+)
+def test_both_manifest_loaders_reject_invalid_implementer(
+    tmp_path: Path, implementer: str, message: str
+) -> None:
+    write_claude_first(tmp_path, implementer=implementer)
+    with pytest.raises(AccountError, match=message):
+        load_ai_accounts(tmp_path)
+    with pytest.raises(AccountError, match=message):
+        load_model_slots(tmp_path)
 
 
 # --- lane argv --------------------------------------------------------------
@@ -297,6 +356,19 @@ def test_chain_steps_name_slots_not_vendors() -> None:
     assert to_json(steps["grok_pr_quality"], models)["vendor"] == "claude"
     assert to_json(steps["grok_pr_quality"], models)["slot"] == "first"
     assert to_json(steps["grok_pr_quality"])["vendor"] == "grok"
+    separate = {"models": models.as_dict(), "implementer": "deepseek"}
+    assert (
+        step_vendor_label(steps["implementer_done"], models, snapshot=separate)
+        == "deepseek"
+    )
+    assert step_vendor_label(steps["reviewer_approved"], models, snapshot=separate) == "claude"
+    assert "who=deepseek implementer" in handoff_prompt(
+        steps["implementer_done"],
+        task_id="1",
+        session_id="s",
+        models=models,
+        snapshot=separate,
+    )
 
 
 @pytest.mark.no_pg
@@ -374,10 +446,10 @@ def test_cli_agent_start_follows_configured_first_slot(
     _run(tmp_path, ["task", "state", tid, "implementing"])
     _run(tmp_path, ["round", "start", "--task", tid])
     capsys.readouterr()
-    with pytest.raises(SystemExit, match="implementer requires --vendor claude \\(configured model slot first\\)"):
+    with pytest.raises(SystemExit, match="implementer requires --vendor claude \\(configured implementer\\)"):
         _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "implementer", "--vendor", "grok", "--round", "1"])
-    # The second slot's provider is refused too: the coordinator binds an implementer only for slot first.
-    with pytest.raises(SystemExit, match="implementer requires --vendor claude \\(configured model slot first\\)"):
+    # The second review slot is not the task's resolved implementer.
+    with pytest.raises(SystemExit, match="implementer requires --vendor claude \\(configured implementer\\)"):
         _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "implementer", "--vendor", "codex", "--round", "1"])
     _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "implementer", "--vendor", "claude", "--round", "1"])
     aid = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("agent ")][-1].split()[1]
@@ -425,6 +497,22 @@ def test_cli_next_prints_configured_vendor(
     assert "who=claude implementer" in out
 
 
+def test_cli_next_and_run_name_the_separate_implementer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_claude_first(tmp_path, implementer="deepseek")
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["close-step", "--task", tid, "--key", "session_registered", "--source", "script", "--evidence", "registered"])
+    _run(tmp_path, ["close-step", "--task", tid, "--key", "spec_written", "--source", "human", "--evidence", "spec"])
+    capsys.readouterr()
+    _run(tmp_path, ["next", "--task", tid])
+    out = capsys.readouterr().out
+    assert "role=implementer vendor=deepseek" in out
+    assert "who=deepseek implementer" in out
+    _run(tmp_path, ["run", "--task", tid, "--dry-run"])
+    assert "who=deepseek implementer" in capsys.readouterr().out
+
+
 @pytest.mark.no_pg
 def test_cli_models_prints_configured_slots(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _run(tmp_path, ["models"])
@@ -433,6 +521,8 @@ def test_cli_models_prints_configured_slots(tmp_path: Path, capsys: pytest.Captu
     _run(tmp_path, ["models"])
     assert capsys.readouterr().out == "first=claude\nsecond=codex\n"
     _run(tmp_path, ["models", "first"])
+    assert capsys.readouterr().out == "claude\n"
+    _run(tmp_path, ["models", "implementer"])
     assert capsys.readouterr().out == "claude\n"
     _run(tmp_path, ["models", "--json"])
     assert json.loads(capsys.readouterr().out) == {"first": "claude", "second": "codex"}
@@ -459,6 +549,7 @@ def test_coordinator_snapshots_carry_the_configured_models(tmp_path: Path, capsy
         assert task is not None
         snap = checklist_snapshot(store, dict(task))
         assert snap["models"] == {"first": "claude", "second": "codex"}
+        assert snap["implementer"] == "claude"
         assert snap["models_pinned"] is True
         # The chain takes the last matching row, so agents come oldest first.
         for aid, started, status in (("a-old", "2026-01-01T00:00:00Z", "working"), ("a-new", "2026-01-02T00:00:00Z", "done")):
@@ -470,6 +561,7 @@ def test_coordinator_snapshots_carry_the_configured_models(tmp_path: Path, capsy
         assert checklist_snapshot(store, unpinned)["models_pinned"] is False
         task_snap = _task_snapshot(store, tid)
         assert task_snap["models"] == {"first": "claude", "second": "codex"}
+        assert task_snap["implementer"] == "claude"
     finally:
         store.close()
 
@@ -499,6 +591,44 @@ def test_task_pins_models_at_create(tmp_path: Path, capsys: pytest.CaptureFixtur
     store = open_store()
     try:
         assert store.row("task", tid2).get("models") == {"first": "claude", "second": "codex"}
+    finally:
+        store.close()
+
+
+def test_task_pins_only_a_separate_implementer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_claude_first(tmp_path, implementer="claude")
+    tid = _task(tmp_path, capsys)
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert "implementer" not in task
+        assert implementer_from_snapshot(task) == "claude"
+    finally:
+        store.close()
+
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["implementer"] = "deepseek"
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    _run(
+        tmp_path,
+        ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Separate"],
+    )
+    separate_tid = [
+        ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("task ")
+    ][-1].split()[1]
+    store = open_store()
+    try:
+        separate = store.row("task", separate_tid)
+        assert separate is not None
+        assert separate["models"] == {"first": "claude", "second": "codex"}
+        assert separate["implementer"] == "deepseek"
+        assert implementer_from_snapshot(separate) == "deepseek"
     finally:
         store.close()
 
@@ -615,10 +745,28 @@ def test_agent_models_task_prints_the_pin(tmp_path: Path, capsys: pytest.Capture
     assert capsys.readouterr().out == "claude\n"
     _run(tmp_path, ["models", "first", "--task", tid])
     assert capsys.readouterr().out == "grok\n"
+    _run(tmp_path, ["models", "implementer", "--task", tid])
+    assert capsys.readouterr().out == "grok\n"
     _run(tmp_path, ["models", "--task", tid, "--json"])
     assert json.loads(capsys.readouterr().out) == {"first": "grok", "second": "codex"}
     with pytest.raises(SystemExit, match="--task needs a value"):
         _run(tmp_path, ["models", "--task"])
+
+
+def test_agent_models_implementer_prints_device_setting_or_task_pin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_claude_first(tmp_path, implementer="deepseek")
+    tid = _task(tmp_path, capsys)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["implementer"] = "claude"
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    _run(tmp_path, ["models", "implementer"])
+    assert capsys.readouterr().out == "claude\n"
+    _run(tmp_path, ["models", "implementer", "--task", tid])
+    assert capsys.readouterr().out == "deepseek\n"
+    _run(tmp_path, ["models", "implementer", "--task", tid, "--json"])
+    assert json.loads(capsys.readouterr().out) == {"implementer": "deepseek"}
 
 
 @pytest.mark.no_pg
