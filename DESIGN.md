@@ -406,7 +406,7 @@ agent session keep-working --id ID [--once|--follow]
 # later idle: "Continue.". never types while in-flight or when the pane is empty.
 # default / --once is one tick; --follow polls every 30s.
 agent activity add --session ID --type TYPE --payload-file FILE
-agent task create|list|show|state|summary          # spine skill
+agent task create|list|show|state|summary|pr       # spine skill
 agent checklist set …                             # spine skill
 agent round start --task UUID                     # spine skill
 agent agent start|finish …                        # review-loop (implementer|reviewer) or pr-review (pr-reviewer-*)
