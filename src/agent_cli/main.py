@@ -3117,6 +3117,8 @@ def cmd_run(args: list[str]) -> None:
                 if vendor is None:
                     die(f"{step.key} has no model provider")
                 session_id = str(snap.get("session_id") or "")
+                if vendor not in LANE_VENDORS:
+                    _agent_handoff_exit(step, tid, session_id, models, snap)
                 current_round = int(task.get("current_round") or 0)
                 round_num: int | None = None
                 if role in ("implementer", "reviewer"):

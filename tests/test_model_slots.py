@@ -513,6 +513,44 @@ def test_cli_next_and_run_name_the_separate_implementer(
     assert "who=deepseek implementer" in capsys.readouterr().out
 
 
+def test_cli_run_hands_off_a_separate_implementer_without_a_local_lane(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_claude_first(tmp_path, implementer="deepseek")
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["close-step", "--task", tid, "--key", "session_registered", "--source", "script", "--evidence", "registered"])
+    _run(tmp_path, ["close-step", "--task", tid, "--key", "spec_written", "--source", "human", "--evidence", "spec"])
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        _run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--cwd",
+                str(tmp_path),
+                "--no-tmux",
+            ],
+        )
+
+    assert exc.value.code == 2
+    assert "who=deepseek implementer" in capsys.readouterr().out
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        assert store.rows("agent") == []
+    finally:
+        store.close()
+
+
 @pytest.mark.no_pg
 def test_cli_models_prints_configured_slots(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _run(tmp_path, ["models"])

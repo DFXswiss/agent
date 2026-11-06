@@ -3101,6 +3101,32 @@ def test_preflight_refuses_a_separate_implementer(
         preflight_worker(store, worker, fake)
 
 
+def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) -> None:
+    from agent_cli.coordinator_runtime import _create_implement_task
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["implementer"] = "deepseek"
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+
+    with pytest.raises(CoordinatorError, match="separate implementer is not supported"):
+        _create_implement_task(
+            store,
+            worker,
+            repo="example/project",
+            number=7,
+            title="Fix widget",
+            assigned_id="assigned-7",
+            publication_repo="example/project",
+            base="develop",
+            body="Please fix",
+        )
+    assert store.rows("task") == []
+
 
 def _claude_first_manifest(home: Path) -> None:
     path = home / "ai-accounts.json"

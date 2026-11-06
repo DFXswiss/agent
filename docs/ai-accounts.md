@@ -122,6 +122,9 @@ task's execution binding: after a change, tasks it already accepted stop with
 `agent agent start` accepts any supported provider and `gate record` enforces the
 pinned slot provider. Older tasks without an `implementer` field use their
 pinned `models.first`; tasks without `models` keep `grok`, then `codex`.
+When `agent run --spec-file` resolves an implementer without a local lane
+adapter, it deliberately uses the existing handoff path, names the pinned
+provider as the implementer, and creates no agent row.
 
 The issue coordinator refuses `models.first = codex`: its implementer must not
 execute software, and the codex lane (`codex exec --sandbox workspace-write`)
