@@ -5035,20 +5035,23 @@ class A38GuardRateLimitTests(unittest.TestCase):
 
     def test_foreign_rate_limit_class_name_is_not_recognized(self) -> None:
         foreign_base = type("RateLimitError", (RuntimeError,), {})
-        foreign_type = type("WrappedRateLimit", (foreign_base,), {})
-        limited = foreign_type("rate limited from another module")
-        limited.retry_at = datetime.fromtimestamp(_RESET, tz=timezone.utc)
-        limited.retry_epoch = _RESET
-        limited.results = None
-        limited.completed = None
+        foreign_sub = type("WrappedRateLimit", (foreign_base,), {})
+        # The class itself carries the name, and so does only a base class.
+        for foreign_type in (foreign_base, foreign_sub):
+            with self.subTest(foreign_type=foreign_type.__name__):
+                limited = foreign_type("rate limited from another module")
+                limited.retry_at = datetime.fromtimestamp(_RESET, tz=timezone.utc)
+                limited.retry_epoch = _RESET
+                limited.results = None
+                limited.completed = None
 
-        self.assertFalse(a38_errors.is_rate_limit_error(limited))
-        with mock.patch.object(a38_guard, "reconcile_pull", side_effect=limited):
-            with self.assertRaises(foreign_type):
-                _run_guard(
-                    ["reconcile", "--repo", REPO, "--pr", "1"],
-                    FakeAPI().api(),
-                )
+                self.assertFalse(a38_errors.is_rate_limit_error(limited))
+                with mock.patch.object(a38_guard, "reconcile_pull", side_effect=limited):
+                    with self.assertRaises(foreign_type):
+                        _run_guard(
+                            ["reconcile", "--repo", REPO, "--pr", "1"],
+                            FakeAPI().api(),
+                        )
 
     def test_rate_limited_status_invalidation_keeps_the_original_error(self) -> None:
         api = self._limited(
