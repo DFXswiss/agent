@@ -35,7 +35,10 @@ agent agent finish --id <reviewer-uuid> --verdict approved|rejected
 ```
 
 `round start` only from `open|implementing|reviewing|failed`. Refused from
-`pr-review`, `gate-blocked`, and while a latest gate is `unavailable`.
+`pr-review`, `gate-blocked`, and while a latest gate is `unavailable`. It is
+also refused while the task is `reviewing` and the current round has exactly
+one round row with an implementer `done` and no reviewer verdict: start that
+round's reviewer first.
 
 - Implementer `blocked` → task `failed`. Stop.
 - Reviewer `rejected` → new round (`agent round start`).

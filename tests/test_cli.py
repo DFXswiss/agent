@@ -1549,6 +1549,348 @@ def test_round_start_with_working_pr_reviewer_dies(
         run(tmp_path, ["round", "start", "--task", tid])
 
 
+def test_round_start_awaiting_reviewer_dies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="round 1 awaits its reviewer"):
+        run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "reviewer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    capsys.readouterr()
+
+
+def test_round_start_after_blocked_implementer_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "blocked"])
+    capsys.readouterr()
+
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert "round 2" in capsys.readouterr().out
+
+
+def test_round_start_after_rejected_reviewer_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "reviewer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    rev_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", rev_id, "--verdict", "rejected"])
+    capsys.readouterr()
+
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert "round 2" in capsys.readouterr().out
+
+
+def test_round_start_heals_missing_round_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    store = Store(tmp_path)
+    try:
+        rounds = [
+            r for r in store.rows("task_round") if r.get("task_id") == tid
+        ]
+        assert len(rounds) == 1
+        row_id = rounds[0]["id"]
+        store.write("task_round", "delete", row_id, {})
+    finally:
+        store.close()
+
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert "round 2" in capsys.readouterr().out
+
+
+def test_round_start_after_failed_check_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    run(tmp_path, ["check", "record", "--task", tid, "--name", "lint", "--command", "pytest", "--result", "fail"])
+    capsys.readouterr()
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert "round 2" in capsys.readouterr().out
+
+
+def test_round_start_after_rejected_gate_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "grok",
+        ],
+    )
+    reviewer_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", reviewer_id, "--verdict", "rejected"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "rejected",
+            "--head",
+            "abcdef0",
+            "--agent",
+            reviewer_id,
+            "--evidence",
+            "finding",
+        ],
+    )
+    capsys.readouterr()
+
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert "round 2" in capsys.readouterr().out
+
+
+def test_round_start_with_duplicate_round_rows_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
+    run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
+    tid = _last_task_id(capsys.readouterr().out)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+
+    run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "implementer",
+            "--vendor",
+            "grok",
+            "--round",
+            "1",
+        ],
+    )
+    impl_id = _last_agent_id(capsys.readouterr().out)
+    run(tmp_path, ["agent", "finish", "--id", impl_id, "--verdict", "done"])
+    capsys.readouterr()
+
+    row_id = str(uuid.uuid4())
+    store = Store(tmp_path)
+    try:
+        # Both rows are done so only the duplicate row count decides this case.
+        store.write(
+            "task_round",
+            "insert",
+            row_id,
+            {
+                "id": row_id,
+                "task_id": tid,
+                "round": 1,
+                "implementer_verdict": "done",
+                "reviewer_verdict": None,
+                "started_at": utcnow(),
+                "finished_at": None,
+            },
+        )
+    finally:
+        store.close()
+
+    run(tmp_path, ["round", "start", "--task", tid])
+    assert "round 2" in capsys.readouterr().out
+
+
 def test_implementer_finish_after_session_closed_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
