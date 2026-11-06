@@ -1064,6 +1064,7 @@ def test_rate_limit_while_reading_drain_configuration_propagates() -> None:
     with pytest.raises(RateLimitError) as caught:
         drain_held_runs(fake.api(), REPO)
     assert caught.value.retry_epoch == 1700003600
+    assert caught.value.completed is None
     assert fake.deletes == []
 
 
