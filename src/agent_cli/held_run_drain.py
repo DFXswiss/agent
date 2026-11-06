@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from .a38_errors import is_guard_error, is_rate_limit_error
 from .pr_lifecycle import _workflow_run_never_started
 from .workflow_approval import (
     _commit_shas,
@@ -226,6 +227,12 @@ def drain_held_runs(
     except _BudgetExhausted:
         result["aborted"] = "budget"
         return result
+    except RuntimeError as exc:
+        if not is_rate_limit_error(exc):
+            raise
+        result["requests"] = api.used
+        setattr(exc, "completed", {"held_run_drain": dict(result)})
+        raise
     finally:
         result["requests"] = api.used
 
@@ -243,6 +250,7 @@ def _drain_enabled(
         PullCommitsTruncatedError,
         _is_rate_limit_response,
         _open_pull_numbers_for_head,
+        _rate_limit_error,
         _validate_head_branch,
         _validate_repo,
         _validate_sha,
@@ -530,13 +538,16 @@ def _drain_enabled(
             if status == 404:
                 continue
             if _is_rate_limit_response(status, data, headers):
-                result["aborted"] = "rate-limited"
-                return result
+                raise _rate_limit_error(status, reread_path, headers)
             if status in {401, 403}:
                 result["aborted"] = "forbidden"
                 return result
             raise GuardError(f"held run delete HTTP {status}")
-    except GuardError as exc:
+    except RuntimeError as exc:
+        if is_rate_limit_error(exc):
+            raise
+        if not is_guard_error(exc):
+            raise
         if result["deleted"]:
             result["aborted"] = "error"
             result["error"] = str(exc)

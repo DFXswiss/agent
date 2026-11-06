@@ -16,7 +16,9 @@ import argparse
 import base64
 import json
 import hashlib
+import math
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import subprocess
@@ -29,6 +31,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Mapping, MutableMapping, Sequence
 
 from .a38 import load_policy, report_fact_reasons, verify_report
+from .a38_errors import (
+    GuardError,
+    RateLimitError,
+    is_guard_error,
+    is_rate_limit_error,
+)
 from .local_ci import LocalCiError, parse_comment
 from .pr_guard_config import (
     _LOGIN_RE,
@@ -100,18 +108,18 @@ ISSUE_COMMENT_ACTIONS = frozenset({"created", "edited", "deleted"})
 RequestFn = Callable[..., tuple[int, Any, dict[str, str]]]
 
 
-class GuardError(RuntimeError):
-    """Loud failure of the guard (API, config, bounds). Not a soft report miss."""
-
-
 class PullCommitsTruncatedError(GuardError):
     """A pull commit list reached GitHub's fixed API cap."""
 
 
 def _is_guard_error(exc: BaseException) -> bool:
-    return isinstance(exc, GuardError) or (
-        isinstance(exc, RuntimeError) and type(exc).__name__ == "GuardError"
-    )
+    return is_guard_error(exc)
+
+
+def _reraise_rate_limit(exc: BaseException) -> None:
+    """Keep a rate limit from being reported as a soft or authorisation failure."""
+    if is_rate_limit_error(exc):
+        raise exc
 
 
 @dataclass(frozen=True)
@@ -662,6 +670,23 @@ def _header_ci(headers: Mapping[str, Any], name: str) -> tuple[bool, Any]:
     return False, None
 
 
+_POOL_HEADER_NAMES = (
+    "x-ratelimit-used",
+    "x-ratelimit-remaining",
+    "x-ratelimit-limit",
+    "x-ratelimit-reset",
+)
+
+
+def _remaining_is_zero(headers: Mapping[str, Any]) -> bool:
+    present, remaining = _header_ci(headers, "x-ratelimit-remaining")
+    if not present:
+        return False
+    if type(remaining) is int and remaining == 0:
+        return True
+    return isinstance(remaining, str) and remaining.strip() == "0"
+
+
 def _is_rate_limit_response(status: int, data: Any, headers: Mapping[str, Any]) -> bool:
     if status == 429:
         return True
@@ -670,12 +695,8 @@ def _is_rate_limit_response(status: int, data: Any, headers: Mapping[str, Any]) 
     present, _retry_after = _header_ci(headers, "retry-after")
     if present:
         return True
-    present, remaining = _header_ci(headers, "x-ratelimit-remaining")
-    if present:
-        if type(remaining) is int and remaining == 0:
-            return True
-        if isinstance(remaining, str) and remaining.strip() == "0":
-            return True
+    if _remaining_is_zero(headers):
+        return True
     if isinstance(data, dict):
         message = data.get("message")
         if isinstance(message, str) and "rate limit" in message.lower():
@@ -683,11 +704,181 @@ def _is_rate_limit_response(status: int, data: Any, headers: Mapping[str, Any]) 
     return False
 
 
+def _is_primary_rate_limit(status: int, data: Any, headers: Mapping[str, Any]) -> bool:
+    """Primary pool exhaustion. The reset can be an hour away, so do not retry."""
+    return _is_rate_limit_response(status, data, headers) and _remaining_is_zero(headers)
+
+
+def _reset_epoch(headers: Mapping[str, Any]) -> int | None:
+    present, reset = _header_ci(headers, "x-ratelimit-reset")
+    if not present:
+        return None
+    whole = _whole_nonneg_seconds(reset)
+    if whole is not None:
+        return whole
+    epoch = _epoch_seconds(reset)
+    if epoch is None or not math.isfinite(epoch) or epoch < 0:
+        return None
+    try:
+        return int(round(epoch))
+    except (OverflowError, ValueError):
+        return None
+
+
+def _retry_after_epoch(headers: Mapping[str, Any], now_ts: float) -> int | None:
+    present, retry_after = _header_ci(headers, "retry-after")
+    if not present:
+        return None
+    seconds = _whole_nonneg_seconds(retry_after)
+    if seconds is None:
+        return None
+    try:
+        return math.ceil(now_ts + seconds)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _rate_limit_deadline(
+    headers: Mapping[str, Any], *, now: float | None = None
+) -> tuple[datetime | None, int | None]:
+    """When the limit lifts, from ``x-ratelimit-reset`` or ``retry-after``.
+
+    A primary limit prefers the reset epoch. A secondary limit prefers
+    ``retry-after`` seconds from now, then the reset epoch when that is the
+    only clock the response carried.
+    """
+    now_ts = time.time() if now is None else now
+    reset = _utc_deadline(_reset_epoch(headers))
+    after = _utc_deadline(_retry_after_epoch(headers, now_ts))
+    if _remaining_is_zero(headers) and reset[0] is not None:
+        return reset
+    if after[0] is not None:
+        return after
+    return reset
+
+
+def _utc_deadline(epoch: int | None) -> tuple[datetime | None, int | None]:
+    """The epoch as a UTC time, or no time when it is not representable."""
+    if epoch is None:
+        return None, None
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc), epoch
+    except (OSError, OverflowError, ValueError):
+        return None, None
+
+
+def _rate_limit_phrase(retry_at: datetime | None) -> str:
+    if retry_at is None:
+        return "rate limited"
+    return f"rate limited until {retry_at.strftime('%H:%M')} UTC"
+
+
+def _retry_at_text(retry_at: datetime | None) -> str | None:
+    if retry_at is None:
+        return None
+    return retry_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rate_limit_error(status: int, url: str, headers: Mapping[str, Any]) -> RateLimitError:
+    path = urllib.parse.urlparse(url).path or url
+    retry_at, retry_epoch = _rate_limit_deadline(headers)
+    phrase = _rate_limit_phrase(retry_at)
+    return RateLimitError(
+        f"GitHub API {phrase} ({status}) for {path}",
+        retry_at=retry_at,
+        retry_epoch=retry_epoch,
+    )
+
+
+def _endpoint_family(url: str) -> str:
+    """Group one REST path for the run cost line.
+
+    ``git/trees`` and ``actions/runs`` keep the two-segment family. A
+    ``statuses`` segment is its own family. Everything else uses the first
+    segment after ``/repos/{owner}/{name}``, or the first segment of any
+    other path.
+    """
+    path = urllib.parse.urlparse(url).path
+    parts = [part for part in path.split("/") if part]
+    if len(parts) >= 3 and parts[0] == "repos":
+        rest = parts[3:]
+    else:
+        rest = parts
+    if not rest:
+        return "other"
+    if rest[0] == "git" and len(rest) >= 2:
+        return f"git/{rest[1]}"
+    if rest[0] == "actions" and len(rest) >= 2:
+        return f"actions/{rest[1]}"
+    if "statuses" in rest:
+        return "statuses"
+    return rest[0]
+
+
+def _pool_sample(headers: Mapping[str, Any]) -> dict[str, str]:
+    sample: dict[str, str] = {}
+    for name in _POOL_HEADER_NAMES:
+        present, value = _header_ci(headers, name)
+        if not present or value is None or type(value) is bool:
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+        elif isinstance(value, (int, float)):
+            text = str(value)
+        else:
+            continue
+        if text:
+            sample[name] = text
+    return sample
+
+
+def _format_pool(sample: Mapping[str, str] | None) -> str:
+    if not sample:
+        return "-"
+    parts = [f"{name}={sample[name]}" for name in _POOL_HEADER_NAMES if name in sample]
+    return ",".join(parts) if parts else "-"
+
+
+def _format_api_cost(api: Any | None) -> str:
+    raw_count = getattr(api, "request_count", None)
+    count = raw_count if type(raw_count) is int and raw_count >= 0 else 0
+    raw_families = getattr(api, "requests_by_family", None)
+    families = (
+        raw_families
+        if isinstance(raw_families, Mapping)
+        and all(
+            isinstance(name, str) and type(value) is int
+            for name, value in raw_families.items()
+        )
+        else {}
+    )
+    if families:
+        family_text = ",".join(f"{name}:{families[name]}" for name in sorted(families))
+    else:
+        family_text = "-"
+    raw_first = getattr(api, "pool_first", None)
+    raw_last = getattr(api, "pool_last", None)
+    first = raw_first if isinstance(raw_first, Mapping) else None
+    last = raw_last if isinstance(raw_last, Mapping) else None
+    return (
+        "a38-guard: api cost "
+        f"requests={count} families={family_text} "
+        f"pool_first={_format_pool(first)} pool_last={_format_pool(last)}"
+    )
+
+
+def _print_api_cost(api: Any | None) -> None:
+    print(_format_api_cost(api), file=sys.stderr, flush=True)
+
+
 def _whole_nonneg_seconds(value: Any) -> int | None:
     if type(value) is int and value >= 0:
         return value
     if isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()) is not None:
-        return int(value.strip())
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
     return None
 
 
@@ -695,14 +886,17 @@ def _epoch_seconds(value: Any) -> float | None:
     if type(value) is bool:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        try:
+            return float(value)
+        except OverflowError:
+            return None
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
             return None
         try:
             return float(stripped)
-        except ValueError:
+        except (OverflowError, ValueError):
             return None
     return None
 
@@ -808,6 +1002,24 @@ class GitHubApi:
         self._own_id: int | None = None
         self._own_login: str | None = None
         self._immutable_cache: dict[str, tuple[int, Any, dict[str, str]]] = {}
+        self.request_count = 0
+        self.requests_by_family: dict[str, int] = {}
+        # None until the first response. An empty dict is a response that
+        # carried none of the four pool headers.
+        self.pool_first: dict[str, str] | None = None
+        self.pool_last: dict[str, str] | None = None
+        self._rate_limit: RateLimitError | None = None
+
+    def _count_request(self, url: str) -> None:
+        family = _endpoint_family(url)
+        self.request_count += 1
+        self.requests_by_family[family] = self.requests_by_family.get(family, 0) + 1
+
+    def _note_pool(self, headers: Mapping[str, Any]) -> None:
+        sample = _pool_sample(headers)
+        if self.pool_first is None:
+            self.pool_first = sample
+        self.pool_last = sample
 
     def request(
         self,
@@ -817,6 +1029,9 @@ class GitHubApi:
         body: Any | None = None,
         retry: bool | None = None,
     ) -> tuple[int, Any, dict[str, str]]:
+        # A primary limit already stopped this run. Do not send another request.
+        if self._rate_limit is not None:
+            raise self._rate_limit
         if path_or_url.startswith("https://"):
             url = _ensure_api_url(path_or_url)
         else:
@@ -838,16 +1053,23 @@ class GitHubApi:
         attempts = GET_RETRIES if do_retry else 1
         last_exc: Exception | None = None
         for attempt in range(attempts):
+            if self._rate_limit is not None:
+                raise self._rate_limit
+            self._count_request(url)
             try:
                 status, data, headers = self._request_fn(method_u, url, raw_body)
-            except GuardError:
-                raise
             except Exception as exc:  # noqa: BLE001 — convert to loud GuardError
+                if is_rate_limit_error(exc) or _is_guard_error(exc):
+                    raise
                 last_exc = exc
                 if attempt + 1 >= attempts:
                     raise GuardError(f"GitHub API {method_u} failed: {exc}") from exc
                 self._sleep(RETRY_BACKOFF_S * (attempt + 1))
                 continue
+            self._note_pool(headers)
+            if _is_primary_rate_limit(status, data, headers):
+                self._rate_limit = _rate_limit_error(status, url, headers)
+                raise self._rate_limit
             if status in {502, 503, 504} and do_retry and attempt + 1 < attempts:
                 self._sleep(RETRY_BACKOFF_S * (attempt + 1))
                 continue
@@ -858,6 +1080,9 @@ class GitHubApi:
             ):
                 self._sleep(_rate_limit_sleep_s(headers, attempt))
                 continue
+            if _is_rate_limit_response(status, data, headers):
+                self._rate_limit = _rate_limit_error(status, url, headers)
+                raise self._rate_limit
             result = (status, data, headers)
             if immutable and status in {200, 404} and len(self._immutable_cache) < 128:
                 self._immutable_cache[url] = result
@@ -2363,7 +2588,10 @@ def load_ready_timeline(
             if not isinstance(login, str) or type(actor_id) is not int:
                 continue
             return "ok", (actor_id, login)
-    except GuardError as exc:
+    except RuntimeError as exc:
+        if not _is_guard_error(exc):
+            raise
+        _reraise_rate_limit(exc)
         message = str(exc)
         if (
             "denied (401)" in message
@@ -3280,6 +3508,7 @@ def reconcile_pull(
     last_err: Exception | None = None
     snap: PullSnapshot | None = None
     for _ in range(ASSESS_RETRIES):
+        assessment: Assessment | None = None
         try:
             snap = fetch_pull(api, repo, number)
             assessment = assess_pull(
@@ -3304,15 +3533,38 @@ def reconcile_pull(
             _apply_guard_side_effects(api, published, dry_run=False)
             return published
         except Exception as exc:  # noqa: BLE001 — invalidate after any publish-path failure
+            # A rate limit stops the run. Do not POST a follow-up status.
+            if is_rate_limit_error(exc):
+                if assessment is not None:
+                    setattr(exc, "completed", _completed_steps(assessment))
+                    # A failing verdict the limit kept from being published
+                    # is still a failure of this run.
+                    if _assessment_exit_code(assessment) != 0:
+                        setattr(exc, "failed_before", True)
+                raise
             if _is_guard_error(exc) and "changed before publish" in str(exc):
                 last_err = exc
                 continue
             if publish and not dry_run and snap is not None:
-                invalidate_status(api, snap)
+                _invalidate_after_failure(api, snap)
             raise
     if publish and not dry_run and snap is not None:
-        invalidate_status(api, snap)
+        _invalidate_after_failure(api, snap)
     raise GuardError(f"assessment republish failed after retries: {last_err}")
+
+
+def _invalidate_after_failure(api: GitHubApi, pull: PullSnapshot) -> None:
+    """Invalidate after a real failure; a rate limit here must not hide that failure."""
+    try:
+        invalidate_status(api, pull)
+    except RuntimeError as exc:
+        if not is_rate_limit_error(exc):
+            raise
+        print(
+            "a38-guard: could not invalidate prior status "
+            f"({_rate_limit_phrase(getattr(exc, 'retry_at', None))})",
+            file=sys.stderr,
+        )
 
 
 def invalidate_status(api: GitHubApi, pull: PullSnapshot) -> None:
@@ -3330,7 +3582,11 @@ def invalidate_status(api: GitHubApi, pull: PullSnapshot) -> None:
         )
         if not 200 <= status < 300:
             print("a38-guard: could not invalidate prior status (API denied or unavailable)", file=sys.stderr)
-    except GuardError:
+    except RuntimeError as exc:
+        if is_rate_limit_error(exc):
+            raise
+        if not _is_guard_error(exc):
+            raise
         print("a38-guard: could not invalidate prior status (API denied or unavailable)", file=sys.stderr)
 
 
@@ -3555,6 +3811,11 @@ def _reconcile_workflow_run(
                 runtime_env=runtime_env,
             )
         except Exception as exc:  # noqa: BLE001 — per-PR isolation
+            if is_rate_limit_error(exc):
+                _note_sweep_rate_limit(
+                    exc, results, repo=event_repo, pr=number, failed_before=not all_ok
+                )
+                raise
             results.append({
                 "ok": False, "status": "error", "repo": event_repo,
                 "pr": number, "reasons": [str(exc)],
@@ -3606,7 +3867,11 @@ def reconcile_event(
     own_id: int | None
     try:
         own_id, _ = api.resolve_own_user()
-    except GuardError:
+    except RuntimeError as exc:
+        if is_rate_limit_error(exc):
+            raise
+        if not _is_guard_error(exc):
+            raise
         own_id = None
 
     ignore = event_should_ignore(event_name, payload, own_id=own_id)
@@ -3737,6 +4002,79 @@ def _load_event(
     return name, payload
 
 
+def _log_rate_limited(retry_at: datetime | None) -> None:
+    print(f"a38-guard: {_rate_limit_phrase(retry_at)}", file=sys.stderr, flush=True)
+
+
+def _rate_limited_entry(
+    exc: BaseException, *, repo: str | None = None, pr: int | None = None
+) -> dict[str, Any]:
+    retry_at = getattr(exc, "retry_at", None)
+    retry_epoch = getattr(exc, "retry_epoch", None)
+    completed = getattr(exc, "completed", None)
+    entry: dict[str, Any] = {
+        "ok": False,
+        "status": "rate_limited",
+        "retry_at": _retry_at_text(
+            retry_at if isinstance(retry_at, datetime) else None
+        ),
+        "reasons": [str(exc)],
+    }
+    if type(retry_epoch) is int:
+        entry["retry_epoch"] = retry_epoch
+    if completed is not None:
+        entry["completed"] = completed
+    if repo is not None:
+        entry["repo"] = repo
+    if pr is not None:
+        entry["pr"] = pr
+    return entry
+
+
+def _note_sweep_rate_limit(
+    exc: BaseException,
+    results: list[dict[str, Any]],
+    *,
+    repo: str,
+    pr: int,
+    failed_before: bool,
+) -> None:
+    results.append(_rate_limited_entry(exc, repo=repo, pr=pr))
+    setattr(exc, "results", results)
+    setattr(exc, "failed_before", getattr(exc, "failed_before", False) or failed_before)
+
+
+def _emit_rate_limited(exc: BaseException, args: argparse.Namespace) -> None:
+    retry_at = getattr(exc, "retry_at", None)
+    retry_epoch = getattr(exc, "retry_epoch", None)
+    completed = getattr(exc, "completed", None)
+    results = getattr(exc, "results", None)
+    retry_at = retry_at if isinstance(retry_at, datetime) else None
+    _log_rate_limited(retry_at)
+    payload: dict[str, Any] = {
+        "ok": False,
+        "status": "rate_limited",
+        "retry_at": _retry_at_text(retry_at),
+        "reasons": [str(exc)],
+    }
+    if type(retry_epoch) is int:
+        payload["retry_epoch"] = retry_epoch
+    if completed is not None:
+        payload["completed"] = completed
+    repo = getattr(args, "repo", None)
+    if isinstance(results, list):
+        payload["results"] = results
+        if isinstance(repo, str) and repo:
+            payload["repo"] = repo
+    else:
+        pr = getattr(args, "pr", None)
+        if isinstance(repo, str) and repo:
+            payload["repo"] = repo
+        if type(pr) is int:
+            payload["pr"] = pr
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
 def _assessment_exit_code(assessment: Assessment) -> int:
     """Closed no-ops exit 0. Attribution and unscannable-message hard-fails exit 1
     even on draft/observe and post a failing PR-head status in enforce. Missing
@@ -3753,23 +4091,60 @@ def _assessment_exit_code(assessment: Assessment) -> int:
     ) else 1
 
 
+def _completed_steps(assessment: Assessment) -> dict[str, Any]:
+    """Serialize work that legitimately completed before a rate-limit stop."""
+    return {
+        "writes": list(assessment.writes),
+        "workflow_approvals": list(assessment.workflow_approvals),
+        "environment_approvals": list(assessment.environment_approvals),
+        "ci_results": list(assessment.ci_results),
+        "manual_workflows": list(assessment.manual_workflows),
+        "lifecycle": dict(assessment.lifecycle),
+    }
+
+
 def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | None = None,
          api: GitHubApi | None = None) -> int:
-    arguments = list(argv) if argv is not None else sys.argv[1:]
-    if arguments and arguments[0].startswith("--") and arguments[0] != "--help":
-        arguments.insert(0, "reconcile")
-    args = build_parser().parse_args(arguments)
-    environ: MutableMapping[str, str] = env if env is not None else os.environ
-    if not args.command:
-        build_parser().print_help()
-        return 2
-
+    client: Any | None = None
     try:
-        client = api or GitHubApi(_token_from_env(environ))
-    except GuardError as exc:
-        print(f"a38-guard: {exc}", file=sys.stderr)
-        return 1
+        arguments = list(argv) if argv is not None else sys.argv[1:]
+        if arguments and arguments[0].startswith("--") and arguments[0] != "--help":
+            arguments.insert(0, "reconcile")
+        args = build_parser().parse_args(arguments)
+        environ: MutableMapping[str, str] = env if env is not None else os.environ
+        if not args.command:
+            build_parser().print_help()
+            return 2
 
+        try:
+            client = api or GitHubApi(_token_from_env(environ))
+        except RuntimeError as exc:
+            if not _is_guard_error(exc):
+                raise
+            print(f"a38-guard: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            return _run(args, environ, client)
+        except RuntimeError as exc:
+            if is_rate_limit_error(exc):
+                _emit_rate_limited(exc, args)
+                # The limit itself is not a failure; an earlier real failure
+                # in the same run still is.
+                return 1 if getattr(exc, "failed_before", False) else 0
+            if not _is_guard_error(exc):
+                raise
+            print(f"a38-guard: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        _print_api_cost(client)
+
+
+def _run(
+    args: argparse.Namespace,
+    environ: MutableMapping[str, str],
+    client: GitHubApi,
+) -> int:
     try:
         if args.command == "reconcile":
             dry = bool(args.dry_run or args.no_publish)
@@ -3779,7 +4154,13 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                     raise GuardError("--all-open requires --repo")
                 results = []
                 exit_codes = []
-                numbers = list_open_pulls(client, _validate_repo(args.repo))
+                try:
+                    numbers = list_open_pulls(client, _validate_repo(args.repo))
+                except RuntimeError as exc:
+                    if not is_rate_limit_error(exc):
+                        raise
+                    setattr(exc, "results", results)
+                    raise
                 n = len(numbers)
                 for i, number in enumerate(numbers, start=1):
                     print(
@@ -3797,6 +4178,15 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                             runtime_env=environ,
                         )
                     except Exception as exc:  # noqa: BLE001 — per-PR isolation
+                        if is_rate_limit_error(exc):
+                            _note_sweep_rate_limit(
+                                exc,
+                                results,
+                                repo=args.repo,
+                                pr=number,
+                                failed_before=any(exit_codes),
+                            )
+                            raise
                         results.append({
                             "ok": False, "status": "error", "repo": args.repo,
                             "pr": number, "reasons": [str(exc)],
@@ -3817,7 +4207,17 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
                     drain = drain_held_runs(
                         client, _validate_repo(args.repo), dry_run=dry
                     )
-                except GuardError as exc:
+                except RuntimeError as exc:
+                    if is_rate_limit_error(exc):
+                        setattr(exc, "results", results)
+                        setattr(
+                            exc,
+                            "failed_before",
+                            getattr(exc, "failed_before", False) or any(exit_codes),
+                        )
+                        raise
+                    if not _is_guard_error(exc):
+                        raise
                     print(
                         f"a38-guard: held run drain: {exc}",
                         file=sys.stderr,
@@ -3883,6 +4283,8 @@ def main(argv: Sequence[str] | None = None, *, env: MutableMapping[str, str] | N
 
         raise GuardError(f"unknown command {args.command}")
     except RuntimeError as exc:
+        if is_rate_limit_error(exc):
+            raise
         if not _is_guard_error(exc):
             raise
         print(f"a38-guard: {exc}", file=sys.stderr)

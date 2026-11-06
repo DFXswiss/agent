@@ -31,6 +31,15 @@ from collections.abc import Collection
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
+from .a38_errors import is_guard_error, is_rate_limit_error
+
+
+def _reraise_rate_limit(exc: BaseException) -> None:
+    """A rate limit is not an unreadable review fact."""
+    if is_rate_limit_error(exc):
+        raise exc
+
+
 REVIEW_BEGIN = "<!-- A38-REVIEW:v1 -->"
 REVIEW_END = "<!-- /A38-REVIEW:v1 -->"
 LIFECYCLE_REASON = "Review completion missing"
@@ -1787,7 +1796,8 @@ def _load_threads(api: Any, repo: str, number: int) -> list[str]:
                 },
                 retry=False,
             )
-        except Exception:
+        except Exception as exc:
+            _reraise_rate_limit(exc)
             return ["review thread query failed"]
         if status != 200 or not isinstance(data, Mapping) or data.get("errors"):
             return ["review thread query failed"]
@@ -1829,7 +1839,8 @@ def _head_committed_at(api: Any, repo: str, head: str) -> str | None:
         return None
     try:
         status, data, _headers = api.request("GET", f"/repos/{repo}/commits/{head}")
-    except Exception:
+    except Exception as exc:
+        _reraise_rate_limit(exc)
         return None
     if status != 200 or not isinstance(data, Mapping):
         return None
@@ -1855,7 +1866,8 @@ def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
         status, _data, _headers = api.request(
             "GET", f"/repos/{repo}/contents/REVIEW.md?ref={base_sha}"
         )
-    except Exception:
+    except Exception as exc:
+        _reraise_rate_limit(exc)
         return None
     if status == 200:
         return True
@@ -1865,7 +1877,8 @@ def review_rules_bound(api: Any, repo: str, base_sha: str) -> bool | None:
         commit_status, commit_data, _headers = api.request(
             "GET", f"/repos/{repo}/commits/{base_sha}"
         )
-    except Exception:
+    except Exception as exc:
+        _reraise_rate_limit(exc)
         return None
     if commit_status == 200 and isinstance(commit_data, Mapping):
         return False
@@ -1892,7 +1905,8 @@ def _history_relation(api: Any, repo: str, earlier: str, later: str) -> str:
         status, data, _headers = api.request(
             "GET", f"/repos/{repo}/compare/{earlier}...{later}"
         )
-    except Exception:
+    except Exception as exc:
+        _reraise_rate_limit(exc)
         return "unavailable"
     if status == 404:
         return "other"
@@ -1993,9 +2007,8 @@ def evaluate_review_gate(
     try:
         guard_id, _login = api.resolve_own_user()
     except Exception as exc:
-        from .a38_guard import GuardError
-
-        if not isinstance(exc, GuardError):
+        _reraise_rate_limit(exc)
+        if not is_guard_error(exc):
             raise
         return False, ["guard identity unavailable"]
     if not isinstance(guard_id, int):

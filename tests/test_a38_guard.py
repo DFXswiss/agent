@@ -9,6 +9,9 @@ import base64
 import io
 import json
 import os
+import runpy
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 import unittest
@@ -23,7 +26,13 @@ except ImportError:
     pass
 
 
-from agent_cli import a38_guard, held_run_drain  # noqa: E402
+from agent_cli import (  # noqa: E402
+    a38_errors,
+    a38_guard,
+    a38_review,
+    held_run_drain,
+    readme_only,
+)
 from agent_cli.a38 import (  # noqa: E402
     inventory_omit_reason,
     report_outcome_lines,
@@ -38,6 +47,7 @@ from agent_cli.a38_guard import (  # noqa: E402
     Assessment,
     GitHubApi,
     GuardError,
+    RateLimitError,
     LOCAL_CI_BEGIN,
     LOCAL_CI_END,
     assess_pull,
@@ -4670,6 +4680,938 @@ class A38GuardWorkflowRunTests(unittest.TestCase):
         self.assertIn("github.event.workflow_run.head_sha", text)
         self.assertIn("cancel-in-progress: false", text)
         self.assertNotIn("actions/checkout", text)
+
+
+_RESET = 1_700_003_600
+_NOW = 1_700_000_000
+
+
+def _utc_text(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _utc_hm(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%H:%M")
+
+
+def _run_guard(
+    argv: list[str], api: GitHubApi | None, env: dict[str, str] | None = None
+) -> tuple[int, str, str]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+        code = main(argv, env={} if env is None else env, api=api)
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
+class A38GuardRateLimitTests(unittest.TestCase):
+    def _limited(
+        self,
+        status: int,
+        body: dict[str, Any],
+        headers: dict[str, str],
+        *,
+        calls: list[str] | None = None,
+    ) -> GitHubApi:
+        seen = calls if calls is not None else []
+
+        def request_fn(
+            method: str, url: str, body_bytes: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            seen.append(url)
+            return status, body, headers
+
+        return GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+
+    def test_primary_limit_is_not_retried_and_blocks_later_requests(self) -> None:
+        calls: list[str] = []
+        api = self._limited(
+            403,
+            {"message": "API rate limit exceeded"},
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": str(_RESET),
+            },
+            calls=calls,
+        )
+        with self.assertRaises(RateLimitError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertNotIn("denied", str(caught.exception))
+        self.assertEqual(caught.exception.retry_epoch, _RESET)
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", str(caught.exception))
+        self.assertEqual(len(calls), 1)
+        with self.assertRaises(RateLimitError):
+            api.get_optional(f"/repos/{REPO}/issues/1/comments")
+        with self.assertRaises(RateLimitError):
+            api.paginate(f"/repos/{REPO}/issues/1/comments")
+        self.assertEqual(len(calls), 1)
+
+    def test_out_of_range_reset_is_latched_without_later_request(self) -> None:
+        calls: list[str] = []
+        api = self._limited(
+            403,
+            {"message": "API rate limit exceeded"},
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1" + "0" * 400,
+            },
+            calls=calls,
+        )
+        with self.assertRaises(RateLimitError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertIsNone(caught.exception.retry_at)
+        self.assertIsNone(caught.exception.retry_epoch)
+        with self.assertRaises(RateLimitError) as latched:
+            api.request(
+                "POST",
+                f"/repos/{REPO}/statuses/{HEAD}",
+                body={"state": "error"},
+                retry=False,
+            )
+        self.assertIs(latched.exception, caught.exception)
+        self.assertEqual(len(calls), 1)
+
+    def test_invalid_reset_falls_back_to_valid_retry_after(self) -> None:
+        retry_at, epoch = a38_guard._rate_limit_deadline(
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1" + "0" * 400,
+                "retry-after": "30",
+            },
+            now=_NOW + 0.25,
+        )
+        self.assertEqual(epoch, _NOW + 31)
+        self.assertEqual(retry_at, datetime.fromtimestamp(_NOW + 31, tz=timezone.utc))
+
+    def test_fractional_retry_after_gives_no_time(self) -> None:
+        # The sleep reads retry-after as whole seconds only; the lift time
+        # must not read the same header differently.
+        self.assertEqual(
+            a38_guard._rate_limit_deadline({"retry-after": "1.5"}, now=_NOW),
+            (None, None),
+        )
+
+    def test_primary_write_is_not_retried_or_reported_as_denied(self) -> None:
+        calls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            calls.append(url)
+            return 403, {"message": "API rate limit exceeded"}, {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": str(_RESET),
+            }
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(RateLimitError) as caught:
+            api.request(
+                "POST",
+                f"/repos/{REPO}/statuses/{HEAD}",
+                body={"state": "success", "context": "A38 / report (develop)"},
+                retry=False,
+            )
+        self.assertNotIn("denied", str(caught.exception))
+        self.assertEqual(len(calls), 1)
+        with self.assertRaises(RateLimitError):
+            api.request(
+                "POST",
+                "/graphql",
+                body={"query": "mutation { markPullRequestReadyForReview }"},
+                retry=False,
+            )
+        self.assertEqual(calls, [f"https://api.github.com/repos/{REPO}/statuses/{HEAD}"])
+
+    def test_get_optional_and_paginate_raise_rate_limit(self) -> None:
+        headers = {
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": str(_RESET),
+        }
+        for call in (
+            lambda api: api.get_optional(f"/repos/{REPO}/contents/README.md"),
+            lambda api: api.paginate(f"/repos/{REPO}/pulls/1/reviews"),
+        ):
+            api = self._limited(429, {"message": "rate limit"}, headers)
+            with self.assertRaises(RateLimitError) as caught:
+                call(api)
+            self.assertNotIn("denied", str(caught.exception))
+            self.assertEqual(api.request_count, 1)
+
+    def test_secondary_limit_retries_then_stops(self) -> None:
+        calls: list[str] = []
+        slept: list[float] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            calls.append(url)
+            return 429, {"message": "secondary rate limit"}, {"retry-after": "120"}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=slept.append)
+        with mock.patch("agent_cli.a38_guard.time.time", return_value=_NOW + 0.25):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), a38_guard.GET_RETRIES)
+        self.assertEqual(slept, [60, 60])
+        payload = json.loads(stdout)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(payload["retry_epoch"], _NOW + 121)
+        self.assertEqual(payload["retry_at"], _utc_text(_NOW + 121))
+        self.assertIn(f"rate limited until {_utc_hm(_NOW + 121)} UTC", stderr)
+        self.assertIn(f"requests={a38_guard.GET_RETRIES}", stderr)
+        self.assertIn("api cost", stderr)
+
+    def test_huge_retry_after_is_latched_without_later_request(self) -> None:
+        calls: list[str] = []
+        api = self._limited(
+            429,
+            {"message": "secondary rate limit"},
+            {"retry-after": "1" + "0" * 400},
+            calls=calls,
+        )
+        with self.assertRaises(RateLimitError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertIsNone(caught.exception.retry_at)
+        self.assertIsNone(caught.exception.retry_epoch)
+        self.assertEqual(len(calls), a38_guard.GET_RETRIES)
+        with self.assertRaises(RateLimitError) as latched:
+            api.get_optional(f"/repos/{REPO}/issues/1/comments")
+        self.assertIs(latched.exception, caught.exception)
+        self.assertEqual(len(calls), a38_guard.GET_RETRIES)
+
+    def test_message_only_rate_limit_is_not_authorisation(self) -> None:
+        calls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            calls.append(url)
+            return 403, {"message": "You have exceeded a secondary rate limit"}, {}
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        with self.assertRaises(RateLimitError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertNotIn("denied", str(caught.exception))
+        self.assertIsNone(caught.exception.retry_at)
+        self.assertEqual(len(calls), a38_guard.GET_RETRIES)
+
+    def test_main_reports_rate_limit_without_retry_time(self) -> None:
+        api = self._limited(
+            403,
+            {"message": "You have exceeded a secondary rate limit"},
+            {},
+        )
+        code, stdout, stderr = _run_guard(
+            ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+            api,
+            env={"GH_TOKEN": "fake"},
+        )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertIsNone(payload["retry_at"])
+        self.assertIn("a38-guard: rate limited\n", stderr)
+        self.assertNotIn("rate limited until", stderr)
+
+    def test_authorisation_403_is_unchanged(self) -> None:
+        calls: list[str] = []
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            calls.append(url)
+            return 403, {"message": "Resource not accessible by integration"}, {
+                "x-ratelimit-used": "10",
+                "x-ratelimit-remaining": "4990",
+                "x-ratelimit-limit": "5000",
+                "x-ratelimit-reset": str(_RESET),
+            }
+
+        api = GitHubApi("t", request_fn=request_fn, sleep_fn=lambda _s: None)
+        code, stdout, stderr = _run_guard(
+            ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+            api,
+            env={"GH_TOKEN": "fake"},
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn(
+            "GitHub API denied (403) for /repos/example/public-app/pulls/1: "
+            "Resource not accessible by integration",
+            stderr,
+        )
+        self.assertNotIn("rate limited", stderr)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("requests=1", stderr)
+        self.assertIn("families=pulls:1", stderr)
+        self.assertIn(
+            "pool_first=x-ratelimit-used=10,x-ratelimit-remaining=4990,"
+            "x-ratelimit-limit=5000,x-ratelimit-reset=1700003600",
+            stderr,
+        )
+        self.assertIn("api cost", stderr)
+
+    def test_authorisation_401_with_remaining_zero_is_not_a_rate_limit(self) -> None:
+        calls: list[str] = []
+        api = self._limited(
+            401,
+            {"message": "Bad credentials"},
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(_RESET)},
+            calls=calls,
+        )
+        with self.assertRaises(GuardError) as caught:
+            api.get_json(f"/repos/{REPO}/pulls/1")
+        self.assertNotIsInstance(caught.exception, RateLimitError)
+        self.assertIn("GitHub API denied (401)", str(caught.exception))
+        self.assertEqual(len(calls), 1)
+
+    def test_shared_rate_limit_type_is_recognized_by_helper_modules(self) -> None:
+        self.assertIs(RateLimitError, a38_errors.RateLimitError)
+        exc = a38_errors.RateLimitError(
+            "rate limited", retry_at=None, retry_epoch=None
+        )
+        with self.assertRaises(RateLimitError) as review_caught:
+            a38_review._reraise_rate_limit(exc)
+        self.assertIs(review_caught.exception, exc)
+
+        api = mock.Mock()
+        api.paginate.side_effect = exc
+        with self.assertRaises(RateLimitError) as files_caught:
+            readme_only.list_pull_files(api, REPO, 1)
+        self.assertIs(files_caught.exception, exc)
+
+    def test_module_main_reports_helper_rate_limit(self) -> None:
+        limited = a38_errors.RateLimitError(
+            "GitHub API rate limited while draining held runs",
+            retry_at=datetime.fromtimestamp(_RESET, tz=timezone.utc),
+            retry_epoch=_RESET,
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b"[]"
+        response.headers = {"content-type": "application/json"}
+        response.status = 200
+        opener = mock.Mock()
+        opener.open.return_value = response
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        argv = [
+            "agent_cli.a38_guard",
+            "reconcile",
+            "--repo",
+            REPO,
+            "--all-open",
+        ]
+
+        with mock.patch(
+            "urllib.request.build_opener", return_value=opener
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", side_effect=limited
+        ), mock.patch.object(
+            sys, "argv", argv
+        ), mock.patch.dict(
+            os.environ, {"GH_TOKEN": "fake"}, clear=True
+        ), mock.patch(
+            "sys.stdout", stdout
+        ), mock.patch(
+            "sys.stderr", stderr
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                runpy.run_module(
+                    "agent_cli.a38_guard", run_name="__main__", alter_sys=True
+                )
+
+        self.assertEqual(caught.exception.code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(payload["retry_epoch"], _RESET)
+        self.assertEqual(payload["results"], [])
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr.getvalue())
+        opener.open.assert_called_once()
+
+    def test_foreign_rate_limit_class_name_is_not_recognized(self) -> None:
+        foreign_base = type("RateLimitError", (RuntimeError,), {})
+        foreign_sub = type("WrappedRateLimit", (foreign_base,), {})
+        # The class itself carries the name, and so does only a base class.
+        for foreign_type in (foreign_base, foreign_sub):
+            with self.subTest(foreign_type=foreign_type.__name__):
+                limited = foreign_type("rate limited from another module")
+                limited.retry_at = datetime.fromtimestamp(_RESET, tz=timezone.utc)
+                limited.retry_epoch = _RESET
+                limited.results = None
+                limited.completed = None
+
+                self.assertFalse(a38_errors.is_rate_limit_error(limited))
+                with mock.patch.object(a38_guard, "reconcile_pull", side_effect=limited):
+                    with self.assertRaises(foreign_type):
+                        _run_guard(
+                            ["reconcile", "--repo", REPO, "--pr", "1"],
+                            FakeAPI().api(),
+                        )
+
+    def test_rate_limited_status_invalidation_keeps_the_original_error(self) -> None:
+        api = self._limited(
+            403,
+            {"message": "API rate limit exceeded"},
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": str(_RESET),
+            },
+        )
+        pull = a38_guard.PullSnapshot(
+            repo=REPO,
+            number=1,
+            state="open",
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            private=False,
+            author_id=AUTHOR_ID,
+            author_login="author",
+        )
+        with mock.patch.object(
+            a38_guard, "fetch_pull", return_value=pull
+        ), mock.patch.object(
+            a38_guard, "assess_pull", side_effect=GuardError("assessment failed")
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+        self.assertNotIn('"rate_limited"', stdout)
+        self.assertIn("assessment failed", stderr)
+        self.assertIn(
+            "could not invalidate prior status "
+            f"(rate limited until {_utc_hm(_RESET)} UTC)",
+            stderr,
+        )
+        self.assertEqual(api.request_count, 1)
+
+    def test_sweep_with_blocked_invalidation_does_not_end_green(self) -> None:
+        api = self._limited(
+            403,
+            {"message": "API rate limit exceeded"},
+            {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": str(_RESET),
+            },
+        )
+
+        def pull(_api: GitHubApi, repo: str, number: int) -> Any:
+            return a38_guard.PullSnapshot(
+                repo=repo,
+                number=number,
+                state="open",
+                head_sha=HEAD,
+                base_sha=BASE,
+                base_ref="develop",
+                private=False,
+                author_id=AUTHOR_ID,
+                author_login="author",
+            )
+
+        def drain(client: GitHubApi, repo: str, *, dry_run: bool) -> dict[str, Any]:
+            client.get_json(f"/repos/{repo}/actions/runs")
+            return {}
+
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard, "fetch_pull", side_effect=pull
+        ), mock.patch.object(
+            a38_guard, "assess_pull", side_effect=GuardError("assessment failed")
+        ), mock.patch.object(
+            held_run_drain, "drain_held_runs", side_effect=drain
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "could not invalidate prior status "
+            f"(rate limited until {_utc_hm(_RESET)} UTC)",
+            stderr,
+        )
+        self.assertEqual(api.request_count, 1)
+
+    def test_primary_limit_exits_zero_without_success_writes(self) -> None:
+        fake = FakeAPI()
+        calls: list[tuple[str, str]] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            calls.append((method.upper(), url.split("?", 1)[0]))
+            path = url.split("?", 1)[0]
+            if method.upper() == "GET" and path.endswith(f"/repos/{REPO}/pulls/1"):
+                return 403, {"message": "API rate limit exceeded"}, {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(_RESET),
+                }
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        code, stdout, stderr = _run_guard(
+            ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+            fake.api(),
+            env={"GH_TOKEN": "fake"},
+        )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(payload["repo"], REPO)
+        self.assertEqual(payload["pr"], 1)
+        self.assertEqual(payload["retry_at"], _utc_text(_RESET))
+        self.assertEqual(payload["retry_epoch"], _RESET)
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+        self.assertIn("requests=1", stderr)
+        self.assertIn("families=pulls:1", stderr)
+        self.assertIn("x-ratelimit-remaining=0", stderr)
+        self.assertNotIn("x-ratelimit-used=", stderr)
+        self.assertEqual(fake.writes, [])
+        self.assertEqual(fake.statuses, [])
+        self.assertFalse(any(method == "POST" for method, _url in calls))
+        self.assertFalse(any("graphql" in url or "/approve" in url for _method, url in calls))
+
+    def test_sweep_stops_at_primary_limit(self) -> None:
+        fake = FakeAPI()
+        fake.open_pulls = [1, 2]
+        calls: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            path = url.split("?", 1)[0]
+            calls.append(path)
+            if method.upper() == "GET" and path.endswith(f"/repos/{REPO}/pulls/1"):
+                return 403, {"message": "API rate limit exceeded"}, {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(_RESET),
+                }
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+
+        def drain_must_not_run(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("held run drain must not start after a rate limit")
+
+        with mock.patch.object(held_run_drain, "drain_held_runs", side_effect=drain_must_not_run):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                fake.api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(payload["retry_at"], _utc_text(_RESET))
+        self.assertEqual([item["pr"] for item in payload["results"]], [1])
+        self.assertEqual(payload["results"][0]["status"], "rate_limited")
+        self.assertNotIn("held_run_drain", payload)
+        self.assertFalse(any(path.endswith(f"/repos/{REPO}/pulls/2") for path in calls))
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+        self.assertEqual(fake.writes, [])
+        self.assertEqual(fake.statuses, [])
+
+    def test_drain_rate_limit_keeps_earlier_sweep_failure(self) -> None:
+        fake = FakeAPI()
+        fake.open_pulls = [1]
+        limited = RateLimitError(
+            "GitHub API rate limited while draining held runs",
+            retry_at=datetime.fromtimestamp(_RESET, tz=timezone.utc),
+            retry_epoch=_RESET,
+        )
+        with mock.patch.object(
+            a38_guard,
+            "reconcile_pull",
+            side_effect=GuardError("earlier pull request failed"),
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=limited,
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                fake.api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(payload["retry_at"], _utc_text(_RESET))
+        self.assertEqual(payload["results"][0]["status"], "error")
+        self.assertIn("earlier pull request failed", payload["results"][0]["reasons"])
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+
+    def test_completed_acceptance_is_reported_when_ready_hits_limit(self) -> None:
+        assessment = Assessment(
+            ok=True,
+            status="pass",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+        )
+        pull = a38_guard.PullSnapshot(
+            repo=REPO,
+            number=1,
+            state="open",
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            private=False,
+            author_id=AUTHOR_ID,
+            author_login="author",
+        )
+        limited = RateLimitError(
+            "GitHub API rate limited before Ready",
+            retry_at=datetime.fromtimestamp(_RESET, tz=timezone.utc),
+            retry_epoch=_RESET,
+        )
+
+        def publish(_api: GitHubApi, current: Assessment) -> Assessment:
+            current.writes.extend(
+                [
+                    "comment:create:11",
+                    f"status:create:{status_context_enforce('develop')}",
+                ]
+            )
+            return current
+
+        def later_steps(
+            _api: GitHubApi, current: Assessment, *, dry_run: bool
+        ) -> None:
+            self.assertFalse(dry_run)
+            current.workflow_approvals.append({"run_id": 17, "action": "approved"})
+            current.writes.append("workflow:approve:17")
+            raise limited
+
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch.object(a38_guard, "fetch_pull", return_value=pull), mock.patch.object(
+            a38_guard, "assess_pull", return_value=assessment
+        ), mock.patch.object(
+            a38_guard, "publish_assessment", side_effect=publish
+        ), mock.patch.object(
+            a38_guard, "_apply_guard_side_effects", side_effect=later_steps
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(
+            payload["completed"]["writes"],
+            [
+                "comment:create:11",
+                f"status:create:{status_context_enforce('develop')}",
+                "workflow:approve:17",
+            ],
+        )
+        self.assertEqual(
+            payload["completed"]["workflow_approvals"],
+            [{"run_id": 17, "action": "approved"}],
+        )
+        self.assertNotIn("pull:ready", payload["completed"]["writes"])
+        self.assertEqual(payload["completed"]["lifecycle"], {})
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+
+    def test_step_cut_short_by_limit_is_recorded_in_writes_only(self) -> None:
+        assessment = Assessment(
+            ok=True,
+            status="pass",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+        )
+        limited = RateLimitError(
+            "GitHub API rate limited approving the second run",
+            retry_at=None,
+        )
+
+        def approve(_api: GitHubApi, current: Assessment, *, dry_run: bool) -> list[Any]:
+            current.writes.append("workflow:approve:17")
+            raise limited
+
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch(
+            "agent_cli.workflow_approval.approve_workflow_runs", side_effect=approve
+        ), mock.patch(
+            "agent_cli.environment_approval.approve_environment_deployments",
+            side_effect=lambda *_a, **_k: self.fail("later step ran after the limit"),
+        ):
+            with self.assertRaises(RateLimitError):
+                a38_guard._apply_guard_side_effects(api, assessment, dry_run=False)
+        completed = a38_guard._completed_steps(assessment)
+        self.assertEqual(completed["writes"], ["workflow:approve:17"])
+        self.assertEqual(completed["workflow_approvals"], [])
+        self.assertEqual(completed["environment_approvals"], [])
+
+    def test_cost_line_on_success(self) -> None:
+        fake = FakeAPI()
+        fake.pull["state"] = "closed"
+        seen = {"n": 0}
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            seen["n"] += 1
+            status, data, headers = inner(method, url, body)
+            headers = dict(headers)
+            headers["x-ratelimit-used"] = str(seen["n"])
+            headers["x-ratelimit-remaining"] = str(5000 - seen["n"])
+            headers["x-ratelimit-limit"] = "5000"
+            headers["x-ratelimit-reset"] = str(_RESET)
+            return status, data, headers
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        with mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            return_value={"enabled": False, "deleted": [], "planned": []},
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                fake.api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout)["results"][0]["status"], "closed")
+        self.assertEqual(seen["n"], 2)
+        self.assertIn("requests=2", stderr)
+        self.assertIn("families=pulls:2", stderr)
+        self.assertIn(
+            "pool_first=x-ratelimit-used=1,x-ratelimit-remaining=4999,"
+            "x-ratelimit-limit=5000,x-ratelimit-reset=1700003600",
+            stderr,
+        )
+        self.assertIn(
+            "pool_last=x-ratelimit-used=2,x-ratelimit-remaining=4998,"
+            "x-ratelimit-limit=5000,x-ratelimit-reset=1700003600",
+            stderr,
+        )
+        self.assertEqual(stderr.count("api cost"), 1)
+
+    def test_cost_line_on_failure_without_requests(self) -> None:
+        code, stdout, stderr = _run_guard(
+            ["reconcile", "--repo", REPO, "--pr", "1"],
+            None,
+            env={},
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("GH_TOKEN or GITHUB_TOKEN is required", stderr)
+        self.assertIn(
+            "a38-guard: api cost requests=0 families=- pool_first=- pool_last=-",
+            stderr,
+        )
+
+    def test_cost_line_tolerates_non_github_api_injection(self) -> None:
+        for injected in (mock.Mock(), mock.Mock(spec=GitHubApi)):
+            with self.subTest(injected=injected):
+                self.assertEqual(
+                    a38_guard._format_api_cost(injected),
+                    "a38-guard: api cost requests=0 families=- pool_first=- pool_last=-",
+                )
+
+    def test_cost_line_is_printed_when_argparse_exits(self) -> None:
+        cases = (
+            (["--help"], 0),
+            (["reconcile", "--pr", "not-an-integer"], 2),
+            (["publish", "--repo", REPO], 2),
+        )
+        for argv, expected_code in cases:
+            with self.subTest(argv=argv):
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as caught:
+                        main(argv, env={}, api=mock.Mock())
+                self.assertEqual(caught.exception.code, expected_code)
+                self.assertEqual(stderr.getvalue().count("api cost"), 1)
+                self.assertIn("requests=0", stderr.getvalue())
+                self.assertTrue(
+                    stderr.getvalue().strip().splitlines()[-1].startswith(
+                        "a38-guard: api cost"
+                    )
+                )
+
+    def test_sweep_limit_after_failed_pull_request_exits_one(self) -> None:
+        limited = RateLimitError(
+            "GitHub API rate limited",
+            retry_at=datetime.fromtimestamp(_RESET, tz=timezone.utc),
+            retry_epoch=_RESET,
+        )
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard,
+            "reconcile_pull",
+            side_effect=[GuardError("first pull request failed"), limited],
+        ), mock.patch.object(
+            held_run_drain,
+            "drain_held_runs",
+            side_effect=AssertionError("held run drain must not start after a rate limit"),
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                FakeAPI().api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        payload = json.loads(stdout)
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["status"], "rate_limited")
+        self.assertEqual(
+            [item["status"] for item in payload["results"]], ["error", "rate_limited"]
+        )
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+
+    def test_unpublished_failing_verdict_keeps_exit_one(self) -> None:
+        failing = Assessment(
+            ok=False,
+            status="hard_fail",
+            repo=REPO,
+            pr=1,
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            hard_fail=True,
+        )
+        pull = a38_guard.PullSnapshot(
+            repo=REPO,
+            number=1,
+            state="open",
+            head_sha=HEAD,
+            base_sha=BASE,
+            base_ref="develop",
+            private=False,
+            author_id=AUTHOR_ID,
+            author_login="author",
+        )
+        limited = RateLimitError("GitHub API rate limited before publish", retry_at=None)
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch.object(a38_guard, "fetch_pull", return_value=pull), mock.patch.object(
+            a38_guard, "assess_pull", return_value=failing
+        ), mock.patch.object(a38_guard, "publish_assessment", side_effect=limited):
+            code, stdout, _stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--pr", "1", "--json"],
+                api,
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout)["status"], "rate_limited")
+
+    def test_sweep_keeps_flag_from_current_pull_request(self) -> None:
+        limited = RateLimitError("GitHub API rate limited", retry_at=None)
+        limited.failed_before = True
+        with mock.patch.object(
+            a38_guard, "list_open_pulls", return_value=[1]
+        ), mock.patch.object(a38_guard, "reconcile_pull", side_effect=limited):
+            code, _stdout, _stderr = _run_guard(
+                ["reconcile", "--repo", REPO, "--all-open", "--json"],
+                FakeAPI().api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        self.assertEqual(code, 1)
+
+    def test_multi_pull_event_limit_records_earlier_failure(self) -> None:
+        limited = RateLimitError("GitHub API rate limited", retry_at=None)
+        event = {
+            "workflow_run": {"path": ".github/workflows/test.yml", "head_sha": HEAD},
+            "repository": {"full_name": REPO},
+        }
+        api = GitHubApi(
+            "fake-token",
+            request_fn=lambda *_args, **_kwargs: self.fail("unexpected API request"),
+        )
+        with mock.patch.object(
+            a38_guard, "_open_pull_numbers_for_commit", return_value=[1, 2]
+        ), mock.patch.object(
+            a38_guard,
+            "reconcile_pull",
+            side_effect=[GuardError("first pull request failed"), limited],
+        ):
+            with self.assertRaises(RateLimitError) as caught:
+                a38_guard._reconcile_workflow_run(
+                    api,
+                    payload=event,
+                    repo=None,
+                    pr=None,
+                    dry_run=False,
+                    publish=True,
+                    runtime_revision=None,
+                    runtime_env=None,
+                )
+        self.assertIs(caught.exception, limited)
+        self.assertTrue(caught.exception.failed_before)
+        self.assertEqual(
+            [item["status"] for item in caught.exception.results or []],
+            ["error", "rate_limited"],
+        )
+
+    def test_event_rate_limit_does_not_continue(self) -> None:
+        fake = FakeAPI()
+        calls: list[str] = []
+        inner = fake.request_fn
+
+        def request_fn(
+            method: str, url: str, body: bytes | None = None
+        ) -> tuple[int, Any, dict[str, str]]:
+            path = url.split("?", 1)[0]
+            calls.append(path)
+            if path.endswith("/user"):
+                return 403, {"message": "API rate limit exceeded"}, {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(_RESET),
+                }
+            return inner(method, url, body)
+
+        fake.request_fn = request_fn  # type: ignore[method-assign]
+        payload = {
+            "action": "synchronize",
+            "pull_request": {"number": 1},
+            "repository": {"full_name": REPO},
+        }
+        with mock.patch.object(
+            a38_guard, "_load_event", return_value=("pull_request_target", payload)
+        ):
+            code, stdout, stderr = _run_guard(
+                ["reconcile", "--json"],
+                fake.api(),
+                env={"GH_TOKEN": "fake"},
+            )
+        payload_out = json.loads(stdout)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload_out["status"], "rate_limited")
+        self.assertIn(f"rate limited until {_utc_hm(_RESET)} UTC", stderr)
+        self.assertFalse(any(path.endswith(f"/repos/{REPO}/pulls/1") for path in calls))
+        self.assertEqual(fake.writes, [])
+        self.assertEqual(fake.statuses, [])
 
 
 if __name__ == "__main__":
