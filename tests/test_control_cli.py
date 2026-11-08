@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -511,6 +513,108 @@ def test_missing_lane_execution_refuses_interactive_process_start(
     with pytest.raises(SystemExit, match="lane_execution is not configured"):
         run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_interactive_configuration_is_checked_before_runtime_target_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop(missing)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (tmp_path / "runtime-targets.json").write_text(
+        json.dumps({SESSION_A: ["remote-runtime"]}), encoding="utf-8"
+    )
+    calls: list[list[str]] = []
+
+    def runtime_factory(*_args: object, **kwargs: object) -> Runtime:
+        targets = kwargs.get("tmux_targets")
+        assert targets == {SESSION_A: ["remote-runtime"]}
+        assert isinstance(targets, dict)
+        return Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", ""),
+            tmux_targets=targets,
+        )
+
+    monkeypatch.setattr(main_mod, "Runtime", runtime_factory)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert calls == []
+
+
+def test_assignment_starters_forward_the_workspace_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sid = "assigned-session"
+    store = SimpleNamespace(home=tmp_path, close=lambda: None)
+    runtime = SimpleNamespace(exists=lambda _sid: False)
+    starts: list[tuple[str, str | None]] = []
+
+    def session_start(
+        _store: object,
+        _runtime: object,
+        session_id: str,
+        _command: str | None,
+        _cols: int | None,
+        _rows: int | None,
+        **kwargs: object,
+    ) -> str:
+        cwd = kwargs.get("cwd")
+        assert cwd is None or isinstance(cwd, str)
+        starts.append((session_id, cwd))
+        return "tmux-name"
+
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.setattr(main_mod, "open_store", lambda: store)
+    monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
+    monkeypatch.setattr(main_mod, "_session_start", session_start)
+    monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
+    monkeypatch.setattr(main_mod, "assigned_workspace_root", lambda _store: tmp_path / "watch")
+    monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: sid)
+    monkeypatch.setattr(main_mod, "pending_assigned", lambda _store, _sid: [{"id": "assignment"}])
+
+    def dispatch(
+        _store: object,
+        _activity_id: str,
+        *,
+        start: Callable[[str, Path], None],
+        workspace_root: Path,
+        **_kwargs: object,
+    ) -> str:
+        start(sid, workspace_root / sid)
+        return "started"
+
+    monkeypatch.setattr(main_mod, "dispatch_assigned", dispatch)
+    main_mod.cmd_watch(["assigned"])
+
+    import agent_cli.supervise as supervise_mod
+    import agent_cli.telegram_act as telegram_mod
+
+    supervise_cwd = tmp_path / "supervise" / sid
+
+    def tick(
+        *_args: object,
+        start: Callable[[str, Path], None],
+        **_kwargs: object,
+    ) -> str:
+        start(sid, supervise_cwd)
+        return "supervise commission"
+
+    monkeypatch.setattr(supervise_mod, "tick", tick)
+    monkeypatch.setattr(telegram_mod, "reset_idle_clock", lambda *a, **k: None)
+    monkeypatch.setattr(telegram_mod, "notify_status", lambda *a, **k: None)
+    main_mod.cmd_supervise(["--session", sid, "--once"])
+
+    assert starts == [
+        (sid, str(tmp_path / "watch" / sid)),
+        (sid, str(supervise_cwd)),
+    ]
 
 
 def test_remote_interactive_mode_is_rejected_before_process_start(

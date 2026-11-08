@@ -2231,11 +2231,11 @@ def _session_start(
         existing_s = existing if isinstance(existing, str) and existing else ""
         if existing_s and meta.get("ai_binding") != binding:
             die("interactive AI binding changed or is missing; configure a new session instead of resuming")
+        ai.require_model_configuration()
+        ai.require_lane_execution()
         if not runtime.available(sid):
             die("tmux is not installed")
         runtime_exists = runtime.exists(sid)
-        ai.require_model_configuration()
-        ai.require_lane_execution()
         if runtime_exists and not existing_s:
             runtime.stop(sid)
         new_id = grok_new_session_id() if not existing_s else ""
@@ -2817,8 +2817,7 @@ def cmd_next(args: list[str]) -> None:
         _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid)
         wf = str(snap["workflow"])
-        # Display-only resolution: `next` may show an old task's recorded mapping.
-        models = models_from_snapshot(snap)
+        models = models_for_new_record(snap)
         ready = next_steps(wf, snap["checklist"], spine_only=True)
         if as_json:
             print(
@@ -3150,8 +3149,7 @@ def cmd_run(args: list[str]) -> None:
                         step,
                         task_id=str(tid),
                         session_id=str(snap.get("session_id")),
-                        # Dry-run output only: no lane or ledger row is created.
-                        models=models_from_snapshot(snap),
+                        models=models_for_new_record(snap),
                         snapshot=snap,
                     )
                 )
@@ -3569,9 +3567,8 @@ def cmd_models(args: list[str]) -> None:
         store = open_store()
         try:
             task = _need(store, "task", tid)
-            # Display-only task lookup: legacy recorded selections remain visible.
-            models = models_from_snapshot(task)
-            implementer = implementer_from_snapshot(task)
+            models = models_for_new_record(task)
+            implementer = implementer_for_new_record(task)
         finally:
             store.close()
     if positional:
@@ -3861,6 +3858,7 @@ def cmd_watch(args: list[str]) -> None:
                                 None,
                                 None,
                                 provider="grok",
+                                cwd=str(cwd),
                             ),
                             knock=lambda activity_id: deliver(store, _runtime(), activity_id),
                             workspace_root=workspace_root,
@@ -3952,7 +3950,6 @@ def cmd_supervise(args: list[str]) -> None:
         reset_idle_clock(store, working=runtime.exists(sid))
 
         def start(session_id: str, cwd: Path) -> None:
-            del cwd
             _session_start(
                 store,
                 runtime,
@@ -3961,6 +3958,7 @@ def cmd_supervise(args: list[str]) -> None:
                 None,
                 None,
                 provider="grok",
+                cwd=str(cwd),
             )
 
         queued = False

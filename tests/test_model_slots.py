@@ -701,6 +701,35 @@ def test_legacy_task_without_models_rejects_a_new_lane_start(
         )
 
 
+def test_legacy_task_without_models_rejects_new_work_queries_and_handoffs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _task(tmp_path, capsys)
+    _run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "session_registered",
+            "--source", "script", "--evidence", "registered",
+        ],
+    )
+    _run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "spec_written",
+            "--source", "human", "--evidence", "spec",
+        ],
+    )
+    _remove_task_models(tmp_path, tid)
+
+    for command in (
+        ["next", "--task", tid],
+        ["run", "--task", tid, "--dry-run"],
+        ["models", "--task", tid],
+    ):
+        with pytest.raises(SystemExit, match="task models is not configured"):
+            _run(tmp_path, command)
+
+
 def test_cli_next_prints_configured_vendor(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

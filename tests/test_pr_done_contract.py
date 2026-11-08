@@ -72,6 +72,12 @@ def test_design_locks_ready_for_review() -> None:
     assert "ledger `task-done` is not pull-request completion" in section_prose
 
 
+def test_design_records_only_the_normalized_lane_execution_mode() -> None:
+    text = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    assert "normalized lane-execution mode)." in text
+    assert "normalized lane-execution mode and host" not in text
+
+
 def test_pr_review_and_spine_point_at_ready_for_review() -> None:
     pr_review = (PACKAGED / "pr-review" / "SKILL.md").read_text(encoding="utf-8")
     spine = (PACKAGED / "spine" / "SKILL.md").read_text(encoding="utf-8")
