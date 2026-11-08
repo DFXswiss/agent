@@ -2189,6 +2189,47 @@ def _dim_value(raw: object, label: str) -> int:
     return value
 
 
+def _interactive_preflight(
+    store: Store,
+    sid: str,
+    *,
+    meta: dict[str, Any] | None = None,
+    model: str | None = None,
+) -> tuple[Any, dict[str, Any], str]:
+    """Validate an interactive Grok binding before touching its runtime."""
+    from .ai_accounts import load_ai_accounts
+
+    if meta is None:
+        row = _need(store, "session", sid)
+        raw = row.get("runtime")
+        meta = dict(raw) if isinstance(raw, dict) else {}
+    ai = load_ai_accounts(store.home, defer_model_configuration=True)
+    selected = ai.for_session(sid)
+    if selected.account.provider != "grok":
+        die("configured interactive role does not match the requested provider")
+    if model is not None and model != selected.model:
+        die("--model does not match the configured interactive role")
+    binding = {
+        "role": selected.name,
+        "account": selected.account.name,
+        "provider": selected.account.provider,
+        "model": selected.model,
+        "access": selected.access,
+        "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+    }
+    existing = meta.get("grok_session_id")
+    existing_s = existing if isinstance(existing, str) and existing else ""
+    if existing_s and meta.get("ai_binding") != binding:
+        die(
+            "interactive AI binding changed or is missing; "
+            "configure a new session instead of resuming"
+        )
+    ai.require_model_configuration()
+    ai.require_lane_execution()
+    return selected, binding, existing_s
+
+
 def _session_start(
     store: Store,
     runtime: Runtime,
@@ -2216,27 +2257,9 @@ def _session_start(
     command_argv: list[str] | None = None
     start_command = command
     if provider == "grok":
-        from .ai_accounts import load_ai_accounts
-
-        ai = load_ai_accounts(store.home, defer_model_configuration=True)
-        selected = ai.for_session(sid)
-        if selected.account.provider != provider:
-            die("configured interactive role does not match the requested provider")
-        if model is not None and model != selected.model:
-            die("--model does not match the configured interactive role")
-        binding = {
-            "role": selected.name, "account": selected.account.name,
-            "provider": selected.account.provider, "model": selected.model,
-            "access": selected.access,
-            "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
-            "lane_execution": {"mode": "this-device-is-lane-host"},
-        }
-        existing = meta.get("grok_session_id")
-        existing_s = existing if isinstance(existing, str) and existing else ""
-        if existing_s and meta.get("ai_binding") != binding:
-            die("interactive AI binding changed or is missing; configure a new session instead of resuming")
-        ai.require_model_configuration()
-        ai.require_lane_execution()
+        selected, binding, existing_s = _interactive_preflight(
+            store, sid, meta=meta, model=model
+        )
         if not runtime.available(sid):
             die("tmux is not installed")
         runtime_exists = runtime.exists(sid)
@@ -3850,23 +3873,36 @@ def cmd_watch(args: list[str]) -> None:
                 if pending:
                     head_id = pending[0].get("id")
                     if isinstance(head_id, str) and head_id:
-                        dispatch_assigned(
-                            store,
-                            head_id,
-                            sync=lambda: _sync_once(store),
-                            start=lambda session_id, cwd: _session_start(
+                        runtime = _runtime()
+
+                        def start(session_id: str, cwd: Path) -> None:
+                            _session_start(
                                 store,
-                                _runtime(),
+                                runtime,
                                 session_id,
                                 None,
                                 None,
                                 None,
                                 provider="grok",
                                 cwd=str(cwd),
-                            ),
-                            knock=lambda activity_id: deliver(store, _runtime(), activity_id),
+                            )
+
+                        def pane_up(session_id: str) -> bool:
+                            _interactive_preflight(store, session_id)
+                            return runtime.exists(session_id)
+
+                        def knock(activity_id: str) -> str:
+                            _interactive_preflight(store, sid)
+                            return deliver(store, runtime, activity_id)
+
+                        dispatch_assigned(
+                            store,
+                            head_id,
+                            sync=lambda: _sync_once(store),
+                            start=start,
+                            knock=knock,
                             workspace_root=workspace_root,
-                            pane_up=lambda session_id: _runtime().exists(session_id),
+                            pane_up=pane_up,
                         )
                 for activity_id in created:
                     print(f"issue.assigned {activity_id}")
@@ -3951,7 +3987,19 @@ def cmd_supervise(args: list[str]) -> None:
         runtime = _runtime()
         from .telegram_act import reset_idle_clock
 
-        reset_idle_clock(store, working=runtime.exists(sid))
+        def runtime_exists(session_id: str) -> bool:
+            _interactive_preflight(store, session_id)
+            return runtime.exists(session_id)
+
+        def runtime_capture(session_id: str) -> str:
+            _interactive_preflight(store, session_id)
+            return runtime.capture(session_id)
+
+        def knock(activity_id: str) -> str:
+            _interactive_preflight(store, sid)
+            return deliver(store, runtime, activity_id)
+
+        reset_idle_clock(store, working=runtime_exists(sid))
 
         def start(session_id: str, cwd: Path) -> None:
             _session_start(
@@ -3975,17 +4023,18 @@ def cmd_supervise(args: list[str]) -> None:
                 assigned_id = enqueue_assigned(store, sid, repo, number, run_argv)
                 print(f"issue.assigned {assigned_id}")
                 queued = True
-            pane = runtime.capture(sid) if runtime.exists(sid) else ""
+            pane = runtime_capture(sid) if runtime_exists(sid) else ""
             from .grok_pane import grok_pane_is_working
             from .telegram_act import notify_status
 
             working = grok_pane_is_working(pane)
+            _interactive_preflight(store, sid)
             line = tick(
                 store,
                 runtime,
                 sid,
                 start=start,
-                knock=lambda activity_id: deliver(store, runtime, activity_id),
+                knock=knock,
                 pane=pane,
                 working=working,
             )
@@ -3996,7 +4045,7 @@ def cmd_supervise(args: list[str]) -> None:
                     store,
                     sid,
                     line,
-                    working=runtime.exists(sid),
+                    working=runtime_exists(sid),
                 )
                 if posted == "telegram sent":
                     print(posted)

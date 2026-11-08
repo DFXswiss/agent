@@ -548,6 +548,89 @@ def test_interactive_configuration_is_checked_before_runtime_target_probes(
     assert calls == []
 
 
+@pytest.mark.parametrize("starter", ["watch", "supervise"])
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("models", "models is not configured"),
+        ("lane_execution", "lane_execution is not configured"),
+        ("binding", "interactive AI binding changed"),
+    ],
+)
+def test_assignment_starters_preflight_before_attached_runtime_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    starter: str,
+    mutation: str,
+    error: str,
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = {
+            "control": "attached",
+            "tmux_session": "agent-sess-1",
+            "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "ai_binding": expected_ai_binding(),
+        }
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    path = tmp_path / "ai-accounts.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "binding":
+        config["roles"]["interactive-builder"]["model"] = "changed-after-attach"
+    else:
+        config.pop(mutation)
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    calls: list[list[str]] = []
+    runtime = Runtime(
+        runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+    )
+    monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
+
+    if starter == "watch":
+        monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
+        monkeypatch.setattr(main_mod, "assigned_workspace_root", lambda _store: tmp_path)
+        monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: SESSION_A)
+        monkeypatch.setattr(
+            main_mod,
+            "pending_assigned",
+            lambda _store, _sid: [{"id": "assignment"}],
+        )
+
+        def dispatch(
+            _store: object,
+            _activity_id: str,
+            *,
+            pane_up: Callable[[str], bool] | None = None,
+            **_kwargs: object,
+        ) -> str:
+            assert pane_up is not None
+            return "held" if pane_up(SESSION_A) else "started"
+
+        monkeypatch.setattr(main_mod, "dispatch_assigned", dispatch)
+        argv = ["watch", "assigned"]
+    else:
+        argv = ["supervise", "--session", SESSION_A, "--once"]
+
+    with pytest.raises(SystemExit, match=error):
+        main_mod.main(argv)
+    assert calls == []
+
+
 def test_assignment_starters_forward_the_workspace_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -574,6 +657,7 @@ def test_assignment_starters_forward_the_workspace_cwd(
     monkeypatch.setattr(main_mod, "open_store", lambda: store)
     monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
     monkeypatch.setattr(main_mod, "_session_start", session_start)
+    monkeypatch.setattr(main_mod, "_interactive_preflight", lambda *a, **k: None)
     monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
     monkeypatch.setattr(main_mod, "assigned_workspace_root", lambda _store: tmp_path / "watch")
     monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: sid)

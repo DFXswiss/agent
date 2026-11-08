@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from .allow import CHECKLIST_KEYS
-from .model_slots import ModelSlotsError, models_for_new_record
+from .model_slots import (
+    ModelSlotsError,
+    implementer_for_new_record,
+    models_for_new_record,
+)
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
@@ -221,6 +225,7 @@ def _require_reusable_task_models(store: Store, task_id: str) -> None:
         raise StoreError("existing error-fix task not found")
     try:
         models_for_new_record(task)
+        implementer_for_new_record(task)
     except ModelSlotsError as exc:
         raise StoreError(str(exc)) from exc
 

@@ -369,6 +369,32 @@ def test_launch_unconfigured_lane_fails_before_runner(tmp_path: Path) -> None:
     assert called["n"] == 0
 
 
+def test_launch_dry_run_does_not_require_lane_execution(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("lane_execution")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("inspect the lane command\n", encoding="utf-8")
+
+    def boom(_argv: list[str], _stdin_text: str | None) -> object:
+        raise AssertionError("runner must not be called on dry_run")
+
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=boom,
+        dry_run=True,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.returncode == 0
+    assert OPERATOR_GROK_MODEL in result.argv
+
+
 def test_launch_unconfigured_models_fail_before_runner(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))

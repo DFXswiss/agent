@@ -350,6 +350,45 @@ def test_scan_error_fix_rejects_existing_task_without_models_before_git(
     assert not (tmp_path / "error-fix-work").exists()
 
 
+def test_scan_error_fix_rejects_existing_task_with_invalid_implementer_before_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    now = utcnow()
+    store.write(
+        "task",
+        "insert",
+        "invalid-implementer-task",
+        {
+            "id": "invalid-implementer-task",
+            "session_id": "runner-1",
+            "workflow": "implement",
+            "title": "Invalid implementer error fix",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "models": {"first": "grok", "second": "codex"},
+            "implementer": "not-a-provider",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "implementer must be one of" in row["execution_error"]
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
+
+
 def test_find_or_create_requires_active_session(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)

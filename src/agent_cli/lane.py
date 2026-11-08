@@ -342,7 +342,8 @@ def launch(
     cwd = str(Path(cwd).resolve())
 
     write = selected.access == "workspace-write"
-    ai.require_lane_execution()
+    if not dry_run:
+        ai.require_lane_execution()
     codex_output_file: str | None = None
     output_file: str | None = None
     if vendor in OUTPUT_FILE_VENDORS:
