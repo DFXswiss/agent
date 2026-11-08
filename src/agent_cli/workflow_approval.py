@@ -445,6 +445,29 @@ def _belongs_to_pull(
                 raise GuardError("workflow run predates a pull request target or lifecycle change")
 
 
+def _assert_pull_unchanged(
+    api: Any,
+    assessment: Any,
+    pull: Mapping[str, Any],
+    run: Mapping[str, Any],
+) -> None:
+    from .a38_guard import GuardError
+    latest = api.get_json(f"/repos/{assessment.repo}/pulls/{assessment.pr}")
+    if (
+        not isinstance(latest, Mapping)
+        or _field(latest, "state") != "open"
+        or _field(latest, "head", "sha") != _field(pull, "head", "sha")
+        or _field(latest, "base", "sha") != _field(pull, "base", "sha")
+        or _field(latest, "base", "ref") != _field(pull, "base", "ref")
+        or _field(latest, "head", "repo", "full_name")
+        != _field(pull, "head", "repo", "full_name")
+        or _field(latest, "merge_commit_sha")
+        != _field(pull, "merge_commit_sha")
+        or not _records_ci_auth(run, latest)
+    ):
+        raise GuardError("pull request changed before workflow approval")
+
+
 def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -> list[dict[str, Any]]:
     from .a38_guard import (
         GuardError, assess_pull, fetch_pull, resolve_trusted_guard_config,
@@ -541,20 +564,8 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         ) and pull_is_guard_docs_only(api, final.repo, final.number)
         if assessment.write_ready and not still_ready and not docs_waiver:
             raise GuardError("write-ready waiver changed before workflow approval")
-        latest = api.get_json(f"/repos/{assessment.repo}/pulls/{assessment.pr}")
-        if (
-            not isinstance(latest, Mapping)
-            or _field(latest, "state") != "open"
-            or _field(latest, "head", "sha") != _field(pull, "head", "sha")
-            or _field(latest, "base", "sha") != _field(pull, "base", "sha")
-            or _field(latest, "base", "ref") != _field(pull, "base", "ref")
-            or _field(latest, "head", "repo", "full_name")
-            != _field(pull, "head", "repo", "full_name")
-            or _field(latest, "merge_commit_sha")
-            != _field(pull, "merge_commit_sha")
-            or not _records_ci_auth(run, latest)
-        ):
-            raise GuardError("pull request changed before workflow approval")
+        if dry_run:
+            _assert_pull_unchanged(api, assessment, pull, run)
         if not dry_run:
             allowed_shas = {assessment.head_sha}
             groups = [_runs(api, assessment.repo, assessment.head_sha, event=None)]
@@ -599,6 +610,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             recorded_id = _recorded_authorization_run_id(
                 run, siblings, assessment.pr, allowed_shas=allowed_shas
             )
+            _assert_pull_unchanged(api, assessment, pull, run)
             status, _, _ = api.request("POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False)
             if status != 201:
                 if status != 403:

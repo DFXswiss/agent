@@ -1628,6 +1628,46 @@ def test_merge_sha_becoming_null_before_final_read_blocks_approval() -> None:
     assert not _marker_comments(fake, AUTH_MARKER)
 
 
+@pytest.mark.parametrize("changed", ["head", "merge"])
+def test_pull_change_after_authorization_record_listing_blocks_approval(
+    changed: str,
+) -> None:
+    fake = FakeApproval()
+    if changed == "merge":
+        fake.merge_commit_sha = MERGE
+        fake.runs = [fake.run(id=401, head_sha=MERGE)]
+    api = fake.api()
+    original = api.request
+    state = {"after_listing": False, "changed": False}
+
+    def wrapped(method: str, path: str, **kwargs: object):
+        parsed = urlparse(path)
+        if method.upper() == "GET" and parsed.path == f"/repos/{REPO}/actions/runs":
+            if "event" not in parse_qs(parsed.query):
+                state["after_listing"] = True
+        if (
+            state["after_listing"]
+            and not state["changed"]
+            and method.upper() == "GET"
+            and parsed.path == f"/repos/{REPO}/pulls/1"
+        ):
+            state["changed"] = True
+            if changed == "head":
+                fake.pull["head"]["sha"] = BASE2
+            else:
+                fake.merge_commit_sha = BASE2
+        return original(method, path, **kwargs)
+
+    api.request = wrapped  # type: ignore[method-assign]
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(
+        GuardError, match="pull request changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert state["changed"] is True
+    assert fake.posts == []
+
+
 def test_get_run_identity_change_fails_closed() -> None:
     fake = FakeApproval()
     fake.run_override = fake.run(repository={"full_name": "other/public-app"})
