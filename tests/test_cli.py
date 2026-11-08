@@ -46,9 +46,14 @@ def _last_agent_id(out: str) -> str:
 
 
 @pytest.mark.no_pg
-def test_snapshot_output_canonicalizes_legacy_gate_and_checklist_names() -> None:
+def test_dashboard_snapshot_canonicalizes_legacy_names() -> None:
     # Keep legacy names here to verify snapshot alias compatibility.
     snapshot = {
+        "agents": [
+            {"stage": "grok-pr"},
+            {"stage": "codex-pr"},
+            {"stage": None},
+        ],
         "gates": [{"stage": "grok-pr"}, {"stage": "review-2"}],
         "checklist": [{"key": "codex_pr_logic"}, {"key": "review_1_quality"}],
     }
@@ -56,6 +61,11 @@ def test_snapshot_output_canonicalizes_legacy_gate_and_checklist_names() -> None
     _canonicalize_snapshot_names(snapshot)
 
     assert snapshot == {
+        "agents": [
+            {"stage": "review-1"},
+            {"stage": "review-2"},
+            {"stage": None},
+        ],
         "gates": [{"stage": "review-1"}, {"stage": "review-2"}],
         "checklist": [{"key": "review_2_logic"}, {"key": "review_1_quality"}],
     }
@@ -868,6 +878,91 @@ def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[st
         ],
     )
     assert "gate review-1/quality=approved" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("legacy_stage", "canonical", "vendor"),
+    [
+        ("grok-pr", "review-1", "grok"),
+        ("codex-pr", "review-2", "codex"),
+    ],
+)
+def test_gate_record_accepts_stored_legacy_agent_stage(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    legacy_stage: str,
+    canonical: str,
+    vendor: str,
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    head = "abcdef0"
+    agent_id = str(uuid.uuid4())
+    store = Store(tmp_path)
+    try:
+        if canonical == "review-2":
+            for dimension in ("quality", "logic"):
+                gate_id = str(uuid.uuid4())
+                store.write(
+                    "review_gate",
+                    "insert",
+                    gate_id,
+                    {
+                        "id": gate_id,
+                        "task_id": tid,
+                        "stage": "grok-pr",
+                        "dimension": dimension,
+                        "vendor": "grok",
+                        "verdict": "approved",
+                        "evidence": None,
+                        "head_sha": head,
+                        "agent_id": str(uuid.uuid4()),
+                        "recorded_at": utcnow(),
+                    },
+                )
+        store.write(
+            "agent",
+            "insert",
+            agent_id,
+            {
+                "id": agent_id,
+                "session_id": "s",
+                "task_id": tid,
+                "round": None,
+                "role": "pr-reviewer-quality",
+                "vendor": vendor,
+                "stage": legacy_stage,
+                "status": "done",
+                "started_at": utcnow(),
+                "finished_at": utcnow(),
+                "note": "approved",
+            },
+        )
+    finally:
+        store.close()
+
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            canonical,
+            "--dimension",
+            "quality",
+            "--vendor",
+            vendor,
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            agent_id,
+        ],
+    )
+
+    assert f"gate {canonical}/quality=approved" in capsys.readouterr().out
 
 
 def test_gate_record_review_2_before_review_1_dies(

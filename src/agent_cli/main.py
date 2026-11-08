@@ -1509,7 +1509,8 @@ def cmd_gate(args: list[str]) -> None:
             die("agent must be status=done")
         if agent.get("vendor") != vendor:
             die("agent vendor does not match --vendor")
-        if agent.get("stage") is not None and agent.get("stage") != stage:
+        agent_stage = agent.get("stage")
+        if agent_stage is not None and canonical_stage(str(agent_stage)) != stage:
             die("agent stage does not match --stage")
         expected_role = f"pr-reviewer-{dimension}"
         if agent.get("role") != expected_role:
@@ -1942,7 +1943,10 @@ def cmd_status(_: list[str]) -> None:
 
 
 def _canonicalize_snapshot_names(snapshot: dict[str, Any]) -> None:
-    """Canonicalize legacy gate/checklist names in user-facing snapshot output."""
+    """Canonicalize legacy agent, gate, and checklist names in snapshot output."""
+    for agent in snapshot.get("agents") or []:
+        if isinstance(agent, dict) and agent.get("stage") is not None:
+            agent["stage"] = canonical_stage(str(agent["stage"]))
     for gate in snapshot.get("gates") or []:
         if isinstance(gate, dict) and gate.get("stage") is not None:
             gate["stage"] = canonical_stage(str(gate["stage"]))
