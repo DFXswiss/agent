@@ -2517,6 +2517,8 @@ def _publish_terminals(
         sid = session["id"]
         try:
             text = runtime.capture(sid)
+        except StoreConnectionError:
+            raise
         except (SystemExit, StoreError, ValueError) as exc:
             if not _is_grok_runtime(meta):
                 raise

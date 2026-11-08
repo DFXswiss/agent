@@ -671,6 +671,41 @@ def test_publish_terminals_does_not_record_state_for_a_failed_send(
         store.close()
 
 
+def test_publish_terminals_grok_preflight_propagates_store_connection_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "grok",
+            {
+                "id": "grok",
+                "runtime": {
+                    "control": "attached",
+                    "provider": "grok",
+                },
+            },
+        )
+
+        def disconnected_preflight(*args: object, **kwargs: object) -> None:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+
+        monkeypatch.setattr(
+            main_mod,
+            "_interactive_runtime_preflight",
+            disconnected_preflight,
+        )
+
+        with pytest.raises(StoreConnectionError):
+            main_mod._publish_terminals(store, _FakeRuntime(), object(), {}, {})
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("missing", "error"),
     [
