@@ -16,6 +16,8 @@ from typing import Any, Mapping
 
 SUPPORTED_PROVIDERS = frozenset({"grok", "codex", "claude"})
 PROVIDER_CHOICES = "|".join(sorted(SUPPORTED_PROVIDERS))
+IMPLEMENTER_PROVIDERS = SUPPORTED_PROVIDERS | frozenset({"deepseek"})
+IMPLEMENTER_PROVIDER_CHOICES = "|".join(sorted(IMPLEMENTER_PROVIDERS))
 
 MODEL_SLOTS = ("first", "second")
 # Historical ledger identifiers per slot. Stored rows keep these names.
@@ -26,7 +28,7 @@ STAGE_CHOICES = "|".join(SLOT_STAGES[slot] for slot in MODEL_SLOTS)
 
 
 class ModelSlotsError(ValueError):
-    """The models configuration does not describe two distinct supported providers."""
+    """The model-slot or implementer selection is invalid."""
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,19 @@ def parse_model_slots(raw: Any) -> ModelSlots:
     return ModelSlots(values["first"], values["second"])
 
 
+def parse_implementer(raw: Any, models: ModelSlots) -> str:
+    """Validate the optional implementer provider; absent means model slot ``first``."""
+    if raw is None:
+        return models.first
+    if not isinstance(raw, str) or raw not in IMPLEMENTER_PROVIDERS:
+        raise ModelSlotsError(
+            f"implementer must be one of {IMPLEMENTER_PROVIDER_CHOICES}"
+        )
+    if raw == models.second:
+        raise ModelSlotsError("implementer must differ from models.second")
+    return raw
+
+
 def models_from_snapshot(snapshot: Mapping[str, Any] | None) -> ModelSlots:
     """Read ``models`` from a task row or snapshot; absent means the historical order.
 
@@ -91,3 +106,17 @@ def models_from_snapshot(snapshot: Mapping[str, Any] | None) -> ModelSlots:
     if raw is None:
         return DEFAULT_MODEL_SLOTS
     return parse_model_slots(raw)
+
+
+def implementer_from_snapshot(snapshot: Mapping[str, Any] | None) -> str:
+    """Read the task's implementer pin, falling back to its model slot ``first``."""
+    snap = snapshot or {}
+    return parse_implementer(snap.get("implementer"), models_from_snapshot(snap))
+
+
+def model_pins(models: ModelSlots, implementer: str) -> dict[str, Any]:
+    """Task fields for a device selection, omitting a redundant implementer pin."""
+    pins: dict[str, Any] = {"models": models.as_dict()}
+    if implementer != models.first:
+        pins["implementer"] = implementer
+    return pins

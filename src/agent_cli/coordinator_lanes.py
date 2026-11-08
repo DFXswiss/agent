@@ -33,7 +33,13 @@ from .coordinator_config import WorkerConfig
 from .coordinator_exec import run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
 from .lane import OUTPUT_FILE_VENDORS, SPEC_VIA_STDIN, LaneResult, provider_argv
-from .model_slots import SLOT_STAGES, ModelSlots, ModelSlotsError, models_from_snapshot
+from .model_slots import (
+    SLOT_STAGES,
+    ModelSlots,
+    ModelSlotsError,
+    implementer_from_snapshot,
+    models_from_snapshot,
+)
 from .store import Store, utcnow
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
@@ -401,6 +407,7 @@ def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
         "agents": agents,
         "gates": gates,
         "models": _task_models(task).as_dict(),
+        "implementer": implementer_from_snapshot(task),
         "models_pinned": task.get("models") is not None,
         "local_checks": local_checks,
         "implementer_verdict": implementer_verdict,

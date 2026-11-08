@@ -18,7 +18,13 @@ from .allow import (
     SECOND_REVIEW_NOT_POSTED,
     codex_second_review_na,
 )
-from .model_slots import DEFAULT_MODEL_SLOTS, SLOT_STAGES, ModelSlots, models_from_snapshot
+from .model_slots import (
+    DEFAULT_MODEL_SLOTS,
+    SLOT_STAGES,
+    ModelSlots,
+    implementer_from_snapshot,
+    models_from_snapshot,
+)
 from .pr_guard_config import one_review_for
 
 KINDS = ("script", "agent", "human")
@@ -50,8 +56,8 @@ class Step:
     needs: tuple[str, ...]
     kind: str  # script | agent | human
     role: str | None = None
-    # Model slot (first|second) that runs this agent step. The provider is the
-    # device's configuration, never a name in this chain.
+    # Review slot (first|second) associated with this agent step. Implementer
+    # steps may resolve a separate task pin; provider names never live here.
     slot: str | None = None
     spine: bool = True
 
@@ -414,17 +420,18 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
             return "session is not active"
         return ""
     if step.role == "implementer":
-        # A pinned task closes only with its slot-first provider, like the start
+        # A pinned task closes only with its configured implementer, like the start
         # check. A task created before model slots carries no pin and may hold a
         # codex implementer row; it closes with a row of either slot's provider.
         models = models_from_snapshot(snapshot)
+        implementer = implementer_from_snapshot(snapshot)
         pinned = snapshot.get("models_pinned", True)
         ag = None
         for a in snapshot.get("agents") or []:
             vendor = str(a.get("vendor") or "")
             if a.get("role") != "implementer":
                 continue
-            if vendor == models.first or (not pinned and models.slot_of(vendor)):
+            if vendor == implementer or (not pinned and models.slot_of(vendor)):
                 ag = a
         if not ag or ag.get("status") != "done":
             return "no finished implementer agent"
@@ -475,18 +482,38 @@ NO_AUTO_CLOSE = frozenset(
 )
 
 
-def step_vendor(step: Step, models: ModelSlots | None) -> str | None:
-    """Provider that runs this pinned step on this device; None when unpinned or not an agent."""
+def _selection_snapshot(
+    models: ModelSlots | None, snapshot: Mapping[str, Any] | None
+) -> Mapping[str, Any]:
+    if snapshot is not None:
+        return snapshot
+    return {"models": (models or DEFAULT_MODEL_SLOTS).as_dict()}
+
+
+def step_vendor(
+    step: Step,
+    models: ModelSlots | None,
+    *,
+    snapshot: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Provider pinned for this step; None when the step has no provider selection."""
     if step.slot is None:
         return None
+    if step.role == "implementer":
+        return implementer_from_snapshot(_selection_snapshot(models, snapshot))
     return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
 
 
-def step_vendor_label(step: Step, models: ModelSlots | None) -> str:
+def step_vendor_label(
+    step: Step,
+    models: ModelSlots | None,
+    *,
+    snapshot: Mapping[str, Any] | None = None,
+) -> str:
     """Provider name for a pinned agent step, ``-`` otherwise."""
     if step.kind != "agent" or step.slot is None:
         return "-"
-    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
+    return str(step_vendor(step, models, snapshot=snapshot))
 
 
 def handoff_prompt(
@@ -495,9 +522,10 @@ def handoff_prompt(
     task_id: str,
     session_id: str | None,
     models: ModelSlots | None = None,
+    snapshot: Mapping[str, Any] | None = None,
 ) -> str:
     """Single-step brief. The agent sees only THIS step."""
-    who = f"{step_vendor_label(step, models)} {step.role or step.kind}"
+    who = f"{step_vendor_label(step, models, snapshot=snapshot)} {step.role or step.kind}"
     return (
         f"Only this step. Nothing else. Do not claim done.\n"
         f"task={task_id} session={session_id or '-'} key={step.key} who={who}\n"
@@ -505,14 +533,19 @@ def handoff_prompt(
     )
 
 
-def to_json(step: Step, models: ModelSlots | None = None) -> dict[str, Any]:
+def to_json(
+    step: Step,
+    models: ModelSlots | None = None,
+    *,
+    snapshot: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "key": step.key,
         "needs": list(step.needs),
         "kind": step.kind,
         "role": step.role,
         "slot": step.slot,
-        "vendor": step_vendor(step, models),
+        "vendor": step_vendor(step, models, snapshot=snapshot),
         "source": required_source(step),
         "spine": step.spine,
     }

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .model_slots import models_from_snapshot
+from .model_slots import implementer_from_snapshot, models_from_snapshot
 from .pr_guard_config import one_review_for
 
 ACTIONS = ("claim-done", "pr-ready", "pr-create", "task-done")
@@ -227,6 +227,9 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
 
     latest = _latest_gates(list(task.get("gates") or []))
     models = models_from_snapshot(task)
+    # Validate the task's implementation selection through the same resolver
+    # used by start and the chain, even though done gates below concern reviews.
+    implementer_from_snapshot(task)
     heads: set[str] = set()
     all_gates_ok = True
     for stage, dim, slot in GATE_PAIRS:

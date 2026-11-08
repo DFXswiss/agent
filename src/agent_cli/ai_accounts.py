@@ -18,12 +18,15 @@ from .model_slots import (
     SUPPORTED_PROVIDERS,
     ModelSlots,
     ModelSlotsError,
+    parse_implementer,
     parse_model_slots,
 )
 from .store import StoreError
 
 CONFIG_FILE = "ai-accounts.json"
-TOP_LEVEL_KEYS = frozenset({"accounts", "roles", "sessions", "usage_session", "models", "lanes"})
+TOP_LEVEL_KEYS = frozenset(
+    {"accounts", "roles", "sessions", "usage_session", "models", "implementer", "lanes"}
+)
 # Provider CLI configuration-directory variable per supported provider.
 PROVIDER_HOME_ENV = {
     "grok": "GROK_HOME",
@@ -140,6 +143,8 @@ class AIAccounts:
     models: ModelSlots = DEFAULT_MODEL_SLOTS
     # Device-wide lane bindings (slot → role) used when a session binds none.
     lanes: dict[str, str] = field(default_factory=dict)
+    # Effective implementation provider; absent configuration resolves to models.first.
+    implementer: str = DEFAULT_MODEL_SLOTS.first
 
     def for_lane(self, session_id: str, role: str, vendor: str) -> AIRole:
         slot = f"{vendor}:{role}"
@@ -181,10 +186,11 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
-            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, and lanes"
+            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, implementer, and lanes"
         )
     try:
         models = parse_model_slots(raw.get("models"))
+        implementer = parse_implementer(raw.get("implementer"), models)
     except ModelSlotsError as exc:
         raise AccountError(str(exc)) from exc
     accounts_raw = raw.get("accounts")
@@ -280,34 +286,42 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         if selected.account.provider != "grok":
             raise AccountError("usage_session currently supports the Grok billing adapter only")
     return AIAccounts(
-        accounts,
-        roles,
-        sessions,
-        usage_session,
-        models,
-        device_lanes,
+        accounts=accounts,
+        roles=roles,
+        sessions=sessions,
+        usage_session=usage_session,
+        models=models,
+        lanes=device_lanes,
+        implementer=implementer,
     )
 
 
-def load_model_slots(home: Path) -> ModelSlots:
-    """The device's model slot configuration (historical order when unset).
-
-    Checks the file is readable JSON with known top-level keys and parses the
-    ``models`` block; errors inside ``accounts``, ``roles``, ``sessions`` or
-    ``lanes`` do not stop task creation. Launches still validate the whole file.
-    """
+def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
+    """The device's review slots and effective implementer selection."""
     path = home / CONFIG_FILE
     if not path.exists():
-        return DEFAULT_MODEL_SLOTS
+        return DEFAULT_MODEL_SLOTS, DEFAULT_MODEL_SLOTS.first
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
-            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, and lanes"
+            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, implementer, and lanes"
         )
     try:
-        return parse_model_slots(raw.get("models"))
+        models = parse_model_slots(raw.get("models"))
+        return models, parse_implementer(raw.get("implementer"), models)
     except ModelSlotsError as exc:
         raise AccountError(str(exc)) from exc
+
+
+def load_model_slots(home: Path) -> ModelSlots:
+    """The device's model slot configuration (historical order when unset).
+
+    Checks the file is readable JSON with known top-level keys and validates the
+    ``models`` and ``implementer`` selections; errors inside ``accounts``,
+    ``roles``, ``sessions`` or ``lanes`` do not stop task creation. Launches
+    still validate the whole file.
+    """
+    return load_model_configuration(home)[0]

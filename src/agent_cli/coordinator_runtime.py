@@ -19,7 +19,13 @@ from uuid import NAMESPACE_URL, uuid5
 from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts
-from .model_slots import DEFAULT_MODEL_SLOTS, ModelSlotsError, models_from_snapshot
+from .model_slots import (
+    DEFAULT_MODEL_SLOTS,
+    ModelSlotsError,
+    implementer_from_snapshot,
+    model_pins,
+    models_from_snapshot,
+)
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
     REQUIRED_LANE_SLOTS,
@@ -128,7 +134,7 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         raise CoordinatorError(str(exc)) from exc
     try:
         ai = load_ai_accounts(store.home)
-        _refuse_codex_first(ai.models.first)
+        _refuse_codex_first(ai.models.first, ai.implementer)
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(worker.session_id, role, vendor)
@@ -172,22 +178,29 @@ CODEX_FIRST_REFUSED = (
     "models.first = codex is not supported by the coordinator: the codex "
     "implementer lane cannot be restricted from running commands"
 )
+SEPARATE_IMPLEMENTER_REFUSED = (
+    "a separate implementer is not supported by the coordinator: implementer must equal "
+    "models.first"
+)
 
 
-def _refuse_codex_first(first: str) -> None:
+def _refuse_codex_first(first: str, implementer: str | None = None) -> None:
     """codex exec --sandbox workspace-write can run shell commands; the coordinator's
     implementer must not execute software. Used by preflight, task creation and launch."""
     if first == "codex":
         raise CoordinatorError(CODEX_FIRST_REFUSED)
+    if implementer is not None and implementer != first:
+        raise CoordinatorError(SEPARATE_IMPLEMENTER_REFUSED)
 
 
 def _first_slot_vendor(task: dict[str, Any]) -> str:
     """Provider of model slot ``first``, pinned on the task when it was created."""
     try:
         first = models_from_snapshot(task).first
+        implementer = implementer_from_snapshot(task)
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
-    _refuse_codex_first(first)
+    _refuse_codex_first(first, implementer)
     return first
 
 
@@ -279,7 +292,7 @@ def _create_implement_task(
         ai = load_ai_accounts(store.home)
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    _refuse_codex_first(ai.models.first)
+    _refuse_codex_first(ai.models.first, ai.implementer)
     c = {
         "phase": "accept",
         "source": {
@@ -319,7 +332,7 @@ def _create_implement_task(
             "payload": {"coordinator": c, "source_issue": {"repo": repo, "number": number}},
             "state": "open",
             "current_round": 0,
-            "models": ai.models.as_dict(),
+            **model_pins(ai.models, ai.implementer),
             "created_at": utcnow(),
             "updated_at": utcnow(),
             "change_summary_en": None,
