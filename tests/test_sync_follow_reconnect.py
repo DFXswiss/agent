@@ -682,6 +682,7 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
     tmp_path: Path,
     missing: str,
     error: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _init_paired_store(tmp_path)
     config = {
@@ -708,12 +709,6 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
         store.write(
             "session",
             "insert",
-            "raw",
-            {"id": "raw", "runtime": {"control": "attached"}},
-        )
-        store.write(
-            "session",
-            "insert",
             "grok",
             {
                 "id": "grok",
@@ -722,6 +717,12 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
                     "provider": "grok",
                 },
             },
+        )
+        store.write(
+            "session",
+            "insert",
+            "raw",
+            {"id": "raw", "runtime": {"control": "attached"}},
         )
 
         class _RecordingRuntime:
@@ -741,11 +742,14 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
 
         runtime = _RecordingRuntime()
         ws = _RecordingWs()
-        with pytest.raises(StoreError, match=error):
-            main_mod._publish_terminals(store, runtime, ws, {}, {})
+        main_mod._publish_terminals(store, runtime, ws, {}, {})
 
         assert runtime.captured == ["raw"]
         assert [frame["session_id"] for frame in ws.sent] == ["raw"]
+        assert (
+            f"terminal grok configuration error: {error}"
+            in capsys.readouterr().err
+        )
     finally:
         store.close()
 

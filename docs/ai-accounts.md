@@ -2,10 +2,10 @@
 
 Static scripts that load this manifest select AI provider accounts and
 user-defined roles from `$AGENT_HOME/ai-accounts.json`. Installation creates no
-accounts, roles, or session selections. A missing file or a manifest without
-`models` fails with `models is not configured`. When `models` is set, null or
-empty `accounts`, `roles`, `sessions`, and `lanes` leave those collections
-empty. An absent `implementer` uses
+accounts, roles, or session selections. A missing file or an otherwise valid
+manifest without `models` fails with `models is not configured`. When `models`
+is set, null or empty `accounts`, `roles`, `sessions`, and `lanes` leave those
+collections empty. An absent `implementer` uses
 `models.first`; neither selection authorizes a launch without lane bindings.
 Every model-lane launch also requires an explicit top-level `lane_execution`
 declaration written by the local harness. Missing or invalid declarations fail
@@ -274,8 +274,7 @@ headless lane (`claude --print`, spec on stdin, read tools only, plus
 subagents or the web). The configured model is required,
 and a supplied `--model` must agree with it. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;
-a changed or missing binding requires a new session. The binding also pins the normalized `lane_execution` mode, so a live process
-or stored conversation cannot be reused after changing that declaration. Existing unbound Grok conversation IDs are not silently adopted under a newly
+a changed or missing binding requires a new session. Existing unbound Grok conversation IDs are not silently adopted under a newly
 configured account. Interactive provider starts run only on a declared lane
 host. Agent does not provide its own remote lane transport or workspace
 mirroring. Interactive tmux sessions may still use

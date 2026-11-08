@@ -80,6 +80,7 @@ from .model_slots import (
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .runtime import (
+    PreflightRuntime,
     Runtime,
     grok_model,
     grok_new_session_id,
@@ -2221,11 +2222,16 @@ def _interactive_preflight(
         "model": selected.model,
         "access": selected.access,
         "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
-        "lane_execution": {"mode": "this-device-is-lane-host"},
     }
     existing = meta.get("grok_session_id")
     existing_s = existing if isinstance(existing, str) and existing else ""
-    if existing_s and meta.get("ai_binding") != binding:
+    stored_binding = meta.get("ai_binding")
+    comparable_binding = (
+        dict(stored_binding) if isinstance(stored_binding, dict) else stored_binding
+    )
+    if isinstance(comparable_binding, dict):
+        comparable_binding.pop("lane_execution", None)
+    if existing_s and comparable_binding != binding:
         die(
             "interactive AI binding changed or is missing; "
             "configure a new session instead of resuming"
@@ -2246,14 +2252,28 @@ def _interactive_runtime_preflight(
         row = _need(store, "session", sid)
         raw = row.get("runtime")
         meta = dict(raw) if isinstance(raw, dict) else {}
+    if not _is_grok_runtime(meta):
+        return
+    _interactive_preflight(store, sid, meta=meta)
+
+
+def _is_grok_runtime(meta: dict[str, Any]) -> bool:
     binding = meta.get("ai_binding")
-    if not (
+    return (
         meta.get("provider") == "grok"
         or bool(meta.get("grok_session_id"))
         or (isinstance(binding, dict) and binding.get("provider") == "grok")
-    ):
-        return
-    _interactive_preflight(store, sid, meta=meta)
+    )
+
+
+def _preflight_runtime(store: Store, runtime: Runtime) -> PreflightRuntime:
+    """Return the single access path for operations on session runtimes."""
+    if isinstance(runtime, PreflightRuntime):
+        return runtime
+    return PreflightRuntime(
+        runtime,
+        lambda sid: _interactive_runtime_preflight(store, sid),
+    )
 
 
 def _session_start(
@@ -2280,6 +2300,7 @@ def _session_start(
     name = tmux_name(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
+    runtime = _preflight_runtime(store, runtime)
     command_argv: list[str] | None = None
     start_command = command
     if provider == "grok":
@@ -2320,7 +2341,7 @@ def _session_start(
 def _session_stop(store: Store, runtime: Runtime, sid: str) -> None:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
-    runtime.stop(sid)
+    _preflight_runtime(store, runtime).stop(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
     meta["tmux_session"] = meta.get("tmux_session") or tmux_name(sid)
@@ -2342,9 +2363,7 @@ def _session_keep_working(
     _require_owned(store, row, "session")
     if row.get("status") != "active":
         die(f"session {sid} is not active")
-    raw = row.get("runtime")
-    meta = dict(raw) if isinstance(raw, dict) else {}
-    _interactive_runtime_preflight(store, sid, meta=meta)
+    runtime = _preflight_runtime(store, runtime)
     if not runtime.available(sid):
         die("tmux is not installed")
     sleep_s = 30
@@ -2358,14 +2377,7 @@ def _session_keep_working(
         meta = dict(raw) if isinstance(raw, dict) else {}
         kw_raw = meta.get("keep_working")
         state = dict(kw_raw) if isinstance(kw_raw, dict) else {}
-        status = tick(
-            runtime,
-            sid,
-            state,
-            preflight=lambda: _interactive_runtime_preflight(
-                store, sid, meta=meta
-            ),
-        )
+        status = tick(runtime, sid, state)
         latest = _need(store, "session", sid)
         latest_meta = dict(latest.get("runtime") or {}) if isinstance(latest.get("runtime"), dict) else {}
         latest_meta["keep_working"] = state
@@ -2399,9 +2411,7 @@ def _session_input(
     has_key = key is not None
     if has_data == has_key:
         die("input requires exactly one of --data or --key")
-    raw = row.get("runtime")
-    meta = dict(raw) if isinstance(raw, dict) else {}
-    _interactive_runtime_preflight(store, sid, meta=meta)
+    runtime = _preflight_runtime(store, runtime)
     if has_data:
         runtime.input_text(sid, data or "")
     else:
@@ -2411,7 +2421,7 @@ def _session_input(
 def _session_resize(store: Store, runtime: Runtime, sid: str, cols: int, rows: int) -> None:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
-    runtime.resize(sid, cols, rows)
+    _preflight_runtime(store, runtime).resize(sid, cols, rows)
 
 
 def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
@@ -2497,6 +2507,7 @@ def _publish_terminals(
     last_capture: dict[str, str],
 ) -> None:
     device = store.device_id()
+    runtime = _preflight_runtime(store, runtime)
     for session in store.rows("session"):
         if session.get("_origin_device_id") != device:
             continue
@@ -2504,8 +2515,15 @@ def _publish_terminals(
         if not isinstance(meta, dict) or meta.get("control") != "attached":
             continue
         sid = session["id"]
-        _interactive_runtime_preflight(store, sid, meta=meta)
-        text = runtime.capture(sid)
+        try:
+            text = runtime.capture(sid)
+        except (SystemExit, StoreError, ValueError) as exc:
+            if not _is_grok_runtime(meta):
+                raise
+            error = exc.args[0] if getattr(exc, "args", None) else str(exc)
+            message = str(error).removeprefix("agent: ")
+            print(f"terminal {sid} configuration error: {message}", file=sys.stderr)
+            continue
         if last_capture.get(sid) == text:
             continue
         seq = terminal_seq.get(sid, 0) + 1
@@ -3698,15 +3716,10 @@ def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
     try:
-        runtime = _runtime()
-
-        def preflight(sid: str) -> None:
-            _interactive_runtime_preflight(store, sid)
+        runtime = _preflight_runtime(store, _runtime())
 
         if once:
-            for activity_id, status in knock_drain(
-                store, runtime, preflight=preflight
-            ):
+            for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
             return
         from .pending import scan_pending
@@ -3775,9 +3788,7 @@ def cmd_knock(args: list[str]) -> None:
                 except StoreError as exc:
                     print(f"error.fix error: {exc}", file=sys.stderr)
                 last_poll = time.monotonic()
-            activity_id = knock_listen(
-                store, runtime, timeout=30.0, preflight=preflight
-            )
+            activity_id = knock_listen(store, runtime, timeout=30.0)
             if activity_id:
                 print(f"knock {activity_id}")
     finally:
@@ -3924,7 +3935,7 @@ def cmd_watch(args: list[str]) -> None:
                 if pending:
                     head_id = pending[0].get("id")
                     if isinstance(head_id, str) and head_id:
-                        runtime = _runtime()
+                        runtime = _preflight_runtime(store, _runtime())
 
                         def start(session_id: str, cwd: Path) -> None:
                             _session_start(
@@ -3938,21 +3949,11 @@ def cmd_watch(args: list[str]) -> None:
                                 cwd=str(cwd),
                             )
 
-                        def runtime_preflight(session_id: str) -> None:
-                            _interactive_runtime_preflight(store, session_id)
-
                         def pane_up(session_id: str) -> bool:
-                            _interactive_preflight(store, session_id)
                             return runtime.exists(session_id)
 
                         def knock(activity_id: str) -> str:
-                            _interactive_preflight(store, sid)
-                            return deliver(
-                                store,
-                                runtime,
-                                activity_id,
-                                preflight=runtime_preflight,
-                            )
+                            return deliver(store, runtime, activity_id)
 
                         dispatch_assigned(
                             store,
@@ -4043,28 +4044,17 @@ def cmd_supervise(args: list[str]) -> None:
                 die(f"supervise --follow already running for session {sid}")
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
-        runtime = _runtime()
+        runtime = _preflight_runtime(store, _runtime())
         from .telegram_act import reset_idle_clock
 
-        def runtime_preflight(session_id: str) -> None:
-            _interactive_runtime_preflight(store, session_id)
-
         def runtime_exists(session_id: str) -> bool:
-            _interactive_preflight(store, session_id)
             return runtime.exists(session_id)
 
         def runtime_capture(session_id: str) -> str:
-            _interactive_preflight(store, session_id)
             return runtime.capture(session_id)
 
         def knock(activity_id: str) -> str:
-            _interactive_preflight(store, sid)
-            return deliver(
-                store,
-                runtime,
-                activity_id,
-                preflight=runtime_preflight,
-            )
+            return deliver(store, runtime, activity_id)
 
         reset_idle_clock(store, working=runtime_exists(sid))
 
@@ -4095,7 +4085,6 @@ def cmd_supervise(args: list[str]) -> None:
             from .telegram_act import notify_status
 
             working = grok_pane_is_working(pane)
-            _interactive_preflight(store, sid)
             line = tick(
                 store,
                 runtime,
@@ -4104,7 +4093,6 @@ def cmd_supervise(args: list[str]) -> None:
                 knock=knock,
                 pane=pane,
                 working=working,
-                preflight=runtime_preflight,
             )
             print(line)
             try:

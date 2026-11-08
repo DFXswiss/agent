@@ -98,7 +98,6 @@ def expected_ai_binding(
         "model": model,
         "access": access,
         "configuration": hashlib.sha256(config_dir.encode()).hexdigest(),
-        "lane_execution": {"mode": "this-device-is-lane-host"},
     }
 
 
@@ -579,6 +578,61 @@ def test_interactive_configuration_is_checked_before_runtime_target_probes(
     assert calls == []
 
 
+def test_providerless_start_preflights_existing_grok_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    remove_ai_setting(tmp_path, "models")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="models is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A])
+
+    assert calls == []
+
+
+def test_control_resize_preflights_existing_grok_binding(
+    tmp_path: Path,
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    remove_ai_setting(tmp_path, "lane_execution")
+    calls: list[list[str]] = []
+    runtime = Runtime(
+        runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+    )
+    store = Store(tmp_path)
+    try:
+        ack = apply_control(
+            store,
+            runtime,
+            {
+                "type": "control",
+                "session_id": SESSION_A,
+                "action": "resize",
+                "payload": {"cols": 100, "rows": 40},
+            },
+        )
+    finally:
+        store.close()
+
+    assert ack["ok"] is False
+    assert "lane_execution is not configured" in ack["error"]
+    assert calls == []
+
+
 @pytest.mark.parametrize("missing", ["models", "lane_execution"])
 def test_session_input_preflights_before_grok_runtime_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
@@ -870,7 +924,7 @@ def test_assignment_starters_preflight_before_attached_runtime_reuse(
 
 
 @pytest.mark.parametrize("starter", ["watch", "supervise"])
-def test_assignment_knocks_forward_runtime_preflight_to_deliver(
+def test_assignment_knocks_use_preflight_runtime_in_deliver(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     starter: str,
@@ -902,11 +956,8 @@ def test_assignment_knocks_forward_runtime_preflight_to_deliver(
         _store: object,
         _runtime: object,
         activity_id: str,
-        *,
-        preflight: Callable[[str], None] | None = None,
     ) -> str:
-        assert preflight is not None
-        preflight(sid)
+        assert _runtime.exists(sid)
         delivered.append(activity_id)
         return "sent"
 
@@ -941,11 +992,8 @@ def test_assignment_knocks_forward_runtime_preflight_to_deliver(
         def supervise_tick(
             *_args: object,
             knock: Callable[[str], str],
-            preflight: Callable[[str], None] | None = None,
             **_kwargs: object,
         ) -> str:
-            assert preflight is not None
-            preflight(sid)
             knock("assignment")
             return "supervise commission"
 
@@ -983,7 +1031,9 @@ def test_assignment_starters_forward_the_workspace_cwd(
     monkeypatch.setattr(main_mod, "open_store", lambda: store)
     monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
     monkeypatch.setattr(main_mod, "_session_start", session_start)
-    monkeypatch.setattr(main_mod, "_interactive_preflight", lambda *a, **k: None)
+    monkeypatch.setattr(
+        main_mod, "_interactive_runtime_preflight", lambda *a, **k: None
+    )
     monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
     monkeypatch.setattr(main_mod, "assigned_workspace_root", lambda _store: tmp_path / "watch")
     monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: sid)
@@ -1146,6 +1196,51 @@ def test_resume_refuses_account_config_role_or_model_change_before_process_start
         run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
     after = len([c for c in calls if c[:2] == ["tmux", "new-session"]])
     assert after == before
+
+
+def test_resume_accepts_legacy_binding_with_lane_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"]["ai_binding"]["lane_execution"] = {
+            "mode": "this-device-is-lane-host"
+        }
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(0, "", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"]["ai_binding"] == expected_ai_binding()
+    finally:
+        store.close()
 
 
 def test_legacy_grok_session_without_ai_binding_refuses_resume(

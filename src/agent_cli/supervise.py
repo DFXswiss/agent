@@ -155,14 +155,8 @@ def _send(
     runtime: Runtime,
     session_id: str,
     text: str,
-    *,
-    preflight: Callable[[str], None] | None = None,
 ) -> None:
-    if preflight is not None:
-        preflight(session_id)
     runtime.input_text(session_id, text)
-    if preflight is not None:
-        preflight(session_id)
     runtime.input_key(session_id, "enter")
 
 
@@ -329,14 +323,11 @@ def tick(
     ask: bool = False,
     pane: str | None = None,
     working: bool | None = None,
-    preflight: Callable[[str], None] | None = None,
 ) -> str:
     if SESSION_RE.match(session_id) is None:
         raise StoreError("session id may contain only A-Za-z0-9_-")
 
     def runtime_exists(sid: str) -> bool:
-        if preflight is not None:
-            preflight(sid)
         return runtime.exists(sid)
 
     clock = time.time() if now is None else now
@@ -403,14 +394,10 @@ def tick(
         return f"supervise commission assigned={assigned_id} dispatch={dispatched}"
     if pane is None:
         if runtime_exists(session_id):
-            if preflight is not None:
-                preflight(session_id)
             pane = runtime.capture(session_id)
         else:
             pane = ""
     if grok_permission_prompt(pane):
-        if preflight is not None:
-            preflight(session_id)
         runtime.input_key(session_id, "enter")
         _log(
             store,
@@ -428,8 +415,6 @@ def tick(
     elif grok_pane_is_working(pane):
         busy = True
     else:
-        if preflight is not None:
-            preflight(session_id)
         busy = runtime.is_busy(session_id)
     if busy:
         _mark_working(store, clock)
@@ -458,7 +443,7 @@ def tick(
             _ack(store, session_id, assigned_id)
             return f"supervise done assigned={assigned_id}"
         if last_phase == "done" and answer == ANSWER_NO:
-            _send(runtime, session_id, QUESTION_WHY, preflight=preflight)
+            _send(runtime, session_id, QUESTION_WHY)
             _log(
                 store,
                 session_id,
@@ -471,7 +456,7 @@ def tick(
             )
             return f"supervise ask phase=why assigned={assigned_id}"
         if last_phase == "why" and answer == ANSWER_CAN:
-            _send(runtime, session_id, CONTINUE_TEXT, preflight=preflight)
+            _send(runtime, session_id, CONTINUE_TEXT)
             _log(
                 store,
                 session_id,
@@ -498,7 +483,7 @@ def tick(
             return f"supervise skip assigned={assigned_id}"
         return f"supervise answer ignored assigned={assigned_id}"
     if last_kind == "continue":
-        _send(runtime, session_id, QUESTION_DONE, preflight=preflight)
+        _send(runtime, session_id, QUESTION_DONE)
         _log(
             store,
             session_id,
@@ -514,7 +499,7 @@ def tick(
         last_kind == "ask" and answer is None
     ):
         if last_kind == "ask" and last_phase == "why":
-            _send(runtime, session_id, QUESTION_WHY, preflight=preflight)
+            _send(runtime, session_id, QUESTION_WHY)
             _log(
                 store,
                 session_id,
@@ -526,7 +511,7 @@ def tick(
                 number=number,
             )
             return f"supervise ask phase=why assigned={assigned_id}"
-        _send(runtime, session_id, QUESTION_DONE, preflight=preflight)
+        _send(runtime, session_id, QUESTION_DONE)
         _log(
             store,
             session_id,

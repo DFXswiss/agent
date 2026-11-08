@@ -480,8 +480,7 @@ an explicit interactive role from `ai-accounts.json`. The model and provider
 profile directory are required configuration; there is no built-in model.
 The CLI accepts only a UUID, so first start creates `runtime.grok_session_id`.
 A later start may resume that ID only with the same recorded AI binding
-(role, account, provider, model, access, configuration-directory hash, and
-normalized lane-execution mode).
+(role, account, provider, model, access, and configuration-directory hash).
 Changing that binding, or adopting an old unbound ID, requires a new session.
 Provider credential environment variables are cleared in the child process,
 and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot

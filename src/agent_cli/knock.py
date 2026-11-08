@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from .runtime import Runtime
@@ -53,8 +52,6 @@ def deliver(
     store: Store,
     runtime: Runtime,
     activity_id: str,
-    *,
-    preflight: Callable[[str], None] | None = None,
 ) -> str:
     """Send the knock or leave it queued. Returns sent|queued|unread|missing."""
     if store.wake_delivered(activity_id):
@@ -83,13 +80,9 @@ def deliver(
     if control != "attached":
         store.enqueue_wake(activity_id, sid)
         return "unread"
-    if preflight is not None:
-        preflight(sid)
     if not runtime.exists(sid, target=target):
         store.enqueue_wake(activity_id, sid)
         return "unread"
-    if preflight is not None:
-        preflight(sid)
     if runtime.is_busy(sid):
         store.enqueue_wake(activity_id, sid)
         return "queued"
@@ -113,11 +106,7 @@ def deliver(
         return "sent"
     text = knock_text(activity_id)
     try:
-        if preflight is not None:
-            preflight(sid)
         runtime.input_text(sid, text, target=target)
-        if preflight is not None:
-            preflight(sid)
         runtime.input_key(sid, "enter", target=target)
     except BaseException:
         store.unclaim_wake(activity_id)
@@ -128,12 +117,10 @@ def deliver(
 def drain(
     store: Store,
     runtime: Runtime,
-    *,
-    preflight: Callable[[str], None] | None = None,
 ) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for row in store.pending_wakes():
-        status = deliver(store, runtime, row["activity_id"], preflight=preflight)
+        status = deliver(store, runtime, row["activity_id"])
         out.append((row["activity_id"], status))
     return out
 
@@ -142,18 +129,16 @@ def listen_once(
     store: Store,
     runtime: Runtime,
     timeout: float = 2.0,
-    *,
-    preflight: Callable[[str], None] | None = None,
 ) -> str | None:
     import psycopg
 
     with psycopg.connect(store.dsn, autocommit=True) as conn:
         conn.execute("LISTEN agent_inbox")
-        drain(store, runtime, preflight=preflight)
+        drain(store, runtime)
         for notify in conn.notifies(timeout=timeout):
             payload = notify.payload
             if isinstance(payload, str) and payload:
-                deliver(store, runtime, payload, preflight=preflight)
+                deliver(store, runtime, payload)
                 return payload
             break
     return None

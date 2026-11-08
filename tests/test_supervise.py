@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_cli.runtime import Completed, Runtime
+from agent_cli.runtime import Completed, PreflightRuntime, Runtime
 from agent_cli.store import Store
 from agent_cli.supervise import (
     ANSWER_BLOCKED,
@@ -375,19 +375,20 @@ def test_tick_preflights_every_runtime_probe_and_input(tmp_path: Path) -> None:
             events.append("input_key")
             super().input_key(session_id, key, target=target)
 
-    runtime = OrderedRuntime(exists=False, pane="")
+    raw_runtime = OrderedRuntime(exists=False, pane="")
 
     def preflight(session_id: str) -> None:
         assert session_id == "runner-1"
         events.append("preflight")
 
+    runtime = PreflightRuntime(raw_runtime, preflight)
+
     tick(
         store,
         runtime,
         "runner-1",
-        start=lambda _sid, _cwd: setattr(runtime, "present", True),
+        start=lambda _sid, _cwd: setattr(raw_runtime, "present", True),
         knock=lambda _aid: "sent",
-        preflight=preflight,
     )
     tick(
         store,
@@ -397,9 +398,8 @@ def test_tick_preflights_every_runtime_probe_and_input(tmp_path: Path) -> None:
         knock=lambda _aid: "sent",
         quiet_seconds=0,
         ask=True,
-        preflight=preflight,
     )
-    runtime.pane = (
+    raw_runtime.pane = (
         "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
         "  1/3:select  \u2502  Tab:next option\n"
     )
@@ -411,7 +411,6 @@ def test_tick_preflights_every_runtime_probe_and_input(tmp_path: Path) -> None:
         knock=lambda _aid: "sent",
         quiet_seconds=0,
         ask=True,
-        preflight=preflight,
     )
 
     runtime_events = {"exists", "capture", "is_busy", "input_text", "input_key"}

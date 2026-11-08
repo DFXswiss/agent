@@ -72,10 +72,13 @@ def test_design_locks_ready_for_review() -> None:
     assert "ledger `task-done` is not pull-request completion" in section_prose
 
 
-def test_design_records_only_the_normalized_lane_execution_mode() -> None:
+def test_design_does_not_pin_lane_execution_in_interactive_binding() -> None:
     text = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
-    assert "normalized lane-execution mode)." in text
-    assert "normalized lane-execution mode and host" not in text
+    assert (
+        "role, account, provider, model, access, and configuration-directory hash"
+        in text
+    )
+    assert "normalized lane-execution mode" not in text
 
 
 def test_pr_review_and_spine_point_at_ready_for_review() -> None:
