@@ -505,6 +505,27 @@ def test_run_unconfigured_ai_leaves_no_working_agent(
     )
 
 
+def test_run_reports_missing_lane_before_missing_models(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("models")
+    raw["sessions"][DEFAULT_SESSION]["lanes"] = {}
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    _assert_run_config_failure_leaves_no_working_agent(
+        tmp_path,
+        tid,
+        capsys,
+        monkeypatch,
+        spec=spec,
+        match="No AI lane configured",
+    )
+
+
 def test_run_malformed_ai_accounts_leaves_no_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

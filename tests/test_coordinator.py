@@ -3003,6 +3003,34 @@ def test_preparation_failure_after_mkstemp_removes_owned_output(
     assert [row for row in store.rows("agent") if row.get("task_id") == tid] == []
 
 
+def test_run_prepared_returns_decode_failure_and_removes_owned_output(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    output = tmp_path / "provider-output.txt"
+    output.write_bytes(b"\xff")
+    prepared = {
+        "agent_id": "agent-1",
+        "role": "pr-reviewer-quality",
+        "vendor": "codex",
+        "argv": ["codex"],
+        "stdin_text": None,
+        "codex_output": str(output),
+        "worktree": str(tmp_path),
+    }
+
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared,
+        timeout=1,
+        lane_runner=lambda _argv, _stdin=None: Completed(0, "", ""),
+    )
+
+    assert agent_id == "agent-1"
+    assert isinstance(outcome, UnicodeDecodeError)
+    assert not output.exists()
+
+
 def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

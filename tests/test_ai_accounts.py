@@ -16,7 +16,6 @@ from agent_cli.ai_accounts import (
     AIAccounts,
     AIRole,
     load_ai_accounts,
-    load_lane_execution,
 )
 from agent_cli.model_slots import ModelSlots
 
@@ -167,7 +166,7 @@ def test_missing_lane_execution_preserves_reads_but_refuses_launch_resolution(
         loaded.for_lane("chosen-session", "implementer", "grok")
     assert str(excinfo.value) == LANE_EXECUTION_ERROR
     with pytest.raises(AccountError) as load_exc:
-        load_lane_execution(tmp_path)
+        loaded.require_lane_execution()
     assert str(load_exc.value) == LANE_EXECUTION_ERROR
 
 
@@ -180,7 +179,7 @@ def test_remote_lane_execution_is_unsupported(tmp_path: Path) -> None:
     with pytest.raises(AccountError, match="remote.*not supported"):
         loaded.for_lane("chosen-session", "implementer", "grok")
     with pytest.raises(AccountError, match="remote.*not supported"):
-        load_lane_execution(tmp_path)
+        loaded.require_lane_execution()
 
 
 def test_session_omitted_interactive_and_empty_lanes(tmp_path: Path) -> None:

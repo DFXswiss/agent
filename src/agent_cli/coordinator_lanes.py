@@ -812,45 +812,42 @@ def _run_prepared(
     argv = list(prepared["argv"])
     stdin_text = prepared["stdin_text"]
     worktree = prepared["worktree"]
+    codex_output = prepared.get("codex_output")
     try:
-        if lane_runner is not None:
-            completed = lane_runner(argv, stdin_text)
-        else:
-            completed = run_bounded(
-                argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
+        try:
+            if lane_runner is not None:
+                completed = lane_runner(argv, stdin_text)
+            else:
+                completed = run_bounded(
+                    argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
+                )
+            stdout = str(getattr(completed, "stdout") or "")
+            stderr = str(getattr(completed, "stderr") or "")
+            returncode = int(getattr(completed, "returncode"))
+            if codex_output:
+                try:
+                    file_text = Path(str(codex_output)).read_text(encoding="utf-8")
+                except OSError:
+                    file_text = ""
+                if file_text:
+                    stdout = file_text
+            return prepared["agent_id"], LaneResult(
+                role=str(prepared["role"]),
+                vendor=str(prepared["vendor"]),
+                status=parse_model_result(stdout, returncode)[0],
+                argv=argv,
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
             )
-    except Exception as exc:  # noqa: BLE001
-        codex_output = prepared.get("codex_output")
+        except Exception as exc:  # noqa: BLE001
+            return prepared["agent_id"], exc
+    finally:
         if codex_output:
             try:
                 os.unlink(str(codex_output))
             except OSError:
                 pass
-        return prepared["agent_id"], exc
-    codex_output = prepared.get("codex_output")
-    stdout = str(getattr(completed, "stdout") or "")
-    stderr = str(getattr(completed, "stderr") or "")
-    returncode = int(getattr(completed, "returncode"))
-    if codex_output:
-        try:
-            file_text = Path(str(codex_output)).read_text(encoding="utf-8")
-        except OSError:
-            file_text = ""
-        if file_text:
-            stdout = file_text
-        try:
-            os.unlink(str(codex_output))
-        except OSError:
-            pass
-    return prepared["agent_id"], LaneResult(
-        role=str(prepared["role"]),
-        vendor=str(prepared["vendor"]),
-        status=parse_model_result(stdout, returncode)[0],
-        argv=argv,
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
 
 
 def _abort_prepared_pr_reviews(

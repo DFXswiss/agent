@@ -2504,6 +2504,7 @@ def _publish_terminals(
         if not isinstance(meta, dict) or meta.get("control") != "attached":
             continue
         sid = session["id"]
+        _interactive_runtime_preflight(store, sid, meta=meta)
         text = runtime.capture(sid)
         if last_capture.get(sid) == text:
             continue
@@ -3354,14 +3355,17 @@ def cmd_run(args: list[str]) -> None:
                 # launch() still resolves the same binding; no ambient fallback.
                 from .ai_accounts import load_ai_accounts
 
-                ai = load_ai_accounts(store.home)
+                ai = load_ai_accounts(
+                    store.home, defer_model_configuration=True
+                )
                 ai.for_lane(
                     session_id, role, vendor, require_execution=False
                 )
+                ai.require_model_configuration()
+                ai.require_lane_execution()
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )
-                ai.require_lane_execution()
                 if working is None:
                     start_args = [
                         "start",

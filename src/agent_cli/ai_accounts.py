@@ -418,24 +418,6 @@ def _lane_execution_error(value: Any) -> str:
     return LANE_EXECUTION_ERROR
 
 
-def load_lane_execution(home: Path) -> LaneExecution:
-    """Load the explicit declaration that this device is a lane host."""
-    path = home / CONFIG_FILE
-    if not path.exists():
-        raise AccountError(LANE_EXECUTION_ERROR)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
-    if not isinstance(raw, dict):
-        raise AccountError(LANE_EXECUTION_ERROR)
-    value = raw.get("lane_execution")
-    execution = _parse_lane_execution(value)
-    if execution is None:
-        raise AccountError(_lane_execution_error(value))
-    return execution
-
-
 def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
     """The device's review slots and effective implementer selection."""
     path = home / CONFIG_FILE

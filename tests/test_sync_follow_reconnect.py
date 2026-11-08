@@ -671,6 +671,85 @@ def test_publish_terminals_does_not_record_state_for_a_failed_send(
         store.close()
 
 
+@pytest.mark.parametrize(
+    ("missing", "error"),
+    [
+        ("models", "models is not configured"),
+        ("lane_execution", "lane_execution is not configured"),
+    ],
+)
+def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
+    tmp_path: Path,
+    missing: str,
+    error: str,
+) -> None:
+    _init_paired_store(tmp_path)
+    config = {
+        "models": {"first": "grok", "second": "codex"},
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "accounts": {
+            "grok-a": {"provider": "grok", "config_dir": "/test/grok-a"},
+        },
+        "roles": {
+            "interactive": {
+                "account": "grok-a",
+                "model": "operator-model",
+                "access": "workspace-write",
+            },
+        },
+        "sessions": {"grok": {"interactive": "interactive"}},
+    }
+    config.pop(missing)
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "raw",
+            {"id": "raw", "runtime": {"control": "attached"}},
+        )
+        store.write(
+            "session",
+            "insert",
+            "grok",
+            {
+                "id": "grok",
+                "runtime": {
+                    "control": "attached",
+                    "provider": "grok",
+                },
+            },
+        )
+
+        class _RecordingRuntime:
+            def __init__(self) -> None:
+                self.captured: list[str] = []
+
+            def capture(self, session_id: str) -> str:
+                self.captured.append(session_id)
+                return f"output for {session_id}"
+
+        class _RecordingWs:
+            def __init__(self) -> None:
+                self.sent: list[dict] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(json.loads(data))
+
+        runtime = _RecordingRuntime()
+        ws = _RecordingWs()
+        with pytest.raises(StoreError, match=error):
+            main_mod._publish_terminals(store, runtime, ws, {}, {})
+
+        assert runtime.captured == ["raw"]
+        assert [frame["session_id"] for frame in ws.sent] == ["raw"]
+    finally:
+        store.close()
+
+
 def test_reconnect_republishes_terminal_state_even_if_unchanged(tmp_path: Path) -> None:
     """Regression test: terminal_seq/last_capture persist across internal reconnects
     (that's the whole point of this fix - the process survives instead of restarting
