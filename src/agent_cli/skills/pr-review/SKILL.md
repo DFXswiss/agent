@@ -12,6 +12,8 @@ Order: model slot `first`, then model slot `second`. The provider of each slot (
 The same manifest must declare the current device as a lane host. The local
 harness's lane starter starts review lanes on that external host; Agent has no
 remote SSH execution mode.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Without this skill, `agent gate` and pr-reviewer `agent agent` commands refuse.
 

@@ -30,6 +30,8 @@ device as a lane host. The local harness's lane starter starts the command on
 that external host; Agent does not mirror work there. Missing, invalid, or
 `remote` `lane_execution` fails closed; `--no-tmux` is not an execution-device
 bypass.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Model lanes never start monitors or wait/poll for checks, reviews, or CI. Return
 the current result or blocker to the script; it observes events and informs a

@@ -703,6 +703,8 @@ Its `lane_execution` declaration is required for every vendor-lane start and
 only explicitly marks the current device as a lane host. The local harness's
 lane starter must start Agent on the external lane host; absence, invalid
 configuration, and the unsupported `remote` mode authorize no fallback.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 Its required `models` block names the provider of model slot `first` and `second`, and
 its optional `implementer` names a separate implementation provider;
 device-wide `lanes` bind slots for every session. An unset `models` block

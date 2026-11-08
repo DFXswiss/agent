@@ -1123,7 +1123,7 @@ def cmd_agent(args: list[str]) -> None:
                             )
             from .ai_accounts import load_ai_accounts
 
-            load_ai_accounts(store.home).require_lane_execution()
+            load_ai_accounts(store.home)
             aid = str(uuid.uuid4())
             store.write(
                 "agent",

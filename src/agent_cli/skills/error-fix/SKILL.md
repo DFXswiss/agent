@@ -33,6 +33,8 @@ Those lanes require the external lane host's `ai-accounts.json` to identify the
 current device as a lane host. The local harness's lane starter starts them
 there; Agent has no remote-execution fallback and never runs a vendor CLI on an
 undeclared work device.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Model lanes never start monitors, poll, or wait for logs, CI, or PR events.
 Return the current result or blocker to the script. Event detection and any

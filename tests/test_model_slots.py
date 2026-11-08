@@ -489,6 +489,49 @@ def test_cli_agent_start_follows_configured_first_slot(
         _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "reviewer", "--vendor", "codex", "--round", "1"])
 
 
+def test_cli_agent_start_records_agent_without_lane_execution(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
+    tid = _task(tmp_path, capsys)
+
+    _run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "grok",
+        ],
+    )
+    aid = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        row = store.row("agent", aid)
+        assert row is not None
+        assert row["task_id"] == tid
+        assert row["status"] == "working"
+    finally:
+        store.close()
+
+
 def test_cli_gate_record_requires_the_slot_provider(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -11,6 +11,8 @@ Requires **spine**. Roles: `implementer`, `reviewer`. The reviewer runs on model
 That manifest must also declare the current device as a lane host. The local
 harness's lane starter starts lanes on that external host; Agent has no remote
 SSH execution mode.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Without this skill, implementer and reviewer `agent agent` commands refuse.
 

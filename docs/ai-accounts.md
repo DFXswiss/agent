@@ -106,6 +106,8 @@ lane_execution is not configured: lanes never run on a work device; start lanes 
 The rejected `remote` mode also reports that it is not supported. Model
 display and other read-only configuration inspection do not launch a lane and
 remain available without this declaration.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
