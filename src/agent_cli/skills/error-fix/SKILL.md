@@ -61,10 +61,12 @@ subsequent notification that provides useful model work belong to the script.
    (never the origin checkout). Mandatory checks must `pass`, then
    `pr.open` opens a **draft** via `agent github pending`. A retry reuses
    head `error-fix-<id8>`. Gates run on that head after `pushed`. A human
-   merges. A nonterminal legacy task without model pins is replaced by a
-   newly pinned task and marked `superseded` before staging or Git starts.
-   Missing model configuration creates neither a replacement nor a worktree;
-   a changed configuration makes the watcher evaluate the intent again.
+   merges. A nonterminal legacy task without model pins stops before staging
+   or Git and reports the supported transition:
+   `agent task state <id> superseded`. The next scan ignores that terminal task
+   and creates a newly pinned task. An unchanged legacy task and model
+   configuration are not retried; either that state transition or a changed
+   configuration makes the watcher evaluate the intent again.
 
 ```bash
 agent activity add --session <id> --type error.skip --payload-file <path>

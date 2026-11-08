@@ -493,6 +493,8 @@ def cmd_session(args: list[str]) -> None:
         if sub == "close":
             sid = require_flag(rest, "--id")
             row = _need(store, "session", sid)
+            from .error_fix_act import is_retryable_configuration_error
+
             open_tasks = [
                 t
                 for t in store.rows("task")
@@ -515,7 +517,10 @@ def cmd_session(args: list[str]) -> None:
                 for a in store.rows("activity")
                 if a.get("session_id") == sid
                 and a.get("type") == "error.fix"
-                and a.get("execution_status") == "pending"
+                and (
+                    a.get("execution_status") == "pending"
+                    or is_retryable_configuration_error(a)
+                )
             ]
             if pending_fix:
                 die("session has pending error.fix")

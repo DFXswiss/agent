@@ -846,12 +846,13 @@ The watcher resolves the configured model pins before it creates a staging
 directory or invokes Git. A missing or invalid selection records a stable
 configuration error; unchanged configuration is not retried, while a changed
 configuration is evaluated again. Before reusing an existing error-fix task,
-the watcher validates that task's pinned `models`. It replaces a nonterminal
-legacy task without model pins with a newly pinned task and marks the legacy
-task `superseded` with the replacement reason before any staging or Git
-operation. Without a valid device model selection, no replacement is created;
-the configuration error is fingerprinted so a changed configuration is
-evaluated again.
+the watcher validates that task's pinned `models`. A nonterminal legacy task
+without model pins fails closed before any staging or Git operation. Replace it
+explicitly with `agent task state <id> superseded`; the next scan ignores that
+terminal task and creates a new task with the configured model pins. The stable
+error fingerprint includes the model configuration plus the legacy task id and
+state, so an unchanged scan stays quiet while either superseding the task or
+changing the configuration permits one new evaluation.
 
 ### 21.6 Not in this revision
 

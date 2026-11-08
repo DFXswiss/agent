@@ -747,41 +747,49 @@ def _prepare_pr_review_agent(
         ai.require_lane_execution()
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
-    if vendor in OUTPUT_FILE_VENDORS:
-        fd, codex_output = tempfile.mkstemp(
-            prefix=f"agent-coord-{vendor}-", suffix=".txt"
+    try:
+        if vendor in OUTPUT_FILE_VENDORS:
+            fd, codex_output = tempfile.mkstemp(
+                prefix=f"agent-coord-{vendor}-", suffix=".txt"
+            )
+            os.close(fd)
+        argv = [
+            *selected.env_prefix(),
+            *provider_argv(
+                vendor,
+                spec_file=str(spec_path),
+                cwd=worktree,
+                write=write,
+                model=selected.model,
+                output_file=codex_output,
+            ),
+        ]
+        stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
+        store.write(
+            "agent",
+            "insert",
+            aid,
+            {
+                "id": aid,
+                "session_id": worker.session_id,
+                "task_id": task["id"],
+                "round": None,
+                "role": role,
+                "vendor": vendor,
+                "stage": stage,
+                "status": "working",
+                "started_at": utcnow(),
+                "finished_at": None,
+                "note": None,
+            },
         )
-        os.close(fd)
-    argv = [
-        *selected.env_prefix(),
-        *provider_argv(
-            vendor,
-            spec_file=str(spec_path),
-            cwd=worktree,
-            write=write,
-            model=selected.model,
-            output_file=codex_output,
-        ),
-    ]
-    stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
-    store.write(
-        "agent",
-        "insert",
-        aid,
-        {
-            "id": aid,
-            "session_id": worker.session_id,
-            "task_id": task["id"],
-            "round": None,
-            "role": role,
-            "vendor": vendor,
-            "stage": stage,
-            "status": "working",
-            "started_at": utcnow(),
-            "finished_at": None,
-            "note": None,
-        },
-    )
+    except BaseException:
+        if codex_output:
+            try:
+                os.unlink(codex_output)
+            except OSError:
+                pass
+        raise
     return {
         "agent_id": aid,
         "role": role,
@@ -854,6 +862,13 @@ def _abort_prepared_pr_reviews(
     exc: BaseException,
 ) -> None:
     """Close every persisted preparation before publishing one blocker."""
+    for prepared in prepared_list:
+        codex_output = prepared.get("codex_output")
+        if codex_output:
+            try:
+                os.unlink(str(codex_output))
+            except OSError:
+                pass
     for prepared in prepared_list:
         agent = store.row("agent", prepared["agent_id"])
         if agent is not None and agent.get("status") == "working":
@@ -1076,8 +1091,13 @@ def phase_pr_gates(
         save_task(store, task)
         results: dict[str, Any] = {}
         lock = threading.Lock()
+        start_barrier = threading.Event()
+        start_aborted = threading.Event()
 
         def _worker(prep: dict[str, Any]) -> None:
+            start_barrier.wait()
+            if start_aborted.is_set():
+                return
             agent_id, outcome = _run_prepared(
                 prep, timeout=worker.lane_timeout, lane_runner=lane_runner
             )
@@ -1088,9 +1108,19 @@ def phase_pr_gates(
             threading.Thread(target=_worker, args=(prep,))
             for prep in prepared_list
         ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
+        started_threads: list[threading.Thread] = []
+        try:
+            for thread in threads:
+                thread.start()
+                started_threads.append(thread)
+        except Exception:
+            start_aborted.set()
+            start_barrier.set()
+            for thread in started_threads:
+                thread.join()
+            raise
+        start_barrier.set()
+        for thread in started_threads:
             thread.join()
     except (StoreError, Exception) as exc:
         _abort_prepared_pr_reviews(

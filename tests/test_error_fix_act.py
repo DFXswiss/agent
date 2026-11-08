@@ -335,7 +335,7 @@ def test_scan_error_fix_waits_for_model_configuration_before_git(
     assert calls[0][:3] == ["git", "clone", "--"]
 
 
-def test_scan_error_fix_replaces_legacy_task_once_before_git(
+def test_scan_error_fix_requires_explicit_legacy_supersede_before_git(
     tmp_path: Path,
 ) -> None:
     store = Store(tmp_path)
@@ -345,59 +345,48 @@ def test_scan_error_fix_replaces_legacy_task_once_before_git(
     _legacy_task(store)
     calls: list[list[str]] = []
 
-    def runner(argv: list[str]) -> Completed:
-        tasks = store.rows("task")
-        assert len(tasks) == 2
-        legacy = store.row("task", "legacy-error-fix-task")
-        assert legacy is not None
-        assert legacy["state"] == "superseded"
-        replacement_id = legacy["payload"]["superseded_by"]
-        replacement = store.row("task", replacement_id)
-        assert replacement is not None
-        assert replacement["models"] == {"first": "grok", "second": "codex"}
-        assert (
-            error_fix_act_mod._lookup_implement_task(
-                store, "runner-1", "error-seen-12345678"
-            )
-            == replacement_id
-        )
-        calls.append(list(argv))
-        if argv[:3] == ["git", "clone", "--"]:
-            Path(argv[-1]).joinpath(".git").mkdir(parents=True)
-        return Completed(0, "", "")
-
-    lines = scan_error_fix(store, runner)
+    lines = scan_error_fix(store, _clone_runner(calls))
     legacy = store.row("task", "legacy-error-fix-task")
     assert legacy is not None
-    replacement_id = legacy["payload"]["superseded_by"]
-    assert legacy["payload"]["superseded_reason"] == (
-        "legacy error-fix task lacked explicit model pins"
-    )
-    assert lines == [
-        f"error.fix fix-1 task={replacement_id} "
-        f"worktree={tmp_path / 'error-fix-work' / replacement_id}"
-    ]
-    assert calls[0][:3] == ["git", "clone", "--"]
+    assert legacy["state"] == "open"
+    assert lines == ["error.fix fix-1 error"]
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
     row = store.row("activity", "fix-1")
     assert row is not None
-    assert row["execution_status"] == "done"
-
-    updated = {key: value for key, value in row.items() if not key.startswith("_")}
-    updated["execution_status"] = "pending"
-    store.write("activity", "update", "fix-1", updated)
-    calls.clear()
-    assert scan_error_fix(store, runner) == [
-        f"error.fix fix-1 task={replacement_id} "
-        f"worktree={tmp_path / 'error-fix-work' / replacement_id}"
-    ]
-    assert calls == []
-    assert len(store.rows("task")) == 2
+    assert row["execution_status"] == "error"
     assert (
-        error_fix_act_mod._lookup_implement_task(
-            store, "runner-1", "error-seen-12345678"
-        )
-        == replacement_id
+        "agent task state legacy-error-fix-task superseded"
+        in row["execution_error"]
     )
+    first_fingerprint = row["result"]["configuration_fingerprint"]
+
+    assert scan_error_fix(store, _clone_runner(calls)) == []
+    assert calls == []
+
+    updated_legacy = {
+        key: value for key, value in legacy.items() if not key.startswith("_")
+    }
+    updated_legacy["state"] = "superseded"
+    store.write("task", "update", legacy["id"], updated_legacy)
+
+    lines = scan_error_fix(store, _clone_runner(calls))
+    tasks = store.rows("task")
+    replacements = [task for task in tasks if task["id"] != legacy["id"]]
+    assert len(replacements) == 1
+    replacement = replacements[0]
+    assert replacement["models"] == {"first": "grok", "second": "codex"}
+    assert lines == [
+        f"error.fix fix-1 task={replacement['id']} "
+        f"worktree={tmp_path / 'error-fix-work' / replacement['id']}"
+    ]
+    assert calls[0][:3] == ["git", "clone", "--"]
+    done = store.row("activity", "fix-1")
+    assert done is not None
+    assert done["execution_status"] == "done"
+    assert done["result"]["task_id"] == replacement["id"]
+    assert done["result"].get("configuration_fingerprint") is None
+    assert first_fingerprint
 
 
 @pytest.mark.parametrize("state", ["done", "failed", "superseded"])
@@ -422,7 +411,7 @@ def test_lookup_implement_task_ignores_terminal_tasks(
     )
 
 
-def test_scan_error_fix_legacy_task_without_configuration_is_retryable_and_runs_no_git(
+def test_scan_error_fix_legacy_fingerprint_changes_with_model_configuration(
     tmp_path: Path,
 ) -> None:
     store = Store(tmp_path)
@@ -438,7 +427,7 @@ def test_scan_error_fix_legacy_task_without_configuration_is_retryable_and_runs_
     assert row is not None
     assert row["execution_status"] == "error"
     assert row["result"]["kind"] == "model-configuration"
-    assert row["result"]["configuration_fingerprint"]
+    first_fingerprint = row["result"]["configuration_fingerprint"]
     assert calls == []
     assert len(store.rows("task")) == 1
     legacy = store.row("task", "legacy-error-fix-task")
@@ -456,12 +445,68 @@ def test_scan_error_fix_legacy_task_without_configuration_is_retryable_and_runs_
     lines = scan_error_fix(store, _clone_runner(calls))
     legacy = store.row("task", "legacy-error-fix-task")
     assert legacy is not None
-    replacement_id = legacy["payload"]["superseded_by"]
-    assert lines == [
-        f"error.fix fix-1 task={replacement_id} "
-        f"worktree={tmp_path / 'error-fix-work' / replacement_id}"
-    ]
+    assert legacy["state"] == "open"
+    assert lines == ["error.fix fix-1 error"]
+    retried = store.row("activity", "fix-1")
+    assert retried is not None
+    assert retried["result"]["configuration_fingerprint"] != first_fingerprint
+    assert calls == []
+
+
+def test_generic_error_clears_stale_configuration_fingerprint(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    updated = {key: value for key, value in row.items() if not key.startswith("_")}
+    updated["result"] = {
+        "kind": "model-configuration",
+        "configuration_fingerprint": "stale",
+    }
+    store.write("activity", "update", row["id"], updated)
+    stale = store.row("activity", "fix-1")
+    assert stale is not None
+
+    error_fix_act_mod._mark(store, stale, status="error", error="ordinary failure")
+
+    marked = store.row("activity", "fix-1")
+    assert marked is not None
+    assert marked["result"] == {}
+    assert not error_fix_act_mod.is_retryable_configuration_error(marked)
+
+
+def test_scan_error_fix_rechecks_active_session_before_each_git_operation(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "clone", "--"]:
+            Path(argv[-1]).joinpath(".git").mkdir(parents=True)
+            session = store.row("session", "runner-1")
+            assert session is not None
+            updated = {
+                key: value for key, value in session.items() if not key.startswith("_")
+            }
+            updated["status"] = "closed"
+            store.write("session", "update", session["id"], updated)
+        return Completed(0, "", "")
+
+    assert scan_error_fix(store, runner) == ["error.fix fix-1 error"]
+    assert len(calls) == 1
     assert calls[0][:3] == ["git", "clone", "--"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["execution_error"] == "session is not active"
+    assert store.rows("task") == []
 
 
 def test_scan_error_fix_rejects_existing_task_with_invalid_implementer_before_git(

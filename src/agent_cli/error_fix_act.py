@@ -53,6 +53,15 @@ def _configuration_error_fingerprint(row: dict[str, Any]) -> str | None:
     return _nonempty_str(result.get("configuration_fingerprint"))
 
 
+def is_retryable_configuration_error(row: dict[str, Any]) -> bool:
+    """Whether an error.fix row is waiting for a retry-triggering change."""
+    return (
+        row.get("type") == "error.fix"
+        and row.get("execution_status") == "error"
+        and _configuration_error_fingerprint(row) is not None
+    )
+
+
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
@@ -73,6 +82,8 @@ def _mark(
         updated["execution_error"] = str(error)[:500]
     if result is not None:
         updated["result"] = result
+    elif status == "error":
+        updated["result"] = {}
     store.write("activity", "update", updated["id"], updated)
 
 
@@ -241,14 +252,8 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
         return None
 
     def preference(row: dict[str, Any]) -> tuple[bool, str, str, str]:
-        try:
-            models_for_new_record(row)
-            implementer_for_new_record(row)
-            reusable = True
-        except ModelSlotsError:
-            reusable = False
         return (
-            reusable,
+            row.get("models") is None,
             str(row.get("created_at") or ""),
             str(row.get("updated_at") or ""),
             str(row.get("id") or ""),
@@ -257,10 +262,47 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
     return str(max(matches, key=preference)["id"])
 
 
+def _configuration_fingerprint_for_row(
+    store: Store,
+    row: dict[str, Any],
+    model_configuration_fingerprint: str,
+) -> str:
+    """Include a blocking legacy task so its state change permits one retry."""
+    payload = row.get("payload")
+    session_id = _nonempty_str(row.get("session_id"))
+    error_id = (
+        _nonempty_str(payload.get("error_id"))
+        if isinstance(payload, dict)
+        else None
+    )
+    if session_id is None or error_id is None:
+        return model_configuration_fingerprint
+    task_id = _lookup_implement_task(store, session_id, error_id)
+    task = store.row("task", task_id) if task_id is not None else None
+    if task is None or task.get("models") is not None:
+        return model_configuration_fingerprint
+    material = (
+        f"{model_configuration_fingerprint}\0{task_id}\0"
+        f"{str(task.get('state') or '')}"
+    ).encode()
+    return hashlib.sha256(material).hexdigest()
+
+
+def _legacy_task_error(task: dict[str, Any]) -> str:
+    task_id = str(task.get("id") or "")
+    return (
+        f"legacy error-fix task {task_id} has no model pins; "
+        f"run 'agent task state {task_id} superseded', then the next scan "
+        "will create a newly pinned task"
+    )
+
+
 def _require_reusable_task_models(store: Store, task_id: str) -> None:
     task = store.row("task", task_id)
     if task is None:
         raise StoreError("existing error-fix task not found")
+    if task.get("models") is None:
+        raise StoreError(_legacy_task_error(task))
     try:
         models_for_new_record(task)
         implementer_for_new_record(task)
@@ -281,26 +323,7 @@ def _find_or_create_implement_task(
         raise StoreError("error_id is required")
     existing = _lookup_implement_task(store, session_id, error_id)
     if existing is not None:
-        existing_task = store.row("task", existing)
-        if existing_task is None:
-            raise StoreError("existing error-fix task not found")
-        try:
-            _require_reusable_task_models(store, existing)
-        except StoreError:
-            if existing_task.get("models") is not None:
-                raise
-            pins = task_pins if task_pins is not None else _device_model_pins(store)
-            replacement = _insert_implement_task(
-                store,
-                session_id,
-                error_id,
-                title,
-                ref=ref or _nonempty_str(existing_task.get("ref")),
-                task_pins=pins,
-                check_open_draft=False,
-            )
-            _supersede_legacy_task(store, existing_task, replacement)
-            return replacement, True
+        _require_reusable_task_models(store, existing)
         return existing, False
     return (
         _insert_implement_task(
@@ -310,7 +333,6 @@ def _find_or_create_implement_task(
             title,
             ref=ref,
             task_pins=task_pins,
-            check_open_draft=True,
         ),
         True,
     )
@@ -324,7 +346,6 @@ def _insert_implement_task(
     *,
     ref: str | None,
     task_pins: dict[str, Any] | None,
-    check_open_draft: bool,
 ) -> str:
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
@@ -336,13 +357,9 @@ def _insert_implement_task(
     )
     if fingerprint is None:
         raise StoreError("fingerprint is required")
-    if check_open_draft and _already_open_draft(store, fingerprint):
+    if _already_open_draft(store, fingerprint):
         raise StoreError("already-open-draft")
-    session = store.row("session", session_id)
-    if session is None:
-        raise StoreError("session not found")
-    if session.get("status") != "active":
-        raise StoreError("session is not active")
+    session = _require_active_session(store, session_id)
     pins = task_pins if task_pins is not None else _device_model_pins(store)
     tid = str(uuid.uuid4())
     store.write(
@@ -389,19 +406,13 @@ def _insert_implement_task(
     return tid
 
 
-def _supersede_legacy_task(
-    store: Store, legacy_task: dict[str, Any], replacement_task_id: str
-) -> None:
-    updated = _strip(legacy_task)
-    payload = updated.get("payload")
-    updated["payload"] = dict(payload) if isinstance(payload, dict) else {}
-    updated["payload"]["superseded_reason"] = (
-        "legacy error-fix task lacked explicit model pins"
-    )
-    updated["payload"]["superseded_by"] = replacement_task_id
-    updated["state"] = "superseded"
-    updated["updated_at"] = utcnow()
-    store.write("task", "update", updated["id"], updated)
+def _require_active_session(store: Store, session_id: str) -> dict[str, Any]:
+    session = store.row("session", session_id)
+    if session is None:
+        raise StoreError("session not found")
+    if session.get("status") != "active":
+        raise StoreError("session is not active")
+    return session
 
 
 def _line_fingerprint(seen_payload: dict[str, Any]) -> str | None:
@@ -451,24 +462,26 @@ def scan_error_fix(store: Store, runner: Runner) -> list[str]:
 
 
 def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
-    configuration_fingerprint = _model_configuration_fingerprint(store.home)
-    rows = [
-        row
-        for row in store.rows("activity")
-        if row.get("_origin_device_id") == store.device_id()
-        and row.get("type") == "error.fix"
-        and (
-            row.get("execution_status") == "pending"
-            or (
-                row.get("execution_status") == "error"
-                and _configuration_error_fingerprint(row)
-                not in (None, configuration_fingerprint)
-            )
+    model_configuration_fingerprint = _model_configuration_fingerprint(store.home)
+    rows: list[tuple[dict[str, Any], str]] = []
+    for row in store.rows("activity"):
+        if (
+            row.get("_origin_device_id") != store.device_id()
+            or row.get("type") != "error.fix"
+        ):
+            continue
+        configuration_fingerprint = _configuration_fingerprint_for_row(
+            store, row, model_configuration_fingerprint
         )
-    ]
-    rows.sort(key=lambda row: str(row.get("id") or ""))
+        if row.get("execution_status") == "pending" or (
+            row.get("execution_status") == "error"
+            and _configuration_error_fingerprint(row)
+            not in (None, configuration_fingerprint)
+        ):
+            rows.append((row, configuration_fingerprint))
+    rows.sort(key=lambda item: str(item[0].get("id") or ""))
     lines: list[str] = []
-    for row in rows:
+    for row, configuration_fingerprint in rows:
         rid = str(row.get("id") or "?")
         try:
             error_id, _fingerprint, repo = _pending_fix(store, row)
@@ -485,33 +498,17 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 _require_reusable_task_models(store, existing)
             except StoreError as exc:
                 existing_row = store.row("task", existing)
-                if existing_row is None or existing_row.get("models") is not None:
-                    _mark(store, row, status="error", error=str(exc))
-                    lines.append(f"error.fix {rid} error")
-                    continue
-                try:
-                    replacement_pins = _device_model_pins(store)
-                except StoreError as config_exc:
+                if existing_row is not None and existing_row.get("models") is None:
                     _mark_model_configuration_error(
                         store,
                         row,
-                        config_exc,
+                        exc,
                         configuration_fingerprint,
                     )
-                    lines.append(f"error.fix {rid} error")
-                    continue
-                try:
-                    existing, _created = _find_or_create_implement_task(
-                        store,
-                        session_id,
-                        error_id,
-                        f"error-fix {error_id[:8]}",
-                        task_pins=replacement_pins,
-                    )
-                except StoreError as replacement_exc:
-                    _mark(store, row, status="error", error=str(replacement_exc))
-                    lines.append(f"error.fix {rid} error")
-                    continue
+                else:
+                    _mark(store, row, status="error", error=str(exc))
+                lines.append(f"error.fix {rid} error")
+                continue
         if existing is not None and (parent / existing / ".git").exists():
             path = parent / existing
             result = {
@@ -546,9 +543,21 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 continue
         if row.get("execution_status") == "error":
             _mark(store, row, status="pending", result={})
+        try:
+            _require_active_session(store, session_id)
+        except StoreError:
+            # Execution has not started, so keep the intent pending for a later scan.
+            lines.append(f"error.fix {rid} error")
+            continue
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         staging = parent / f"pending-{rid}"
         if not (staging / ".git").exists():
+            try:
+                _require_active_session(store, session_id)
+            except StoreError as exc:
+                _mark(store, row, status="error", error=str(exc))
+                lines.append(f"error.fix {rid} error")
+                continue
             error = _run_git(
                 runner,
                 ["git", "clone", "--", f"https://github.com/{repo}.git", str(staging)],
@@ -567,6 +576,13 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 existing_ref = _nonempty_str(existing_row.get("ref"))
             if existing_ref is not None:
                 checkout.append(existing_ref)
+        try:
+            _require_active_session(store, session_id)
+        except StoreError as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            _mark(store, row, status="error", error=str(exc))
+            lines.append(f"error.fix {rid} error")
+            continue
         error = _run_git(
             runner,
             checkout,

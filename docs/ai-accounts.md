@@ -172,7 +172,10 @@ pinned `models.first`. Tasks recorded before model slots existed and therefore
 missing `models` remain readable with the historical `grok`, then `codex`
 mapping for existing agent and gate rows. They cannot start a new lane or write
 a new agent or gate row; recreate them after the local harness has written the
-device's `models` selection.
+device's `models` selection. For a nonterminal legacy error-fix task, run
+`agent task state <id> superseded`; the next `agent watch error-fix` scan ignores
+the terminal task and creates a newly pinned task. The watcher performs no
+staging or Git operation while that explicit transition is still required.
 When `agent run --spec-file` resolves an implementer without a local lane
 adapter, it deliberately uses the existing handoff path, names the pinned
 provider as the implementer, and creates no agent row.
