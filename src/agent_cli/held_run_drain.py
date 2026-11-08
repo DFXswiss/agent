@@ -10,7 +10,6 @@ from typing import Any, Mapping
 from .a38_errors import is_guard_error, is_rate_limit_error
 from .pr_lifecycle import _workflow_run_never_started
 from .workflow_approval import (
-    _commit_shas,
     _list_runs,
     _pending,
     _timestamp,
@@ -66,11 +65,11 @@ class _BudgetedApi:
 def _open_pull_protection(
     api: Any,
     repo: str,
-) -> tuple[set[str], dict[tuple[str, str], list[int]]]:
+) -> set[str]:
+    """Open pull requests protect their current head SHA and merge commit SHA."""
     from .a38_guard import GuardError, _validate_sha
 
     protected: set[str] = set()
-    pulls_by_branch: dict[tuple[str, str], list[int]] = {}
     for pull in api.paginate(f"/repos/{repo}/pulls?state=open"):
         head = pull.get("head") if isinstance(pull, Mapping) else None
         head_sha = head.get("sha") if isinstance(head, Mapping) else None
@@ -94,9 +93,6 @@ def _open_pull_protection(
             head_ref = head.get("ref")
             if not isinstance(head_ref, str) or head_ref == "":
                 raise GuardError("open pull request head ref missing")
-            pulls_by_branch.setdefault(
-                (full_name.lower(), head_ref), []
-            ).append(number)
 
         merge_sha = pull.get("merge_commit_sha")
         if merge_sha is None:
@@ -126,46 +122,7 @@ def _open_pull_protection(
                 raise GuardError("open pull request merge sha invalid") from exc
             protected.add(merge_sha)
 
-    return protected, pulls_by_branch
-
-
-def _run_is_protected(
-    api: Any,
-    repo: str,
-    run: Mapping[str, Any],
-    protection: tuple[set[str], dict[tuple[str, str], list[int]]],
-    commit_cache: dict[int, set[str] | None],
-) -> bool:
-    from .a38_guard import PullCommitsTruncatedError
-
-    protected, pulls_by_branch = protection
-    head_sha = run.get("head_sha")
-    if not isinstance(head_sha, str):
-        return False
-    head_sha = head_sha.lower()
-    if head_sha in protected:
-        return True
-    head_repository = run.get("head_repository")
-    head_repo = (
-        head_repository.get("full_name")
-        if isinstance(head_repository, Mapping)
-        else None
-    )
-    head_branch = run.get("head_branch")
-    if not isinstance(head_repo, str) or not isinstance(head_branch, str):
-        return False
-    for number in pulls_by_branch.get((head_repo.lower(), head_branch), []):
-        if number not in commit_cache:
-            try:
-                commit_cache[number] = {
-                    sha.lower() for sha in _commit_shas(api, repo, number)
-                }
-            except PullCommitsTruncatedError:
-                commit_cache[number] = None
-        commits = commit_cache[number]
-        if commits is None or head_sha in commits:
-            return True
-    return False
+    return protected
 
 
 def drain_held_runs(
@@ -247,7 +204,6 @@ def _drain_enabled(
 ) -> dict[str, Any]:
     from .a38_guard import (
         GuardError,
-        PullCommitsTruncatedError,
         _is_rate_limit_response,
         _open_pull_numbers_for_head,
         _rate_limit_error,
@@ -280,10 +236,7 @@ def _drain_enabled(
         now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=MIN_AGE_S)
     slot = int(now.timestamp()) // ROTATION_PERIOD_S
-    commit_cache: dict[int, set[str] | None] = {}
-    # Keep the scan-time check broader as a cheap conservative first filter.
-    protection = _open_pull_protection(api, repo)
-    protected = protection[0]
+    protected = _open_pull_protection(api, repo)
     result["protected"] = len(protected)
 
     # A capped window only omits candidates; protection does not depend on it.
@@ -321,8 +274,6 @@ def _drain_enabled(
             continue
         candidate = dict(run)
         candidate["head_sha"] = head_sha
-        if _run_is_protected(api, repo, candidate, protection, commit_cache):
-            continue
         candidates.append(candidate)
 
     candidates.sort(
@@ -464,17 +415,9 @@ def _drain_enabled(
                 if detail_merge_sha is None:
                     detail_protected = True
                     break
-                try:
-                    detail_commits = {
-                        sha.lower() for sha in _commit_shas(api, repo, number)
-                    }
-                except PullCommitsTruncatedError:
-                    detail_protected = True
-                    break
                 if (
                     detail_head_sha == current_sha
                     or detail_merge_sha == current_sha
-                    or current_sha in detail_commits
                 ):
                     detail_protected = True
                     break

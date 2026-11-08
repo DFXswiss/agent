@@ -1,6 +1,6 @@
 """Opt-in approval of initial fork CI runs after the local report gate.
 
-A missing review record does not block this approval. This module authorizes execution, never retries a test or approves a review. The trusted default ref still requires workflow_approval.workflows, but that list does not filter which held pull_request runs are approved.
+A missing review record does not block this approval. This module authorizes execution, never retries a test or approves a review. Only an initial held run whose head SHA is the current head or the merge commit is approved; a run on an older commit of the pull request is left alone for the held-run drain. The trusted default ref still requires workflow_approval.workflows, but that list does not filter which held pull_request runs are approved.
 """
 from __future__ import annotations
 
@@ -493,6 +493,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
     held = [
         run for run in inventory
         if _release_shape(run, pull, commit_shas) and _pending(run)
+        and _records_ci_auth(run, pull)
         and not _has_newer_active(inventory, pull, run, commit_shas)
     ]
     held.sort(key=lambda run: (_timestamp(run.get("created_at")), run["id"]))
@@ -512,6 +513,10 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             or not _release_shape(run, pull, commit_shas)
         ):
             raise GuardError("workflow run identity changed before approval")
+        # Approval releases only the current head and the merge commit. A run
+        # on a superseded commit stays held for the drain.
+        if not _records_ci_auth(run, pull):
+            continue
         if not _pending(run):
             continue
         if _foreign_or_ambiguous_pull_link(run, pull, commit_shas):

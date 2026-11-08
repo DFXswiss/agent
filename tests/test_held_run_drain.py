@@ -148,11 +148,11 @@ class FakeDrain(FakeAPI):
             remainder = path.split("/pulls/", 1)[1]
             number = int(remainder.split("/", 1)[0])
             if remainder.endswith("/commits"):
+                read_count = self.commit_read_counts.get(number, 0)
+                self.commit_read_counts[number] = read_count + 1
                 reads = self.commits_reads.get(number)
                 if reads:
-                    read_count = self.commit_read_counts.get(number, 0)
                     shas = reads[min(read_count, len(reads) - 1)]
-                    self.commit_read_counts[number] = read_count + 1
                 else:
                     shas = self.commits_by_pull.get(number, [])
                 return 200, [
@@ -271,10 +271,10 @@ def test_open_pull_branch_fork_match_is_case_insensitive() -> None:
     fake = FakeDrain()
     run = fake.run(head_repository={"full_name": "CONTRIBUTOR/fork"})
     fake.runs = [run]
-    fake.open_pull_items = [
-        _open_pull("a" * 40, "b" * 40, head_repo="Contributor/Fork")
+    fake.open_pull_lists = [
+        [],
+        [_open_pull("a" * 40, run["head_sha"], head_repo="Contributor/Fork")],
     ]
-    fake.commits_by_pull[1] = [run["head_sha"]]
     result = drain_held_runs(fake.api(), REPO)
     assert result["deleted"] == []
     assert fake.deletes == []
@@ -394,7 +394,6 @@ def test_request_budget_interruption_does_not_delete_candidate(
         fake = FakeDrain()
         fake.runs = [fake.run()]
         fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
-        fake.commits_by_pull[1] = []
         return fake
 
     measured = configured_fake()
@@ -446,15 +445,16 @@ def test_open_pull_merge_commit_is_protected() -> None:
     assert fake.deletes == []
 
 
-def test_open_pull_older_commit_is_protected() -> None:
+def test_open_pull_older_commit_is_deleted() -> None:
     fake = FakeDrain()
     run = fake.run()
     fake.runs = [run]
     fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
     fake.commits_by_pull[1] = [run["head_sha"]]
     result = drain_held_runs(fake.api(), REPO)
-    assert result["deleted"] == []
-    assert fake.deletes == []
+    assert result["deleted"] == [101]
+    assert fake.deletes == [101]
+    assert fake.commit_read_counts == {}
 
 
 def test_branch_without_an_open_pull_is_deleted() -> None:
@@ -469,7 +469,6 @@ def test_force_push_orphan_on_open_pull_branch_is_deleted() -> None:
     fake = FakeDrain()
     fake.runs = [fake.run()]
     fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
-    fake.commits_by_pull[1] = ["c" * 40]
     result = drain_held_runs(fake.api(), REPO)
     assert result["deleted"] == [101]
     assert fake.deletes == [101]
@@ -499,7 +498,7 @@ def test_fresh_open_pull_recheck_protects_candidate_before_delete() -> None:
     assert fake.deletes == []
 
 
-def test_fresh_commit_list_recheck_protects_a_newly_pushed_candidate() -> None:
+def test_fresh_recheck_does_not_read_a_commit_list() -> None:
     fake = FakeDrain()
     run = fake.run()
     fake.runs = [run]
@@ -507,11 +506,12 @@ def test_fresh_commit_list_recheck_protects_a_newly_pushed_candidate() -> None:
     fake.commits_reads[1] = [["c" * 40], [run["head_sha"]]]
     result = drain_held_runs(fake.api(), REPO)
     assert result["candidates"] == 1
-    assert result["deleted"] == []
-    assert fake.deletes == []
+    assert result["deleted"] == [101]
+    assert fake.commit_read_counts == {}
+    assert fake.deletes == [101]
 
 
-def test_recheck_queries_only_the_head_and_reads_its_fresh_commits() -> None:
+def test_recheck_queries_only_the_head_and_does_not_read_commits() -> None:
     fake = FakeDrain()
     run = fake.run()
     fake.runs = [run]
@@ -524,11 +524,12 @@ def test_recheck_queries_only_the_head_and_reads_its_fresh_commits() -> None:
     result = drain_held_runs(fake.api(), REPO)
 
     assert result["candidates"] == 1
-    assert result["deleted"] == []
+    assert result["deleted"] == [101]
     assert "head=" not in fake.pull_list_queries[0]
     assert len(fake.pull_list_queries) == 2
     assert all("head=" in query for query in fake.pull_list_queries[1:])
-    assert fake.deletes == []
+    assert fake.commit_read_counts == {}
+    assert fake.deletes == [101]
 
 
 @pytest.mark.parametrize("head_branch", ["feature\x01", "x" * 256])
@@ -631,7 +632,6 @@ def test_recheck_deleted_fork_head_sha_protects_candidate() -> None:
     listed = _open_pull("a" * 40, "b" * 40)
     fake.runs = [run]
     fake.open_pull_items = [listed]
-    fake.commits_reads[1] = [["c" * 40], ["d" * 40]]
     fake.pull_overrides[1] = {
         **listed,
         "head": {**listed["head"], "sha": run["head_sha"], "repo": None},
@@ -640,7 +640,7 @@ def test_recheck_deleted_fork_head_sha_protects_candidate() -> None:
     result = drain_held_runs(fake.api(), REPO)
 
     assert result["deleted"] == []
-    assert fake.commit_read_counts == {1: 1}
+    assert fake.commit_read_counts == {}
     assert fake.deletes == []
 
 
@@ -856,7 +856,7 @@ def test_empty_run_head_branch_is_not_deleted() -> None:
     assert fake.deletes == []
 
 
-def test_truncated_pull_commit_list_protects_only_its_branch() -> None:
+def test_truncated_pull_commit_list_does_not_protect() -> None:
     fake = FakeDrain()
     fake.runs = [
         fake.run(id=101, head_branch="feature"),
@@ -864,9 +864,10 @@ def test_truncated_pull_commit_list_protects_only_its_branch() -> None:
     ]
     fake.open_pull_items = [_open_pull("a" * 40, "b" * 40)]
     fake.commits_by_pull[1] = [f"{ident:040x}" for ident in range(250)]
-    result = drain_held_runs(fake.api(), REPO)
-    assert result["deleted"] == [102]
-    assert fake.deletes == [102]
+    result = drain_held_runs(fake.api(), REPO, now=_now_for_offset(2, 0))
+    assert result["deleted"] == [101, 102]
+    assert fake.commit_read_counts == {}
+    assert fake.deletes == [101, 102]
 
 
 def test_later_run_attempt_is_not_deleted() -> None:

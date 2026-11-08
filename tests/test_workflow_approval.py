@@ -691,29 +691,69 @@ def test_non_allowlisted_path_on_current_head_is_approved_and_recorded() -> None
     assert not _marker_comments(fake, CANCEL_MARKER)
 
 
-def test_older_commit_sha_is_approved_but_not_recorded() -> None:
-    fake = FakeApproval()
-    fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=HEAD)]
-    fake.runs = [fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z")]
-    result = reconcile_pull(fake.api(), REPO, 1)
-    assert fake.posts == [301]
-    assert fake.cancels == []
-    assert "workflow:approve:301" in result.writes
-    assert not any(w.startswith("workflow:cancel:") for w in result.writes)
-    assert any(
-        item["run_id"] == 301 and item["status"] == "approved" for item in result.workflow_approvals
-    )
-    assert not _marker_comments(fake, AUTH_MARKER)
-    assert not _marker_comments(fake, CANCEL_MARKER)
-
-
-def test_older_commit_sha_is_not_approved_when_newer_same_path_is_in_progress() -> None:
+def test_older_commit_sha_is_not_approved() -> None:
     fake = FakeApproval()
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=HEAD)]
     fake.runs = [
         fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=302, created_at="2026-09-05T11:00:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [302]
+    assert fake.cancels == []
+    assert "workflow:approve:302" in result.writes
+    assert "workflow:approve:301" not in result.writes
+    assert not any(w.startswith("workflow:cancel:") for w in result.writes)
+    assert result.workflow_approvals == [
+        {"run_id": 302, "workflow": PATH, "head": HEAD, "status": "approved"}
+    ]
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert _comment_record(auths[0])["runs"] == [{"run_id": 302, "workflow": PATH}]
+    assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_three_commit_pull_approves_only_the_head_runs() -> None:
+    fake = FakeApproval()
+    fake.pull_commits = [
+        _clean_commit(sha=OLD),
+        _clean_commit(sha=MID),
+        _clean_commit(sha=HEAD),
+    ]
+    fake.runs = [
+        fake.run(id=301, path=PATH, head_sha=OLD, created_at="2026-09-04T09:00:00Z"),
+        fake.run(id=302, path=OTHER, head_sha=OLD, created_at="2026-09-04T09:01:00Z"),
+        fake.run(id=401, path=PATH, head_sha=MID, created_at="2026-09-04T10:00:00Z"),
+        fake.run(id=402, path=OTHER, head_sha=MID, created_at="2026-09-04T10:01:00Z"),
+        fake.run(id=501, path=PATH, head_sha=HEAD, created_at="2026-09-05T11:00:00Z"),
+        fake.run(id=502, path=OTHER, head_sha=HEAD, created_at="2026-09-05T11:01:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [501, 502]
+    assert fake.cancels == []
+    assert result.workflow_approvals == [
+        {"run_id": 501, "workflow": PATH, "head": HEAD, "status": "approved"},
+        {"run_id": 502, "workflow": OTHER, "head": HEAD, "status": "approved"},
+    ]
+    assert {w for w in result.writes if w.startswith("workflow:approve:")} == {
+        "workflow:approve:501", "workflow:approve:502",
+    }
+    assert not any(item["run_id"] in {301, 302, 401, 402} for item in result.workflow_approvals)
+    assert not any(w.startswith("workflow:cancel:") for w in result.writes)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert {row["run_id"] for row in _comment_record(auths[0])["runs"]} == {501, 502}
+    assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_older_current_head_copy_is_not_approved_when_newer_same_path_is_in_progress() -> None:
+    fake = FakeApproval()
+    fake.pull_commits = [_clean_commit(sha=MID), _clean_commit(sha=HEAD)]
+    fake.runs = [
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
+            head_sha=MID,
             created_at="2026-09-05T11:00:00Z",
             status="in_progress",
             conclusion=None,
@@ -733,7 +773,7 @@ def test_intermediate_sha_in_progress_blocks_older_hold_when_queries_are_scoped(
     fake.honor_run_query = True
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=MID), _clean_commit(sha=HEAD)]
     fake.runs = [
-        fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
             head_sha=MID,
@@ -749,12 +789,12 @@ def test_intermediate_sha_in_progress_blocks_older_hold_when_queries_are_scoped(
     assert not any(w.startswith("workflow:") for w in result.writes)
 
 
-def test_foreign_sha_in_progress_does_not_block_older_hold() -> None:
+def test_foreign_sha_in_progress_does_not_block_current_head_hold() -> None:
     fake = FakeApproval()
     fake.honor_run_query = True
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=HEAD)]
     fake.runs = [
-        fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
             head_sha=MID,
@@ -767,15 +807,17 @@ def test_foreign_sha_in_progress_does_not_block_older_hold() -> None:
     assert fake.posts == [301]
     assert fake.cancels == []
     assert any(item["run_id"] == 301 and item["status"] == "approved" for item in result.workflow_approvals)
-    assert not _marker_comments(fake, AUTH_MARKER)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert _comment_record(auths[0])["runs"] == [{"run_id": 301, "workflow": PATH}]
 
 
-def test_completed_newer_intermediate_sha_does_not_block_older_hold() -> None:
+def test_completed_newer_intermediate_sha_does_not_block_current_head_hold() -> None:
     fake = FakeApproval()
     fake.honor_run_query = True
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=MID), _clean_commit(sha=HEAD)]
     fake.runs = [
-        fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
             head_sha=MID,
@@ -788,7 +830,9 @@ def test_completed_newer_intermediate_sha_does_not_block_older_hold() -> None:
     assert fake.posts == [301]
     assert fake.cancels == []
     assert any(item["run_id"] == 301 and item["status"] == "approved" for item in result.workflow_approvals)
-    assert not _marker_comments(fake, AUTH_MARKER)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert _comment_record(auths[0])["runs"] == [{"run_id": 301, "workflow": PATH}]
 
 
 def test_unstarted_cancel_does_not_replace_the_finished_sibling() -> None:
