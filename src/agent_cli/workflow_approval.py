@@ -312,17 +312,15 @@ def _has_newer_active(
     )
 
 
-def _historical_pull_sha(
-    run: Mapping[str, Any], pull: Mapping[str, Any], pull_shas: set[str] | None,
+def _merge_commit_sha_run(
+    run: Mapping[str, Any], pull: Mapping[str, Any],
 ) -> bool:
     sha = run.get("head_sha")
     current = pull["head"]["sha"]
     if not isinstance(sha, str) or sha == "" or sha == current:
         return False
     merge = _merge_sha(pull)
-    if merge is not None and sha == merge:
-        return True
-    return pull_shas is not None and sha in pull_shas
+    return merge is not None and sha == merge
 
 
 def _counts_for_ready_inventory(
@@ -363,7 +361,7 @@ def _records_ci_auth(run: Mapping[str, Any], pull: Mapping[str, Any]) -> bool:
 
 
 def _foreign_or_ambiguous_pull_link(
-    run: Mapping[str, Any], pull: Mapping[str, Any], pull_shas: set[str] | None,
+    run: Mapping[str, Any], pull: Mapping[str, Any],
 ) -> bool:
     """A linked run for another pull request is not approved.
 
@@ -384,7 +382,7 @@ def _foreign_or_ambiguous_pull_link(
         return False
     if (
         same_number
-        and _historical_pull_sha(run, pull, pull_shas)
+        and _merge_commit_sha_run(run, pull)
         and run.get("head_branch") == head["ref"]
         and isinstance(run.get("head_repository"), Mapping)
         and run["head_repository"].get("full_name") == head["repo"]["full_name"]
@@ -394,7 +392,7 @@ def _foreign_or_ambiguous_pull_link(
 
 
 def _belongs_to_pull(
-    api: Any, run: Mapping[str, Any], pull: Mapping[str, Any], *, pull_shas: set[str] | None = None,
+    api: Any, run: Mapping[str, Any], pull: Mapping[str, Any],
 ) -> None:
     from .a38_guard import GuardError
     repo = pull["base"]["repo"]["full_name"]
@@ -413,11 +411,11 @@ def _belongs_to_pull(
         same_base = _field(linked, "base", "sha") == pull["base"]["sha"]
         if same_number and same_head and same_base:
             return
-        # Older commit or merge commit of this PR: a different linked head is not
-        # another PR when branch and fork match. Foreign and ambiguous links still fail.
+        # Merge commit of this PR: a different linked head is not another PR
+        # when branch and fork match. Foreign and ambiguous links still fail.
         if (
             same_number
-            and _historical_pull_sha(run, pull, pull_shas)
+            and _merge_commit_sha_run(run, pull)
             and run.get("head_branch") == head["ref"]
             and isinstance(run.get("head_repository"), Mapping)
             and run["head_repository"].get("full_name") == head["repo"]["full_name"]
@@ -543,9 +541,9 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             continue
         if not _pending(run):
             continue
-        if _foreign_or_ambiguous_pull_link(run, pull, commit_shas):
+        if _foreign_or_ambiguous_pull_link(run, pull):
             continue
-        _belongs_to_pull(api, run, pull, pull_shas=commit_shas)
+        _belongs_to_pull(api, run, pull)
         # Last live checks immediately before the irreversible authorization.
         final = fetch_pull(api, assessment.repo, assessment.pr)
         config_now = resolve_trusted_guard_config(api, final)

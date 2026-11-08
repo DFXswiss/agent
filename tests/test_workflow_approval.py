@@ -911,6 +911,32 @@ def test_current_head_counts_without_a_repository() -> None:
     assert wa._counts_for_ready_inventory({"head_sha": HEAD}, None, HEAD) is True
 
 
+def test_merge_commit_sha_run_accepts_only_the_merge_commit() -> None:
+    pull = {"head": {"sha": HEAD}, "merge_commit_sha": MERGE}
+    assert wa._merge_commit_sha_run({"head_sha": MERGE}, pull) is True
+    assert wa._merge_commit_sha_run({"head_sha": OLD}, pull) is False
+    assert wa._merge_commit_sha_run({"head_sha": HEAD}, pull) is False
+
+
+def test_old_commit_link_is_foreign() -> None:
+    fake = FakeApproval()
+    fake.pull["merge_commit_sha"] = MERGE
+    run = fake.run(head_sha=OLD, pull_requests=[_link(head=OLD)])
+    assert wa._foreign_or_ambiguous_pull_link(run, fake.pull) is True
+    with pytest.raises(
+        GuardError, match="workflow run targets another pull request head or base"
+    ):
+        wa._belongs_to_pull(object(), run, fake.pull)
+
+
+def test_merge_commit_link_matches_branch_and_fork() -> None:
+    fake = FakeApproval()
+    fake.pull["merge_commit_sha"] = MERGE
+    run = fake.run(head_sha=MERGE, pull_requests=[_link(head=MERGE)])
+    assert wa._foreign_or_ambiguous_pull_link(run, fake.pull) is False
+    wa._belongs_to_pull(object(), run, fake.pull)
+
+
 def test_older_merge_hold_records_the_newer_finished_head_run() -> None:
     fake = FakeApproval()
     fake.merge_commit_sha = MERGE
@@ -1694,7 +1720,9 @@ def test_missing_and_stale_links_fail_closed(what: str) -> None:
     assert fake.posts == []
 
 
-@pytest.mark.parametrize("what", ["ambiguous", "cross-pr", "cross-head", "cross-base"])
+@pytest.mark.parametrize(
+    "what", ["ambiguous", "cross-pr", "cross-head", "cross-base", "older-commit"]
+)
 def test_mismatched_link_is_skipped(what: str) -> None:
     fake = FakeApproval()
     run = fake.runs[0]
@@ -1704,6 +1732,8 @@ def test_mismatched_link_is_skipped(what: str) -> None:
         run["pull_requests"] = [_link(number=2)]
     elif what == "cross-head":
         run["pull_requests"] = [_link(head=BASE2)]
+    elif what == "older-commit":
+        run["pull_requests"] = [_link(head=OLD)]
     else:
         run["pull_requests"] = [_link(base=BASE2)]
     result = reconcile_pull(fake.api(), REPO, 1)
