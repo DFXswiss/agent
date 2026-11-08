@@ -327,7 +327,7 @@ def launch(
 
     if not session_id or config_home is None:
         raise SystemExit("lane requires an explicit session and AI configuration home")
-    ai = load_ai_accounts(config_home)
+    ai = load_ai_accounts(config_home, defer_model_configuration=True)
     selected = ai.for_lane(
         session_id, role, vendor, require_execution=False
     )
@@ -341,6 +341,7 @@ def launch(
     spec_file = str(path.resolve())
     cwd = str(Path(cwd).resolve())
 
+    ai.require_model_configuration()
     write = selected.access == "workspace-write"
     if not dry_run:
         ai.require_lane_execution()

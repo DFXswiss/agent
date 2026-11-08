@@ -49,7 +49,7 @@ from .model_slots import (
     models_for_new_record,
     models_from_snapshot,
 )
-from .store import Store, utcnow
+from .store import Store, StoreError, utcnow
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
@@ -845,6 +845,36 @@ def _run_prepared(
     )
 
 
+def _abort_prepared_pr_reviews(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    prepared_list: list[dict[str, Any]],
+    exc: BaseException,
+) -> None:
+    """Close every persisted preparation before publishing one blocker."""
+    for prepared in prepared_list:
+        agent = store.row("agent", prepared["agent_id"])
+        if agent is not None and agent.get("status") == "working":
+            agent["status"] = "done"
+            agent["finished_at"] = utcnow()
+            agent["note"] = "prelaunch aborted"
+            store.write("agent", "update", agent["id"], strip_row(agent))
+    c = coord(task)
+    c["phase"] = "blocked"
+    c["blocker"] = str(exc)
+    save_task(store, task)
+    _post_issue_status(
+        store,
+        worker,
+        runner,
+        task,
+        f"Blocked: {redact(str(exc))}",
+        "gate-prelaunch",
+    )
+
+
 def _pr_review_scope(dimension: str) -> str:
     """Scope text embedded in one pull-request review specification."""
     if dimension == "quality":
@@ -1036,35 +1066,37 @@ def phase_pr_gates(
                     ),
                 )
             )
-    except CoordinatorError as exc:
-        # Prelaunch failure after some inserts: close phantoms.
-        for prep in prepared_list:
-            agent = store.row("agent", prep["agent_id"])
-            if agent is not None and agent.get("status") == "working":
-                agent["status"] = "done"
-                agent["finished_at"] = utcnow()
-                agent["note"] = "prelaunch aborted"
-                store.write("agent", "update", agent["id"], strip_row(agent))
-        c["phase"] = "blocked"
-        c["blocker"] = str(exc)
-        save_task(store, task)
-        _post_issue_status(store, worker, runner, task, f"Blocked: {redact(str(exc))}", "gate-prelaunch")
+    except (StoreError, Exception) as exc:
+        _abort_prepared_pr_reviews(
+            store, worker, task, runner, prepared_list, exc
+        )
         raise
 
-    save_task(store, task)
-    results: dict[str, Any] = {}
-    lock = threading.Lock()
+    try:
+        save_task(store, task)
+        results: dict[str, Any] = {}
+        lock = threading.Lock()
 
-    def _worker(prep: dict[str, Any]) -> None:
-        agent_id, outcome = _run_prepared(prep, timeout=worker.lane_timeout, lane_runner=lane_runner)
-        with lock:
-            results[agent_id] = outcome
+        def _worker(prep: dict[str, Any]) -> None:
+            agent_id, outcome = _run_prepared(
+                prep, timeout=worker.lane_timeout, lane_runner=lane_runner
+            )
+            with lock:
+                results[agent_id] = outcome
 
-    threads = [threading.Thread(target=_worker, args=(prep,)) for prep in prepared_list]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+        threads = [
+            threading.Thread(target=_worker, args=(prep,))
+            for prep in prepared_list
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    except (StoreError, Exception) as exc:
+        _abort_prepared_pr_reviews(
+            store, worker, task, runner, prepared_list, exc
+        )
+        raise
 
     # Persist actual results on the main thread.
     outcomes: list[tuple[dict[str, Any], LaneResult]] = []

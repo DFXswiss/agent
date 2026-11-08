@@ -423,6 +423,32 @@ def test_launch_unconfigured_models_fail_before_runner(tmp_path: Path) -> None:
     assert called["n"] == 0
 
 
+def test_launch_missing_binding_precedes_missing_models(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("models")
+    raw["sessions"][DEFAULT_SESSION]["lanes"].pop("grok:implementer")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("do the thing\n", encoding="utf-8")
+
+    with pytest.raises(
+        AccountError,
+        match=f"No AI lane configured for session {DEFAULT_SESSION} slot grok:implementer",
+    ):
+        launch(
+            role="implementer",
+            vendor="grok",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            runner=lambda *_args: (_ for _ in ()).throw(AssertionError("must not run")),
+            dry_run=False,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
 def test_launch_provider_mismatch_refused_before_runner(tmp_path: Path) -> None:
     write_operator_ai_accounts(tmp_path)
     raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))

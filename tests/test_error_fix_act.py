@@ -75,6 +75,28 @@ def _fix(store: Store, activity_id: str = "fix-1") -> None:
     )
 
 
+def _legacy_task(store: Store) -> None:
+    now = utcnow()
+    store.write(
+        "task",
+        "insert",
+        "legacy-error-fix-task",
+        {
+            "id": "legacy-error-fix-task",
+            "session_id": "runner-1",
+            "workflow": "implement",
+            "title": "Legacy error fix",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+
+
 def test_scan_error_fix_clones_then_reuses(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
@@ -313,41 +335,133 @@ def test_scan_error_fix_waits_for_model_configuration_before_git(
     assert calls[0][:3] == ["git", "clone", "--"]
 
 
-def test_scan_error_fix_rejects_existing_task_without_models_before_git(
+def test_scan_error_fix_replaces_legacy_task_once_before_git(
     tmp_path: Path,
 ) -> None:
     store = Store(tmp_path)
     _runner_session(store)
     _seen(store)
     _fix(store)
-    now = utcnow()
-    store.write(
-        "task",
-        "insert",
-        "legacy-error-fix-task",
-        {
-            "id": "legacy-error-fix-task",
-            "session_id": "runner-1",
-            "workflow": "implement",
-            "title": "Legacy error fix",
-            "repo": "org/app",
-            "ref": None,
-            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
-            "state": "open",
-            "current_round": 0,
-            "created_at": now,
-            "updated_at": now,
-        },
+    _legacy_task(store)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        tasks = store.rows("task")
+        assert len(tasks) == 2
+        legacy = store.row("task", "legacy-error-fix-task")
+        assert legacy is not None
+        assert legacy["state"] == "superseded"
+        replacement_id = legacy["payload"]["superseded_by"]
+        replacement = store.row("task", replacement_id)
+        assert replacement is not None
+        assert replacement["models"] == {"first": "grok", "second": "codex"}
+        assert (
+            error_fix_act_mod._lookup_implement_task(
+                store, "runner-1", "error-seen-12345678"
+            )
+            == replacement_id
+        )
+        calls.append(list(argv))
+        if argv[:3] == ["git", "clone", "--"]:
+            Path(argv[-1]).joinpath(".git").mkdir(parents=True)
+        return Completed(0, "", "")
+
+    lines = scan_error_fix(store, runner)
+    legacy = store.row("task", "legacy-error-fix-task")
+    assert legacy is not None
+    replacement_id = legacy["payload"]["superseded_by"]
+    assert legacy["payload"]["superseded_reason"] == (
+        "legacy error-fix task lacked explicit model pins"
     )
+    assert lines == [
+        f"error.fix fix-1 task={replacement_id} "
+        f"worktree={tmp_path / 'error-fix-work' / replacement_id}"
+    ]
+    assert calls[0][:3] == ["git", "clone", "--"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "done"
+
+    updated = {key: value for key, value in row.items() if not key.startswith("_")}
+    updated["execution_status"] = "pending"
+    store.write("activity", "update", "fix-1", updated)
+    calls.clear()
+    assert scan_error_fix(store, runner) == [
+        f"error.fix fix-1 task={replacement_id} "
+        f"worktree={tmp_path / 'error-fix-work' / replacement_id}"
+    ]
+    assert calls == []
+    assert len(store.rows("task")) == 2
+    assert (
+        error_fix_act_mod._lookup_implement_task(
+            store, "runner-1", "error-seen-12345678"
+        )
+        == replacement_id
+    )
+
+
+@pytest.mark.parametrize("state", ["done", "failed", "superseded"])
+def test_lookup_implement_task_ignores_terminal_tasks(
+    tmp_path: Path, state: str
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _legacy_task(store)
+    task = store.row("task", "legacy-error-fix-task")
+    assert task is not None
+    updated = {key: value for key, value in task.items() if not key.startswith("_")}
+    updated["state"] = state
+    store.write("task", "update", task["id"], updated)
+
+    assert (
+        error_fix_act_mod._lookup_implement_task(
+            store, "runner-1", "error-seen-12345678"
+        )
+        is None
+    )
+
+
+def test_scan_error_fix_legacy_task_without_configuration_is_retryable_and_runs_no_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    (tmp_path / "ai-accounts.json").unlink()
+    _seen(store)
+    _fix(store)
+    _legacy_task(store)
     calls: list[list[str]] = []
 
     assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
     row = store.row("activity", "fix-1")
     assert row is not None
     assert row["execution_status"] == "error"
-    assert "task must be recreated" in row["execution_error"]
+    assert row["result"]["kind"] == "model-configuration"
+    assert row["result"]["configuration_fingerprint"]
     assert calls == []
+    assert len(store.rows("task")) == 1
+    legacy = store.row("task", "legacy-error-fix-task")
+    assert legacy is not None
+    assert legacy["state"] == "open"
     assert not (tmp_path / "error-fix-work").exists()
+
+    assert scan_error_fix(store, _clone_runner(calls)) == []
+    assert calls == []
+
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
+    lines = scan_error_fix(store, _clone_runner(calls))
+    legacy = store.row("task", "legacy-error-fix-task")
+    assert legacy is not None
+    replacement_id = legacy["payload"]["superseded_by"]
+    assert lines == [
+        f"error.fix fix-1 task={replacement_id} "
+        f"worktree={tmp_path / 'error-fix-work' / replacement_id}"
+    ]
+    assert calls[0][:3] == ["git", "clone", "--"]
 
 
 def test_scan_error_fix_rejects_existing_task_with_invalid_implementer_before_git(

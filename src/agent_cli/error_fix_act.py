@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .allow import CHECKLIST_KEYS
+from .allow import CHECKLIST_KEYS, TERMINAL_STATES
 from .model_slots import (
     ModelSlotsError,
     implementer_for_new_record,
@@ -74,6 +74,24 @@ def _mark(
     if result is not None:
         updated["result"] = result
     store.write("activity", "update", updated["id"], updated)
+
+
+def _mark_model_configuration_error(
+    store: Store,
+    row: dict[str, Any],
+    exc: StoreError,
+    configuration_fingerprint: str,
+) -> None:
+    _mark(
+        store,
+        row,
+        status="error",
+        error=str(exc),
+        result={
+            "kind": _MODEL_CONFIGURATION_ERROR,
+            "configuration_fingerprint": configuration_fingerprint,
+        },
+    )
 
 
 def _repo_ok(repo: Any) -> str | None:
@@ -206,6 +224,7 @@ def find_or_create_implement_task(
 
 def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str | None:
     origin = store.device_id()
+    matches: list[dict[str, Any]] = []
     for row in store.rows("task"):
         if row.get("_origin_device_id") != origin:
             continue
@@ -213,10 +232,29 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
             continue
         if row.get("workflow") != "implement":
             continue
+        if str(row.get("state") or "") in TERMINAL_STATES:
+            continue
         payload = row.get("payload")
         if isinstance(payload, dict) and payload.get("error_id") == error_id:
-            return str(row["id"])
-    return None
+            matches.append(row)
+    if not matches:
+        return None
+
+    def preference(row: dict[str, Any]) -> tuple[bool, str, str, str]:
+        try:
+            models_for_new_record(row)
+            implementer_for_new_record(row)
+            reusable = True
+        except ModelSlotsError:
+            reusable = False
+        return (
+            reusable,
+            str(row.get("created_at") or ""),
+            str(row.get("updated_at") or ""),
+            str(row.get("id") or ""),
+        )
+
+    return str(max(matches, key=preference)["id"])
 
 
 def _require_reusable_task_models(store: Store, task_id: str) -> None:
@@ -243,8 +281,51 @@ def _find_or_create_implement_task(
         raise StoreError("error_id is required")
     existing = _lookup_implement_task(store, session_id, error_id)
     if existing is not None:
-        _require_reusable_task_models(store, existing)
+        existing_task = store.row("task", existing)
+        if existing_task is None:
+            raise StoreError("existing error-fix task not found")
+        try:
+            _require_reusable_task_models(store, existing)
+        except StoreError:
+            if existing_task.get("models") is not None:
+                raise
+            pins = task_pins if task_pins is not None else _device_model_pins(store)
+            replacement = _insert_implement_task(
+                store,
+                session_id,
+                error_id,
+                title,
+                ref=ref or _nonempty_str(existing_task.get("ref")),
+                task_pins=pins,
+                check_open_draft=False,
+            )
+            _supersede_legacy_task(store, existing_task, replacement)
+            return replacement, True
         return existing, False
+    return (
+        _insert_implement_task(
+            store,
+            session_id,
+            error_id,
+            title,
+            ref=ref,
+            task_pins=task_pins,
+            check_open_draft=True,
+        ),
+        True,
+    )
+
+
+def _insert_implement_task(
+    store: Store,
+    session_id: str,
+    error_id: str,
+    title: str,
+    *,
+    ref: str | None,
+    task_pins: dict[str, Any] | None,
+    check_open_draft: bool,
+) -> str:
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
     repo = _repo_ok(seen_payload.get("repo") if isinstance(seen_payload, dict) else None)
@@ -255,13 +336,14 @@ def _find_or_create_implement_task(
     )
     if fingerprint is None:
         raise StoreError("fingerprint is required")
-    if _already_open_draft(store, fingerprint):
+    if check_open_draft and _already_open_draft(store, fingerprint):
         raise StoreError("already-open-draft")
     session = store.row("session", session_id)
     if session is None:
         raise StoreError("session not found")
     if session.get("status") != "active":
         raise StoreError("session is not active")
+    pins = task_pins if task_pins is not None else _device_model_pins(store)
     tid = str(uuid.uuid4())
     store.write(
         "task",
@@ -277,7 +359,7 @@ def _find_or_create_implement_task(
             "payload": {"error_id": error_id, "repo": repo},
             "state": "open",
             "current_round": 0,
-            **(task_pins if task_pins is not None else _device_model_pins(store)),
+            **pins,
             "created_at": utcnow(),
             "updated_at": utcnow(),
             "change_summary_en": None,
@@ -304,7 +386,22 @@ def _find_or_create_implement_task(
                 "updated_at": utcnow(),
             },
         )
-    return tid, True
+    return tid
+
+
+def _supersede_legacy_task(
+    store: Store, legacy_task: dict[str, Any], replacement_task_id: str
+) -> None:
+    updated = _strip(legacy_task)
+    payload = updated.get("payload")
+    updated["payload"] = dict(payload) if isinstance(payload, dict) else {}
+    updated["payload"]["superseded_reason"] = (
+        "legacy error-fix task lacked explicit model pins"
+    )
+    updated["payload"]["superseded_by"] = replacement_task_id
+    updated["state"] = "superseded"
+    updated["updated_at"] = utcnow()
+    store.write("task", "update", updated["id"], updated)
 
 
 def _line_fingerprint(seen_payload: dict[str, Any]) -> str | None:
@@ -387,9 +484,34 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             try:
                 _require_reusable_task_models(store, existing)
             except StoreError as exc:
-                _mark(store, row, status="error", error=str(exc))
-                lines.append(f"error.fix {rid} error")
-                continue
+                existing_row = store.row("task", existing)
+                if existing_row is None or existing_row.get("models") is not None:
+                    _mark(store, row, status="error", error=str(exc))
+                    lines.append(f"error.fix {rid} error")
+                    continue
+                try:
+                    replacement_pins = _device_model_pins(store)
+                except StoreError as config_exc:
+                    _mark_model_configuration_error(
+                        store,
+                        row,
+                        config_exc,
+                        configuration_fingerprint,
+                    )
+                    lines.append(f"error.fix {rid} error")
+                    continue
+                try:
+                    existing, _created = _find_or_create_implement_task(
+                        store,
+                        session_id,
+                        error_id,
+                        f"error-fix {error_id[:8]}",
+                        task_pins=replacement_pins,
+                    )
+                except StoreError as replacement_exc:
+                    _mark(store, row, status="error", error=str(replacement_exc))
+                    lines.append(f"error.fix {rid} error")
+                    continue
         if existing is not None and (parent / existing / ".git").exists():
             path = parent / existing
             result = {
@@ -414,15 +536,11 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             try:
                 task_pins = _device_model_pins(store)
             except StoreError as exc:
-                _mark(
+                _mark_model_configuration_error(
                     store,
                     row,
-                    status="error",
-                    error=str(exc),
-                    result={
-                        "kind": _MODEL_CONFIGURATION_ERROR,
-                        "configuration_fingerprint": configuration_fingerprint,
-                    },
+                    exc,
+                    configuration_fingerprint,
                 )
                 lines.append(f"error.fix {rid} error")
                 continue
