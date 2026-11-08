@@ -7,6 +7,7 @@ continue. In-flight turns are never interrupted.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from .grok_pane import grok_pane_is_idle, grok_pane_is_working, grok_permission_prompt
@@ -20,23 +21,37 @@ STANDING = (
 CONTINUE = "Continue."
 
 
-def tick(runtime: Runtime, session_id: str, state: dict[str, Any]) -> str:
+def tick(
+    runtime: Runtime,
+    session_id: str,
+    state: dict[str, Any],
+    *,
+    preflight: Callable[[], None] | None = None,
+) -> str:
     """Advance one keep-working step. Mutates *state*."""
+    authorize = preflight or (lambda: None)
+    authorize()
     if not runtime.exists(session_id):
         return "missing"
+    authorize()
     pane = runtime.capture(session_id)
     if pane.strip() == "":
         return "unobservable"
     if grok_permission_prompt(pane):
+        authorize()
         runtime.input_key(session_id, "enter")
         return "approved"
     if grok_pane_is_working(pane) or not grok_pane_is_idle(pane):
         return "working"
     if not state.get("standing_sent"):
+        authorize()
         runtime.input_text(session_id, STANDING)
+        authorize()
         runtime.input_key(session_id, "enter")
         state["standing_sent"] = True
         return "standing"
+    authorize()
     runtime.input_text(session_id, CONTINUE)
+    authorize()
     runtime.input_key(session_id, "enter")
     return "continue"
