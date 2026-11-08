@@ -457,6 +457,7 @@ def _assert_pull_unchanged(
         not isinstance(latest, Mapping)
         or _field(latest, "state") != "open"
         or _field(latest, "head", "sha") != _field(pull, "head", "sha")
+        or _field(latest, "head", "ref") != _field(pull, "head", "ref")
         or _field(latest, "base", "sha") != _field(pull, "base", "sha")
         or _field(latest, "base", "ref") != _field(pull, "base", "ref")
         or _field(latest, "head", "repo", "full_name")

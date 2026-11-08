@@ -1628,7 +1628,7 @@ def test_merge_sha_becoming_null_before_final_read_blocks_approval() -> None:
     assert not _marker_comments(fake, AUTH_MARKER)
 
 
-@pytest.mark.parametrize("changed", ["head", "merge"])
+@pytest.mark.parametrize("changed", ["head", "head-ref", "merge"])
 def test_pull_change_after_authorization_record_listing_blocks_approval(
     changed: str,
 ) -> None:
@@ -1654,6 +1654,8 @@ def test_pull_change_after_authorization_record_listing_blocks_approval(
             state["changed"] = True
             if changed == "head":
                 fake.pull["head"]["sha"] = BASE2
+            elif changed == "head-ref":
+                fake.pull["head"]["ref"] = "other-branch"
             else:
                 fake.merge_commit_sha = BASE2
         return original(method, path, **kwargs)
