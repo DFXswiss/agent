@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.main import _latest_gates, load_task_dict, main
+from agent_cli.main import (
+    _canonicalize_snapshot_names,
+    _latest_gates,
+    load_task_dict,
+    main,
+)
 from agent_cli.store import Store, StoreError, utcnow
 from agent_cli.usage import AuthStale
 
@@ -15,6 +20,17 @@ from agent_cli.usage import AuthStale
 def run(home: Path, argv: list[str]) -> None:
     import os
 
+    # The local harness supplies the device model assignment before task creation.
+    if argv[:2] == ["task", "create"] and not (home / "ai-accounts.json").exists():
+        (home / "ai-accounts.json").write_text(
+            json.dumps(
+                {
+                    "models": {"first": "grok", "second": "codex"},
+                    "lane_execution": {"mode": "this-device-is-lane-host"},
+                }
+            ),
+            encoding="utf-8",
+        )
     os.environ["AGENT_HOME"] = str(home)
     main(argv)
 
@@ -27,6 +43,22 @@ def _last_task_id(out: str) -> str:
 def _last_agent_id(out: str) -> str:
     agent_line = [ln for ln in out.splitlines() if ln.startswith("agent ")][-1]
     return agent_line.split()[1]
+
+
+@pytest.mark.no_pg
+def test_snapshot_output_canonicalizes_legacy_gate_and_checklist_names() -> None:
+    # Keep legacy names here to verify snapshot alias compatibility.
+    snapshot = {
+        "gates": [{"stage": "grok-pr"}, {"stage": "review-2"}],
+        "checklist": [{"key": "codex_pr_logic"}, {"key": "review_1_quality"}],
+    }
+
+    _canonicalize_snapshot_names(snapshot)
+
+    assert snapshot == {
+        "gates": [{"stage": "review-1"}, {"stage": "review-2"}],
+        "checklist": [{"key": "review_2_logic"}, {"key": "review_1_quality"}],
+    }
 
 
 @pytest.mark.no_pg
@@ -54,27 +86,27 @@ def test_done_decision_ignores_the_stored_one_review_copy(monkeypatch: pytest.Mo
         }
     }
     posted = {
-        "codex_pr_quality": "second review not posted",
-        "codex_pr_logic": "second review not posted",
+        "review_2_quality": "second review not posted",
+        "review_2_logic": "second review not posted",
     }
     login, config = _done_one_review(
         object(),
         task,
-        {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        {"review_2_quality": "n_a", "review_2_logic": "n_a"},
         posted,
     )
     assert calls["n"] == 1
     assert login == "alice"
     assert config is None
     done = _ready_task()
-    done["checklist"]["codex_pr_quality"] = "n_a"
-    done["checklist"]["codex_pr_logic"] = "n_a"
-    done["gates"] = [gate for gate in done["gates"] if gate["stage"] == "grok-pr"]
+    done["checklist"]["review_2_quality"] = "n_a"
+    done["checklist"]["review_2_logic"] = "n_a"
+    done["gates"] = [gate for gate in done["gates"] if gate["stage"] == "review-1"]
     done["pull_opener"] = login
     done["trusted_pr_guard"] = config
     blocking = " ".join(ready_for_done_blocking(done))
-    assert "codex_pr_quality=n_a" in blocking
-    assert "codex_pr_logic=n_a" in blocking
+    assert "review_2_quality=n_a" in blocking
+    assert "review_2_logic=n_a" in blocking
 
     def boom(_store: object, _task: dict) -> tuple[str, dict | None]:
         raise AssertionError("live read")
@@ -83,15 +115,15 @@ def test_done_decision_ignores_the_stored_one_review_copy(monkeypatch: pytest.Mo
     assert _done_one_review(
         object(),
         task,
-        {"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+        {"review_2_quality": "ja", "review_2_logic": "ja"},
         posted,
     ) == ("", None)
     calls["n"] = 0
     assert _done_one_review(
         object(),
         task,
-        {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
-        {"codex_pr_quality": "seed", "codex_pr_logic": "seed"},
+        {"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        {"review_2_quality": "seed", "review_2_logic": "seed"},
     ) == ("", None)
     assert calls["n"] == 0
 
@@ -103,7 +135,7 @@ def test_done_decision_ignores_the_stored_one_review_copy(monkeypatch: pytest.Mo
         _done_one_review(
             object(),
             task,
-            {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+            {"review_2_quality": "n_a", "review_2_logic": "n_a"},
             posted,
         )
 
@@ -147,13 +179,13 @@ def test_claim_done_reads_the_live_exception(
     tid = _last_task_id(capsys.readouterr().out)
     snap = _ready_task(session_id="sess-1")
     snap["id"] = tid
-    snap["checklist"]["codex_pr_quality"] = "n_a"
-    snap["checklist"]["codex_pr_logic"] = "n_a"
+    snap["checklist"]["review_2_quality"] = "n_a"
+    snap["checklist"]["review_2_logic"] = "n_a"
     snap["checklist_evidence"] = {
-        "codex_pr_quality": "second review not posted",
-        "codex_pr_logic": "second review not posted",
+        "review_2_quality": "second review not posted",
+        "review_2_logic": "second review not posted",
     }
-    snap["gates"] = [gate for gate in snap["gates"] if gate["stage"] == "grok-pr"]
+    snap["gates"] = [gate for gate in snap["gates"] if gate["stage"] == "review-1"]
 
     def load_snaps(_store: object, _session_id: str) -> list[dict]:
         fresh = dict(snap)
@@ -180,7 +212,7 @@ def test_claim_done_reads_the_live_exception(
     with pytest.raises(SystemExit):
         run(tmp_path, ["allow", "--action", "claim-done", "--session", "sess-1"])
     denied = capsys.readouterr()
-    assert "codex_pr_quality=n_a" in f"{denied.out}\n{denied.err}"
+    assert "review_2_quality=n_a" in f"{denied.out}\n{denied.err}"
 
     def down(_store: object, _task: dict) -> tuple[str, dict | None]:
         raise PrGuardLookupError("down")
@@ -245,10 +277,10 @@ def test_terminal_task_does_not_read_the_trusted_review_list(
     snap = {
         "id": "done-task",
         "state": "done",
-        "checklist": {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        "checklist": {"review_2_quality": "n_a", "review_2_logic": "n_a"},
         "checklist_evidence": {
-            "codex_pr_quality": "second review not posted",
-            "codex_pr_logic": "second review not posted",
+            "review_2_quality": "second review not posted",
+            "review_2_logic": "second review not posted",
         },
     }
     _attach_live_one_review(object(), snap)
@@ -274,10 +306,10 @@ def test_wrong_evidence_does_not_read_the_trusted_review_list(
     snap = {
         "id": "open-task",
         "state": "pr-review",
-        "checklist": {"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        "checklist": {"review_2_quality": "n_a", "review_2_logic": "n_a"},
         "checklist_evidence": {
-            "codex_pr_quality": "seed",
-            "codex_pr_logic": "second review not posted",
+            "review_2_quality": "seed",
+            "review_2_logic": "second review not posted",
         },
     }
     _attach_live_one_review(RowStore(), snap)
@@ -309,8 +341,8 @@ def test_load_task_dict_does_not_read_the_trusted_review_list(
         def rows(self, table: str) -> list[dict]:
             if table == "checklist_item":
                 return [
-                    {"task_id": "task-1", "key": "codex_pr_quality", "status": "n_a"},
-                    {"task_id": "task-1", "key": "codex_pr_logic", "status": "n_a"},
+                    {"task_id": "task-1", "key": "review_2_quality", "status": "n_a"},
+                    {"task_id": "task-1", "key": "review_2_logic", "status": "n_a"},
                 ]
             if table in ("local_check", "review_gate"):
                 return []
@@ -630,7 +662,7 @@ def test_unavailable_whitespace_evidence_dies(
                 "--task",
                 tid,
                 "--key",
-                "grok_pr_quality",
+                "review_1_quality",
                 "--status",
                 "unavailable",
                 "--source",
@@ -822,7 +854,7 @@ def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[st
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "quality",
             "--vendor",
@@ -835,10 +867,10 @@ def test_gate_record_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[st
             agent_id,
         ],
     )
-    assert "gate grok-pr/quality=approved" in capsys.readouterr().out
+    assert "gate review-1/quality=approved" in capsys.readouterr().out
 
 
-def test_gate_record_codex_before_grok_dies(
+def test_gate_record_review_2_before_review_1_dies(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run(tmp_path, ["init"])
@@ -846,26 +878,33 @@ def test_gate_record_codex_before_grok_dies(
     run(tmp_path, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
     tid = _last_task_id(capsys.readouterr().out)
 
-    run(
-        tmp_path,
-        [
+    # Agent start now enforces this ordering too. Seed a valid completed row so
+    # this test continues to exercise the independent gate-write boundary.
+    agent_id = str(uuid.uuid4())
+    store = Store(tmp_path)
+    try:
+        store.write(
             "agent",
-            "start",
-            "--session",
-            "s",
-            "--task",
-            tid,
-            "--role",
-            "pr-reviewer-quality",
-            "--vendor",
-            "codex",
-        ],
-    )
-    agent_id = _last_agent_id(capsys.readouterr().out)
-    run(tmp_path, ["agent", "finish", "--id", agent_id, "--verdict", "approved"])
-    capsys.readouterr()
+            "insert",
+            agent_id,
+            {
+                "id": agent_id,
+                "session_id": "s",
+                "task_id": tid,
+                "round": None,
+                "role": "pr-reviewer-quality",
+                "vendor": "codex",
+                "stage": "review-2",
+                "status": "done",
+                "started_at": utcnow(),
+                "finished_at": utcnow(),
+                "note": "approved",
+            },
+        )
+    finally:
+        store.close()
 
-    with pytest.raises(SystemExit, match="codex-pr requires approved grok-pr"):
+    with pytest.raises(SystemExit, match="review-2 requires approved review-1"):
         run(
             tmp_path,
             [
@@ -874,7 +913,7 @@ def test_gate_record_codex_before_grok_dies(
                 "--task",
                 tid,
                 "--stage",
-                "codex-pr",
+                "review-2",
                 "--dimension",
                 "quality",
                 "--vendor",
@@ -887,6 +926,140 @@ def test_gate_record_codex_before_grok_dies(
                 agent_id,
             ],
         )
+
+
+def test_legacy_stage_alias_writes_canonical_stage_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    aid = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="grok"
+    )
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    capsys.readouterr()
+
+    # Keep the legacy stage here to verify CLI alias compatibility.
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "grok-pr",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "grok",
+            "--verdict",
+            "approved",
+            "--head",
+            "abcdef0",
+            "--agent",
+            aid,
+        ],
+    )
+    captured = capsys.readouterr()
+    assert captured.err == "deprecated stage/key name grok-pr; use review-1\n"
+    assert "gate review-1/quality=approved" in captured.out
+
+    store = Store(tmp_path)
+    try:
+        stages = [
+            row["stage"]
+            for row in store.rows("review_gate")
+            if row.get("task_id") == tid
+        ]
+    finally:
+        store.close()
+    assert stages == ["review-1"]
+
+
+def test_legacy_checklist_key_alias_writes_canonical_key_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+
+    # Keep the legacy key here to verify CLI alias compatibility.
+    run(
+        tmp_path,
+        [
+            "checklist",
+            "set",
+            "--task",
+            tid,
+            "--key",
+            "grok_pr_quality",
+            "--status",
+            "pending",
+            "--source",
+            "script",
+        ],
+    )
+    captured = capsys.readouterr()
+    assert captured.err == (
+        "deprecated stage/key name grok_pr_quality; use review_1_quality\n"
+    )
+    assert captured.out == "checklist review_1_quality=pending\n"
+
+    store = Store(tmp_path)
+    try:
+        keys = {
+            row["key"]
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == tid
+        }
+    finally:
+        store.close()
+    assert "review_1_quality" in keys
+    assert "grok_pr_quality" not in keys
+
+
+def test_stored_legacy_checklist_rows_open_canonical_second_review_steps(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    prerequisites = {
+        "session_registered",
+        "spec_written",
+        "implementer_done",
+        "reviewer_approved",
+        "local_check_pass",
+        "pushed",
+    }
+    # Keep legacy keys here to verify stored-row compatibility.
+    legacy_names = {
+        "review_1_quality": "grok_pr_quality",
+        "review_1_logic": "grok_pr_logic",
+    }
+    store = Store(tmp_path)
+    try:
+        for stored in store.rows("checklist_item"):
+            if stored.get("task_id") != tid:
+                continue
+            row = {
+                key: value
+                for key, value in stored.items()
+                if not key.startswith("_")
+            }
+            key = str(row["key"])
+            if key in prerequisites:
+                row["status"] = "ja"
+            if key in legacy_names:
+                row["key"] = legacy_names[key]
+                row["status"] = "ja"
+            store.write("checklist_item", "update", str(row["id"]), row)
+    finally:
+        store.close()
+
+    run(tmp_path, ["next", "--task", tid, "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert {step["key"] for step in payload["next"]} == {
+        "review_2_quality",
+        "review_2_logic",
+    }
 
 
 def test_reviewer_start_before_implementer_done_dies(
@@ -2987,7 +3160,7 @@ def test_review_loop_and_pr_review_skills_required(
                 "--task",
                 tid,
                 "--stage",
-                "grok-pr",
+                "review-1",
                 "--dimension",
                 "quality",
                 "--vendor",
@@ -3215,7 +3388,7 @@ def _seed_pr_review_gate(
 
 def _gate_argv(tid: str, aid: str, verdict: str, *extra: str, head: str = _GATE_HEAD) -> list[str]:
     return [
-        "gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality",
+        "gate", "record", "--task", tid, "--stage", "review-1", "--dimension", "quality",
         "--vendor", "grok", "--verdict", verdict, "--head", head, "--agent", aid, *extra,
     ]
 
@@ -3261,7 +3434,7 @@ def test_rejected_gate_queues_its_findings_for_the_pull_request(tmp_path: Path, 
     tid, aid = _seed_pr_review_gate(tmp_path, capsys)
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "dto.ts:91 keeps @IsOptional()"))
     out = capsys.readouterr().out
-    assert "gate grok-pr/quality=rejected" in out
+    assert "gate review-1/quality=rejected" in out
     assert "type=review.post" in out
     rows = _review_activities(tmp_path)
     assert len(rows) == 1
@@ -3280,7 +3453,7 @@ def test_approved_gate_queues_no_comment(tmp_path: Path, capsys: pytest.CaptureF
     tid, aid = _seed_pr_review_gate(tmp_path, capsys, verdict="approved")
     run(tmp_path, _gate_argv(tid, aid, "approved"))
     out = capsys.readouterr().out
-    assert "gate grok-pr/quality=approved" in out
+    assert "gate review-1/quality=approved" in out
     assert "type=review.post" not in out
     assert _review_activities(tmp_path) == []
 
@@ -3289,7 +3462,7 @@ def test_rejected_gate_without_a_pull_request_queues_nothing(tmp_path: Path, cap
     tid, aid = _seed_pr_review_gate(tmp_path, capsys, repo=None, ref=None)
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "no pull request yet"))
     out = capsys.readouterr().out
-    assert "gate grok-pr/quality=rejected" in out
+    assert "gate review-1/quality=rejected" in out
     assert "type=review.post" not in out
     assert "no pull request on this task: findings not queued" in out
     assert _review_activities(tmp_path) == []
@@ -3518,7 +3691,7 @@ def test_a_malformed_repository_queues_no_comment(
     tid, aid = _seed_pr_review_gate(tmp_path, capsys, repo=bad_repo, ref="7")
     run(tmp_path, _gate_argv(tid, aid, "rejected", "--evidence", "findings"))
     out = capsys.readouterr().out
-    assert "gate grok-pr/quality=rejected" in out
+    assert "gate review-1/quality=rejected" in out
     assert "no pull request on this task: findings not queued" in out
     assert _review_activities(tmp_path) == []
 
@@ -3589,6 +3762,51 @@ def _start_pr_reviewer(
     return _last_agent_id(capsys.readouterr().out)
 
 
+def test_pr_reviewer_start_validates_stage_vendor_and_order(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    with pytest.raises(
+        SystemExit,
+        match=r"stage review-2 requires --vendor codex",
+    ):
+        run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "pr-reviewer-quality", "--stage", "review-2",
+                "--vendor", "grok",
+            ],
+        )
+    with pytest.raises(
+        SystemExit,
+        match=r"review-2 requires approved review-1/quality before agent start",
+    ):
+        run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "pr-reviewer-quality", "--stage", "review-2",
+                "--vendor", "codex",
+            ],
+        )
+
+    run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "pr-reviewer-quality", "--stage", "review-1",
+            "--vendor", "grok",
+        ],
+    )
+    aid = _last_agent_id(capsys.readouterr().out)
+    store = Store(tmp_path)
+    try:
+        assert store.row("agent", aid)["stage"] == "review-1"
+    finally:
+        store.close()
+
+
 def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -3597,6 +3815,7 @@ def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
             {
                 "models": {"first": "grok", "second": "codex"},
                 "implementer": "deepseek",
+                "lane_execution": {"mode": "this-device-is-lane-host"},
             }
         ),
         encoding="utf-8",
@@ -3645,7 +3864,7 @@ def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
         run(
             tmp_path,
             [
-                "gate", "record", "--task", tid, "--stage", "grok-pr",
+                "gate", "record", "--task", tid, "--stage", "review-1",
                 "--dimension", "quality", "--vendor", "deepseek",
                 "--verdict", "approved", "--head", "abcdef0", "--agent", "missing",
             ],
@@ -3662,7 +3881,7 @@ def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.Captur
             "--task",
             tid,
             "--key",
-            "grok_pr_quality",
+            "review_1_quality",
             "--status",
             "unavailable",
             "--source",
@@ -3671,7 +3890,7 @@ def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.Captur
             "vendor HTTP 402",
         ],
     )
-    assert "checklist grok_pr_quality=unavailable" in capsys.readouterr().out
+    assert "checklist review_1_quality=unavailable" in capsys.readouterr().out
     with pytest.raises(SystemExit, match="unavailable requires --evidence"):
         run(
             tmp_path,
@@ -3681,7 +3900,7 @@ def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.Captur
                 "--task",
                 tid,
                 "--key",
-                "grok_pr_logic",
+                "review_1_logic",
                 "--status",
                 "unavailable",
                 "--source",
@@ -3750,7 +3969,7 @@ def test_close_step_unavailable_after_gate_record(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "quality",
             "--vendor",
@@ -3774,7 +3993,7 @@ def test_close_step_unavailable_after_gate_record(
                 "--task",
                 tid,
                 "--key",
-                "grok_pr_quality",
+                "review_1_quality",
                 "--source",
                 "script",
                 "--status",
@@ -3788,7 +4007,7 @@ def test_close_step_unavailable_after_gate_record(
             "--task",
             tid,
             "--key",
-            "grok_pr_quality",
+            "review_1_quality",
             "--source",
             "script",
             "--status",
@@ -3804,7 +4023,7 @@ def test_close_step_unavailable_after_gate_record(
         items = [
             row
             for row in store.rows("checklist_item")
-            if row.get("task_id") == tid and row.get("key") == "grok_pr_quality"
+            if row.get("task_id") == tid and row.get("key") == "review_1_quality"
         ]
     finally:
         store.close()
@@ -3875,7 +4094,7 @@ def test_round_start_refuses_unavailable_gate(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "quality",
             "--vendor",
@@ -3899,7 +4118,7 @@ def test_same_second_gate_prefers_newer_updated_row() -> None:
     recorded_at = "2026-01-01T00:00:00Z"
     newer = {
         "task_id": "task-1",
-        "stage": "grok-pr",
+        "stage": "review-1",
         "dimension": "quality",
         "vendor": "grok",
         "verdict": "approved",
@@ -3926,11 +4145,71 @@ def test_same_second_gate_prefers_newer_updated_row() -> None:
             return {"id": "task-1"}
 
     store = GateStore()
-    assert _latest_gates(store, "task-1")[("grok-pr", "quality")] is newer
+    assert _latest_gates(store, "task-1")[("review-1", "quality")] is newer
     assert [g["verdict"] for g in load_task_dict(store, "task-1")["gates"]] == [
         "unavailable",
         "approved",
     ]
+
+
+def test_new_second_stage_accepts_stored_legacy_first_stage_gates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    head = "abcdef0"
+    store = Store(tmp_path)
+    try:
+        # Keep the legacy stage here to verify stored-gate compatibility.
+        for dimension in ("quality", "logic"):
+            gate_id = str(uuid.uuid4())
+            store.write(
+                "review_gate",
+                "insert",
+                gate_id,
+                {
+                    "id": gate_id,
+                    "task_id": tid,
+                    "stage": "grok-pr",
+                    "dimension": dimension,
+                    "vendor": "grok",
+                    "verdict": "approved",
+                    "evidence": None,
+                    "head_sha": head,
+                    "agent_id": str(uuid.uuid4()),
+                    "recorded_at": utcnow(),
+                },
+            )
+    finally:
+        store.close()
+
+    aid = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="codex"
+    )
+    run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    capsys.readouterr()
+    run(
+        tmp_path,
+        [
+            "gate",
+            "record",
+            "--task",
+            tid,
+            "--stage",
+            "review-2",
+            "--dimension",
+            "quality",
+            "--vendor",
+            "codex",
+            "--verdict",
+            "approved",
+            "--head",
+            head,
+            "--agent",
+            aid,
+        ],
+    )
+
+    assert "gate review-2/quality=approved" in capsys.readouterr().out
 
 
 def test_gate_record_recorded_at_has_six_fractional_digits(
@@ -3950,7 +4229,7 @@ def test_gate_record_recorded_at_has_six_fractional_digits(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "quality",
             "--vendor",
@@ -3995,12 +4274,6 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
         ("logic", "grok"): _start_pr_reviewer(
             tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="grok"
         ),
-        ("quality", "codex"): _start_pr_reviewer(
-            tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="codex"
-        ),
-        ("logic", "codex"): _start_pr_reviewer(
-            tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="codex"
-        ),
     }
     grok_q = agents[("quality", "grok")]
     run(tmp_path, ["agent", "finish", "--id", grok_q, "--verdict", "unavailable"])
@@ -4015,7 +4288,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "quality",
             "--vendor",
@@ -4031,7 +4304,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
         ],
     )
     out = capsys.readouterr().out
-    assert "gate grok-pr/quality=unavailable" in out
+    assert "gate review-1/quality=unavailable" in out
     assert "type=review.post" not in out
     run(tmp_path, ["task", "show", tid])
     assert json.loads(capsys.readouterr().out)["state"] == "gate-blocked"
@@ -4049,7 +4322,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "quality",
             "--vendor",
@@ -4073,7 +4346,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--task",
             tid,
             "--stage",
-            "grok-pr",
+            "review-1",
             "--dimension",
             "logic",
             "--vendor",
@@ -4087,6 +4360,15 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
         ],
     )
     capsys.readouterr()
+    agents[("quality", "codex")] = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-quality", vendor="codex"
+    )
+    agents[("logic", "codex")] = _start_pr_reviewer(
+        tmp_path, capsys, tid, role="pr-reviewer-logic", vendor="codex"
+    )
+    for key in (("quality", "codex"), ("logic", "codex")):
+        run(tmp_path, ["agent", "finish", "--id", agents[key], "--verdict", "approved"])
+        capsys.readouterr()
     run(
         tmp_path,
         [
@@ -4095,7 +4377,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--task",
             tid,
             "--stage",
-            "codex-pr",
+            "review-2",
             "--dimension",
             "quality",
             "--vendor",
@@ -4117,7 +4399,7 @@ def test_pr_reviewer_unavailable_sets_gate_blocked_then_recovers(
             "--task",
             tid,
             "--stage",
-            "codex-pr",
+            "review-2",
             "--dimension",
             "logic",
             "--vendor",
@@ -4151,7 +4433,7 @@ def test_gate_record_unavailable_without_evidence_dies(
                 "--task",
                 tid,
                 "--stage",
-                "grok-pr",
+                "review-1",
                 "--dimension",
                 "quality",
                 "--vendor",

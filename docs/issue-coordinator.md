@@ -99,7 +99,9 @@ for worker in workers.values():
   present for the worker session; worker and review GitHub accounts configured,
   authenticated, and bound to **different** logins; worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
-  provider.
+  provider. A missing `models` block is reported as `preflight blocked: models
+  is not configured`; the outer `coordinate --follow` loop remains active and
+  retries later ticks after configuration is repaired.
 - Required AI slots, with `<first>` / `<second>` the providers of the device's
   model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
   `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,
@@ -108,9 +110,16 @@ for worker in workers.values():
   because a codex implementer can run commands. It requires `implementer` to
   be absent or equal to `models.first`; a separate implementer is refused at
   preflight, task creation and launch with `SEPARATE_IMPLEMENTER_REFUSED`. A
-  non-default `models` block is part of the execution binding, so changing it
-  stops accepted tasks with "task execution configuration changed" until it is
-  restored.
+  required `models` block and `lane_execution` are part of the execution
+  binding, so changing either stops accepted tasks with "task execution
+  configuration changed" until it is restored. A task accepted under the
+  preceding hash formula accepts that legacy hash once and is immediately
+  repinned when its only formula differences are the newly added
+  `lane_execution` field and the old omission of the historical `grok`/`codex`
+  `models` value. Other configuration changes still stop the task.
+  `lane_execution` accepts only `this-device-is-lane-host`: the local harness's
+  lane starter starts the coordinator on the external lane host. The Agent
+  coordinator does not SSH, mirror, or copy a lane from a work device.
 - Checkpoints live in `task.payload['coordinator']` and activity `result`
   fields. There is **no** second hub state machine and **no** new store table.
 - `runner` executes `gh`/`git` trusted calls and returns
@@ -205,8 +214,8 @@ for worker in workers.values():
    independent invocations; agent rows prepared on the main thread, subprocesses
    in threads, results persisted on the main thread), then model slot `second`
    quality+logic the same way only after both first-slot dimensions are approved
-   on that head. The phase and stage names `pr_gates_grok` / `grok-pr` and
-   `pr_gates_codex` / `codex-pr` are the historical identifiers of the two slots. Author
+   on that head. The persisted phase names `pr_gates_grok` and
+   `pr_gates_codex` select stages `review-1` and `review-2`, respectively. Author
    session does not sit those reviews. Incomplete/unavailable vendor output is a
    GitHub-visible blocker with `resume_phase` of `pr_gates_grok` /
    `pr_gates_codex` and a pinned `question_activity_id` — not a rejected
@@ -214,7 +223,7 @@ for worker in workers.values():
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
    head-specific evidence. A successful second-slot lane still starts when the
    checklist keys are `n_a`. It replaces `n_a` with `ja` for
-   `codex_pr_quality` and `codex_pr_logic`, including on a later tick whose
+   `review_2_quality` and `review_2_logic`, including on a later tick whose
    gate is already approved. After `ja`, both second-slot gates are required again.
    `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
@@ -250,8 +259,8 @@ for worker in workers.values():
    operator script output — not model/repo input). Re-verify clean signed head
    **after** the command, re-observe CI fresh (no stale `ci_green`), unchanged PR
    head, author/base/mergeability, tests, and all four same-head gates. The two
-   `codex-pr` gates are omitted on readiness, formal approve, and leave-draft
-   only when both `codex_pr_*` checklist keys (historical names of slot `second`) are already `n_a`, the evidence is
+   `review-2` gates are omitted on readiness, formal approve, and leave-draft
+   only when both `review_2_*` checklist keys are already `n_a`, the evidence is
    exactly `second review not posted`, and the opener is listed in
    one_review_authors in the trusted .github/pr-guard.json on the default
    branch. A missing file, a missing key, or an empty list keeps all four
@@ -294,7 +303,7 @@ for worker in workers.values():
    set Ready. If the opener is no longer listed, it posts a new comment that
    Ready was not set and does not call `gh pr ready`. The same correction is
    posted on a later leave-draft when that one-review evidence comment is
-   already done, both `codex_pr_*` checklist keys (slot `second`) are still `n_a` with evidence exactly
+   already done, both `review_2_*` checklist keys are still `n_a` with evidence exactly
    `second review not posted`, and the live list no longer grants the
    exception, before the gate check can hide it. A transport failure on that
    later read retries and does not set Ready. A later leave-draft that

@@ -9,7 +9,7 @@ from typing import Any
 
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .github_accounts import Account, AccountError, load_accounts
-from .model_slots import DEFAULT_MODEL_SLOTS, SLOT_KEY_PREFIXES, STAGE_SLOTS, ModelSlots
+from .model_slots import SLOT_KEY_PREFIXES, STAGE_SLOTS, ModelSlots, canonical_stage
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
@@ -36,12 +36,10 @@ def required_lane_slots(models: ModelSlots) -> tuple[str, ...]:
 
 
 def checklist_key_for_stage(stage: str, dimension: str) -> str:
-    """Checklist key of a PR gate: historical slot prefix plus dimension."""
-    return f"{SLOT_KEY_PREFIXES[STAGE_SLOTS[stage]]}{dimension}"
+    """Canonical checklist key for a PR gate stage and dimension."""
+    return f"{SLOT_KEY_PREFIXES[STAGE_SLOTS[canonical_stage(stage)]]}{dimension}"
 
 
-# Historical default binding (models unset: grok first, codex second).
-REQUIRED_LANE_SLOTS = required_lane_slots(DEFAULT_MODEL_SLOTS)
 PROTECTED_BRANCHES = frozenset({"develop", "main", "master"})
 ACCEPT_MARKER_PREFIX = "<!-- agent-coordinator:accept:v1:"
 ACCEPT_BODY = (

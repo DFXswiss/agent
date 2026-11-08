@@ -12,7 +12,6 @@ from typing import Any
 
 from .coordinator_config import WorkerConfig
 from .coordinator_runtime import (
-    REQUIRED_LANE_SLOTS,
     CoordinatorError,
     advance_one,
     discover_assignments,
@@ -76,6 +75,5 @@ def tick(
 
 
 __all__ = [
-    "REQUIRED_LANE_SLOTS",
     "tick",
 ]

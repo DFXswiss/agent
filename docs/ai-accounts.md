@@ -2,11 +2,15 @@
 
 Static scripts that load this manifest select AI provider accounts and
 user-defined roles from `$AGENT_HOME/ai-accounts.json`. Installation creates no
-accounts, roles, or session selections. A missing file, `{}`, or null/empty
-`accounts`, `roles`, `sessions` and `lanes` leaves the configuration empty. An
-absent `models` block pins the historical order `grok`, then `codex` on new tasks
-and is how tasks without a pin are read. An absent `implementer` uses
+accounts, roles, or session selections. A missing file or a manifest without
+`models` fails with `models is not configured`. When `models` is set, null or
+empty `accounts`, `roles`, `sessions`, and `lanes` leave those collections
+empty. An absent `implementer` uses
 `models.first`; neither selection authorizes a launch without lane bindings.
+Every model-lane launch also requires an explicit top-level `lane_execution`
+declaration written by the local harness. Missing or invalid declarations fail
+closed because Agent cannot infer whether the current device is a user's work
+device.
 There is no
 implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
@@ -18,7 +22,7 @@ the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, 
 unknown top-level key or a malformed model selection therefore stops task
 creation. `agent task create` and error-fix tasks ignore errors inside
 `accounts`, `roles`, `sessions` or `lanes`; the issue coordinator validates the
-whole manifest before it accepts a task.
+whole manifest, including `lane_execution`, before it accepts a task.
 It does not implement the complete issue-to-PR coordinator or a sandbox.
 
 The following is an **operator-supplied example**, never an installed default.
@@ -27,6 +31,9 @@ binds the lanes device-wide:
 
 ```json
 {
+  "lane_execution": {
+    "mode": "this-device-is-lane-host"
+  },
   "models": {
     "first": "claude",
     "second": "codex"
@@ -70,6 +77,35 @@ binds the lanes device-wide:
 }
 ```
 
+## Lane execution device
+
+`lane_execution` has exactly one accepted form. The external lane host marks
+itself explicitly:
+
+```json
+{
+  "lane_execution": {"mode": "this-device-is-lane-host"}
+}
+```
+
+Agent does not transport a lane from a work device to that host. The local
+harness's lane starter starts the Agent lane command on the external lane host,
+with its workspace and provider configuration already present there. The
+`remote` mode, SSH/rsync mirroring, copy-back, remote manifests, and remote
+interactive terminals are not supported by Agent.
+
+`--no-tmux` changes only the process holder and never authorizes execution on
+an undeclared device. Omitting `lane_execution`, adding fields, or using any
+other mode refuses all model-lane starts with:
+
+```text
+lane_execution is not configured: lanes never run on a work device; start lanes through the local harness's lane starter on an external lane host, or mark this device as a lane host
+```
+
+The rejected `remote` mode also reports that it is not supported. Model
+display and other read-only configuration inspection do not launch a lane and
+remain available without this declaration.
+
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
 the operator; they are distinct from the fixed workflow kinds (`implementer`,
@@ -82,7 +118,7 @@ roles.
 
 The lane chain has two logical review slots. Model slot `first` reviews the
 inner loop and runs the first PR review pair; model slot `second` runs the
-second PR review pair. The optional top-level `models` block names the provider
+second PR review pair. The required top-level `models` block names the provider
 of each review slot:
 
 - `first`: `grok`, `codex` or `claude`
@@ -103,11 +139,14 @@ either `models` slot. For example, a device may configure:
 ```
 
 Which provider a person works with is this device-local choice; no provider
-name is fixed in the chain. The stored ledger identifiers keep their historical
-names and now mean the slot, not a provider: gate stages `grok-pr` (slot
-`first`) and `codex-pr` (slot `second`), checklist keys `grok_pr_*` and
-`codex_pr_*`, coordinator phases `pr_gates_grok` and `pr_gates_codex`. A device
-without a `models` block keeps the historical order `grok`, then `codex`.
+name is fixed in the chain. Gate stages are `review-1` and `review-2`, with
+checklist prefixes `review_1_` and `review_2_`. The old stages `grok-pr` and
+`codex-pr` and old keys `grok_pr_quality`, `grok_pr_logic`, `codex_pr_quality`,
+and `codex_pr_logic` are legacy aliases: CLI input accepts and warns about them,
+and stored rows remain readable without a database rewrite. Coordinator phases `pr_gates_grok` and
+`pr_gates_codex` retain their internal persisted names. A device without a
+`models` block has no slot assignment; task creation, device model display, and
+launch configuration fail loudly.
 
 A task pins the device's `models` when it is created (`task create`, the issue
 coordinator, error-fix tasks). When the configured implementer differs from
@@ -118,12 +157,21 @@ the field stays absent when both are equal. Every later check for that task (`ag
 values, so changing `models` or `implementer` affects only tasks created
 afterwards, whether by the CLI or error-fix. The issue coordinator is the exception: it refuses a
 separate implementer at preflight, so setting one stops every coordinator tick, including for
-tasks it has already accepted, until `implementer` is removed or set to `models.first`. It also hashes the device's non-default `models` into each accepted
-task's execution binding: after a change, tasks it already accepted stop with
-"task execution configuration changed" until the configuration is restored. For the PR reviewer roles,
-`agent agent start` accepts any supported provider and `gate record` enforces the
-pinned slot provider. Older tasks without an `implementer` field use their
-pinned `models.first`; tasks without `models` keep `grok`, then `codex`.
+tasks it has already accepted, until `implementer` is removed or set to `models.first`. It hashes the device's `models` and `lane_execution` into each accepted
+task's execution binding: a later change stops the task with "task execution
+configuration changed" until the accepted configuration is restored. A task
+accepted before the current hash formula accepts the matching legacy formula
+once and is immediately repinned; this compatibility covers only
+the newly added `lane_execution` field and the former omission of the historical
+`grok`/`codex` `models` value. Other changes still stop the task. For the PR reviewer roles, `agent agent start --stage review-1|review-2` requires the
+provider pinned to that stage. A second-stage agent cannot start until both
+first-stage dimensions are approved. `gate record` repeats the slot check and
+verifies the agent's recorded stage. Older tasks without an `implementer` field use their
+pinned `models.first`. Tasks recorded before model slots existed and therefore
+missing `models` remain readable with the historical `grok`, then `codex`
+mapping for existing agent and gate rows. They cannot start a new lane or write
+a new agent or gate row; recreate them after the local harness has written the
+device's `models` selection.
 When `agent run --spec-file` resolves an implementer without a local lane
 adapter, it deliberately uses the existing handoff path, names the pinned
 provider as the implementer, and creates no agent row.
@@ -220,8 +268,10 @@ headless lane (`claude --print`, spec on stdin, read tools only, plus
 subagents or the web). The configured model is required,
 and a supplied `--model` must agree with it. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;
-a changed or missing binding requires a new session. Existing unbound Grok
-conversation IDs are not silently adopted under a newly configured account.
+a changed or missing binding requires a new session. The binding also pins the normalized `lane_execution` mode, so a live process
+or stored conversation cannot be reused after changing that declaration. Existing unbound Grok conversation IDs are not silently adopted under a newly
+configured account. Interactive provider starts run only on a declared lane
+host; Agent does not provide a remote-interactive transport.
 
 ## Migration from implicit defaults
 
@@ -235,7 +285,10 @@ vendor/role lists and built-in model choices in code. After adopting
 3. Choose the two model slots in `models` and bind the lanes, device-wide in
    the top-level `lanes` map or per session: keys such as `claude:implementer`
    and, when needed, `interactive`.
-4. Sessions without a binding of their own use the device-wide `lanes` map.
+4. On the external lane host, set `lane_execution` to
+   `{"mode":"this-device-is-lane-host"}` before enabling launch paths. The
+   local harness's lane starter is responsible for starting work on that host.
+5. Sessions without a binding of their own use the device-wide `lanes` map.
    An empty or missing file does not authorize a fallback identity.
 
 Configure the lane bindings (device-wide `lanes` or per session) before
@@ -243,7 +296,8 @@ enabling launch paths after upgrading.
 For example, the static script invokes `agent lane run --session chosen-session
 --role implementer --vendor claude --spec-file task.md --no-tmux`; it resolves the
 `claude:implementer` slot to the operator-defined role. `agent run` resolves slots
-using its task session. Interactive starts use `agent session start --id
-chosen-session --provider grok`. Raw terminal `--cmd` remains an explicitly
+using its task session. Interactive starts on the lane host use `agent session
+start --id chosen-session --provider grok`. Raw terminal
+`--cmd` remains an explicitly
 supplied script command, outside provider-profile launch enforcement; it is not
 a sandboxed model interface. No model lane may invoke these execution commands.

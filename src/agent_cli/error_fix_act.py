@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import uuid
 from collections.abc import Callable
@@ -9,10 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from .allow import CHECKLIST_KEYS
+from .model_slots import ModelSlotsError, models_for_new_record
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
 
 Runner = Callable[[list[str]], Completed]
+_MODEL_CONFIGURATION_ERROR = "model-configuration"
 
 
 def _device_model_pins(store: Store) -> dict[str, Any]:
@@ -23,6 +26,27 @@ def _device_model_pins(store: Store) -> dict[str, Any]:
     models, implementer = load_model_configuration(store.home)
     return model_pins(models, implementer)
 
+
+def _model_configuration_fingerprint(home: Path) -> str:
+    from .ai_accounts import CONFIG_FILE
+
+    path = home / CONFIG_FILE
+    try:
+        material = b"present\0" + path.read_bytes()
+    except FileNotFoundError:
+        material = b"missing"
+    except OSError as exc:
+        material = f"unreadable\0{type(exc).__name__}\0{exc.errno}".encode()
+    return hashlib.sha256(material).hexdigest()
+
+
+def _configuration_error_fingerprint(row: dict[str, Any]) -> str | None:
+    result = row.get("result")
+    if not isinstance(result, dict):
+        return None
+    if result.get("kind") != _MODEL_CONFIGURATION_ERROR:
+        return None
+    return _nonempty_str(result.get("configuration_fingerprint"))
 
 
 def _strip(row: dict[str, Any]) -> dict[str, Any]:
@@ -191,6 +215,16 @@ def _lookup_implement_task(store: Store, session_id: str, error_id: str) -> str 
     return None
 
 
+def _require_reusable_task_models(store: Store, task_id: str) -> None:
+    task = store.row("task", task_id)
+    if task is None:
+        raise StoreError("existing error-fix task not found")
+    try:
+        models_for_new_record(task)
+    except ModelSlotsError as exc:
+        raise StoreError(str(exc)) from exc
+
+
 def _find_or_create_implement_task(
     store: Store,
     session_id: str,
@@ -198,11 +232,13 @@ def _find_or_create_implement_task(
     title: str,
     *,
     ref: str | None = None,
+    task_pins: dict[str, Any] | None = None,
 ) -> tuple[str, bool]:
     if _nonempty_str(error_id) is None:
         raise StoreError("error_id is required")
     existing = _lookup_implement_task(store, session_id, error_id)
     if existing is not None:
+        _require_reusable_task_models(store, existing)
         return existing, False
     seen = _error_seen(store, session_id, error_id)
     seen_payload = seen.get("payload")
@@ -236,7 +272,7 @@ def _find_or_create_implement_task(
             "payload": {"error_id": error_id, "repo": repo},
             "state": "open",
             "current_round": 0,
-            **_device_model_pins(store),
+            **(task_pins if task_pins is not None else _device_model_pins(store)),
             "created_at": utcnow(),
             "updated_at": utcnow(),
             "change_summary_en": None,
@@ -313,12 +349,20 @@ def scan_error_fix(store: Store, runner: Runner) -> list[str]:
 
 
 def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
+    configuration_fingerprint = _model_configuration_fingerprint(store.home)
     rows = [
         row
         for row in store.rows("activity")
         if row.get("_origin_device_id") == store.device_id()
         and row.get("type") == "error.fix"
-        and row.get("execution_status") == "pending"
+        and (
+            row.get("execution_status") == "pending"
+            or (
+                row.get("execution_status") == "error"
+                and _configuration_error_fingerprint(row)
+                not in (None, configuration_fingerprint)
+            )
+        )
     ]
     rows.sort(key=lambda row: str(row.get("id") or ""))
     lines: list[str] = []
@@ -332,9 +376,15 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             continue
         session_id = str(row["session_id"])
         parent = Path(store.home) / "error-fix-work"
-        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         head = f"error-fix-{error_id[:8]}"
         existing = _lookup_implement_task(store, session_id, error_id)
+        if existing is not None:
+            try:
+                _require_reusable_task_models(store, existing)
+            except StoreError as exc:
+                _mark(store, row, status="error", error=str(exc))
+                lines.append(f"error.fix {rid} error")
+                continue
         if existing is not None and (parent / existing / ".git").exists():
             path = parent / existing
             result = {
@@ -354,6 +404,26 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
             suffix = f" line_fingerprint={extra}" if extra else ""
             lines.append(f"error.fix {rid} task={existing} worktree={path}{suffix}")
             continue
+        task_pins: dict[str, Any] | None = None
+        if existing is None:
+            try:
+                task_pins = _device_model_pins(store)
+            except StoreError as exc:
+                _mark(
+                    store,
+                    row,
+                    status="error",
+                    error=str(exc),
+                    result={
+                        "kind": _MODEL_CONFIGURATION_ERROR,
+                        "configuration_fingerprint": configuration_fingerprint,
+                    },
+                )
+                lines.append(f"error.fix {rid} error")
+                continue
+        if row.get("execution_status") == "error":
+            _mark(store, row, status="pending", result={})
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         staging = parent / f"pending-{rid}"
         if not (staging / ".git").exists():
             error = _run_git(
@@ -389,6 +459,7 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
                 session_id,
                 error_id,
                 f"error-fix {error_id[:8]}",
+                task_pins=task_pins,
             )
         except StoreError as exc:
             shutil.rmtree(staging, ignore_errors=True)

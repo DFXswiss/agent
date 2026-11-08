@@ -324,9 +324,13 @@ def launch(
     if vendor not in LANE_VENDORS:
         raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
     from .ai_accounts import load_ai_accounts
+
     if not session_id or config_home is None:
         raise SystemExit("lane requires an explicit session and AI configuration home")
-    selected = load_ai_accounts(config_home).for_lane(session_id, role, vendor)
+    ai = load_ai_accounts(config_home)
+    selected = ai.for_lane(
+        session_id, role, vendor, require_execution=False
+    )
 
     path = Path(spec_file)
     if not path.is_file():
@@ -338,6 +342,7 @@ def launch(
     cwd = str(Path(cwd).resolve())
 
     write = selected.access == "workspace-write"
+    ai.require_lane_execution()
     codex_output_file: str | None = None
     output_file: str | None = None
     if vendor in OUTPUT_FILE_VENDORS:

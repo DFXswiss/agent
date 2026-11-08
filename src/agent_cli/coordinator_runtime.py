@@ -20,15 +20,15 @@ from .a38_review import COMPLIANCE_PROMPT
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import AIAccounts, load_ai_accounts
 from .model_slots import (
-    DEFAULT_MODEL_SLOTS,
+    LEGACY_RECORDED_SLOTS,
     ModelSlotsError,
-    implementer_from_snapshot,
+    canonical_key,
+    implementer_for_new_record,
     model_pins,
-    models_from_snapshot,
+    models_for_new_record,
 )
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
-    REQUIRED_LANE_SLOTS,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
     REQUIRED_WORKER_SKILLS,
@@ -94,7 +94,6 @@ from .store import Store, StoreError, utcnow
 
 # Re-exports for coordinator.py and tests.
 __all__ = [
-    "REQUIRED_LANE_SLOTS",
     "CoordinatorError",
     "advance_one",
     "discover_assignments",
@@ -137,17 +136,26 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
         _refuse_codex_first(ai.models.first, ai.implementer)
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
-            selected = ai.for_lane(worker.session_id, role, vendor)
+            selected = ai.for_lane(
+                worker.session_id, role, vendor, require_execution=False
+            )
             if role == "implementer" and selected.access != "workspace-write":
                 raise CoordinatorError("implementer lane requires workspace-write access")
             if role != "implementer" and selected.access != "read-only":
                 raise CoordinatorError(f"{slot} requires read-only access")
     except AIAccountError as exc:
-        raise CoordinatorError(str(exc)) from exc
+        message = str(exc)
+        if message.startswith("models is not configured"):
+            message = "models is not configured"
+        raise CoordinatorError(message) from exc
     if not worker.repositories:
         raise CoordinatorError("worker has no repositories configured")
     if not worker.workspace_root.is_absolute():
         raise CoordinatorError("workspace_root must be absolute")
+    try:
+        ai.require_lane_execution()
+    except AIAccountError as exc:
+        raise CoordinatorError(str(exc)) from exc
 
 
 def execution_binding(
@@ -157,21 +165,80 @@ def execution_binding(
 
     ``ai`` lets a caller hash the same manifest read it pins ``models`` from.
     """
+    ai = ai if ai is not None else load_ai_accounts(store.home)
+    selected = _execution_binding_fields(store, worker, repo, ai)
+    encoded = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _execution_binding_fields(
+    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts
+) -> dict[str, Any]:
+    """Return the current binding fields from one AI-manifest snapshot."""
     cfg = repo_cfg(worker, repo)
     github = load_accounts(store.home)
-    ai = ai if ai is not None else load_ai_accounts(store.home)
+    lanes = [
+        asdict(
+            ai.for_lane(
+                worker.session_id,
+                slot.split(":", 1)[1],
+                slot.split(":", 1)[0],
+                require_execution=False,
+            )
+        )
+        for slot in required_lane_slots(ai.models)
+    ]
     selected = {
-        "repository": asdict(cfg), "workspace": str(worker.workspace_root),
-        "worker_session": worker.session_id, "review_session": worker.review_session,
+        "repository": asdict(cfg),
+        "workspace": str(worker.workspace_root),
+        "worker_session": worker.session_id,
+        "review_session": worker.review_session,
         "reply_logins": worker.reply_logins,
-        "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
-        # Only a non-default models block enters the hash, so a device without one,
-        # or with the default written out, keeps the hash of earlier tasks.
-        **({"models": ai.models.as_dict()} if ai.models != DEFAULT_MODEL_SLOTS else {}),
-        "lanes": [asdict(ai.for_lane(worker.session_id, slot.split(":", 1)[1], slot.split(":", 1)[0]))
-                  for slot in required_lane_slots(ai.models)],
+        "github": [
+            asdict(github.for_session(sid))
+            for sid in (worker.session_id, worker.review_session)
+        ],
+        "models": ai.models.as_dict(),
+        "lane_execution": asdict(ai.require_lane_execution()),
+        "lanes": lanes,
     }
-    return hashlib.sha256(json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return selected
+
+
+def _legacy_execution_binding(
+    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts
+) -> str:
+    """Reproduce the pre-lane-execution hash for accepted-task migration only.
+
+    The old formula omitted ``lane_execution`` and omitted ``models`` when the
+    historical grok/codex mapping was selected. All other fields remain pinned.
+    """
+    selected = _execution_binding_fields(store, worker, repo, ai)
+    selected.pop("lane_execution")
+    if ai.models == LEGACY_RECORDED_SLOTS:
+        selected.pop("models")
+    encoded = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def refresh_execution_binding(
+    store: Store, worker: WorkerConfig, task: dict[str, Any]
+) -> None:
+    """Validate a task binding and migrate only the preceding hash formula."""
+    checkpoint = coord(task)
+    source = checkpoint.get("source") or {}
+    repo = str(source.get("repo") or "")
+    ai = load_ai_accounts(store.home)
+    current = execution_binding(store, worker, repo, ai)
+    stored = checkpoint.get("execution_binding")
+    if stored == current:
+        return
+    if stored != _legacy_execution_binding(store, worker, repo, ai):
+        raise CoordinatorError("task execution configuration changed or is unpinned")
+    # Accepted tasks keep working across the binding-formula upgrade. Repin
+    # immediately so a later real models/lane/device change stops.
+    checkpoint["execution_binding"] = current
+    save_task(store, task)
 
 
 CODEX_FIRST_REFUSED = (
@@ -196,8 +263,9 @@ def _refuse_codex_first(first: str, implementer: str | None = None) -> None:
 def _first_slot_vendor(task: dict[str, Any]) -> str:
     """Provider of model slot ``first``, pinned on the task when it was created."""
     try:
-        first = models_from_snapshot(task).first
-        implementer = implementer_from_snapshot(task)
+        # Lane start: an old task without a pin must be recreated before new work.
+        first = models_for_new_record(task).first
+        implementer = implementer_for_new_record(task)
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(first, implementer)
@@ -244,7 +312,7 @@ def _find_task_for_issue_device_wide(
 def _ensure_checklist_rows(store: Store, task: dict[str, Any], session: dict[str, Any]) -> None:
     """Reconcile checklist after partial crash — never leave keys missing forever."""
     existing = {
-        str(item.get("key"))
+        canonical_key(str(item.get("key")))
         for item in store.rows("checklist_item")
         if item.get("task_id") == task["id"]
     }
@@ -1293,11 +1361,8 @@ def advance_one(
     task = tasks[0]
     c = coord(task)
     phase = str(c.get("phase") or "accept")
-    source = c.get("source") or {}
     try:
-        binding = execution_binding(store, worker, str(source.get("repo") or ""))
-        if c.get("execution_binding") != binding:
-            raise CoordinatorError("task execution configuration changed or is unpinned")
+        refresh_execution_binding(store, worker, task)
     except (CoordinatorError, StoreError) as exc:
         return publish_blocker(store, worker, task, runner, str(exc), kind="configuration-binding")
     # Stop new effects when assignment is revoked. await_merge may continue

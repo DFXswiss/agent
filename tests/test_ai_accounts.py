@@ -8,6 +8,7 @@ import pytest
 
 from agent_cli.ai_accounts import (
     ACCESS_VALUES,
+    LANE_EXECUTION_ERROR,
     READ_ONLY_WORKFLOW_KINDS,
     SUPPORTED_PROVIDERS,
     AccountError,
@@ -15,9 +16,16 @@ from agent_cli.ai_accounts import (
     AIAccounts,
     AIRole,
     load_ai_accounts,
+    load_lane_execution,
 )
+from agent_cli.model_slots import ModelSlots
 
 pytestmark = pytest.mark.no_pg
+
+UNCONFIGURED_MODELS_MESSAGE = (
+    "models is not configured: the device's ai-accounts.json must name "
+    "models.first and models.second (set by the local harness)"
+)
 
 
 def write_config(home: Path, data: dict) -> None:
@@ -26,6 +34,8 @@ def write_config(home: Path, data: dict) -> None:
 
 def sample_config() -> dict:
     return {
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "models": {"first": "grok", "second": "codex"},
         "accounts": {
             "grok-primary": {
                 "provider": "grok",
@@ -98,17 +108,12 @@ def sample_config() -> dict:
         {"accounts": {}, "roles": {}, "sessions": {}},
     ],
 )
-def test_installation_defaults_to_empty(tmp_path: Path, data) -> None:
+def test_installation_without_models_is_unconfigured(tmp_path: Path, data) -> None:
     if data is not None:
         write_config(tmp_path, data)
-    accounts = load_ai_accounts(tmp_path)
-    assert accounts.accounts == {}
-    assert accounts.roles == {}
-    assert accounts.sessions == {}
-    with pytest.raises(AccountError, match="No AI session configured"):
-        accounts.for_session("chosen-session")
-    with pytest.raises(AccountError, match="No AI session configured"):
-        accounts.for_lane("chosen-session", "implementer", "grok")
+    with pytest.raises(AccountError) as excinfo:
+        load_ai_accounts(tmp_path)
+    assert str(excinfo.value) == UNCONFIGURED_MODELS_MESSAGE
 
 
 def test_many_profiles_and_roles_load_without_fixed_count(tmp_path: Path) -> None:
@@ -148,6 +153,34 @@ def test_explicit_session_and_lane_resolution(tmp_path: Path) -> None:
         loaded.for_session("lanes-only")
     with pytest.raises(AccountError, match="No AI lane configured"):
         loaded.for_lane("lanes-only", "reviewer", "grok")
+
+
+def test_missing_lane_execution_preserves_reads_but_refuses_launch_resolution(
+    tmp_path: Path,
+) -> None:
+    data = sample_config()
+    data.pop("lane_execution")
+    write_config(tmp_path, data)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.for_session("chosen-session").name == "builder"
+    with pytest.raises(AccountError) as excinfo:
+        loaded.for_lane("chosen-session", "implementer", "grok")
+    assert str(excinfo.value) == LANE_EXECUTION_ERROR
+    with pytest.raises(AccountError) as load_exc:
+        load_lane_execution(tmp_path)
+    assert str(load_exc.value) == LANE_EXECUTION_ERROR
+
+
+def test_remote_lane_execution_is_unsupported(tmp_path: Path) -> None:
+    data = sample_config()
+    data["lane_execution"] = {"mode": "remote", "host": "lane.example"}
+    write_config(tmp_path, data)
+    loaded = load_ai_accounts(tmp_path)
+    assert loaded.for_session("chosen-session").name == "builder"
+    with pytest.raises(AccountError, match="remote.*not supported"):
+        loaded.for_lane("chosen-session", "implementer", "grok")
+    with pytest.raises(AccountError, match="remote.*not supported"):
+        load_lane_execution(tmp_path)
 
 
 def test_session_omitted_interactive_and_empty_lanes(tmp_path: Path) -> None:
@@ -349,6 +382,7 @@ def test_errors_do_not_echo_credential_like_values(tmp_path: Path) -> None:
     write_config(
         tmp_path,
         {
+            "models": {"first": "grok", "second": "codex"},
             "accounts": {
                 "probe": {
                     "provider": "grok",
@@ -375,7 +409,13 @@ def test_account_error_extends_store_error() -> None:
 def test_frozen_dataclasses_expose_required_fields() -> None:
     account = AIAccount("n", "grok", "/absolute/config")
     role = AIRole("r", account, "model-x", "read-only")
-    accounts = AIAccounts({"n": account}, {"r": role}, {})
+    accounts = AIAccounts(
+        {"n": account},
+        {"r": role},
+        {},
+        ModelSlots("grok", "codex"),
+        "grok",
+    )
     assert account.name == "n"
     assert role.model == "model-x"
     assert accounts.roles["r"].access == "read-only"

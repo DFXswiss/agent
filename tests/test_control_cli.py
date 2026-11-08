@@ -36,6 +36,8 @@ def write_operator_interactive_ai_accounts(
     raw-shell starts (provider=None) must not rely on this helper.
     """
     data = {
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "models": {"first": "grok", "second": "codex"},
         "accounts": {
             account_name: {"provider": "grok", "config_dir": config_dir},
             "interactive-grok-b": {
@@ -94,6 +96,7 @@ def expected_ai_binding(
         "model": model,
         "access": access,
         "configuration": hashlib.sha256(config_dir.encode()).hexdigest(),
+        "lane_execution": {"mode": "this-device-is-lane-host"},
     }
 
 
@@ -458,6 +461,77 @@ def test_missing_interactive_account_refuses_before_process_start(
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
     with pytest.raises(SystemExit, match="No AI session configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+def test_missing_models_refuses_after_interactive_binding_before_process_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("models")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        return Completed(1, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="models is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+def test_missing_lane_execution_refuses_interactive_process_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("lane_execution")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="lane_execution is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+def test_remote_interactive_mode_is_rejected_before_process_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {"mode": "remote", "host": "lane.example"}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="remote.*not supported"):
         run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 

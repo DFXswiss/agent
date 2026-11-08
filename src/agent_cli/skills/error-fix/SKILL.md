@@ -29,6 +29,10 @@ again for improvements, executes tests, and performs all GitHub communication.
 Model lanes never start subagents or execute tests themselves. Executor commands
 below belong to the script. See
 [DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+Those lanes require the external lane host's `ai-accounts.json` to identify the
+current device as a lane host. The local harness's lane starter starts them
+there; Agent has no remote-execution fallback and never runs a vendor CLI on an
+undeclared work device.
 
 Model lanes never start monitors, poll, or wait for logs, CI, or PR events.
 Return the current result or blocker to the script. Event detection and any

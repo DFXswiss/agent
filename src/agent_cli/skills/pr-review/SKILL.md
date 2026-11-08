@@ -8,7 +8,10 @@ description: >-
 # Pull-request review contract
 
 Requires **spine**. Roles: `pr-reviewer-quality`, `pr-reviewer-logic`.
-Order: model slot `first`, then model slot `second`. The provider of each slot (`grok`, `codex` or `claude`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`); the examples below assume `first` = grok and `second` = codex.
+Order: model slot `first`, then model slot `second`. The provider of each slot (`grok`, `codex` or `claude`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`). Both slots must be configured; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
+The same manifest must declare the current device as a lane host. The local
+harness's lane starter starts review lanes on that external host; Agent has no
+remote SSH execution mode.
 
 Without this skill, `agent gate` and pr-reviewer `agent agent` commands refuse.
 
@@ -27,25 +30,25 @@ Do not start a monitor, poll GitHub, or wait for CI or another review. Return
 findings or blockers to the script when the review work is exhausted. The
 script monitors events and informs a lane when further work is useful.
 
-Two dimensions (quality, logic) and two slot stages (`grok-pr` = slot first,
-then `codex-pr` = slot second; historical names). The second stage runs only if
+Two dimensions (quality, logic) and two slot stages (`review-1` = slot first,
+then `review-2` = slot second). The second stage runs only if
 both first-slot dimensions are `approved`.
 
 ```bash
-agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
-agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --vendor grok
+agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --stage review-1 --vendor <first-slot-provider>
+agent agent start --session <session-id> --task <uuid> --role pr-reviewer-logic --stage review-1 --vendor <first-slot-provider>
 agent agent finish --id <uuid> --verdict approved|rejected|unavailable
-agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+agent gate record --task <uuid> --stage review-1 --dimension quality --vendor <first-slot-provider> \
   --verdict approved --head <sha> --agent <reviewer-uuid>
-agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+agent gate record --task <uuid> --stage review-1 --dimension quality --vendor <first-slot-provider> \
   --verdict rejected --head <sha> --agent <reviewer-uuid> --evidence "<findings>"
-agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+agent gate record --task <uuid> --stage review-1 --dimension quality --vendor <first-slot-provider> \
   --verdict unavailable --head <sha> --agent <reviewer-uuid> --evidence "<why>"
 ```
 
 `gate record --verdict approved|rejected|unavailable` (`unavailable` needs `--evidence`).
 
-Then the same two dimensions with `--vendor <second-slot provider>` and `--stage codex-pr`.
+Then the same two dimensions with `--vendor <second-slot provider>` and `--stage review-2`.
 
 Review lanes execute no software (no tests, builds, or servers).
 

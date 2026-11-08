@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,12 @@ from agent_cli.store import Store, StoreError, utcnow
 
 
 def _runner_session(store: Store) -> None:
+    # The local harness configures device model slots before creating tasks.
+    if not (store.home / "ai-accounts.json").exists():
+        (store.home / "ai-accounts.json").write_text(
+            json.dumps({"models": {"first": "grok", "second": "codex"}}),
+            encoding="utf-8",
+        )
     store.write(
         "session",
         "insert",
@@ -268,6 +275,79 @@ def test_scan_error_fix_clone_failure_stays_pending_and_cleans_staging(
     assert row["execution_status"] == "pending"
     assert store.rows("task") == []
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
+
+
+def test_scan_error_fix_waits_for_model_configuration_before_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    (tmp_path / "ai-accounts.json").unlink()
+    _seen(store)
+    _fix(store)
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["execution_error"].startswith("models is not configured:")
+    assert row["result"]["kind"] == "model-configuration"
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
+
+    assert scan_error_fix(store, _clone_runner(calls)) == []
+    assert calls == []
+
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
+    lines = scan_error_fix(store, _clone_runner(calls))
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    assert lines == [
+        f"error.fix fix-1 task={tasks[0]['id']} "
+        f"worktree={tmp_path / 'error-fix-work' / tasks[0]['id']}"
+    ]
+    assert calls[0][:3] == ["git", "clone", "--"]
+
+
+def test_scan_error_fix_rejects_existing_task_without_models_before_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    now = utcnow()
+    store.write(
+        "task",
+        "insert",
+        "legacy-error-fix-task",
+        {
+            "id": "legacy-error-fix-task",
+            "session_id": "runner-1",
+            "workflow": "implement",
+            "title": "Legacy error fix",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "task must be recreated" in row["execution_error"]
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
 
 
 def test_find_or_create_requires_active_session(tmp_path: Path) -> None:

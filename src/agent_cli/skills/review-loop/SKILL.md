@@ -7,7 +7,10 @@ description: >-
 
 # Review loop
 
-Requires **spine**. Roles: `implementer`, `reviewer`. The reviewer runs on model slot `first`; the implementer uses the task's separate implementer pin when present and otherwise also uses `first`. Read them with `agent models first --task <uuid>` and `agent models implementer --task <uuid>`. `agent models` without `--task` shows the device setting, which applies to new tasks only.
+Requires **spine**. Roles: `implementer`, `reviewer`. The reviewer runs on model slot `first`; the implementer uses the task's separate implementer pin when present and otherwise also uses `first`. Read them with `agent models first --task <uuid>` and `agent models implementer --task <uuid>`. `agent models` without `--task` shows the device setting, which applies to new tasks only. Both slots must be configured in the device's `ai-accounts.json`; there is no built-in provider assignment.
+That manifest must also declare the current device as a lane host. The local
+harness's lane starter starts lanes on that external host; Agent has no remote
+SSH execution mode.
 
 Without this skill, implementer and reviewer `agent agent` commands refuse.
 
@@ -64,7 +67,7 @@ Empty, partial, timeout, or unavailable review output is not zero findings.
 Zero findings only after an explicit complete pass.
 
 This inner loop is not the pull-request review. `reviewer_approved` does not
-close `grok_pr_*` or `codex_pr_*`. A draft plus local tests is not done.
+close `review_1_*` or `review_2_*`. A draft plus local tests is not done.
 
 When the ledger task is created after the inner loop, close the inner-loop keys
 as `ja` with evidence from `local-check|pushing|pr-review|gate-blocked` without

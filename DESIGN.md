@@ -383,8 +383,8 @@ Person-facing CLI for the spine stays `agent work` / table `open_work`. Catalog 
 
 Checklists, when the spine skill is on, stay `pending` / `ja` / `nein` / `n_a` /
 `unavailable` with an explicit `source`. `ja`, `n_a`, and `unavailable` need
-evidence. `unavailable` is only for the four PR-gate keys (`grok_pr_quality`,
-`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`); it is not `n_a` and it
+evidence. `unavailable` is only for the four PR-gate keys (`review_1_quality`,
+`review_1_logic`, `review_2_quality`, `review_2_logic`); it is not `n_a` and it
 blocks `done`. `done` on a task still requires the workflow checklist and both
 summary sentences.
 
@@ -480,11 +480,15 @@ an explicit interactive role from `ai-accounts.json`. The model and provider
 profile directory are required configuration; there is no built-in model.
 The CLI accepts only a UUID, so first start creates `runtime.grok_session_id`.
 A later start may resume that ID only with the same recorded AI binding
-(role, account, provider, model, access and configuration-directory hash).
+(role, account, provider, model, access, configuration-directory hash, and
+normalized lane-execution mode and host).
 Changing that binding, or adopting an old unbound ID, requires a new session.
 Provider credential environment variables are cleared in the child process,
 and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot
 be combined; `--model`, when supplied, must match the configured role.
+Interactive provider starts require the current device to be a declared lane
+host. The local harness's lane starter starts them on that external host;
+Agent does not provide remote interactive SSH or workspace mirroring.
 
 **Lane providers are the fixed adapter set `grok` | `codex` | `claude`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; a `claude` lane is the headless `claude --print` adapter, not this tmux pane. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 
@@ -542,6 +546,13 @@ start another lane or run tests does not transfer orchestration to the script.
 The static script owns those decisions and invocations; the lane supplies its
 implementation or review result.
 
+Model lanes never run on a user's work device. The local harness's lane starter
+starts them on an external lane host. On that host, `ai-accounts.json` must
+declare `lane_execution.mode = "this-device-is-lane-host"`; Agent has no remote
+SSH/rsync execution mode. Lane starts fail closed without that declaration;
+process-holder flags such as `--no-tmux` do not change the execution-device
+decision.
+
 A model never starts a monitor, polls for status, or waits for a CI run or other
 external event. Model lanes are used exclusively for work. When a lane has no
 more work to perform, it returns its result or blocker to the script. Monitoring
@@ -595,7 +606,7 @@ Write owner, hub role, opt-in skills, required session row, and the generic `act
 
 Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md): open the draft as soon as the first signed task commit exists; full tests and reviews are Ready-for-review gates, not draft gates. A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft (Ready for review) needs two review runs. Each names this head, or a commit after the pull request base that this head still contains. CI on this head must be green. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences; ledger `task-done` is not pull-request completion.
 
-Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex` or `claude`) fills a review slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later review check for that task uses the pinned value. The optional `implementer` selection accepts those providers plus `deepseek`, must differ from `models.second`, and defaults to `models.first`; a task stores a separate top-level implementer pin only when it differs from `models.first`. Older tasks without that field resolve the implementer to their first slot. The only provider order in code is the historical default `grok`, then `codex`, applied to tasks and devices without `models` so that existing ledger rows stay readable; the stored stage names `grok-pr` / `codex-pr` and the checklist keys `grok_pr_*` / `codex_pr_*` are the historical identifiers of the two review slots. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex` or `claude`) fills a review slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later review check for that task uses the pinned value. The optional `implementer` selection accepts those providers plus `deepseek`, must differ from `models.second`, and defaults to `models.first`; a task stores a separate top-level implementer pin only when it differs from `models.first`. Older tasks without that field resolve the implementer to their first slot. There is no built-in slot assignment: missing device configuration fails closed, and an older task without `models` may use the historical `grok`, then `codex` mapping only to read or display recorded agent and gate rows, never to start a lane or write a new row. Gate stages are `review-1` and `review-2`; their checklist prefixes are `review_1_` and `review_2_`. The old stage names `grok-pr` and `codex-pr` and checklist names `grok_pr_*` and `codex_pr_*` remain deprecated CLI input aliases with a warning; stored legacy rows stay readable without migration, while new writes store only the canonical names. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the newest author report that meets the requirements and was created after the head commit, falling back to an older qualifying report when a newer one does not meet them. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. One comment whose lanes are the first review run, and a later comment whose lanes are the second review run. The first comment stays valid when a later commit still contains that head and that head is after the pull request base. Then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
 
@@ -686,12 +697,19 @@ device's hub identity or transfer ownership of store rows.
 [AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
 profiles and roles, explicit models/access and session-to-role bindings. It is
 used by lane launches, interactive Grok starts and optional Grok usage reads.
-Its `models` block names the provider of model slot `first` and `second`, and
+Its `lane_execution` declaration is required for every vendor-lane start and
+only explicitly marks the current device as a lane host. The local harness's
+lane starter must start Agent on the external lane host; absence, invalid
+configuration, and the unsupported `remote` mode authorize no fallback.
+Its required `models` block names the provider of model slot `first` and `second`, and
 its optional `implementer` names a separate implementation provider;
 device-wide `lanes` bind slots for every session. An unset `models` block
-pins the historical order `grok`, then `codex` on new tasks and is how tasks
-without a pin are read; it authorizes no launch, because lane bindings stay
-required. Task creation and `agent models` read both selections.
+is unconfigured and fails closed; no provider assignment is built in. Tasks
+recorded before model slots existed may use the historical `grok`, then `codex`
+mapping only when their existing agent and gate rows are read or displayed.
+They cannot start a new lane or write a new agent or gate row and must be
+recreated with the configured device selection. Task creation and `agent models`
+read both selections.
 Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude
 provider adapters are protocol capabilities, not installed account or role
 selections. A38 visibility lookup uses an explicitly bound GitHub
@@ -822,6 +840,12 @@ On `error.fix`:
 The model never receives production credentials. Analysis that only reads the excerpt does not need write access to the origin branch.
 
 `agent watch error-fix` find-or-creates the implement task and clones `https://github.com/<repo>.git` into `$AGENT_HOME/error-fix-work/<task_id>`; `agent github pending` still opens drafts, and a retry draft uses the existing head `error-fix-<id8>`.
+The watcher resolves the configured model pins before it creates a staging
+directory or invokes Git. A missing or invalid selection records a stable
+configuration error; unchanged configuration is not retried, while a changed
+configuration is evaluated again. Before reusing an existing error-fix task,
+the watcher validates that task's pinned `models`; a legacy task without the
+pin must be recreated and is rejected before any worktree or Git operation.
 
 ### 21.6 Not in this revision
 

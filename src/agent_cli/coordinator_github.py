@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from .allow import GATE_PAIRS, both_codex_reviews_na, evaluate_allow
+from .allow import GATE_PAIRS, both_second_reviews_na, evaluate_allow
 from .model_slots import (
     ModelSlots,
     ModelSlotsError,
+    canonical_checklist,
+    canonical_stage,
     implementer_from_snapshot,
     models_from_snapshot,
 )
@@ -77,8 +79,9 @@ READINESS_CONTRACT = (
 
 
 def _task_models(task: dict[str, Any]) -> ModelSlots:
-    """Model slots pinned on the task (historical order for tasks without a pin)."""
+    """Model slots used to inspect recorded gates, including legacy tasks."""
     try:
+        # Recorded-state read: readiness checks inspect gates already on the task.
         return models_from_snapshot(task)
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
@@ -936,12 +939,12 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return [retry]
     latest = latest_gates(store, task["id"])
-    skip_codex = _codex_skip(store, worker, task, runner, phase="readiness", head=head)
-    if isinstance(skip_codex, list):
-        return skip_codex
+    skip_second = _second_review_skip(store, worker, task, runner, phase="readiness", head=head)
+    if isinstance(skip_second, list):
+        return skip_second
     models = _task_models(task)
     for stage, dimension, slot in GATE_PAIRS:
-        if stage == "codex-pr" and skip_codex:
+        if stage == "review-2" and skip_second:
             continue
         vendor = models.for_slot(slot)
         g = latest.get((stage, dimension))
@@ -1061,12 +1064,12 @@ def phase_formal_approve(
         save_task(store, task)
         return [retry]
     latest = latest_gates(store, task["id"])
-    skip_codex = _codex_skip(store, worker, task, runner, phase="formal_approve", head=head)
-    if isinstance(skip_codex, list):
-        return skip_codex
+    skip_second = _second_review_skip(store, worker, task, runner, phase="formal_approve", head=head)
+    if isinstance(skip_second, list):
+        return skip_second
     models = _task_models(task)
     for stage, dimension, slot in GATE_PAIRS:
-        if stage == "codex-pr" and skip_codex:
+        if stage == "review-2" and skip_second:
             continue
         vendor = models.for_slot(slot)
         g = latest.get((stage, dimension))
@@ -1185,11 +1188,13 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
     task = store.row("task", tid)
     assert task is not None
     checklist_rows = [r for r in store.rows("checklist_item") if r.get("task_id") == tid]
-    checklist = {str(r["key"]): str(r["status"]) for r in checklist_rows}
-    checklist_evidence = {
+    checklist = canonical_checklist(
+        {str(r["key"]): str(r["status"]) for r in checklist_rows}
+    )
+    checklist_evidence = canonical_checklist({
         str(r["key"]): r.get("evidence") if isinstance(r.get("evidence"), str) else ""
         for r in checklist_rows
-    }
+    })
     checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
     ordered_checks = sorted(checks, key=lambda c: c.get("ran_at") or "")
     latest_by_name: dict[str, dict[str, Any]] = {}
@@ -1203,7 +1208,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
     gates_raw.sort(key=lambda g: g.get("recorded_at") or "")
     gates = [
         {
-            "stage": g.get("stage"),
+            "stage": canonical_stage(str(g.get("stage"))),
             "dimension": g.get("dimension"),
             "vendor": g.get("vendor"),
             "verdict": g.get("verdict"),
@@ -1229,21 +1234,23 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
     }
 
 
-def _both_codex_reviews_na(store: Store, task_id: str) -> bool:
-    rows = {
-        str(row.get("key")): row
-        for row in store.rows("checklist_item")
-        if row.get("task_id") == task_id
-    }
+def _both_second_reviews_na(store: Store, task_id: str) -> bool:
+    rows = canonical_checklist(
+        {
+            str(row.get("key")): row
+            for row in store.rows("checklist_item")
+            if row.get("task_id") == task_id
+        }
+    )
     statuses: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
-    for key in ("codex_pr_quality", "codex_pr_logic"):
+    for key in ("review_2_quality", "review_2_logic"):
         row = rows.get(key)
         if not isinstance(row, dict):
             return False
         statuses[key] = row.get("status")
         evidence[key] = row.get("evidence")
-    return both_codex_reviews_na(statuses, evidence)
+    return both_second_reviews_na(statuses, evidence)
 
 
 def _trusted_done_review(
@@ -1258,7 +1265,7 @@ def _trusted_done_review(
     A stored payload copy is not this decision. A lookup failure raises
     ``CiObservationTransportError``.
     """
-    if not _both_codex_reviews_na(store, task["id"]):
+    if not _both_second_reviews_na(store, task["id"]):
         return "", None
     target = target_repo(task)
     number = as_int(coord(task).get("pr_number"))
@@ -1291,9 +1298,9 @@ def _opener_one_review(
     return one_review_for(config, login)
 
 
-def _codex_skip(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner, *, phase: str, head: str) -> bool | list[str]:
+def _second_review_skip(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner, *, phase: str, head: str) -> bool | list[str]:
     """True when the second review may be skipped. A list is a retry message. Two reviews are the standard. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count."""
-    if not _both_codex_reviews_na(store, task["id"]):
+    if not _both_second_reviews_na(store, task["id"]):
         return False
     try:
         return _opener_one_review(store, worker, task, runner)
@@ -1517,14 +1524,14 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         save_task(store, task)
         return [f"formal APPROVE not yet visible on {head[:7]}; retrying leave-draft"]
     latest = latest_gates(store, task["id"])
-    skip_codex = _codex_skip(store, worker, task, runner, phase="leave_draft", head=head)
-    if isinstance(skip_codex, list):
-        return skip_codex
+    skip_second = _second_review_skip(store, worker, task, runner, phase="leave_draft", head=head)
+    if isinstance(skip_second, list):
+        return skip_second
     # A previous tick already published the one-review evidence comment. If the
     # live list no longer grants the exception, correct it before the gate
     # loop. Keys that are no longer n_a are a real two-review pass and still
     # go through the gates. A transport error already returned above.
-    if not skip_codex and _both_codex_reviews_na(store, task["id"]):
+    if not skip_second and _both_second_reviews_na(store, task["id"]):
         one_id = str(
             uuid5(NAMESPACE_URL, f"coordinator-ready-comment:{task['id']}:{head}:one")
         )
@@ -1541,7 +1548,7 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
             )
     models = _task_models(task)
     for stage, dimension, slot in GATE_PAIRS:
-        if stage == "codex-pr" and skip_codex:
+        if stage == "review-2" and skip_second:
             continue
         vendor = models.for_slot(slot)
         g = latest.get((stage, dimension))
@@ -1592,7 +1599,7 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
     c["phase"] = "leave_draft"
     save_task(store, task)
 
-    one_review = bool(skip_codex)
+    one_review = bool(skip_second)
     body = _leave_draft_comment(head, one_review=one_review)
     # The decision is part of the id. A later pass that no longer has the
     # exception posts its own two-review comment instead of reusing this one.
@@ -1622,8 +1629,8 @@ def phase_leave_draft(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         return [retry_after_comment]
     # The evidence comment is an external call. Re-read the trusted list before
     # Ready. One review is enough only while the opener is still listed.
-    if skip_codex:
-        again = _codex_skip(store, worker, task, runner, phase="leave_draft", head=head)
+    if skip_second:
+        again = _second_review_skip(store, worker, task, runner, phase="leave_draft", head=head)
         if isinstance(again, list):
             return again
         if not again:
