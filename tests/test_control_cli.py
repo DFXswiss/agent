@@ -578,6 +578,30 @@ def test_interactive_configuration_is_checked_before_runtime_target_probes(
     assert calls == []
 
 
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_fresh_grok_start_rechecks_configuration_between_runtime_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            remove_ai_setting(tmp_path, missing)
+            return Completed(0, "tmux 3.3a", "")
+        return Completed(1, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert calls == [["tmux", "-V"]]
+
+
 def test_providerless_start_preflights_existing_grok_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

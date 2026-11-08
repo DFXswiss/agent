@@ -299,6 +299,50 @@ def test_scan_error_fix_clone_failure_stays_pending_and_cleans_staging(
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
 
 
+def test_scan_error_fix_pre_clone_session_race_stays_pending_and_cleans_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    staging = tmp_path / "error-fix-work" / "pending-fix-1"
+    staging.mkdir(parents=True)
+    active_checks = 0
+    require_active_session = error_fix_act_mod._require_active_session
+
+    def close_after_first_check(current_store: Store, session_id: str) -> dict:
+        nonlocal active_checks
+        active_checks += 1
+        session = require_active_session(current_store, session_id)
+        if active_checks == 1:
+            updated = {
+                key: value for key, value in session.items() if not key.startswith("_")
+            }
+            updated["status"] = "closed"
+            current_store.write("session", "update", session_id, updated)
+        return session
+
+    monkeypatch.setattr(
+        error_fix_act_mod,
+        "_require_active_session",
+        close_after_first_check,
+    )
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "pending"
+    assert row.get("execution_error") is None
+    assert row["result"] == {}
+    assert active_checks == 2
+    assert calls == []
+    assert store.rows("task") == []
+    assert not staging.exists()
+
+
 def test_scan_error_fix_waits_for_model_configuration_before_git(
     tmp_path: Path,
 ) -> None:

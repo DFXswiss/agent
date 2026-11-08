@@ -2279,13 +2279,23 @@ def _is_grok_runtime(meta: dict[str, Any]) -> bool:
     )
 
 
-def _preflight_runtime(store: Store, runtime: Runtime) -> PreflightRuntime:
+def _preflight_runtime(
+    store: Store,
+    runtime: Runtime,
+    *,
+    pending_meta: dict[str, Any] | None = None,
+) -> PreflightRuntime:
     """Return the single access path for operations on session runtimes."""
-    if isinstance(runtime, PreflightRuntime):
+    if isinstance(runtime, PreflightRuntime) and pending_meta is None:
         return runtime
+    if pending_meta is None:
+        return PreflightRuntime(
+            runtime,
+            lambda sid: _interactive_runtime_preflight(store, sid),
+        )
     return PreflightRuntime(
         runtime,
-        lambda sid: _interactive_runtime_preflight(store, sid),
+        lambda sid: _interactive_runtime_preflight(store, sid, meta=pending_meta),
     )
 
 
@@ -2313,20 +2323,25 @@ def _session_start(
     name = tmux_name(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
-    runtime = _preflight_runtime(store, runtime)
     command_argv: list[str] | None = None
     start_command = command
     if provider == "grok":
         selected, binding, existing_s = _interactive_preflight(
             store, sid, meta=meta, model=model
         )
+        new_id = grok_new_session_id() if not existing_s else ""
+        resolved = grok_model(selected.model)
+        if not existing_s:
+            meta["grok_session_id"] = new_id
+        meta["provider"] = "grok"
+        meta["model"] = resolved
+        meta["ai_binding"] = binding
+        runtime = _preflight_runtime(store, runtime, pending_meta=meta)
         if not runtime.available(sid):
             die("tmux is not installed")
         runtime_exists = runtime.exists(sid)
         if runtime_exists and not existing_s:
             runtime.stop(sid)
-        new_id = grok_new_session_id() if not existing_s else ""
-        resolved = grok_model(selected.model)
         command_argv = [*selected.env_prefix(), *grok_tmux_command_argv(
             existing=existing_s, model=resolved, new_id=new_id,
         )]
@@ -2334,11 +2349,8 @@ def _session_start(
             command_argv.extend(["--deny", "Write", "--deny", "Edit"])
         command_argv.extend(["--deny", "Bash", "--no-subagents", "--disable-web-search"])
         start_command = None
-        if not existing_s:
-            meta["grok_session_id"] = new_id
-        meta["provider"] = "grok"
-        meta["model"] = resolved
-        meta["ai_binding"] = binding
+    else:
+        runtime = _preflight_runtime(store, runtime)
     runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
     meta["tmux_session"] = name
     meta["control"] = "attached"

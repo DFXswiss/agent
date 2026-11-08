@@ -554,8 +554,9 @@ def _scan_error_fix(store: Store, runner: Runner) -> list[str]:
         if not (staging / ".git").exists():
             try:
                 _require_active_session(store, session_id)
-            except StoreError as exc:
-                _mark(store, row, status="error", error=str(exc))
+            except StoreError:
+                shutil.rmtree(staging, ignore_errors=True)
+                _mark(store, row, status="pending", result={})
                 lines.append(f"error.fix {rid} error")
                 continue
             error = _run_git(
