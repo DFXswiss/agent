@@ -488,7 +488,9 @@ and `GROK_HOME` selects the configured profile. `--provider` and `--cmd` cannot
 be combined; `--model`, when supplied, must match the configured role.
 Interactive provider starts require the current device to be a declared lane
 host. The local harness's lane starter starts them on that external host;
-Agent does not provide remote interactive SSH or workspace mirroring.
+Agent does not provide its own remote lane transport or workspace mirroring.
+Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
+the `models` and `lane_execution` checks pass.
 
 **Lane providers are the fixed adapter set `grok` | `codex` | `claude`; the model slots `first` and `second` are device configuration.** A process running inside a tmux pane is not a store vendor. The interactive runtime stays Grok-only; a `claude` lane is the headless `claude --print` adapter, not this tmux pane. There is no shell-string tmux driver: the runtime invokes `tmux` with argv lists only. `runtime.provider` is launch metadata, not a review-gate vendor.
 

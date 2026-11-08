@@ -88,11 +88,12 @@ itself explicitly:
 }
 ```
 
-Agent does not transport a lane from a work device to that host. The local
-harness's lane starter starts the Agent lane command on the external lane host,
-with its workspace and provider configuration already present there. The
-`remote` mode, SSH/rsync mirroring, copy-back, remote manifests, and remote
-interactive terminals are not supported by Agent.
+Agent does not provide its own remote lane transport or workspace mirroring.
+The local harness's lane starter starts the Agent lane command on the external
+lane host, with its workspace and provider configuration already present there.
+Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
+the `models` and `lane_execution` checks pass. The `remote` mode, remote
+manifests, and copy-back are not supported by Agent.
 
 `--no-tmux` changes only the process holder and never authorizes execution on
 an undeclared device. Omitting `lane_execution`, adding fields, or using any
@@ -271,7 +272,10 @@ the configured role, account, model, access and configuration-directory identity
 a changed or missing binding requires a new session. The binding also pins the normalized `lane_execution` mode, so a live process
 or stored conversation cannot be reused after changing that declaration. Existing unbound Grok conversation IDs are not silently adopted under a newly
 configured account. Interactive provider starts run only on a declared lane
-host; Agent does not provide a remote-interactive transport.
+host. Agent does not provide its own remote lane transport or workspace
+mirroring. Interactive tmux sessions may still use
+`$AGENT_HOME/runtime-targets.json` after the `models` and `lane_execution` checks
+pass.
 
 ## Migration from implicit defaults
 
