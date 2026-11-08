@@ -1590,6 +1590,44 @@ def test_mutation_before_write_is_caught_by_live_reassessment(what: str) -> None
     assert fake.posts == []
 
 
+def test_merge_sha_change_before_final_read_blocks_approval() -> None:
+    fake = FakeApproval()
+    fake.merge_commit_sha = MERGE
+    fake.runs = [fake.run(id=401, head_sha=MERGE)]
+
+    def change_merge(f: FakeApproval) -> None:
+        f.merge_commit_sha = BASE2
+
+    fake.before_run_read = change_merge
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(
+        GuardError, match="pull request changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == []
+    assert not _marker_comments(fake, AUTH_MARKER)
+
+
+def test_merge_sha_becoming_null_before_final_read_blocks_approval() -> None:
+    fake = FakeApproval()
+    fake.pull["merge_commit_sha"] = MERGE
+    fake.runs = [fake.run(id=401, head_sha=MERGE)]
+
+    def clear_merge(f: FakeApproval) -> None:
+        f.pull["merge_commit_sha"] = None
+
+    fake.before_run_read = clear_merge
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(
+        GuardError, match="pull request changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == []
+    assert not _marker_comments(fake, AUTH_MARKER)
+
+
 def test_get_run_identity_change_fails_closed() -> None:
     fake = FakeApproval()
     fake.run_override = fake.run(repository={"full_name": "other/public-app"})
