@@ -3912,7 +3912,7 @@ def test_pr_reviewer_start_validates_stage_vendor_and_order(
         )
     with pytest.raises(
         SystemExit,
-        match=r"review-2 requires approved review-1/quality before agent start",
+        match=r"review-2 requires approved review-1/quality at the same head",
     ):
         run(
             tmp_path,
@@ -3935,6 +3935,57 @@ def test_pr_reviewer_start_validates_stage_vendor_and_order(
     store = Store(tmp_path)
     try:
         assert store.row("agent", aid)["stage"] == "review-1"
+    finally:
+        store.close()
+
+
+def test_pr_reviewer_start_refuses_first_stage_gates_on_different_heads(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    store = Store(tmp_path)
+    try:
+        for dimension, head in (("quality", "abcdef0"), ("logic", "1234567")):
+            gate_id = str(uuid.uuid4())
+            store.write(
+                "review_gate",
+                "insert",
+                gate_id,
+                {
+                    "id": gate_id,
+                    "task_id": tid,
+                    "stage": "review-1",
+                    "dimension": dimension,
+                    "vendor": "grok",
+                    "verdict": "approved",
+                    "evidence": None,
+                    "head_sha": head,
+                    "agent_id": str(uuid.uuid4()),
+                    "recorded_at": utcnow(),
+                },
+            )
+    finally:
+        store.close()
+
+    with pytest.raises(
+        SystemExit,
+        match=r"review-2 requires approved review-1/logic at the same head",
+    ):
+        run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "pr-reviewer-quality", "--stage", "review-2",
+                "--vendor", "codex",
+            ],
+        )
+
+    store = Store(tmp_path)
+    try:
+        assert not any(
+            row.get("task_id") == tid and row.get("stage") == "review-2"
+            for row in store.rows("agent")
+        )
     finally:
         store.close()
 

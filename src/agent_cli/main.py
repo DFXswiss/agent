@@ -1111,6 +1111,7 @@ def cmd_agent(args: list[str]) -> None:
                     )
                 if stage == "review-2":
                     latest = _latest_gates(store, tid)
+                    review_1_heads: dict[str, str] = {}
                     for dimension in ("quality", "logic"):
                         gate = latest.get(("review-1", dimension))
                         if (
@@ -1120,8 +1121,20 @@ def cmd_agent(args: list[str]) -> None:
                         ):
                             die(
                                 "review-2 requires approved "
-                                f"review-1/{dimension} before agent start"
+                                f"review-1/{dimension} at the same head"
                             )
+                        review_1_heads[dimension] = str(gate.get("head_sha") or "")
+                    for dimension in ("quality", "logic"):
+                        if not review_1_heads[dimension]:
+                            die(
+                                "review-2 requires approved "
+                                f"review-1/{dimension} at the same head"
+                            )
+                    if review_1_heads["quality"] != review_1_heads["logic"]:
+                        die(
+                            "review-2 requires approved "
+                            "review-1/logic at the same head"
+                        )
             from .ai_accounts import load_ai_accounts
 
             load_ai_accounts(store.home)
