@@ -855,13 +855,11 @@ def _run_prepared(
 
 def _abort_prepared_pr_reviews(
     store: Store,
-    worker: WorkerConfig,
     task: dict[str, Any],
-    runner: Runner,
     prepared_list: list[dict[str, Any]],
     exc: BaseException,
 ) -> None:
-    """Close every persisted preparation before publishing one blocker."""
+    """Close every persisted preparation and leave publication to advance_one."""
     for prepared in prepared_list:
         codex_output = prepared.get("codex_output")
         if codex_output:
@@ -880,14 +878,6 @@ def _abort_prepared_pr_reviews(
     c["phase"] = "blocked"
     c["blocker"] = str(exc)
     save_task(store, task)
-    _post_issue_status(
-        store,
-        worker,
-        runner,
-        task,
-        f"Blocked: {redact(str(exc))}",
-        "gate-prelaunch",
-    )
 
 
 def _pr_review_scope(dimension: str) -> str:
@@ -1082,9 +1072,7 @@ def phase_pr_gates(
                 )
             )
     except (StoreError, Exception) as exc:
-        _abort_prepared_pr_reviews(
-            store, worker, task, runner, prepared_list, exc
-        )
+        _abort_prepared_pr_reviews(store, task, prepared_list, exc)
         raise
 
     try:
@@ -1123,9 +1111,7 @@ def phase_pr_gates(
         for thread in started_threads:
             thread.join()
     except (StoreError, Exception) as exc:
-        _abort_prepared_pr_reviews(
-            store, worker, task, runner, prepared_list, exc
-        )
+        _abort_prepared_pr_reviews(store, task, prepared_list, exc)
         raise
 
     # Persist actual results on the main thread.

@@ -3934,13 +3934,21 @@ def cmd_watch(args: list[str]) -> None:
                                 cwd=str(cwd),
                             )
 
+                        def runtime_preflight(session_id: str) -> None:
+                            _interactive_runtime_preflight(store, session_id)
+
                         def pane_up(session_id: str) -> bool:
                             _interactive_preflight(store, session_id)
                             return runtime.exists(session_id)
 
                         def knock(activity_id: str) -> str:
                             _interactive_preflight(store, sid)
-                            return deliver(store, runtime, activity_id)
+                            return deliver(
+                                store,
+                                runtime,
+                                activity_id,
+                                preflight=runtime_preflight,
+                            )
 
                         dispatch_assigned(
                             store,
@@ -4034,6 +4042,9 @@ def cmd_supervise(args: list[str]) -> None:
         runtime = _runtime()
         from .telegram_act import reset_idle_clock
 
+        def runtime_preflight(session_id: str) -> None:
+            _interactive_runtime_preflight(store, session_id)
+
         def runtime_exists(session_id: str) -> bool:
             _interactive_preflight(store, session_id)
             return runtime.exists(session_id)
@@ -4044,7 +4055,12 @@ def cmd_supervise(args: list[str]) -> None:
 
         def knock(activity_id: str) -> str:
             _interactive_preflight(store, sid)
-            return deliver(store, runtime, activity_id)
+            return deliver(
+                store,
+                runtime,
+                activity_id,
+                preflight=runtime_preflight,
+            )
 
         reset_idle_clock(store, working=runtime_exists(sid))
 
@@ -4084,6 +4100,7 @@ def cmd_supervise(args: list[str]) -> None:
                 knock=knock,
                 pane=pane,
                 working=working,
+                preflight=runtime_preflight,
             )
             print(line)
             try:

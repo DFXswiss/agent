@@ -344,6 +344,84 @@ def test_tick_approves_permission_prompt_even_when_busy(tmp_path: Path) -> None:
     assert rt.keys == ["enter"]
 
 
+def test_tick_preflights_every_runtime_probe_and_input(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _session(store)
+    _assigned(store)
+    events: list[str] = []
+
+    class OrderedRuntime(FakeRuntime):
+        def exists(self, session_id: str, *, target: str | None = None) -> bool:
+            events.append("exists")
+            return self.present
+
+        def capture(self, session_id: str) -> str:
+            events.append("capture")
+            return self.pane
+
+        def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
+            events.append("is_busy")
+            return self.busy
+
+        def input_text(
+            self, session_id: str, data: str, *, target: str | None = None
+        ) -> None:
+            events.append("input_text")
+            super().input_text(session_id, data, target=target)
+
+        def input_key(
+            self, session_id: str, key: str, *, target: str | None = None
+        ) -> None:
+            events.append("input_key")
+            super().input_key(session_id, key, target=target)
+
+    runtime = OrderedRuntime(exists=False, pane="")
+
+    def preflight(session_id: str) -> None:
+        assert session_id == "runner-1"
+        events.append("preflight")
+
+    tick(
+        store,
+        runtime,
+        "runner-1",
+        start=lambda _sid, _cwd: setattr(runtime, "present", True),
+        knock=lambda _aid: "sent",
+        preflight=preflight,
+    )
+    tick(
+        store,
+        runtime,
+        "runner-1",
+        start=lambda _sid, _cwd: None,
+        knock=lambda _aid: "sent",
+        quiet_seconds=0,
+        ask=True,
+        preflight=preflight,
+    )
+    runtime.pane = (
+        "  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)\n"
+        "  1/3:select  \u2502  Tab:next option\n"
+    )
+    tick(
+        store,
+        runtime,
+        "runner-1",
+        start=lambda _sid, _cwd: None,
+        knock=lambda _aid: "sent",
+        quiet_seconds=0,
+        ask=True,
+        preflight=preflight,
+    )
+
+    runtime_events = {"exists", "capture", "is_busy", "input_text", "input_key"}
+    assert runtime_events.issubset(events)
+    for index, event in enumerate(events):
+        if event in runtime_events:
+            assert index > 0
+            assert events[index - 1] == "preflight"
+
+
 def test_follow_does_not_ask_when_stalled(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _session(store)

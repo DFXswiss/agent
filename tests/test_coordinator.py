@@ -2874,13 +2874,45 @@ def _codex_prelaunch_fixture(
     return store, worker, task
 
 
+def _record_blocker_publications(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    published: list[str] = []
+
+    def execute(store, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store.row("activity", activity_id)
+            assert row is not None
+            assert row.get("type") == "comment.post"
+            published.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            updated["execution_status"] = "done"
+            updated["result"] = {
+                "repo": "example/project",
+                "number": 7,
+                "url": "https://x/comment",
+                "id": len(published),
+            }
+            store.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr("agent_cli.coordinator_github.execute_github", execute)
+    return published
+
+
 def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import advance_one
 
     tid = "aa000001-0000-4000-8000-000000000062"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    published = _record_blocker_publications(monkeypatch)
     real_mkstemp = coordinator_lanes.tempfile.mkstemp
     mkstemp_calls = 0
     output_paths: list[Path] = []
@@ -2894,47 +2926,41 @@ def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
         output_paths.append(Path(path))
         return fd, path
 
-    blockers: list[str] = []
-
-    def publish_after_cleanup(
-        store_arg: Store,
-        _worker: Any,
-        _runner: Any,
-        task_arg: dict[str, Any],
-        body: str,
-        _kind: str,
-    ) -> str:
-        agents = [
-            row for row in store_arg.rows("agent") if row.get("task_id") == tid
-        ]
-        assert agents and all(row.get("status") == "done" for row in agents)
-        assert output_paths and all(not path.exists() for path in output_paths)
-        assert task_arg["payload"]["coordinator"]["phase"] == "blocked"
-        blockers.append(body)
-        return "blocker"
-
     monkeypatch.setattr(coordinator_lanes.tempfile, "mkstemp", fail_second_mkstemp)
-    monkeypatch.setattr(coordinator_lanes, "_post_issue_status", publish_after_cleanup)
-
-    with pytest.raises(OSError, match="cannot prepare output"):
-        coordinator_lanes.phase_pr_gates(
-            store,
-            worker,
-            task,
-            lambda _argv: Completed(0, "", ""),
-            lambda _argv, _stdin=None: Completed(
-                0, "STATUS: complete\nRESULT: approved\n", ""
-            ),
-            vendor="codex",
-            stage="review-2",
-        )
+    lines = advance_one(
+        store,
+        worker,
+        runner=fake,
+        lane_runner=lambda _argv, _stdin=None: Completed(
+            0, "STATUS: complete\nRESULT: approved\n", ""
+        ),
+    )
 
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
     assert len(agents) == 1
     assert agents[0]["status"] == "done"
     assert agents[0]["note"] == "prelaunch aborted"
     assert output_paths and all(not path.exists() for path in output_paths)
-    assert len(blockers) == 1
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert published == [comments[0]["id"]]
+    assert "cannot prepare output" in str(comments[0].get("payload"))
+    assert "phase-error" in str(comments[0].get("payload"))
+    assert "gate-prelaunch" not in str(comments[0].get("payload"))
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["question_activity_id"] == comments[0]["id"]
+    assert lines == [
+        "blocked: cannot prepare output",
+        "blocker published on example/project#7",
+    ]
 
 
 def test_preparation_failure_after_mkstemp_removes_owned_output(
@@ -2981,9 +3007,13 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import advance_one
 
     tid = "aa000001-0000-4000-8000-000000000063"
-    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    published = _record_blocker_publications(monkeypatch)
     start_calls = 0
     provider_calls: list[list[str]] = []
     joined: list[threading.Thread] = []
@@ -3001,46 +3031,16 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
         real_join(thread, *args, **kwargs)
         joined.append(thread)
 
-    blockers: list[str] = []
-
-    def publish_after_cleanup(
-        store_arg: Store,
-        _worker: Any,
-        _runner: Any,
-        task_arg: dict[str, Any],
-        body: str,
-        _kind: str,
-    ) -> str:
-        agents = [
-            row for row in store_arg.rows("agent") if row.get("task_id") == tid
-        ]
-        assert len(agents) == 2
-        assert all(row.get("status") == "done" for row in agents)
-        assert provider_calls == []
-        assert len(joined) == 1
-        assert not joined[0].is_alive()
-        assert task_arg["payload"]["coordinator"]["phase"] == "blocked"
-        blockers.append(body)
-        return "blocker"
-
-    monkeypatch.setattr(coordinator_lanes.threading.Thread, "start", fail_second_start)
+    monkeypatch.setattr(
+        coordinator_lanes.threading.Thread, "start", fail_second_start
+    )
     monkeypatch.setattr(coordinator_lanes.threading.Thread, "join", track_join)
-    monkeypatch.setattr(coordinator_lanes, "_post_issue_status", publish_after_cleanup)
 
     def lane_runner(argv: list[str], _stdin: str | None = None) -> Completed:
         provider_calls.append(argv)
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
-    with pytest.raises(RuntimeError, match="thread start failed"):
-        coordinator_lanes.phase_pr_gates(
-            store,
-            worker,
-            task,
-            lambda _argv: Completed(0, "", ""),
-            lane_runner,
-            vendor="codex",
-            stage="review-2",
-        )
+    lines = advance_one(store, worker, runner=fake, lane_runner=lane_runner)
 
     agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
     assert len(agents) == 2
@@ -3048,7 +3048,26 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     assert all(row.get("note") == "prelaunch aborted" for row in agents)
     assert provider_calls == []
     assert len(joined) == 1
-    assert len(blockers) == 1
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert published == [comments[0]["id"]]
+    assert "thread start failed" in str(comments[0].get("payload"))
+    assert "phase-error" in str(comments[0].get("payload"))
+    assert "gate-prelaunch" not in str(comments[0].get("payload"))
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["question_activity_id"] == comments[0]["id"]
+    assert lines == [
+        "blocked: thread start failed",
+        "blocker published on example/project#7",
+    ]
 
 
 def test_approved_codex_stage_replaces_n_a_on_a_later_tick(

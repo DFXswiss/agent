@@ -839,7 +839,9 @@ def test_assignment_starters_preflight_before_attached_runtime_reuse(
 
     if starter == "watch":
         monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
-        monkeypatch.setattr(main_mod, "assigned_workspace_root", lambda _store: tmp_path)
+        monkeypatch.setattr(
+            main_mod, "assigned_workspace_root", lambda _store: tmp_path
+        )
         monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: SESSION_A)
         monkeypatch.setattr(
             main_mod,
@@ -865,6 +867,94 @@ def test_assignment_starters_preflight_before_attached_runtime_reuse(
     with pytest.raises(SystemExit, match=error):
         main_mod.main(argv)
     assert calls == []
+
+
+@pytest.mark.parametrize("starter", ["watch", "supervise"])
+def test_assignment_knocks_forward_runtime_preflight_to_deliver(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    starter: str,
+) -> None:
+    import agent_cli.knock as knock_mod
+    import agent_cli.supervise as supervise_mod
+    import agent_cli.telegram_act as telegram_mod
+
+    sid = "assigned-session"
+    store = SimpleNamespace(home=tmp_path, close=lambda: None)
+    runtime = SimpleNamespace(
+        exists=lambda _sid: True,
+        capture=lambda _sid: "",
+    )
+    checked: list[str] = []
+    delivered: list[str] = []
+
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.setattr(main_mod, "open_store", lambda: store)
+    monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
+    monkeypatch.setattr(main_mod, "_interactive_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        main_mod,
+        "_interactive_runtime_preflight",
+        lambda _store, session_id: checked.append(session_id),
+    )
+
+    def deliver(
+        _store: object,
+        _runtime: object,
+        activity_id: str,
+        *,
+        preflight: Callable[[str], None] | None = None,
+    ) -> str:
+        assert preflight is not None
+        preflight(sid)
+        delivered.append(activity_id)
+        return "sent"
+
+    monkeypatch.setattr(knock_mod, "deliver", deliver)
+    if starter == "watch":
+        monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
+        monkeypatch.setattr(
+            main_mod, "assigned_workspace_root", lambda _store: tmp_path
+        )
+        monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: sid)
+        monkeypatch.setattr(
+            main_mod,
+            "pending_assigned",
+            lambda _store, _sid: [{"id": "assignment"}],
+        )
+
+        def dispatch(
+            _store: object,
+            activity_id: str,
+            *,
+            knock: Callable[[str], str],
+            **_kwargs: object,
+        ) -> str:
+            return knock(activity_id)
+
+        monkeypatch.setattr(main_mod, "dispatch_assigned", dispatch)
+        main_mod.cmd_watch(["assigned"])
+    else:
+        monkeypatch.setattr(telegram_mod, "reset_idle_clock", lambda *a, **k: None)
+        monkeypatch.setattr(telegram_mod, "notify_status", lambda *a, **k: None)
+
+        def supervise_tick(
+            *_args: object,
+            knock: Callable[[str], str],
+            preflight: Callable[[str], None] | None = None,
+            **_kwargs: object,
+        ) -> str:
+            assert preflight is not None
+            preflight(sid)
+            knock("assignment")
+            return "supervise commission"
+
+        monkeypatch.setattr(supervise_mod, "tick", supervise_tick)
+        main_mod.cmd_supervise(["--session", sid, "--once"])
+
+    assert delivered == ["assignment"]
+    assert checked
+    assert set(checked) == {sid}
 
 
 def test_assignment_starters_forward_the_workspace_cwd(
