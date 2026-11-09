@@ -759,7 +759,7 @@ def phase_first_comment(
     body = _render_review_comment(task, payload, rules_bound=rules_bound)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
     request_key = f"first-comment:{head}:{payload['passes']}"
-    request_plan = _prepare_second_review_request(
+    _requested, request_plan = _prepare_second_review_request(
         store,
         worker,
         task,
