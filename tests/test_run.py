@@ -563,6 +563,87 @@ def test_run_spec_file_implementer_complete(
     assert seen.get("spec_file") == str(spec)
 
 
+def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    router_config = tmp_path / "router-config"
+    router_config.mkdir()
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+                "models": {"first": "openrouter", "second": "codex"},
+                "accounts": {
+                    "router": {
+                        "provider": "openrouter",
+                        "config_dir": str(router_config),
+                    }
+                },
+                "roles": {
+                    "router-builder": {
+                        "account": "router",
+                        "model": "vendor/model",
+                        "access": "workspace-write",
+                    }
+                },
+                "sessions": {
+                    DEFAULT_SESSION: {
+                        "interactive": "router-builder",
+                        "lanes": {"openrouter:implementer": "router-builder"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tid = _bootstrap_implement(tmp_path, capsys)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    output_paths: list[Path] = []
+
+    def invalid_output(
+        argv: list[str], stdin_text: str | None, cwd: str | None = None
+    ) -> object:
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        output_file = Path(argv[wrapper_index + 2])
+        output_paths.append(output_file)
+        output_file.write_bytes(b"\xff")
+        assert stdin_text == "implement this\n"
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", invalid_output)
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(worktree),
+            ],
+        )
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "lane output file is not valid UTF-8" in captured.err
+    assert output_paths and not output_paths[0].exists()
+    agents = _agents(tmp_path, tid)
+    assert agents
+    assert all(agent.get("status") != "working" for agent in agents)
+    implementers = [agent for agent in agents if agent.get("role") == "implementer"]
+    assert implementers and implementers[0].get("status") == "done"
+    assert "lane output file is not valid UTF-8" in str(implementers[0].get("note"))
+    assert _task_state(tmp_path, tid) == "failed"
+
+
 def test_run_missing_spec_file_does_not_leave_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

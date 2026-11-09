@@ -661,6 +661,48 @@ def test_launch_openrouter_reads_stream_from_output_file(tmp_path: Path) -> None
     assert result.usage.input_tokens == 7
 
 
+def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    output_paths: list[Path] = []
+
+    def fake(argv: list[str], stdin_text: str | None) -> object:
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        output_file = Path(argv[wrapper_index + 2])
+        output_paths.append(output_file)
+        output_file.write_bytes(b"\xff")
+        assert stdin_text == "implement\n"
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = launch(
+        role="implementer",
+        vendor="openrouter",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=fake,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.status == "unavailable"
+    assert result.stdout == ""
+    assert "lane output file is not valid UTF-8" in result.stderr
+    assert output_paths and not output_paths[0].exists()
+
+
 def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1683,6 +1725,64 @@ def test_cli_lane_run_prints_vendor_stderr(
         )
     err = capsys.readouterr().err
     assert "distinctive-marker-xyz789" in err
+
+
+def test_cli_lane_run_invalid_openrouter_output_is_a_controlled_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    output_paths: list[Path] = []
+
+    def invalid_output(
+        argv: list[str], stdin_text: str | None, cwd: str | None = None
+    ) -> object:
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        output_file = Path(argv[wrapper_index + 2])
+        output_paths.append(output_file)
+        output_file.write_bytes(b"\xff")
+        assert stdin_text == "implement\n"
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    class DummyStore:
+        def write(
+            self, table: str, operation: str, row_id: str, row: dict
+        ) -> None:
+            assert (table, operation, row_id) == ("activity", "insert", row["id"])
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", invalid_output)
+    monkeypatch.setattr("agent_cli.main.open_store", lambda: DummyStore())
+    with pytest.raises(SystemExit) as exc:
+        run(
+            [
+                "lane",
+                "run",
+                "--role",
+                "implementer",
+                "--vendor",
+                "openrouter",
+                "--session",
+                DEFAULT_SESSION,
+                "--spec-file",
+                str(spec),
+                "--cwd",
+                str(tmp_path),
+                "--no-tmux",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "STATUS=unavailable" in captured.out
+    assert "lane output file is not valid UTF-8" in captured.err
+    assert output_paths and not output_paths[0].exists()
 
 
 def test_sanitize_lane_output_strips_escape_sequences_keeps_text() -> None:

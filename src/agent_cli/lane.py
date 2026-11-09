@@ -776,6 +776,22 @@ def launch(
         if lane_output_file is not None:
             try:
                 output_file_text = Path(lane_output_file).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                message = "lane output file is not valid UTF-8"
+                diagnostic = (
+                    f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
+                )
+                return LaneResult(
+                    role=role,
+                    vendor=vendor,
+                    model=selected.model,
+                    status="unavailable",
+                    argv=argv,
+                    returncode=returncode,
+                    stdout="",
+                    stderr=hide_config_dir(diagnostic, selected.account.config_dir),
+                    tmux_session=tmux_session,
+                )
             except OSError:
                 output_file_text = ""
 

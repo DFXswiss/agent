@@ -3623,6 +3623,33 @@ def cmd_run(args: list[str]) -> None:
                     )
                     snap = _chain_snapshot(store, tid, extra_head=head)
                     task = _need(store, "task", tid)
+                elif role == "implementer":
+                    working = _find_working_agent(
+                        store, tid, role=role, vendor=vendor, round_num=round_num
+                    )
+                    if working is None:
+                        die("implementer working agent not found after lane")
+                    note = result.stderr.strip() or result.stdout.strip()
+                    if not note:
+                        note = f"lane STATUS={result.status}"
+                    cmd_agent(
+                        [
+                            "finish",
+                            "--id",
+                            str(working["id"]),
+                            "--verdict",
+                            "blocked",
+                            "--note",
+                            note,
+                        ]
+                    )
+                    _agent_handoff_exit(
+                        step,
+                        tid,
+                        str(snap.get("session_id")),
+                        models_for_new_record(snap),
+                        snap,
+                    )
                 else:
                     _agent_handoff_exit(
                         step,
