@@ -2080,8 +2080,13 @@ def _canonicalize_snapshot_names(snapshot: dict[str, Any]) -> None:
 
 
 def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep the newest usage snapshot per provider account for the dashboard."""
-    seen: set[tuple[str, str]] = set()
+    """Keep the newest usage snapshot per provider account for the dashboard.
+
+    OpenRouter account aliases are device-local manifest names, so replicated
+    devices may reuse an alias for different accounts. The origin device is
+    part of an OpenRouter snapshot's identity.
+    """
+    seen: set[tuple[str, str, str]] = set()
     rows: list[dict[str, Any]] = []
     for event in activity:
         if not isinstance(event, dict) or event.get("type") != "usage.snapshot":
@@ -2095,7 +2100,11 @@ def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]
             if provider == "openrouter"
             else payload.get("account_email")
         )
-        key = (str(provider), str(account))
+        if provider == "openrouter":
+            origin = event.get("_origin_device_id")
+            key = (str(provider), origin if isinstance(origin, str) else "", str(account))
+        else:
+            key = (str(provider), "", str(account))
         if key in seen:
             continue
         seen.add(key)

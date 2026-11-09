@@ -88,3 +88,43 @@ def test_dashboard_usage_rows_separate_openrouter_accounts_and_show_usd() -> Non
         '"$" + p.usage_usd + " / $" + '
         '(typeof p.limit_usd === "number" ? p.limit_usd : "unlimited")'
     ) in html
+
+
+def test_dashboard_usage_rows_separate_openrouter_alias_per_device() -> None:
+    def snapshot(device: str, usage_usd: float) -> dict:
+        return {
+            "type": "usage.snapshot",
+            "_origin_device_id": device,
+            "payload": {
+                "provider": "openrouter",
+                "account": "shared-alias",
+                "usage_usd": usage_usd,
+            },
+        }
+
+    device_a = snapshot("device-a", 1.0)
+    device_b = snapshot("device-b", 2.0)
+
+    rows = _usage_dashboard_rows([device_a, device_b])
+
+    assert rows == [device_a, device_b]
+
+
+def test_dashboard_usage_rows_keep_newest_openrouter_snapshot_per_device_alias() -> None:
+    def snapshot(usage_usd: float) -> dict:
+        return {
+            "type": "usage.snapshot",
+            "_origin_device_id": "device-a",
+            "payload": {
+                "provider": "openrouter",
+                "account": "shared-alias",
+                "usage_usd": usage_usd,
+            },
+        }
+
+    newest = snapshot(2.0)
+    older = snapshot(1.0)
+
+    rows = _usage_dashboard_rows([newest, older])
+
+    assert rows == [newest]
