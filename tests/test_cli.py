@@ -450,6 +450,148 @@ def test_task_repo_and_pr_uses_the_pull_target_not_the_push_remote() -> None:
     assert fallback_number == "12"
 
 
+def _create_task_for_pr(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    repo: str | None = None,
+    ref: str | None = None,
+) -> str:
+    run(tmp_path, ["init"])
+    run(
+        tmp_path,
+        ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"],
+    )
+    args = [
+        "task",
+        "create",
+        "--session",
+        "s",
+        "--workflow",
+        "implement",
+        "--title",
+        "Ship",
+    ]
+    if repo is not None:
+        args.extend(["--repo", repo])
+    if ref is not None:
+        args.extend(["--ref", ref])
+    run(tmp_path, args)
+    return _last_task_id(capsys.readouterr().out)
+
+
+def test_task_pr_attaches_repo_and_pull_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import _task_repo_and_pr
+
+    tid = _create_task_for_pr(tmp_path, capsys)
+    run(
+        tmp_path,
+        ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+    )
+    assert f"task {tid} pr=DFXswiss/agent#149" in capsys.readouterr().out
+    run(tmp_path, ["task", "show", tid])
+    task = json.loads(capsys.readouterr().out)
+    assert task["repo"] == "DFXswiss/agent"
+    assert task["ref"] == "149"
+    assert _task_repo_and_pr(task) == ("DFXswiss/agent", "149")
+
+
+def test_task_pr_is_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys)
+    args = ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"]
+    run(tmp_path, args)
+    run(tmp_path, args)
+    assert capsys.readouterr().out.count(f"task {tid} pr=DFXswiss/agent#149") == 2
+
+
+def test_task_pr_refuses_a_different_pull_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys, ref="148")
+    with pytest.raises(SystemExit, match="task already has pull request 148"):
+        run(
+            tmp_path,
+            ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+        )
+
+
+def test_task_pr_refuses_a_different_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys, repo="DFXswiss/other")
+    with pytest.raises(
+        SystemExit,
+        match="task repo is DFXswiss/other; refusing to change it to DFXswiss/agent",
+    ):
+        run(
+            tmp_path,
+            ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+        )
+
+
+def test_task_pr_refuses_a_non_numeric_ref(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys, ref="develop")
+    with pytest.raises(SystemExit, match="not a pull request number"):
+        run(
+            tmp_path,
+            ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", "149"],
+        )
+    capsys.readouterr()
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["ref"] == "develop"
+
+
+def test_task_pr_refuses_error_fix_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.error_fix_act import find_or_create_implement_task
+
+    error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    _seed_cli_error_seen_for_conclusion(tmp_path)
+    store = Store(tmp_path)
+    try:
+        tid, _ = find_or_create_implement_task(
+            store, "error-session", error_id, "Fix observed error"
+        )
+    finally:
+        store.close()
+    with pytest.raises(SystemExit, match="refuses error-fix tasks"):
+        run(
+            tmp_path,
+            ["task", "pr", "--id", tid, "--repo", "org/app", "--pr", "149"],
+        )
+    capsys.readouterr()
+    run(tmp_path, ["task", "show", tid])
+    assert json.loads(capsys.readouterr().out)["ref"] in (None, "")
+
+
+def test_task_pr_rejects_invalid_repo_and_pull_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _create_task_for_pr(tmp_path, capsys)
+    for repo in (
+        "DFXswiss",
+        "/agent",
+        "DFXswiss/",
+        "DFXswiss/agent/extra",
+        "DFX swiss/agent",
+    ):
+        with pytest.raises(SystemExit, match="--repo must be owner/name"):
+            run(tmp_path, ["task", "pr", "--id", tid, "--repo", repo, "--pr", "149"])
+    for pr in ("0", "-1", "1.5", "abc"):
+        with pytest.raises(SystemExit, match="--pr must be a pull request number"):
+            run(
+                tmp_path,
+                ["task", "pr", "--id", tid, "--repo", "DFXswiss/agent", "--pr", pr],
+            )
+
+
 def test_session_task_checklist_status(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run(tmp_path, ["init"])
     run(tmp_path, ["session", "register", "--id", "sess-1", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])

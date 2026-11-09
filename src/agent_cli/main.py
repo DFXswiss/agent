@@ -648,7 +648,7 @@ def cmd_activity(args: list[str]) -> None:
 
 def cmd_task(args: list[str]) -> None:
     if not args:
-        die("Usage: agent task create|list|show|state|summary")
+        die("Usage: agent task create|list|show|state|summary|pr")
     store = open_store()
     try:
         sub, rest = args[0], args[1:]
@@ -778,7 +778,47 @@ def cmd_task(args: list[str]) -> None:
             store.write("task", "update", tid, _strip(row))
             print(f"task {tid} summary set")
             return
-        die(f"unknown task command: {sub}")
+        if sub == "pr":
+            tid = require_flag(rest, "--id")
+            repo = require_flag(rest, "--repo")
+            raw_pr = require_flag(rest, "--pr")
+            if (
+                repo.count("/") != 1
+                or any(not part for part in repo.split("/"))
+                or any(char.isspace() for char in repo)
+            ):
+                die("--repo must be owner/name")
+            if not raw_pr.isascii() or not raw_pr.isdigit() or int(raw_pr) < 1:
+                die("--pr must be a pull request number")
+            pr = int(raw_pr)
+            row = _need(store, "task", tid)
+            _require_owned(store, row, "task")
+            _require_skill(_need(store, "session", row["session_id"]), "spine")
+            payload = row.get("payload")
+            if isinstance(payload, dict) and payload.get("error_id"):
+                die(
+                    "task pr refuses error-fix tasks: their ref is the checkout start point"
+                )
+            old_repo = str(row.get("repo") or "")
+            if old_repo and old_repo != repo:
+                die(f"task repo is {old_repo}; refusing to change it to {repo}")
+            old_ref = str(row.get("ref") or "")
+            if old_ref and not old_ref.isdigit():
+                die(
+                    f"task ref is {old_ref}; it is not a pull request number, refusing to replace it"
+                )
+            if old_ref.isdigit() and old_ref != str(pr):
+                die(f"task already has pull request {old_ref}")
+            row["repo"] = repo
+            row["ref"] = str(pr)
+            row["updated_at"] = utcnow()
+            store.write("task", "update", tid, _strip(row))
+            print(f"task {tid} pr={repo}#{pr}")
+            return
+        die(
+            f"unknown task command: {sub}\n"
+            "Usage: agent task create|list|show|state|summary|pr"
+        )
     finally:
         store.close()
 

@@ -77,6 +77,7 @@ agent session keep-working --id <session-id> [--once|--follow]
 agent session stop --id <session-id>
 agent activity add --session <session-id> --type message --payload-file ./mail.json
 agent task create --session <session-id> --workflow implement --title "…"
+agent task pr --id <task-id> --repo <owner/name> --pr <number>
 agent round start --task <uuid>
 # --vendor is pinned on the task from ai-accounts.json; implementer may be separate,
 # while review providers come from models. These examples use grok for implementer/first.

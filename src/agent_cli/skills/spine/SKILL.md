@@ -42,6 +42,8 @@ agent run --task <uuid> [--dry-run] [--head SHA] [--cwd PATH] [--spec-file PATH]
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 ```
 
+Once the draft pull request exists, attach it with `agent task pr --id <task-id> --repo <owner/name> --pr <number>`; the one-review path and queued gate findings read it from there.
+
 `run` git-pushes (no force) when `pushed` is open and measures mergeability when `mergeable` is open. Protected branches stay refused.
 
 `allow` exits 0 when permitted, 2 when denied, 1 on usage errors.
