@@ -2224,6 +2224,8 @@ def _interactive_preflight(
         meta = dict(raw) if isinstance(raw, dict) else {}
     ai = load_ai_accounts(store.home, defer_model_configuration=True)
     selected = ai.for_session(sid)
+    ai.require_model_configuration()
+    ai.require_lane_execution()
     if selected.account.provider != "grok":
         die("configured interactive role does not match the requested provider")
     if model is not None and model != selected.model:
@@ -2244,13 +2246,11 @@ def _interactive_preflight(
     )
     if isinstance(comparable_binding, dict):
         comparable_binding.pop("lane_execution", None)
-    if existing_s and comparable_binding != binding:
+    if _is_grok_runtime(meta) and comparable_binding != binding:
         die(
             "interactive AI binding changed or is missing; "
             "configure a new session instead of resuming"
         )
-    ai.require_model_configuration()
-    ai.require_lane_execution()
     return selected, binding, existing_s
 
 
@@ -2335,6 +2335,7 @@ def _session_start(
         if not existing_s:
             pending_meta = dict(meta)
             pending_meta["grok_start_pending"] = True
+            pending_meta["ai_binding"] = binding
             row["runtime"] = pending_meta
             store.write("session", "update", sid, _strip(row))
         if not existing_s:

@@ -634,7 +634,7 @@ def test_fresh_grok_start_rechecks_configuration_before_new_session(
     assert not any(argv[:2] == ["tmux", "new-session"] for argv in calls)
 
 
-def test_failed_final_grok_metadata_write_keeps_pending_marker(
+def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_operator_interactive_ai_accounts(tmp_path)
@@ -679,13 +679,16 @@ def test_failed_final_grok_metadata_write_keeps_pending_marker(
         row = store.row("session", SESSION_A)
         assert row is not None
         assert row["runtime"]["grok_start_pending"] is True
+        assert row["runtime"]["ai_binding"] == expected_ai_binding()
         assert "grok_session_id" not in row["runtime"]
     finally:
         store.close()
 
-    remove_ai_setting(tmp_path, "models")
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["roles"]["interactive-builder"]["model"] = "changed-after-failed-write"
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     calls.clear()
-    with pytest.raises(SystemExit, match="models is not configured"):
+    with pytest.raises(SystemExit, match="interactive AI binding changed"):
         run(tmp_path, ["session", "input", "--id", SESSION_A, "--data", "continue"])
     assert calls == []
 
