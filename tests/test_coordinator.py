@@ -3598,6 +3598,69 @@ def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) ->
     assert store.rows("task") == []
 
 
+def test_create_implement_task_refuses_external_second_for_non_a38_worker(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_runtime import _create_implement_task
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+
+    with pytest.raises(CoordinatorError, match="only for A38 workers"):
+        _create_implement_task(
+            store,
+            worker,
+            repo="example/project",
+            number=7,
+            title="Fix widget",
+            assigned_id="assigned-7",
+            repository_config=worker.repositories["example/project"],
+            body="Please fix",
+        )
+    assert store.rows("task") == []
+
+
+def test_create_implement_task_accepts_null_second_for_a38_worker(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_runtime import _create_implement_task
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+
+    task = _create_implement_task(
+        store,
+        worker,
+        repo="example/project",
+        number=7,
+        title="Fix widget",
+        assigned_id="assigned-7",
+        repository_config=worker.repositories["example/project"],
+        body="Please fix",
+    )
+    assert task is not None
+    assert task["models"] == {"first": "grok", "second": None}
+    assert task["payload"]["coordinator"]["a38"] == {"enabled": True}
+    assert len(store.rows("task")) == 1
+
+
 def test_preflight_refuses_external_second_for_non_a38_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

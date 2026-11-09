@@ -1064,6 +1064,70 @@ def test_task_pins_models_at_create(tmp_path: Path, capsys: pytest.CaptureFixtur
         store.close()
 
 
+def test_task_create_checks_and_pins_one_model_configuration_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The null check and the pin must come from the same manifest snapshot."""
+    _run(tmp_path, ["init"])
+    _run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"])
+
+    class DriftingLoader:
+        def __init__(self) -> None:
+            self.calls: list[Path] = []
+
+        def __call__(self, home: Path) -> tuple[ModelSlots, str]:
+            self.calls.append(home)
+            # The device changes after the first read: a second read would find no second slot.
+            return ModelSlots("grok", "codex" if len(self.calls) == 1 else None), "grok"
+
+    loader = DriftingLoader()
+    monkeypatch.setattr("agent_cli.main.load_model_configuration", loader)
+    monkeypatch.setattr("agent_cli.ai_accounts.load_model_configuration", loader)
+    _run(
+        tmp_path,
+        ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"],
+    )
+    out = capsys.readouterr().out
+    tid = [ln for ln in out.splitlines() if ln.startswith("task ")][-1].split()[1]
+    assert len(loader.calls) == 1
+    from agent_cli.main import open_store
+
+    store = open_store()
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert task["models"] == {"first": "grok", "second": "codex"}
+    finally:
+        store.close()
+
+
+def test_task_create_refuses_null_second_without_inserting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run(tmp_path, ["init"])
+    _run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"])
+    calls: list[Path] = []
+
+    def fake_load(home: Path) -> tuple[ModelSlots, str]:
+        calls.append(home)
+        return ModelSlots("grok", None), "grok"
+
+    monkeypatch.setattr("agent_cli.main.load_model_configuration", fake_load)
+    with pytest.raises(SystemExit, match="models.second = null"):
+        _run(
+            tmp_path,
+            ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"],
+        )
+    assert len(calls) == 1
+    from agent_cli.main import open_store
+
+    store = open_store()
+    try:
+        assert store.rows("task") == []
+    finally:
+        store.close()
+
+
 def test_task_pins_only_a_separate_implementer(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

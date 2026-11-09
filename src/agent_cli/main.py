@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-from .ai_accounts import load_ai_accounts, load_model_configuration, load_model_slots
+from .ai_accounts import load_ai_accounts, load_model_configuration
 from .allow import (
     ACTIONS,
     GATE_PAIRS,
@@ -250,19 +250,10 @@ def _same_home(a: Path, b: Path) -> bool:
     return a.expanduser().resolve() == b.expanduser().resolve()
 
 
-def _store_model_pins(store: Any) -> dict[str, Any]:
-    """Task model fields of the device that owns this store (its home, else CLI home)."""
+def _store_model_configuration(store: Any) -> tuple[ModelSlots, str]:
+    """One manifest read for the task's model check and its pinned selection."""
     store_home = getattr(store, "home", None)
-    models, implementer = load_model_configuration(
-        store_home if isinstance(store_home, Path) else home()
-    )
-    return model_pins(models, implementer)
-
-
-def _store_models(store: Any) -> ModelSlots:
-    """The device's review slots for this store (historical order when unset)."""
-    store_home = getattr(store, "home", None)
-    return load_model_slots(store_home if isinstance(store_home, Path) else home())
+    return load_model_configuration(store_home if isinstance(store_home, Path) else home())
 
 
 def home() -> Path:
@@ -779,7 +770,7 @@ def cmd_task(args: list[str]) -> None:
                 )
                 print(f"task {tid}")
                 return
-            models = _store_models(store)
+            models, implementer = _store_model_configuration(store)
             if models.second is None:
                 die(EXTERNAL_SECOND_TASK_CREATION_ERROR)
             tid = str(uuid.uuid4())
@@ -796,7 +787,7 @@ def cmd_task(args: list[str]) -> None:
                     "ref": flag(rest, "--ref"),
                     "state": "open",
                     "current_round": 0,
-                    **_store_model_pins(store),
+                    **model_pins(models, implementer),
                     "created_at": utcnow(),
                     "updated_at": utcnow(),
                     "change_summary_en": None,

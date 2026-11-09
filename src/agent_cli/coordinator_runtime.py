@@ -151,10 +151,7 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
     try:
         ai = load_ai_accounts(store.home)
         _refuse_codex_first(ai.models.first, ai.implementer)
-        if worker.a38 and ai.models.second is not None:
-            raise CoordinatorError("A38 workers require models.second = null")
-        if not worker.a38 and ai.models.second is None:
-            raise CoordinatorError("models.second = null is allowed only for A38 workers")
+        _require_second_for_worker(ai.models.second, worker.a38)
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(
@@ -283,6 +280,14 @@ def _refuse_codex_first(first: str, implementer: str | None = None) -> None:
         raise CoordinatorError(SEPARATE_IMPLEMENTER_REFUSED)
 
 
+def _require_second_for_worker(second: str | None, a38: bool) -> None:
+    """Only A38 workers may run without a second review vendor."""
+    if a38 and second is not None:
+        raise CoordinatorError("A38 workers require models.second = null")
+    if not a38 and second is None:
+        raise CoordinatorError("models.second = null is allowed only for A38 workers")
+
+
 def _first_slot_vendor(task: dict[str, Any]) -> str:
     """Provider of model slot ``first``, pinned on the task when it was created."""
     try:
@@ -383,6 +388,7 @@ def _create_implement_task(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(ai.models.first, ai.implementer)
+    _require_second_for_worker(ai.models.second, worker.a38)
     source = {
         "repo": repo,
         "number": number,

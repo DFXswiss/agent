@@ -480,5 +480,5 @@ def test_usage_accounts_validate_names_and_provider(tmp_path: Path) -> None:
         load_ai_accounts(tmp_path)
     from agent_cli.ai_accounts import load_model_slots
 
-    # Task creation reads only the models block, so a broken usage_accounts does not stop it.
+    # Task creation validates models and implementer but ignores broken usage_accounts.
     assert load_model_slots(tmp_path).as_dict()["first"]
