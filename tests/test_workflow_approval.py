@@ -691,29 +691,69 @@ def test_non_allowlisted_path_on_current_head_is_approved_and_recorded() -> None
     assert not _marker_comments(fake, CANCEL_MARKER)
 
 
-def test_older_commit_sha_is_approved_but_not_recorded() -> None:
-    fake = FakeApproval()
-    fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=HEAD)]
-    fake.runs = [fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z")]
-    result = reconcile_pull(fake.api(), REPO, 1)
-    assert fake.posts == [301]
-    assert fake.cancels == []
-    assert "workflow:approve:301" in result.writes
-    assert not any(w.startswith("workflow:cancel:") for w in result.writes)
-    assert any(
-        item["run_id"] == 301 and item["status"] == "approved" for item in result.workflow_approvals
-    )
-    assert not _marker_comments(fake, AUTH_MARKER)
-    assert not _marker_comments(fake, CANCEL_MARKER)
-
-
-def test_older_commit_sha_is_not_approved_when_newer_same_path_is_in_progress() -> None:
+def test_older_commit_sha_is_not_approved() -> None:
     fake = FakeApproval()
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=HEAD)]
     fake.runs = [
         fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=302, created_at="2026-09-05T11:00:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [302]
+    assert fake.cancels == []
+    assert "workflow:approve:302" in result.writes
+    assert "workflow:approve:301" not in result.writes
+    assert not any(w.startswith("workflow:cancel:") for w in result.writes)
+    assert result.workflow_approvals == [
+        {"run_id": 302, "workflow": PATH, "head": HEAD, "status": "approved"}
+    ]
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert _comment_record(auths[0])["runs"] == [{"run_id": 302, "workflow": PATH}]
+    assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_three_commit_pull_approves_only_the_head_runs() -> None:
+    fake = FakeApproval()
+    fake.pull_commits = [
+        _clean_commit(sha=OLD),
+        _clean_commit(sha=MID),
+        _clean_commit(sha=HEAD),
+    ]
+    fake.runs = [
+        fake.run(id=301, path=PATH, head_sha=OLD, created_at="2026-09-04T09:00:00Z"),
+        fake.run(id=302, path=OTHER, head_sha=OLD, created_at="2026-09-04T09:01:00Z"),
+        fake.run(id=401, path=PATH, head_sha=MID, created_at="2026-09-04T10:00:00Z"),
+        fake.run(id=402, path=OTHER, head_sha=MID, created_at="2026-09-04T10:01:00Z"),
+        fake.run(id=501, path=PATH, head_sha=HEAD, created_at="2026-09-05T11:00:00Z"),
+        fake.run(id=502, path=OTHER, head_sha=HEAD, created_at="2026-09-05T11:01:00Z"),
+    ]
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert fake.posts == [501, 502]
+    assert fake.cancels == []
+    assert result.workflow_approvals == [
+        {"run_id": 501, "workflow": PATH, "head": HEAD, "status": "approved"},
+        {"run_id": 502, "workflow": OTHER, "head": HEAD, "status": "approved"},
+    ]
+    assert {w for w in result.writes if w.startswith("workflow:approve:")} == {
+        "workflow:approve:501", "workflow:approve:502",
+    }
+    assert not any(item["run_id"] in {301, 302, 401, 402} for item in result.workflow_approvals)
+    assert not any(w.startswith("workflow:cancel:") for w in result.writes)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert {row["run_id"] for row in _comment_record(auths[0])["runs"]} == {501, 502}
+    assert not _marker_comments(fake, CANCEL_MARKER)
+
+
+def test_older_current_head_copy_is_not_approved_when_newer_same_path_is_in_progress() -> None:
+    fake = FakeApproval()
+    fake.pull_commits = [_clean_commit(sha=MID), _clean_commit(sha=HEAD)]
+    fake.runs = [
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
+            head_sha=MID,
             created_at="2026-09-05T11:00:00Z",
             status="in_progress",
             conclusion=None,
@@ -733,7 +773,7 @@ def test_intermediate_sha_in_progress_blocks_older_hold_when_queries_are_scoped(
     fake.honor_run_query = True
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=MID), _clean_commit(sha=HEAD)]
     fake.runs = [
-        fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
             head_sha=MID,
@@ -749,12 +789,12 @@ def test_intermediate_sha_in_progress_blocks_older_hold_when_queries_are_scoped(
     assert not any(w.startswith("workflow:") for w in result.writes)
 
 
-def test_foreign_sha_in_progress_does_not_block_older_hold() -> None:
+def test_foreign_sha_in_progress_does_not_block_current_head_hold() -> None:
     fake = FakeApproval()
     fake.honor_run_query = True
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=HEAD)]
     fake.runs = [
-        fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
             head_sha=MID,
@@ -767,15 +807,17 @@ def test_foreign_sha_in_progress_does_not_block_older_hold() -> None:
     assert fake.posts == [301]
     assert fake.cancels == []
     assert any(item["run_id"] == 301 and item["status"] == "approved" for item in result.workflow_approvals)
-    assert not _marker_comments(fake, AUTH_MARKER)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert _comment_record(auths[0])["runs"] == [{"run_id": 301, "workflow": PATH}]
 
 
-def test_completed_newer_intermediate_sha_does_not_block_older_hold() -> None:
+def test_completed_newer_intermediate_sha_does_not_block_current_head_hold() -> None:
     fake = FakeApproval()
     fake.honor_run_query = True
     fake.pull_commits = [_clean_commit(sha=OLD), _clean_commit(sha=MID), _clean_commit(sha=HEAD)]
     fake.runs = [
-        fake.run(id=301, head_sha=OLD, created_at="2026-09-04T11:00:00Z"),
+        fake.run(id=301, head_sha=HEAD, created_at="2026-09-04T11:00:00Z"),
         fake.run(
             id=302,
             head_sha=MID,
@@ -788,7 +830,9 @@ def test_completed_newer_intermediate_sha_does_not_block_older_hold() -> None:
     assert fake.posts == [301]
     assert fake.cancels == []
     assert any(item["run_id"] == 301 and item["status"] == "approved" for item in result.workflow_approvals)
-    assert not _marker_comments(fake, AUTH_MARKER)
+    auths = _marker_comments(fake, AUTH_MARKER)
+    assert len(auths) == 1
+    assert _comment_record(auths[0])["runs"] == [{"run_id": 301, "workflow": PATH}]
 
 
 def test_unstarted_cancel_does_not_replace_the_finished_sibling() -> None:
@@ -865,6 +909,32 @@ def test_missing_head_repository_fails_closed_without_a_fork_name() -> None:
 
 def test_current_head_counts_without_a_repository() -> None:
     assert wa._counts_for_ready_inventory({"head_sha": HEAD}, None, HEAD) is True
+
+
+def test_merge_commit_sha_run_accepts_only_the_merge_commit() -> None:
+    pull = {"head": {"sha": HEAD}, "merge_commit_sha": MERGE}
+    assert wa._merge_commit_sha_run({"head_sha": MERGE}, pull) is True
+    assert wa._merge_commit_sha_run({"head_sha": OLD}, pull) is False
+    assert wa._merge_commit_sha_run({"head_sha": HEAD}, pull) is False
+
+
+def test_old_commit_link_is_foreign() -> None:
+    fake = FakeApproval()
+    fake.pull["merge_commit_sha"] = MERGE
+    run = fake.run(head_sha=OLD, pull_requests=[_link(head=OLD)])
+    assert wa._foreign_or_ambiguous_pull_link(run, fake.pull) is True
+    with pytest.raises(
+        GuardError, match="workflow run targets another pull request head or base"
+    ):
+        wa._belongs_to_pull(object(), run, fake.pull)
+
+
+def test_merge_commit_link_matches_branch_and_fork() -> None:
+    fake = FakeApproval()
+    fake.pull["merge_commit_sha"] = MERGE
+    run = fake.run(head_sha=MERGE, pull_requests=[_link(head=MERGE)])
+    assert wa._foreign_or_ambiguous_pull_link(run, fake.pull) is False
+    wa._belongs_to_pull(object(), run, fake.pull)
 
 
 def test_older_merge_hold_records_the_newer_finished_head_run() -> None:
@@ -1546,6 +1616,86 @@ def test_mutation_before_write_is_caught_by_live_reassessment(what: str) -> None
     assert fake.posts == []
 
 
+def test_merge_sha_change_before_final_read_blocks_approval() -> None:
+    fake = FakeApproval()
+    fake.merge_commit_sha = MERGE
+    fake.runs = [fake.run(id=401, head_sha=MERGE)]
+
+    def change_merge(f: FakeApproval) -> None:
+        f.merge_commit_sha = BASE2
+
+    fake.before_run_read = change_merge
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(
+        GuardError, match="pull request changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == []
+    assert not _marker_comments(fake, AUTH_MARKER)
+
+
+def test_merge_sha_becoming_null_before_final_read_blocks_approval() -> None:
+    fake = FakeApproval()
+    fake.pull["merge_commit_sha"] = MERGE
+    fake.runs = [fake.run(id=401, head_sha=MERGE)]
+
+    def clear_merge(f: FakeApproval) -> None:
+        f.pull["merge_commit_sha"] = None
+
+    fake.before_run_read = clear_merge
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(
+        GuardError, match="pull request changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == []
+    assert not _marker_comments(fake, AUTH_MARKER)
+
+
+@pytest.mark.parametrize("changed", ["head", "head-ref", "merge"])
+def test_pull_change_after_authorization_record_listing_blocks_approval(
+    changed: str,
+) -> None:
+    fake = FakeApproval()
+    if changed == "merge":
+        fake.merge_commit_sha = MERGE
+        fake.runs = [fake.run(id=401, head_sha=MERGE)]
+    api = fake.api()
+    original = api.request
+    state = {"after_listing": False, "changed": False}
+
+    def wrapped(method: str, path: str, **kwargs: object):
+        parsed = urlparse(path)
+        if method.upper() == "GET" and parsed.path == f"/repos/{REPO}/actions/runs":
+            if "event" not in parse_qs(parsed.query):
+                state["after_listing"] = True
+        if (
+            state["after_listing"]
+            and not state["changed"]
+            and method.upper() == "GET"
+            and parsed.path == f"/repos/{REPO}/pulls/1"
+        ):
+            state["changed"] = True
+            if changed == "head":
+                fake.pull["head"]["sha"] = BASE2
+            elif changed == "head-ref":
+                fake.pull["head"]["ref"] = "other-branch"
+            else:
+                fake.merge_commit_sha = BASE2
+        return original(method, path, **kwargs)
+
+    api.request = wrapped  # type: ignore[method-assign]
+    assessment = assess_pull(api, REPO, 1)
+    with pytest.raises(
+        GuardError, match="pull request changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert state["changed"] is True
+    assert fake.posts == []
+
+
 def test_get_run_identity_change_fails_closed() -> None:
     fake = FakeApproval()
     fake.run_override = fake.run(repository={"full_name": "other/public-app"})
@@ -1570,7 +1720,9 @@ def test_missing_and_stale_links_fail_closed(what: str) -> None:
     assert fake.posts == []
 
 
-@pytest.mark.parametrize("what", ["ambiguous", "cross-pr", "cross-head", "cross-base"])
+@pytest.mark.parametrize(
+    "what", ["ambiguous", "cross-pr", "cross-head", "cross-base", "older-commit"]
+)
 def test_mismatched_link_is_skipped(what: str) -> None:
     fake = FakeApproval()
     run = fake.runs[0]
@@ -1580,6 +1732,8 @@ def test_mismatched_link_is_skipped(what: str) -> None:
         run["pull_requests"] = [_link(number=2)]
     elif what == "cross-head":
         run["pull_requests"] = [_link(head=BASE2)]
+    elif what == "older-commit":
+        run["pull_requests"] = [_link(head=OLD)]
     else:
         run["pull_requests"] = [_link(base=BASE2)]
     result = reconcile_pull(fake.api(), REPO, 1)
