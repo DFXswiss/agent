@@ -2256,14 +2256,24 @@ def _interactive_runtime_preflight(
     sid: str,
     *,
     meta: dict[str, Any] | None = None,
+    provider: str | None = None,
 ) -> None:
     """Preflight a Grok-bound runtime while leaving raw terminals unchanged."""
     if meta is None:
-        row = _need(store, "session", sid)
-        raw = row.get("runtime")
-        meta = dict(raw) if isinstance(raw, dict) else {}
+        row = store.row("session", sid)
+        if row is None:
+            if provider != "grok":
+                die(f"unknown session: {sid}")
+            meta = {}
+        else:
+            raw = row.get("runtime")
+            meta = dict(raw) if isinstance(raw, dict) else {}
     if not _is_grok_runtime(meta):
-        return
+        raw_terminal = isinstance(meta.get("tmux_session"), str) and bool(
+            meta["tmux_session"]
+        )
+        if provider != "grok" or raw_terminal:
+            return
     _interactive_preflight(store, sid, meta=meta)
 
 
@@ -2321,6 +2331,7 @@ def _session_start(
     name = tmux_name(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
+    original = _strip(row)
     command_argv: list[str] | None = None
     start_command = command
     existing_s = ""
@@ -2337,11 +2348,6 @@ def _session_start(
         meta["model"] = resolved
         meta["ai_binding"] = binding
         runtime = _preflight_runtime(store, runtime, pending_meta=meta)
-        if not runtime.available(sid):
-            die("tmux is not installed")
-        runtime_exists = runtime.exists(sid)
-        if runtime_exists and not existing_s:
-            runtime.stop(sid)
         command_argv = [*selected.env_prefix(), *grok_tmux_command_argv(
             existing=existing_s, model=resolved, new_id=new_id,
         )]
@@ -2351,23 +2357,34 @@ def _session_start(
         start_command = None
     else:
         runtime = _preflight_runtime(store, runtime)
-    started = runtime.start(
-        sid,
-        start_command,
-        cols,
-        rows,
-        command_argv=command_argv,
-        cwd=cwd,
-        require_new=provider == "grok" and not existing_s,
-    )
     if provider == "grok" and not existing_s:
-        if not started:
-            die("tmux session already exists; Grok was not started")
         pending_meta = dict(raw) if isinstance(raw, dict) else {}
         pending_meta["grok_start_pending"] = True
         pending_meta["ai_binding"] = binding
         row["runtime"] = pending_meta
         store.write("session", "update", sid, _strip(row))
+    try:
+        if provider == "grok":
+            if not runtime.available(sid):
+                die("tmux is not installed")
+            runtime_exists = runtime.exists(sid)
+            if runtime_exists and not existing_s:
+                runtime.stop(sid)
+        started = runtime.start(
+            sid,
+            start_command,
+            cols,
+            rows,
+            command_argv=command_argv,
+            cwd=cwd,
+            require_new=provider == "grok" and not existing_s,
+        )
+        if provider == "grok" and not existing_s and not started:
+            die("tmux session already exists; Grok was not started")
+    except BaseException:
+        if provider == "grok" and not existing_s:
+            store.write("session", "update", sid, original)
+        raise
     if provider == "grok":
         meta.pop("grok_start_pending", None)
     meta["tmux_session"] = name
@@ -4089,6 +4106,7 @@ def cmd_supervise(args: list[str]) -> None:
                 die(f"supervise --follow already running for session {sid}")
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
+        _interactive_runtime_preflight(store, sid, provider="grok")
         runtime = _preflight_runtime(store, _runtime())
         from .telegram_act import reset_idle_clock
 
