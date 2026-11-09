@@ -702,11 +702,25 @@ def _own_comment_activity(
     payload: Mapping[str, Any],
 ) -> bool:
     """Only the exact local comment intent may occupy its deterministic id."""
-    return (
-        activity.get("_origin_device_id") == store.device_id()
-        and activity.get("session_id") == worker.session_id
-        and activity.get("type") == "comment.post"
-        and activity.get("payload") == payload
+    return _own_row_matches(
+        store,
+        activity,
+        {
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": payload,
+        },
+    )
+
+
+def _own_row_matches(
+    store: Store,
+    row: Mapping[str, Any],
+    stable_fields: Mapping[str, Any],
+) -> bool:
+    """Match row ownership and every stable field used by a durable intent."""
+    return row.get("_origin_device_id") == store.device_id() and all(
+        row.get(key) == value for key, value in stable_fields.items()
     )
 
 
@@ -962,22 +976,31 @@ def _write_second_review_request_pings(
     occurrence = int(plan["occurrence"])
     for login in plan["recipients"]:
         pid = _ping_id(str(task["id"]), head, login, occurrence)
-        if store.row("ping", pid) is not None:
+        payload = {
+            "id": pid,
+            "from_login": plan["sender"],
+            "to_login": login,
+            "kind": "review-request",
+            "task_id": task["id"],
+            "body": plan["note"],
+            "created_at": plan["created_at"],
+            "acked_at": None,
+        }
+        existing = store.row("ping", pid)
+        if existing is not None:
+            stable_fields = {
+                key: value for key, value in payload.items() if key != "acked_at"
+            }
+            if not _own_row_matches(store, existing, stable_fields):
+                raise CoordinatorError(
+                    "A38 second-review ping id is held by a foreign or mismatched row"
+                )
             continue
         store.write(
             "ping",
             "insert",
             pid,
-            {
-                "id": pid,
-                "from_login": plan["sender"],
-                "to_login": login,
-                "kind": "review-request",
-                "task_id": task["id"],
-                "body": plan["note"],
-                "created_at": plan["created_at"],
-                "acked_at": None,
-            },
+            payload,
         )
 
 
@@ -1411,6 +1434,10 @@ def phase_await_second_review(
     if state == "CLOSED":
         # A closed pull request gets no further review comments.
         raise CoordinatorError("pull request is not open while awaiting second review")
+    # Complete the durable current occurrence before considering mail or a new
+    # timeout occurrence. A crash after one ping must resume the missing ids,
+    # not advance the timeout and strand part of the saved request.
+    send_second_review_requests(store, worker, task)
     lines = intake_second_reviews(store, worker, task, runner, current)
     if lines is not None:
         return lines

@@ -6007,6 +6007,200 @@ def test_a38_first_comment_partial_ping_crash_adds_only_the_missing_ping(
     assert len({row["id"] for row in pings}) == len(worker.second_reviewers)
 
 
+def test_a38_second_review_ping_refuses_a_foreign_deterministic_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import (
+        _ping_id,
+        _prepare_second_review_request,
+        _write_second_review_request_pings,
+    )
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    assert task is not None
+    _requested, plan = _prepare_second_review_request(store, worker, task)
+    login = worker.second_reviewers[0]
+    ping_id = _ping_id(task_id, fake.head, login, int(plan["occurrence"]))
+    store.apply_replica_row(
+        {
+            "table": "ping",
+            "row_id": ping_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": ping_id,
+                "from_login": plan["sender"],
+                "to_login": login,
+                "kind": "review-request",
+                "task_id": task_id,
+                "body": plan["note"],
+                "created_at": plan["created_at"],
+                "acked_at": None,
+            },
+            "updated_at": "2026-01-01T00:00:03Z",
+        }
+    )
+
+    with pytest.raises(CoordinatorError, match="foreign or mismatched"):
+        _write_second_review_request_pings(store, task, plan)
+
+    assert store.row("ping", ping_id)["_origin_device_id"] == "foreign-device"
+
+
+def test_a38_second_review_ping_refuses_own_row_with_mismatched_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import (
+        _ping_id,
+        _prepare_second_review_request,
+        _write_second_review_request_pings,
+    )
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    assert task is not None
+    _requested, plan = _prepare_second_review_request(store, worker, task)
+    login = worker.second_reviewers[0]
+    ping_id = _ping_id(task_id, fake.head, login, int(plan["occurrence"]))
+    store.write(
+        "ping",
+        "insert",
+        ping_id,
+        {
+            "id": ping_id,
+            "from_login": plan["sender"],
+            "to_login": login,
+            "kind": "review-request",
+            "task_id": task_id,
+            "body": "different review request",
+            "created_at": plan["created_at"],
+            "acked_at": None,
+        },
+    )
+
+    with pytest.raises(CoordinatorError, match="foreign or mismatched"):
+        _write_second_review_request_pings(store, task, plan)
+
+    assert store.row("ping", ping_id)["body"] == "different review request"
+
+
+def test_a38_second_review_ping_reuses_own_matching_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import (
+        _ping_id,
+        _prepare_second_review_request,
+        _write_second_review_request_pings,
+    )
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    assert task is not None
+    _requested, plan = _prepare_second_review_request(store, worker, task)
+    login = worker.second_reviewers[0]
+    ping_id = _ping_id(task_id, fake.head, login, int(plan["occurrence"]))
+    store.write(
+        "ping",
+        "insert",
+        ping_id,
+        {
+            "id": ping_id,
+            "from_login": plan["sender"],
+            "to_login": login,
+            "kind": "review-request",
+            "task_id": task_id,
+            "body": plan["note"],
+            "created_at": plan["created_at"],
+            "acked_at": "2026-01-01T00:00:05Z",
+        },
+    )
+
+    _write_second_review_request_pings(store, task, plan)
+
+    assert len(store.rows("ping")) == 1
+    assert store.row("ping", ping_id)["acked_at"] == "2026-01-01T00:00:05Z"
+
+
+def test_a38_timeout_reping_crash_resumes_only_the_missing_ping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import (
+        _ping_id,
+        phase_await_second_review,
+        phase_first_comment,
+    )
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "utcnow", lambda: "2026-01-01T00:00:00Z"
+    )
+    phase_first_comment(store, worker, store.row("task", task_id), fake)
+    assert len(store.rows("ping")) == 2
+    real_write_pings = coordinator_a38._write_second_review_request_pings
+
+    def crash_after_first_reping(store_arg, task_arg, plan):  # noqa: ANN001
+        if int(plan["occurrence"]) == 0:
+            real_write_pings(store_arg, task_arg, plan)
+            return
+        partial = dict(plan)
+        partial["recipients"] = list(plan["recipients"][:1])
+        real_write_pings(store_arg, task_arg, partial)
+        raise RuntimeError("crash after first timeout re-ping")
+
+    monkeypatch.setattr(
+        coordinator_a38, "utcnow", lambda: "2026-01-02T00:00:00Z"
+    )
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_write_second_review_request_pings",
+            crash_after_first_reping,
+        )
+        with pytest.raises(RuntimeError, match="first timeout re-ping"):
+            phase_await_second_review(
+                store, worker, store.row("task", task_id), fake
+            )
+
+    crashed = store.row("task", task_id)
+    assert crashed is not None
+    state = crashed["payload"]["coordinator"]["a38"]["second_review"]
+    assert state["request_count"] == 1
+    assert len(store.rows("ping")) == 3
+    assert store.row(
+        "ping",
+        _ping_id(task_id, fake.head, worker.second_reviewers[0], 1),
+    ) is not None
+    assert store.row(
+        "ping",
+        _ping_id(task_id, fake.head, worker.second_reviewers[1], 1),
+    ) is None
+
+    monkeypatch.setattr(
+        coordinator_a38, "utcnow", lambda: "2026-01-02T00:01:00Z"
+    )
+    assert phase_await_second_review(
+        store, worker, store.row("task", task_id), fake
+    ) == ["awaiting external second review"]
+
+    pings = store.rows("ping")
+    assert len(pings) == 4
+    resumed = store.row("task", task_id)
+    assert resumed is not None
+    assert resumed["payload"]["coordinator"]["a38"]["second_review"][
+        "request_count"
+    ] == 1
+    for login in worker.second_reviewers:
+        assert sum(row["to_login"] == login for row in pings) == 2
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 1)) is not None
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 2)) is None
+
+
 def test_a38_first_comment_ping_and_external_mail_happy_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6026,6 +6220,9 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
         "update",
         tid,
         {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.utcnow", lambda: "2026-01-01T00:00:00Z"
     )
     saved = store.row("task", tid)
     assert "first A38 review comment posted" in phase_first_comment(store, worker, saved, fake)[0]
