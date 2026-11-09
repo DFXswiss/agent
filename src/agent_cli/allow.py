@@ -9,7 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .model_slots import implementer_from_snapshot, models_from_snapshot
+from .model_slots import (
+    canonical_checklist,
+    canonical_key,
+    canonical_stage,
+    implementer_from_snapshot,
+    models_from_snapshot,
+)
 from .pr_guard_config import one_review_for
 
 ACTIONS = ("claim-done", "pr-ready", "pr-create", "task-done")
@@ -24,10 +30,10 @@ CHECKLIST_KEYS: dict[str, tuple[str, ...]] = {
         "reviewer_approved",
         "local_check_pass",
         "pushed",
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
         "contributing_ok",
         "deviation_declared",
         "deviation_granted",
@@ -38,10 +44,10 @@ CHECKLIST_KEYS: dict[str, tuple[str, ...]] = {
         "contributing_ok",
         "coverage_ok",
         "handbook_ok",
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
         "deviation_declared",
         "deviation_granted",
     ),
@@ -51,10 +57,10 @@ CHECKLIST_KEYS: dict[str, tuple[str, ...]] = {
         "reviewer_approved",
         "local_check_pass",
         "pushed",
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
         "mergeable",
     ),
 }
@@ -70,25 +76,24 @@ N_A_ALLOWED = frozenset(
     }
 )
 
-CODEX_SECOND_REVIEW_KEYS = frozenset({"codex_pr_quality", "codex_pr_logic"})
+SECOND_REVIEW_KEYS = frozenset({"review_2_quality", "review_2_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
 
-# (stage, dimension, model slot). The stage names are the historical ledger
-# identifiers of slot ``first`` and ``second``; the provider comes from the
-# device's ``models`` configuration (see model_slots).
+# (stage, dimension, model slot). The provider comes from the device's
+# ``models`` configuration (see model_slots).
 GATE_PAIRS = (
-    ("grok-pr", "quality", "first"),
-    ("grok-pr", "logic", "first"),
-    ("codex-pr", "quality", "second"),
-    ("codex-pr", "logic", "second"),
+    ("review-1", "quality", "first"),
+    ("review-1", "logic", "first"),
+    ("review-2", "quality", "second"),
+    ("review-2", "logic", "second"),
 )
 
 GATE_UNAVAILABLE_KEYS = frozenset(
     {
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
     }
 )
 
@@ -129,16 +134,21 @@ def requires_evidence(status: str, key: str) -> bool:
     return False
 
 
-def codex_second_review_na(key: str, evidence: str | None) -> bool:
-    return key in CODEX_SECOND_REVIEW_KEYS and evidence == SECOND_REVIEW_NOT_POSTED
+def second_review_na(key: str, evidence: str | None) -> bool:
+    return (
+        canonical_key(key) in SECOND_REVIEW_KEYS
+        and evidence == SECOND_REVIEW_NOT_POSTED
+    )
 
 
-def both_codex_reviews_na(statuses: Mapping[str, Any], evidence: Mapping[str, Any] | None) -> bool:
+def both_second_reviews_na(statuses: Mapping[str, Any], evidence: Mapping[str, Any] | None) -> bool:
     """Both second-review keys are n_a with evidence exactly ``second review not posted``."""
-    recorded = evidence if isinstance(evidence, Mapping) else {}
+    canonical_statuses = canonical_checklist(statuses)
+    recorded = canonical_checklist(evidence) if isinstance(evidence, Mapping) else {}
     return all(
-        statuses.get(key) == "n_a" and recorded.get(key) == SECOND_REVIEW_NOT_POSTED
-        for key in CODEX_SECOND_REVIEW_KEYS
+        canonical_statuses.get(key) == "n_a"
+        and recorded.get(key) == SECOND_REVIEW_NOT_POSTED
+        for key in SECOND_REVIEW_KEYS
     )
 
 
@@ -153,7 +163,7 @@ def _latest_gates(gates: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str
         dim = g.get("dimension")
         if stage is None or dim is None:
             continue
-        out[(str(stage), str(dim))] = g
+        out[(canonical_stage(str(stage)), str(dim))] = g
     return out
 
 
@@ -176,8 +186,8 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     if not required:
         return [f"{tid}:workflow={workflow}"]
 
-    checklist = task.get("checklist") or {}
-    # Two reviews are required. Both Codex keys may be n_a only when their
+    checklist = canonical_checklist(task.get("checklist") or {})
+    # Two reviews are required. Both second-review keys may be n_a only when their
     # evidence is exactly "second review not posted" and this opener is listed
     # in one_review_authors on the trusted default-branch file. A missing
     # file, a missing key, an empty list, or any other evidence keeps both
@@ -185,7 +195,7 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     trusted = task.get("trusted_pr_guard")
     opener = task.get("pull_opener")
     recorded = task.get("checklist_evidence")
-    skip_codex_gates = both_codex_reviews_na(
+    skip_second_gates = both_second_reviews_na(
         checklist,
         recorded if isinstance(recorded, Mapping) else None,
     ) and one_review_for(
@@ -201,7 +211,7 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
             continue
         if st == "n_a" and key in N_A_ALLOWED:
             continue
-        if st == "n_a" and skip_codex_gates and key in CODEX_SECOND_REVIEW_KEYS:
+        if st == "n_a" and skip_second_gates and key in SECOND_REVIEW_KEYS:
             continue
         blocking.append(f"{tid}:{key}={st}")
 
@@ -226,6 +236,7 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
             blocking.append(f"{tid}:local_check_pass=ja_without_pass_skip")
 
     latest = _latest_gates(list(task.get("gates") or []))
+    # Recorded-state read: done checks validate gate and agent rows that already exist.
     models = models_from_snapshot(task)
     # Validate the task's implementation selection through the same resolver
     # used by start and the chain, even though done gates below concern reviews.
@@ -234,7 +245,7 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     all_gates_ok = True
     for stage, dim, slot in GATE_PAIRS:
         vendor = models.for_slot(slot)
-        if skip_codex_gates and stage == "codex-pr":
+        if skip_second_gates and stage == "review-2":
             continue
         got = latest.get((stage, dim))
         if got is None:

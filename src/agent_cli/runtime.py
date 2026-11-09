@@ -167,14 +167,19 @@ class Runtime:
         rows: int | None,
         command_argv: list[str] | None = None,
         cwd: str | None = None,
-    ) -> None:
+        *,
+        require_new: bool = False,
+    ) -> bool:
+        """Start tmux and report whether ``new-session`` actually ran."""
         if not self.available(session_id):
             raise SystemExit("tmux is not installed")
         name = tmux_name(session_id)
         if self.exists(session_id):
+            if require_new:
+                return False
             if cols is not None and rows is not None:
                 self.resize(session_id, cols, rows)
-            return
+            return False
         argv: list[str] = ["tmux", "new-session", "-d", "-s", name]
         if cwd is not None:
             argv.extend(["-c", cwd])
@@ -195,6 +200,7 @@ class Runtime:
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "tmux new-session failed").strip()
             raise SystemExit(detail)
+        return True
 
     def stop(self, session_id: str) -> None:
         if not self.exists(session_id):
@@ -237,3 +243,15 @@ class Runtime:
         if completed.returncode != 0:
             return ""
         return completed.stdout
+
+
+class PreflightRuntime(Runtime):
+    """Run a session-specific authorization check before every tmux command."""
+
+    def __init__(self, runtime: Runtime, preflight: Callable[[str], None]) -> None:
+        self._runtime = runtime
+        self._preflight = preflight
+
+    def _tmux(self, session_id: str, tmux_argv: list[str]) -> Completed:
+        self._preflight(session_id)
+        return self._runtime._tmux(session_id, tmux_argv)

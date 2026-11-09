@@ -25,6 +25,13 @@ The static script owns execution and progression. A model lane must not invoke
 Tests and lane starts in the workflow below are script responsibilities; models
 return their implementation or review results. See
 [DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+Every vendor-lane start also requires `ai-accounts.json` to mark the current
+device as a lane host. The local harness's lane starter starts the command on
+that external host; Agent does not mirror work there. Missing, invalid, or
+`remote` `lane_execution` fails closed; `--no-tmux` is not an execution-device
+bypass.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Model lanes never start monitors or wait/poll for checks, reviews, or CI. Return
 the current result or blocker to the script; it observes events and informs a
@@ -51,8 +58,8 @@ Once the draft pull request exists, attach it with `agent task pr --id <task-id>
 ## Checklist values
 
 Keys are `pending`, `ja`, `nein`, `n_a`, or `unavailable`. `ja`, `n_a`, and
-`unavailable` need `--evidence`. `unavailable` only on `grok_pr_quality`,
-`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`; it is not `n_a` and it
+`unavailable` need `--evidence`. `unavailable` only on `review_1_quality`,
+`review_1_logic`, `review_2_quality`, `review_2_logic`; it is not `n_a` and it
 blocks `done`. Unavailable is not allowed for other keys.
 
 ## Task states
@@ -72,17 +79,17 @@ treats it like `done` / `failed`. Cannot supersede a `done` task.
 Do not invent keys. Chains:
 
 **implement:** `session_registered`, `spec_written`, `implementer_done`,
-`reviewer_approved`, `local_check_pass`, `pushed`, `grok_pr_quality`,
-`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`, `contributing_ok`,
+`reviewer_approved`, `local_check_pass`, `pushed`, `review_1_quality`,
+`review_1_logic`, `review_2_quality`, `review_2_logic`, `contributing_ok`,
 `deviation_declared`, `deviation_granted`
 
-**review:** `session_registered`, `contributing_read`, `grok_pr_quality`,
-`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`, `coverage_ok`,
+**review:** `session_registered`, `contributing_read`, `review_1_quality`,
+`review_1_logic`, `review_2_quality`, `review_2_logic`, `coverage_ok`,
 `handbook_ok`, `contributing_ok`, `deviation_declared`, `deviation_granted`
 
 **resolve-conflicts:** `session_registered`, `conflicts_resolved`,
-`reviewer_approved`, `local_check_pass`, `pushed`, `grok_pr_quality`,
-`grok_pr_logic`, `codex_pr_quality`, `codex_pr_logic`, `mergeable`
+`reviewer_approved`, `local_check_pass`, `pushed`, `review_1_quality`,
+`review_1_logic`, `review_2_quality`, `review_2_logic`, `mergeable`
 
 `done` still requires the workflow checklist and both summary sentences
 (`agent task summary`). That ledger `task-done` / checklist close is not

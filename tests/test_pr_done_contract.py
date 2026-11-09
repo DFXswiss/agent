@@ -72,6 +72,15 @@ def test_design_locks_ready_for_review() -> None:
     assert "ledger `task-done` is not pull-request completion" in section_prose
 
 
+def test_design_does_not_pin_lane_execution_in_interactive_binding() -> None:
+    text = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+    assert (
+        "role, account, provider, model, access, and configuration-directory hash"
+        in text
+    )
+    assert "normalized lane-execution mode" not in text
+
+
 def test_pr_review_and_spine_point_at_ready_for_review() -> None:
     pr_review = (PACKAGED / "pr-review" / "SKILL.md").read_text(encoding="utf-8")
     spine = (PACKAGED / "spine" / "SKILL.md").read_text(encoding="utf-8")

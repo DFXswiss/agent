@@ -10,6 +10,7 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 from agent_cli import main as main_mod
 from agent_cli.main import cmd_sync, open_store
 from agent_cli.hub import Hub, HubError
+from agent_cli.runtime import Completed, Runtime
 from agent_cli.store import Store, StoreConnectionError, StoreError
 
 
@@ -481,11 +482,17 @@ def test_websocket_exception_reconnects_instead_of_dying(
     assert len(calls) == 2, "a WebSocketException must be retried, not exit the process"
 
 
-class _FakeRuntime:
+class _FakeRuntime(Runtime):
     """Stands in for Runtime without shelling out to tmux."""
 
-    def capture(self, session_id: str) -> str:
-        return "some output"
+    def __init__(self) -> None:
+        super().__init__(
+            runner=lambda argv: Completed(
+                0,
+                "some output" if argv[:2] == ["tmux", "capture-pane"] else "",
+                "",
+            )
+        )
 
 
 def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
@@ -667,6 +674,127 @@ def test_publish_terminals_does_not_record_state_for_a_failed_send(
         main_mod._publish_terminals(store, _FakeRuntime(), ws, terminal_seq, last_capture)
         assert len(ws.sent) == 1, "the retried publish must actually resend the frame, not skip it"
         assert last_capture == {"s1": "some output"}
+    finally:
+        store.close()
+
+
+def test_publish_terminals_grok_preflight_propagates_store_connection_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "grok",
+            {
+                "id": "grok",
+                "runtime": {
+                    "control": "attached",
+                    "provider": "grok",
+                },
+            },
+        )
+
+        def disconnected_preflight(*args: object, **kwargs: object) -> None:
+            raise StoreConnectionError("server closed the connection unexpectedly")
+
+        monkeypatch.setattr(
+            main_mod,
+            "_interactive_runtime_preflight",
+            disconnected_preflight,
+        )
+
+        with pytest.raises(StoreConnectionError):
+            main_mod._publish_terminals(store, _FakeRuntime(), object(), {}, {})
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("missing", "error"),
+    [
+        ("models", "models is not configured"),
+        ("lane_execution", "lane_execution is not configured"),
+    ],
+)
+def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
+    tmp_path: Path,
+    missing: str,
+    error: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _init_paired_store(tmp_path)
+    config = {
+        "models": {"first": "grok", "second": "codex"},
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "accounts": {
+            "grok-a": {"provider": "grok", "config_dir": "/test/grok-a"},
+        },
+        "roles": {
+            "interactive": {
+                "account": "grok-a",
+                "model": "operator-model",
+                "access": "workspace-write",
+            },
+        },
+        "sessions": {"grok": {"interactive": "interactive"}},
+    }
+    config.pop(missing)
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "grok",
+            {
+                "id": "grok",
+                "runtime": {
+                    "control": "attached",
+                    "provider": "grok",
+                },
+            },
+        )
+        store.write(
+            "session",
+            "insert",
+            "raw",
+            {"id": "raw", "runtime": {"control": "attached"}},
+        )
+
+        class _RecordingRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(runner=lambda _argv: Completed(0, "", ""))
+                self.captured: list[str] = []
+
+            def _tmux(self, session_id: str, tmux_argv: list[str]) -> Completed:
+                if tmux_argv[:2] == ["tmux", "capture-pane"]:
+                    self.captured.append(session_id)
+                    return Completed(0, f"output for {session_id}", "")
+                return Completed(0, "", "")
+
+        class _RecordingWs:
+            def __init__(self) -> None:
+                self.sent: list[dict] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(json.loads(data))
+
+        runtime = _RecordingRuntime()
+        ws = _RecordingWs()
+        main_mod._publish_terminals(store, runtime, ws, {}, {})
+
+        assert runtime.captured == ["raw"]
+        assert [frame["session_id"] for frame in ws.sent] == ["raw"]
+        assert (
+            f"terminal grok configuration error: {error}"
+            in capsys.readouterr().err
+        )
     finally:
         store.close()
 

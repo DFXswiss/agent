@@ -29,6 +29,12 @@ again for improvements, executes tests, and performs all GitHub communication.
 Model lanes never start subagents or execute tests themselves. Executor commands
 below belong to the script. See
 [DESIGN.md §19.1](../../../../DESIGN.md#191-responsibility-split).
+Those lanes require the external lane host's `ai-accounts.json` to identify the
+current device as a lane host. The local harness's lane starter starts them
+there; Agent has no remote-execution fallback and never runs a vendor CLI on an
+undeclared work device.
+`lane_execution` gates provider execution on this device; recording an Agent
+for a lane started elsewhere does not need it.
 
 Model lanes never start monitors, poll, or wait for logs, CI, or PR events.
 Return the current result or blocker to the script. Event detection and any
@@ -57,7 +63,12 @@ subsequent notification that provides useful model work belong to the script.
    (never the origin checkout). Mandatory checks must `pass`, then
    `pr.open` opens a **draft** via `agent github pending`. A retry reuses
    head `error-fix-<id8>`. Gates run on that head after `pushed`. A human
-   merges.
+   merges. A nonterminal legacy task without model pins stops before staging
+   or Git and reports the supported transition:
+   `agent task state <id> superseded`. The next scan ignores that terminal task
+   and creates a newly pinned task. An unchanged legacy task and model
+   configuration are not retried; either that state transition or a changed
+   configuration makes the watcher evaluate the intent again.
 
 ```bash
 agent activity add --session <id> --type error.skip --payload-file <path>

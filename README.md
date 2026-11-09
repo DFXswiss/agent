@@ -17,6 +17,11 @@ subagents, run tests, or access GitHub. The user works in GitHub and merges the
 reviewed PR there. This is a workflow requirement, not a claim of a complete
 deployed integration.
 
+Model lanes never run on a work device. The local harness's lane starter starts
+them on an external lane host, where `ai-accounts.json` declares
+`lane_execution.mode = "this-device-is-lane-host"`. Agent has no SSH/rsync
+remote-execution mode.
+
 Model lanes perform work and return results or blockers. They never start
 monitors, poll statuses, or wait for CI. Scripts own monitoring and inform a
 model when an observed event provides useful work; see DESIGN.md §19.1.
@@ -80,13 +85,13 @@ agent task create --session <session-id> --workflow implement --title "…"
 agent task pr --id <task-id> --repo <owner/name> --pr <number>
 agent round start --task <uuid>
 # --vendor is pinned on the task from ai-accounts.json; implementer may be separate,
-# while review providers come from models. These examples use grok for implementer/first.
-agent agent start --session <session-id> --task <uuid> --role implementer --vendor grok --round 1
+# while review providers come from models.
+agent agent start --session <session-id> --task <uuid> --role implementer --vendor <implementer-provider> --round 1
 agent agent finish --id <implementer-uuid> --verdict done
-agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --vendor grok
+agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --stage review-1 --vendor <first-slot-provider>
 agent agent finish --id <reviewer-uuid> --verdict approved
 agent check record --task <uuid> --name lint --command "pytest" --result pass
-agent gate record --task <uuid> --stage grok-pr --dimension quality --vendor grok \
+agent gate record --task <uuid> --stage review-1 --dimension quality --vendor <first-slot-provider> \
   --verdict approved --head <sha> --agent <reviewer-uuid>
 agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>

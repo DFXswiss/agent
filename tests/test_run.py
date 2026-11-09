@@ -26,6 +26,8 @@ def write_operator_ai_accounts(home: Path, *, sessions: dict | None = None) -> N
     malformed/mismatched.
     """
     data = {
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "models": {"first": "grok", "second": "codex"},
         "accounts": {
             "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
             "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
@@ -503,6 +505,27 @@ def test_run_unconfigured_ai_leaves_no_working_agent(
     )
 
 
+def test_run_reports_missing_lane_before_missing_models(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("models")
+    raw["sessions"][DEFAULT_SESSION]["lanes"] = {}
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    _assert_run_config_failure_leaves_no_working_agent(
+        tmp_path,
+        tid,
+        capsys,
+        monkeypatch,
+        spec=spec,
+        match="No AI lane configured",
+    )
+
+
 def test_run_malformed_ai_accounts_leaves_no_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -782,7 +805,7 @@ def test_run_mergeable_after_gates(
     assert push_called["n"] == 1
     assert _checklist(tmp_path, tid)["pushed"] == "ja"
 
-    for stage, vendor in (("grok-pr", "grok"), ("codex-pr", "codex")):
+    for stage, vendor in (("review-1", "grok"), ("review-2", "codex")):
         for dimension in ("quality", "logic"):
             _record_pr_gate(
                 tmp_path,
@@ -794,7 +817,7 @@ def test_run_mergeable_after_gates(
             )
             run(tmp_path, ["run", "--task", tid])
             capsys.readouterr()
-            key = f"{vendor}_pr_{dimension}"
+            key = f"{stage.replace('-', '_')}_{dimension}"
             assert _checklist(tmp_path, tid)[key] == "ja"
 
     monkeypatch.setattr(

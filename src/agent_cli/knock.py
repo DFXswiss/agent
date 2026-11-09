@@ -48,7 +48,11 @@ def assigned_inflight_id(store: Store, session_id: str) -> str | None:
     return None
 
 
-def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
+def deliver(
+    store: Store,
+    runtime: Runtime,
+    activity_id: str,
+) -> str:
     """Send the knock or leave it queued. Returns sent|queued|unread|missing."""
     if store.wake_delivered(activity_id):
         return "sent"
@@ -73,7 +77,10 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     if target is None:
         stored = meta.get("tmux_session")
         target = stored if isinstance(stored, str) and stored else None
-    if control != "attached" or not runtime.exists(sid, target=target):
+    if control != "attached":
+        store.enqueue_wake(activity_id, sid)
+        return "unread"
+    if not runtime.exists(sid, target=target):
         store.enqueue_wake(activity_id, sid)
         return "unread"
     if runtime.is_busy(sid):
@@ -107,7 +114,10 @@ def deliver(store: Store, runtime: Runtime, activity_id: str) -> str:
     return "sent"
 
 
-def drain(store: Store, runtime: Runtime) -> list[tuple[str, str]]:
+def drain(
+    store: Store,
+    runtime: Runtime,
+) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for row in store.pending_wakes():
         status = deliver(store, runtime, row["activity_id"])
@@ -115,7 +125,11 @@ def drain(store: Store, runtime: Runtime) -> list[tuple[str, str]]:
     return out
 
 
-def listen_once(store: Store, runtime: Runtime, timeout: float = 2.0) -> str | None:
+def listen_once(
+    store: Store,
+    runtime: Runtime,
+    timeout: float = 2.0,
+) -> str | None:
     import psycopg
 
     with psycopg.connect(store.dsn, autocommit=True) as conn:

@@ -25,16 +25,16 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 from .ai_accounts import load_model_configuration
 from .allow import (
     ACTIONS,
-    CODEX_SECOND_REVIEW_KEYS,
     GATE_PAIRS,
     GATE_UNAVAILABLE_KEYS,
+    SECOND_REVIEW_KEYS,
     SECOND_REVIEW_NOT_POSTED,
     TERMINAL_STATES,
-    both_codex_reviews_na,
-    codex_second_review_na,
+    both_second_reviews_na,
     evaluate_allow,
     ready_for_done_blocking,
     requires_evidence,
+    second_review_na,
 )
 from .chain import (
     CLOSE_STATUSES,
@@ -51,23 +51,36 @@ from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
 from .knock import listen_once as knock_listen
-from .lane import LANE_ROLES, LANE_VENDORS, LaneResult, launch
+from .lane import (
+    LANE_ROLES,
+    LANE_VENDORS,
+    LaneResult,
+    launch,
+)
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .model_slots import (
-    DEFAULT_MODEL_SLOTS,
     IMPLEMENTER_PROVIDER_CHOICES,
     IMPLEMENTER_PROVIDERS,
     PROVIDER_CHOICES,
+    SLOT_STAGES,
     STAGE_CHOICES,
+    STAGE_SLOTS,
     ModelSlots,
     ModelSlotsError,
+    PinnedModelSlotsError,
+    canonical_checklist,
+    canonical_key,
+    canonical_stage,
+    implementer_for_new_record,
     implementer_from_snapshot,
     model_pins,
+    models_for_new_record,
     models_from_snapshot,
 )
 from .pg import PgError, cluster_exists, cluster_running, ensure_cluster, require_loopback_dsn, stop_cluster
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
 from .runtime import (
+    PreflightRuntime,
     Runtime,
     grok_model,
     grok_new_session_id,
@@ -96,10 +109,10 @@ CHECKLIST = {
         "reviewer_approved",
         "local_check_pass",
         "pushed",
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
         "contributing_ok",
         "deviation_declared",
         "deviation_granted",
@@ -110,10 +123,10 @@ CHECKLIST = {
         "contributing_ok",
         "coverage_ok",
         "handbook_ok",
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
         "deviation_declared",
         "deviation_granted",
     ),
@@ -123,10 +136,10 @@ CHECKLIST = {
         "reviewer_approved",
         "local_check_pass",
         "pushed",
-        "grok_pr_quality",
-        "grok_pr_logic",
-        "codex_pr_quality",
-        "codex_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
+        "review_2_quality",
+        "review_2_logic",
         "mergeable",
     ),
 }
@@ -210,6 +223,14 @@ STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 
 def die(msg: str) -> None:
     raise SystemExit(f"agent: {msg}")
+
+
+def _warn_deprecated_name(supplied: str, canonical: str) -> None:
+    if supplied != canonical:
+        print(
+            f"deprecated stage/key name {supplied}; use {canonical}",
+            file=sys.stderr,
+        )
 
 
 def default_home() -> Path:
@@ -473,6 +494,8 @@ def cmd_session(args: list[str]) -> None:
         if sub == "close":
             sid = require_flag(rest, "--id")
             row = _need(store, "session", sid)
+            from .error_fix_act import is_retryable_configuration_error
+
             open_tasks = [
                 t
                 for t in store.rows("task")
@@ -495,7 +518,10 @@ def cmd_session(args: list[str]) -> None:
                 for a in store.rows("activity")
                 if a.get("session_id") == sid
                 and a.get("type") == "error.fix"
-                and a.get("execution_status") == "pending"
+                and (
+                    a.get("execution_status") == "pending"
+                    or is_retryable_configuration_error(a)
+                )
             ]
             if pending_fix:
                 die("session has pending error.fix")
@@ -513,7 +539,14 @@ def cmd_session(args: list[str]) -> None:
             rows = _dim_flag(rest, "--rows")
             runtime = _runtime()
             name = _session_start(
-                store, runtime, sid, cmd, cols, rows, provider=provider, model=model
+                store,
+                runtime,
+                sid,
+                cmd,
+                cols,
+                rows,
+                provider=provider,
+                model=model,
             )
             row = store.row("session", sid)
             grok_id = ""
@@ -833,7 +866,9 @@ def cmd_checklist(args: list[str]) -> None:
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
-    key = require_flag(rest, "--key")
+    supplied_key = require_flag(rest, "--key")
+    key = canonical_key(supplied_key)
+    _warn_deprecated_name(supplied_key, key)
     status = require_flag(rest, "--status")
     source = require_flag(rest, "--source")
     if status not in CHECKLIST_STATUSES:
@@ -847,8 +882,8 @@ def cmd_checklist(args: list[str]) -> None:
         die(f"{status} requires --evidence")
     if (
         status == "n_a"
-        and key in CODEX_SECOND_REVIEW_KEYS
-        and not codex_second_review_na(key, evidence)
+        and key in SECOND_REVIEW_KEYS
+        and not second_review_na(key, evidence)
     ):
         die(f"n_a for {key} requires evidence {SECOND_REVIEW_NOT_POSTED}")
     deviation_declared = _bool_flag(rest, "--deviation-declared")
@@ -877,10 +912,14 @@ def cmd_checklist(args: list[str]) -> None:
         task = _need(store, "task", tid)
         _require_owned(store, task, "task")
         _require_skill(_need(store, "session", task["session_id"]), "spine")
-        items = [r for r in store.rows("checklist_item") if r.get("task_id") == tid and r.get("key") == key]
+        items = [
+            r
+            for r in store.rows("checklist_item")
+            if r.get("task_id") == tid and canonical_key(str(r.get("key"))) == key
+        ]
         if len(items) != 1:
             die(f"checklist {key} for task {tid} not found")
-        if status == "n_a" and key in CODEX_SECOND_REVIEW_KEYS:
+        if status == "n_a" and key in SECOND_REVIEW_KEYS:
             login, config = _live_one_review(store, task)
             if not one_review_for(config, login):
                 die(
@@ -1001,16 +1040,47 @@ def cmd_agent(args: list[str]) -> None:
                 die(f"vendor must be {PROVIDER_CHOICES}")
             round_raw = flag(rest, "--round")
             round_num: int | None = None
+            supplied_stage = flag(rest, "--stage")
+            stage: str | None = None
             if role in ("implementer", "reviewer"):
                 if round_raw is None or round_raw == "":
                     die(f"{role} requires --round")
-            # The task's pin; an unknown task is reported below by _need, and
-            # until then the historical order applies (never the device setting).
-            models = models_from_snapshot(store.row("task", tid))
-            if role == "reviewer" and vendor != models.first:
+                if supplied_stage is not None:
+                    die("--stage is only valid for PR-reviewer roles")
+            else:
+                if supplied_stage is not None:
+                    stage = canonical_stage(supplied_stage)
+                    _warn_deprecated_name(supplied_stage, stage)
+                    if stage not in STAGE_SLOTS:
+                        die(f"stage must be {STAGE_CHOICES}")
+            # Preserve the historical vendor-precondition order for an unknown
+            # task and use a present task pin when it is valid. A legacy task
+            # without ``models`` must not turn the display-only mapping into a
+            # vendor requirement for a new row. Invalid pins are diagnosed only
+            # after the existing start preconditions below.
+            task_snapshot = store.row("task", tid)
+            models: ModelSlots | None = None
+            if task_snapshot is None or task_snapshot.get("models") is not None:
+                try:
+                    models = models_from_snapshot(task_snapshot)
+                except PinnedModelSlotsError:
+                    pass
+            if role == "reviewer" and models is not None and vendor != models.first:
                 die(f"reviewer requires --vendor {models.first} (configured model slot first)")
-            implementer = implementer_from_snapshot(store.row("task", tid))
-            if role == "implementer" and vendor != implementer:
+            if stage is not None and models is not None:
+                expected_vendor = models.for_stage(stage)
+                if vendor != expected_vendor:
+                    die(
+                        f"stage {stage} requires --vendor {expected_vendor} "
+                        "(model slot pinned on the task)"
+                    )
+            implementer: str | None = None
+            if task_snapshot is None or models is not None:
+                try:
+                    implementer = implementer_from_snapshot(task_snapshot)
+                except PinnedModelSlotsError:
+                    pass
+            if role == "implementer" and implementer is not None and vendor != implementer:
                 die(f"implementer requires --vendor {implementer} (configured implementer)")
             if round_raw is not None and round_raw != "":
                 if not round_raw.isdigit():
@@ -1059,6 +1129,52 @@ def cmd_agent(args: list[str]) -> None:
             _require_owned(store, task, "task")
             if tr is not None:
                 _require_owned(store, tr, "task_round")
+            # New agent rows require explicit, valid task pins. Keep this after
+            # every pre-existing start condition and immediately before writing.
+            models = models_for_new_record(task)
+            implementer = implementer_for_new_record(task)
+            if role in ("pr-reviewer-quality", "pr-reviewer-logic") and stage is None:
+                slot = models.slot_of(vendor)
+                if slot is None:
+                    die("PR-reviewer vendor is not pinned on the task")
+                stage = SLOT_STAGES[slot]
+            if role == "reviewer" and vendor != models.first:
+                die(f"reviewer requires --vendor {models.first} (configured model slot first)")
+            if role == "implementer" and vendor != implementer:
+                die(f"implementer requires --vendor {implementer} (configured implementer)")
+            if stage is not None:
+                expected_vendor = models.for_stage(stage)
+                if vendor != expected_vendor:
+                    die(
+                        f"stage {stage} requires --vendor {expected_vendor} "
+                        "(model slot pinned on the task)"
+                    )
+                if stage == "review-2":
+                    latest = _latest_gates(store, tid)
+                    review_1_heads: dict[str, str] = {}
+                    for dimension in ("quality", "logic"):
+                        gate = latest.get(("review-1", dimension))
+                        if (
+                            gate is None
+                            or gate.get("verdict") != "approved"
+                            or gate.get("vendor") != models.first
+                        ):
+                            die(
+                                "review-2 requires approved "
+                                f"review-1/{dimension} at the same head"
+                            )
+                        review_1_heads[dimension] = str(gate.get("head_sha") or "")
+                    for dimension in ("quality", "logic"):
+                        if not review_1_heads[dimension]:
+                            die(
+                                "review-2 requires approved "
+                                f"review-1/{dimension} at the same head"
+                            )
+                    if review_1_heads["quality"] != review_1_heads["logic"]:
+                        die(
+                            "review-2 requires approved "
+                            "review-1/logic at the same head"
+                        )
             aid = str(uuid.uuid4())
             store.write(
                 "agent",
@@ -1071,6 +1187,7 @@ def cmd_agent(args: list[str]) -> None:
                     "round": round_num,
                     "role": role,
                     "vendor": vendor,
+                    "stage": stage,
                     "status": "working",
                     "started_at": utcnow(),
                     "finished_at": None,
@@ -1385,14 +1502,16 @@ def cmd_gate(args: list[str]) -> None:
         )
     rest = args[1:]
     tid = require_flag(rest, "--task")
-    stage = require_flag(rest, "--stage")
+    supplied_stage = require_flag(rest, "--stage")
+    stage = canonical_stage(supplied_stage)
+    _warn_deprecated_name(supplied_stage, stage)
     dimension = require_flag(rest, "--dimension")
     vendor = require_flag(rest, "--vendor")
     verdict = require_flag(rest, "--verdict")
     head = require_flag(rest, "--head").lower()
     agent_id = require_flag(rest, "--agent")
     evidence = flag(rest, "--evidence")
-    if stage not in ("grok-pr", "codex-pr"):
+    if stage not in STAGE_SLOTS:
         die(f"stage must be {STAGE_CHOICES}")
     if dimension not in ("quality", "logic"):
         die("dimension must be quality|logic")
@@ -1409,27 +1528,36 @@ def cmd_gate(args: list[str]) -> None:
     store = open_store()
     try:
         task = _need(store, "task", tid)
-        models = models_from_snapshot(task)
-        expected_vendor = models.for_stage(stage)
-        if vendor != expected_vendor:
-            die(f"stage {stage} requires vendor {expected_vendor} (model slot pinned on the task)")
+        # A historical slot mapping may display existing rows, but it must not
+        # authorize or constrain a new gate record. The strict pin check remains
+        # at the write boundary so the existing precondition order is preserved.
+        models = None if task.get("models") is None else models_from_snapshot(task)
+        if models is not None:
+            expected_vendor = models.for_stage(stage)
+            if vendor != expected_vendor:
+                die(
+                    f"stage {stage} requires vendor {expected_vendor} "
+                    "(model slot pinned on the task)"
+                )
         session = _need(store, "session", task["session_id"])
         if session.get("status") != "active":
             die(f"session {task['session_id']} is not active")
         _require_owned(store, session, "session")
         _require_owned(store, task, "task")
         _require_skill(session, "pr-review")
-        if stage == "codex-pr":
+        if stage == "review-2":
             latest = _latest_gates(store, tid)
-            gq = latest.get(("grok-pr", "quality"))
-            gl = latest.get(("grok-pr", "logic"))
+            gq = latest.get(("review-1", "quality"))
+            gl = latest.get(("review-1", "logic"))
             for label, g in (("quality", gq), ("logic", gl)):
                 if g is None:
-                    die(f"codex-pr requires approved grok-pr/{label} at the same head")
-                if g.get("vendor") != models.first or g.get("verdict") != "approved":
-                    die(f"codex-pr requires approved grok-pr/{label} at the same head")
+                    die(f"review-2 requires approved review-1/{label} at the same head")
+                if g.get("verdict") != "approved":
+                    die(f"review-2 requires approved review-1/{label} at the same head")
+                if models is not None and g.get("vendor") != models.first:
+                    die(f"review-2 requires approved review-1/{label} at the same head")
                 if g.get("head_sha") != head:
-                    die(f"codex-pr requires approved grok-pr/{label} at the same head")
+                    die(f"review-2 requires approved review-1/{label} at the same head")
         agent = _need(store, "agent", agent_id)
         if agent.get("task_id") != tid:
             die("agent task_id does not match --task")
@@ -1437,12 +1565,17 @@ def cmd_gate(args: list[str]) -> None:
             die("agent must be status=done")
         if agent.get("vendor") != vendor:
             die("agent vendor does not match --vendor")
+        agent_stage = agent.get("stage")
+        if agent_stage is not None and canonical_stage(str(agent_stage)) != stage:
+            die("agent stage does not match --stage")
         expected_role = f"pr-reviewer-{dimension}"
         if agent.get("role") != expected_role:
             die(f"agent role must be {expected_role}")
         if verdict == "rejected" and task.get("state") == "done":
             die("cannot reject a gate on a done task")
         _require_owned(store, task, "task")
+        # Gate-row write: legacy tasks without a model pin cannot add gates.
+        models = models_for_new_record(task)
         gid = str(uuid.uuid4())
         store.write(
             "review_gate",
@@ -1865,6 +1998,19 @@ def cmd_status(_: list[str]) -> None:
         store.close()
 
 
+def _canonicalize_snapshot_names(snapshot: dict[str, Any]) -> None:
+    """Canonicalize legacy agent, gate, and checklist names in snapshot output."""
+    for agent in snapshot.get("agents") or []:
+        if isinstance(agent, dict) and agent.get("stage") is not None:
+            agent["stage"] = canonical_stage(str(agent["stage"]))
+    for gate in snapshot.get("gates") or []:
+        if isinstance(gate, dict) and gate.get("stage") is not None:
+            gate["stage"] = canonical_stage(str(gate["stage"]))
+    for item in snapshot.get("checklist") or []:
+        if isinstance(item, dict) and item.get("key") is not None:
+            item["key"] = canonical_key(str(item["key"]))
+
+
 def cmd_dashboard(args: list[str]) -> None:
     port = 7845
     if args:
@@ -1906,6 +2052,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 for session in snap.get("sessions") or []:
                     session["can_control"] = session.get("_origin_device_id") == device
                     session["control_connected"] = True
+                _canonicalize_snapshot_names(snap)
                 self._json(200, snap)
                 return
             if path in ("/", "/index.html"):
@@ -2098,6 +2245,108 @@ def _dim_value(raw: object, label: str) -> int:
     return value
 
 
+def _interactive_preflight(
+    store: Store,
+    sid: str,
+    *,
+    meta: dict[str, Any] | None = None,
+    model: str | None = None,
+) -> tuple[Any, dict[str, Any], str]:
+    """Validate an interactive Grok binding before touching its runtime."""
+    from .ai_accounts import load_ai_accounts
+
+    if meta is None:
+        row = _need(store, "session", sid)
+        raw = row.get("runtime")
+        meta = dict(raw) if isinstance(raw, dict) else {}
+    ai = load_ai_accounts(store.home, defer_model_configuration=True)
+    selected = ai.for_session(sid)
+    ai.require_model_configuration()
+    ai.require_lane_execution()
+    if selected.account.provider != "grok":
+        die("configured interactive role does not match the requested provider")
+    if model is not None and model != selected.model:
+        die("--model does not match the configured interactive role")
+    binding = {
+        "role": selected.name,
+        "account": selected.account.name,
+        "provider": selected.account.provider,
+        "model": selected.model,
+        "access": selected.access,
+        "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
+    }
+    existing = meta.get("grok_session_id")
+    existing_s = existing if isinstance(existing, str) and existing else ""
+    stored_binding = meta.get("ai_binding")
+    comparable_binding = (
+        dict(stored_binding) if isinstance(stored_binding, dict) else stored_binding
+    )
+    if isinstance(comparable_binding, dict):
+        comparable_binding.pop("lane_execution", None)
+    if _is_grok_runtime(meta) and comparable_binding != binding:
+        die(
+            "interactive AI binding changed or is missing; "
+            "configure a new session instead of resuming"
+        )
+    return selected, binding, existing_s
+
+
+def _interactive_runtime_preflight(
+    store: Store,
+    sid: str,
+    *,
+    meta: dict[str, Any] | None = None,
+    provider: str | None = None,
+) -> None:
+    """Preflight a Grok-bound runtime while leaving raw terminals unchanged."""
+    if meta is None:
+        row = store.row("session", sid)
+        if row is None:
+            if provider != "grok":
+                die(f"unknown session: {sid}")
+            meta = {}
+        else:
+            raw = row.get("runtime")
+            meta = dict(raw) if isinstance(raw, dict) else {}
+    if not _is_grok_runtime(meta):
+        raw_terminal = isinstance(meta.get("tmux_session"), str) and bool(
+            meta["tmux_session"]
+        )
+        if provider != "grok" or raw_terminal:
+            return
+    _interactive_preflight(store, sid, meta=meta)
+
+
+def _is_grok_runtime(meta: dict[str, Any]) -> bool:
+    binding = meta.get("ai_binding")
+    return (
+        meta.get("grok_start_pending") is True
+        or meta.get("provider") == "grok"
+        or bool(meta.get("grok_session_id"))
+        or (isinstance(binding, dict) and binding.get("provider") == "grok")
+    )
+
+
+def _preflight_runtime(
+    store: Store,
+    runtime: Runtime,
+    *,
+    pending_meta: dict[str, Any] | None = None,
+) -> PreflightRuntime:
+    """Return the single access path for operations on session runtimes."""
+    if isinstance(runtime, PreflightRuntime) and pending_meta is None:
+        return runtime
+    if pending_meta is None:
+        return PreflightRuntime(
+            runtime,
+            lambda sid: _interactive_runtime_preflight(store, sid),
+        )
+    return PreflightRuntime(
+        runtime,
+        lambda sid: _interactive_runtime_preflight(store, sid, meta=pending_meta),
+    )
+
+
 def _session_start(
     store: Store,
     runtime: Runtime,
@@ -2122,31 +2371,23 @@ def _session_start(
     name = tmux_name(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
+    original = _strip(row)
     command_argv: list[str] | None = None
     start_command = command
+    existing_s = ""
+    binding: dict[str, Any] = {}
     if provider == "grok":
-        from .ai_accounts import load_ai_accounts
-        selected = load_ai_accounts(store.home).for_session(sid)
-        if selected.account.provider != provider:
-            die("configured interactive role does not match the requested provider")
-        if model is not None and model != selected.model:
-            die("--model does not match the configured interactive role")
-        binding = {
-            "role": selected.name, "account": selected.account.name,
-            "provider": selected.account.provider, "model": selected.model,
-            "access": selected.access,
-            "configuration": hashlib.sha256(selected.account.config_dir.encode()).hexdigest(),
-        }
-        existing = meta.get("grok_session_id")
-        existing_s = existing if isinstance(existing, str) and existing else ""
-        if existing_s and meta.get("ai_binding") != binding:
-            die("interactive AI binding changed or is missing; configure a new session instead of resuming")
-        if not runtime.available(sid):
-            die("tmux is not installed")
-        if runtime.exists(sid) and not existing_s:
-            runtime.stop(sid)
+        selected, binding, existing_s = _interactive_preflight(
+            store, sid, meta=meta, model=model
+        )
         new_id = grok_new_session_id() if not existing_s else ""
         resolved = grok_model(selected.model)
+        if not existing_s:
+            meta["grok_session_id"] = new_id
+        meta["provider"] = "grok"
+        meta["model"] = resolved
+        meta["ai_binding"] = binding
+        runtime = _preflight_runtime(store, runtime, pending_meta=meta)
         command_argv = [*selected.env_prefix(), *grok_tmux_command_argv(
             existing=existing_s, model=resolved, new_id=new_id,
         )]
@@ -2154,12 +2395,38 @@ def _session_start(
             command_argv.extend(["--deny", "Write", "--deny", "Edit"])
         command_argv.extend(["--deny", "Bash", "--no-subagents", "--disable-web-search"])
         start_command = None
-        if not existing_s:
-            meta["grok_session_id"] = new_id
-        meta["provider"] = "grok"
-        meta["model"] = resolved
-        meta["ai_binding"] = binding
-    runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
+    else:
+        runtime = _preflight_runtime(store, runtime)
+    if provider == "grok" and not existing_s:
+        pending_meta = dict(raw) if isinstance(raw, dict) else {}
+        pending_meta["grok_start_pending"] = True
+        pending_meta["ai_binding"] = binding
+        row["runtime"] = pending_meta
+        store.write("session", "update", sid, _strip(row))
+    try:
+        if provider == "grok":
+            if not runtime.available(sid):
+                die("tmux is not installed")
+            runtime_exists = runtime.exists(sid)
+            if runtime_exists and not existing_s:
+                runtime.stop(sid)
+        started = runtime.start(
+            sid,
+            start_command,
+            cols,
+            rows,
+            command_argv=command_argv,
+            cwd=cwd,
+            require_new=provider == "grok" and not existing_s,
+        )
+        if provider == "grok" and not existing_s and not started:
+            die("tmux session already exists; Grok was not started")
+    except BaseException:
+        if provider == "grok" and not existing_s:
+            store.write("session", "update", sid, original)
+        raise
+    if provider == "grok":
+        meta.pop("grok_start_pending", None)
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
@@ -2174,7 +2441,7 @@ def _session_start(
 def _session_stop(store: Store, runtime: Runtime, sid: str) -> None:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
-    runtime.stop(sid)
+    _preflight_runtime(store, runtime).stop(sid)
     raw = row.get("runtime")
     meta = dict(raw) if isinstance(raw, dict) else {}
     meta["tmux_session"] = meta.get("tmux_session") or tmux_name(sid)
@@ -2196,6 +2463,7 @@ def _session_keep_working(
     _require_owned(store, row, "session")
     if row.get("status") != "active":
         die(f"session {sid} is not active")
+    runtime = _preflight_runtime(store, runtime)
     if not runtime.available(sid):
         die("tmux is not installed")
     sleep_s = 30
@@ -2243,6 +2511,7 @@ def _session_input(
     has_key = key is not None
     if has_data == has_key:
         die("input requires exactly one of --data or --key")
+    runtime = _preflight_runtime(store, runtime)
     if has_data:
         runtime.input_text(sid, data or "")
     else:
@@ -2252,7 +2521,7 @@ def _session_input(
 def _session_resize(store: Store, runtime: Runtime, sid: str, cols: int, rows: int) -> None:
     row = _need(store, "session", sid)
     _require_owned(store, row, "session")
-    runtime.resize(sid, cols, rows)
+    _preflight_runtime(store, runtime).resize(sid, cols, rows)
 
 
 def apply_control(store: Store, runtime: Runtime, message: dict) -> dict:
@@ -2338,6 +2607,7 @@ def _publish_terminals(
     last_capture: dict[str, str],
 ) -> None:
     device = store.device_id()
+    runtime = _preflight_runtime(store, runtime)
     for session in store.rows("session"):
         if session.get("_origin_device_id") != device:
             continue
@@ -2345,7 +2615,17 @@ def _publish_terminals(
         if not isinstance(meta, dict) or meta.get("control") != "attached":
             continue
         sid = session["id"]
-        text = runtime.capture(sid)
+        try:
+            text = runtime.capture(sid)
+        except StoreConnectionError:
+            raise
+        except (SystemExit, StoreError, ValueError) as exc:
+            if not _is_grok_runtime(meta):
+                raise
+            error = exc.args[0] if getattr(exc, "args", None) else str(exc)
+            message = str(error).removeprefix("agent: ")
+            print(f"terminal {sid} configuration error: {message}", file=sys.stderr)
+            continue
         if last_capture.get(sid) == text:
             continue
         seq = terminal_seq.get(sid, 0) + 1
@@ -2380,7 +2660,7 @@ def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
     ordered = [g for _, g in indexed]
     latest: dict[tuple[str, str], dict] = {}
     for g in ordered:
-        latest[(g.get("stage"), g.get("dimension"))] = g
+        latest[(canonical_stage(str(g.get("stage"))), g.get("dimension"))] = g
     return latest
 
 
@@ -2417,11 +2697,13 @@ def load_task_dict(store: Store, tid: str) -> dict:
     if task is None:
         die(f"unknown task: {tid}")
     checklist_rows = [r for r in store.rows("checklist_item") if r.get("task_id") == tid]
-    checklist = {str(r["key"]): str(r["status"]) for r in checklist_rows}
-    checklist_evidence = {
+    checklist = canonical_checklist(
+        {str(r["key"]): str(r["status"]) for r in checklist_rows}
+    )
+    checklist_evidence = canonical_checklist({
         str(r["key"]): r.get("evidence") if isinstance(r.get("evidence"), str) else ""
         for r in checklist_rows
-    }
+    })
     checks = [c for c in store.rows("local_check") if c.get("task_id") == tid]
     ordered_checks = list(reversed(checks))
     ordered_checks.sort(key=lambda c: c.get("ran_at") or "")
@@ -2442,7 +2724,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
     ordered_gates = [g for _, g in indexed_gates]
     gates = [
         {
-            "stage": g.get("stage"),
+            "stage": canonical_stage(str(g.get("stage"))),
             "dimension": g.get("dimension"),
             "vendor": g.get("vendor"),
             "verdict": g.get("verdict"),
@@ -2465,6 +2747,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
         "local_checks": local_checks,
         "pull_opener": "",
         "trusted_pr_guard": None,
+        # Recorded-state read: task display keeps legacy gate rows readable.
         "models": models_from_snapshot(task).as_dict(),
         "implementer": implementer_from_snapshot(task),
     }
@@ -2478,6 +2761,7 @@ def load_session_tasks(store: Store, session_id: str) -> list[dict]:
 
 def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> dict:
     task = load_task_dict(store, tid)
+    task_row = store.row("task", tid) or {}
     sid = str(task.get("session_id") or "")
     session = store.row("session", sid) if sid else None
     agents_raw = [a for a in store.rows("agent") if a.get("task_id") == tid]
@@ -2504,9 +2788,11 @@ def _chain_snapshot(store: Store, tid: str, extra_head: str | None = None) -> di
     return {
         "session_active": bool(session is not None and session.get("status") == "active"),
         "agents": agents,
-        "models": task.get("models") or DEFAULT_MODEL_SLOTS.as_dict(),
+        # Preserve absence so write/start resolvers can reject legacy tasks;
+        # recorded-row readers apply the historical mapping themselves.
+        "models": task_row.get("models"),
         "implementer": implementer_from_snapshot(task),
-        "models_pinned": (store.row("task", tid) or {}).get("models") is not None,
+        "models_pinned": task_row.get("models") is not None,
         "gates": task.get("gates") or [],
         "local_checks": task.get("local_checks") or [],
         "head_sha": head,
@@ -2535,11 +2821,13 @@ def _assert_ready(store: Store, task: dict) -> None:
     if workflow not in CHECKLIST:
         die("unknown workflow")
     tid = str(task["id"])
-    items = {
-        r["key"]: r
-        for r in store.rows("checklist_item")
-        if r.get("task_id") == task["id"]
-    }
+    items = canonical_checklist(
+        {
+            str(r["key"]): r
+            for r in store.rows("checklist_item")
+            if r.get("task_id") == task["id"]
+        }
+    )
     for key in CHECKLIST[workflow]:
         item = items.get(key)
         status = item["status"] if item else None
@@ -2549,8 +2837,8 @@ def _assert_ready(store: Store, task: dict) -> None:
             if key in N_A_ALLOWED:
                 if not isinstance(evidence, str) or evidence == "":
                     die(f"task is not done: checklist {key}=n_a requires evidence")
-            elif not codex_second_review_na(key, stored):
-                if key in CODEX_SECOND_REVIEW_KEYS:
+            elif not second_review_na(key, stored):
+                if key in SECOND_REVIEW_KEYS:
                     die(
                         "task is not done: checklist "
                         f"{key}=n_a requires evidence {SECOND_REVIEW_NOT_POSTED}"
@@ -2716,7 +3004,7 @@ def cmd_next(args: list[str]) -> None:
         _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid)
         wf = str(snap["workflow"])
-        models = models_from_snapshot(snap)
+        models = models_for_new_record(snap)
         ready = next_steps(wf, snap["checklist"], spine_only=True)
         if as_json:
             print(
@@ -2769,7 +3057,10 @@ def cmd_next(args: list[str]) -> None:
 
 def cmd_close_step(args: list[str]) -> None:
     tid = flag(args, "--task")
-    key = flag(args, "--key")
+    supplied_key = flag(args, "--key")
+    key = canonical_key(supplied_key) if supplied_key is not None else None
+    if supplied_key is not None and key is not None:
+        _warn_deprecated_name(supplied_key, key)
     source = flag(args, "--source")
     evidence = flag(args, "--evidence")
     status = flag(args, "--status") or "ja"
@@ -2782,8 +3073,8 @@ def cmd_close_step(args: list[str]) -> None:
     if status not in CLOSE_STATUSES:
         die("close-step --status must be ja|n_a|unavailable")
     if status == "n_a" and key not in N_A_ALLOWED:
-        if not codex_second_review_na(key, evidence):
-            if key in CODEX_SECOND_REVIEW_KEYS:
+        if not second_review_na(key, evidence):
+            if key in SECOND_REVIEW_KEYS:
                 die(f"n_a for {key} requires evidence {SECOND_REVIEW_NOT_POSTED}")
             die(f"n_a is not allowed for {key}")
     if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
@@ -2795,7 +3086,7 @@ def cmd_close_step(args: list[str]) -> None:
     try:
         _require_task_session_active(store, tid)
         snap = _chain_snapshot(store, tid, extra_head=head)
-        if status == "n_a" and key in CODEX_SECOND_REVIEW_KEYS:
+        if status == "n_a" and key in SECOND_REVIEW_KEYS:
             login, config = _live_one_review(store, store.row("task", tid) or {})
             snap["pull_opener"] = login
             snap["trusted_pr_guard"] = config
@@ -2852,7 +3143,7 @@ def _attach_live_one_review(
     """Copy the live exception onto one open done snapshot.
 
     ``load_task_dict`` leaves the opener empty and the trusted config unset.
-    GitHub is read only for an open task whose both Codex keys are already
+    GitHub is read only for an open task whose two second-review keys are already
     ``n_a`` with evidence exactly ``second review not posted``. A terminal
     task is not read. A lookup error stops the command and does not grant
     the exception. The stored payload copy is not read. ``pr-ready`` does
@@ -2881,14 +3172,14 @@ def _done_one_review(
 
     Callers are task state done, ``allow task-done``, and ``allow claim-done``.
     ``load_task_dict`` stays local and does not call this. The stored payload
-    copy is not this decision. Both Codex keys must already be ``n_a`` with
+    copy is not this decision. Both second-review keys must already be ``n_a`` with
     evidence exactly ``second review not posted`` before a live read. Any
     other evidence stays local. A missing pull, a missing file, or a lookup
     error does not grant the exception. The live read uses the session's
     bound GitHub account. A missing binding, an authentication failure, or a
     login mismatch stops the command. There is no ambient login.
     """
-    if not both_codex_reviews_na(checklist, evidence):
+    if not both_second_reviews_na(checklist, evidence):
         return "", None
     try:
         return _live_one_review(store, task)
@@ -3045,7 +3336,7 @@ def cmd_run(args: list[str]) -> None:
                         step,
                         task_id=str(tid),
                         session_id=str(snap.get("session_id")),
-                        models=models_from_snapshot(snap),
+                        models=models_for_new_record(snap),
                         snapshot=snap,
                     )
                 )
@@ -3168,7 +3459,8 @@ def cmd_run(args: list[str]) -> None:
                 cwd = _resolve_run_cwd(args)
                 tmux = "--no-tmux" not in args
                 role = str(step.role or "")
-                models = models_from_snapshot(snap)
+                # Lane/agent start: old tasks must be recreated with a model pin.
+                models = models_for_new_record(snap)
                 vendor = step_vendor(step, models, snapshot=snap)
                 if vendor is None:
                     die(f"{step.key} has no model provider")
@@ -3183,7 +3475,14 @@ def cmd_run(args: list[str]) -> None:
                 # launch() still resolves the same binding; no ambient fallback.
                 from .ai_accounts import load_ai_accounts
 
-                load_ai_accounts(store.home).for_lane(session_id, role, vendor)
+                ai = load_ai_accounts(
+                    store.home, defer_model_configuration=True
+                )
+                ai.for_lane(
+                    session_id, role, vendor, require_execution=False
+                )
+                ai.require_model_configuration()
+                ai.require_lane_execution()
                 working = _find_working_agent(
                     store, tid, role=role, vendor=vendor, round_num=round_num
                 )
@@ -3201,6 +3500,11 @@ def cmd_run(args: list[str]) -> None:
                     ]
                     if round_num is not None:
                         start_args.extend(["--round", str(round_num)])
+                    if role in ("pr-reviewer-quality", "pr-reviewer-logic"):
+                        stage = SLOT_STAGES.get(str(step.slot))
+                        if stage is None:
+                            die(f"{step.key} has no review stage")
+                        start_args.extend(["--stage", stage])
                     cmd_agent(start_args)
                 result = launch(
                     role=role,
@@ -3236,7 +3540,7 @@ def cmd_run(args: list[str]) -> None:
                         step,
                         tid,
                         str(snap.get("session_id")),
-                        models_from_snapshot(snap),
+                        models_for_new_record(snap),
                         snap,
                     )
             else:
@@ -3244,7 +3548,8 @@ def cmd_run(args: list[str]) -> None:
                     step,
                     tid,
                     str(snap.get("session_id")),
-                    models_from_snapshot(snap),
+                    # Handoff starts new work outside this adapter and also needs a pin.
+                    models_for_new_record(snap),
                     snap,
                 )
         if close_key is None:
@@ -3452,8 +3757,8 @@ def cmd_models(args: list[str]) -> None:
         store = open_store()
         try:
             task = _need(store, "task", tid)
-            models = models_from_snapshot(task)
-            implementer = implementer_from_snapshot(task)
+            models = models_for_new_record(task)
+            implementer = implementer_for_new_record(task)
         finally:
             store.close()
     if positional:
@@ -3513,7 +3818,8 @@ def cmd_knock(args: list[str]) -> None:
     once = "--once" in args
     store = open_store()
     try:
-        runtime = _runtime()
+        runtime = _preflight_runtime(store, _runtime())
+
         if once:
             for activity_id, status in knock_drain(store, runtime):
                 print(f"knock {activity_id} {status}")
@@ -3731,23 +4037,34 @@ def cmd_watch(args: list[str]) -> None:
                 if pending:
                     head_id = pending[0].get("id")
                     if isinstance(head_id, str) and head_id:
-                        dispatch_assigned(
-                            store,
-                            head_id,
-                            sync=lambda: _sync_once(store),
-                            start=lambda session_id, cwd: _session_start(
+                        runtime = _preflight_runtime(store, _runtime())
+
+                        def start(session_id: str, cwd: Path) -> None:
+                            _session_start(
                                 store,
-                                _runtime(),
+                                runtime,
                                 session_id,
                                 None,
                                 None,
                                 None,
                                 provider="grok",
                                 cwd=str(cwd),
-                            ),
-                            knock=lambda activity_id: deliver(store, _runtime(), activity_id),
+                            )
+
+                        def pane_up(session_id: str) -> bool:
+                            return runtime.exists(session_id)
+
+                        def knock(activity_id: str) -> str:
+                            return deliver(store, runtime, activity_id)
+
+                        dispatch_assigned(
+                            store,
+                            head_id,
+                            sync=lambda: _sync_once(store),
+                            start=start,
+                            knock=knock,
                             workspace_root=workspace_root,
-                            pane_up=lambda session_id: _runtime().exists(session_id),
+                            pane_up=pane_up,
                         )
                 for activity_id in created:
                     print(f"issue.assigned {activity_id}")
@@ -3829,10 +4146,20 @@ def cmd_supervise(args: list[str]) -> None:
                 die(f"supervise --follow already running for session {sid}")
             lock_fh.write(str(os.getpid()))
             lock_fh.flush()
-        runtime = _runtime()
+        _interactive_runtime_preflight(store, sid, provider="grok")
+        runtime = _preflight_runtime(store, _runtime())
         from .telegram_act import reset_idle_clock
 
-        reset_idle_clock(store, working=runtime.exists(sid))
+        def runtime_exists(session_id: str) -> bool:
+            return runtime.exists(session_id)
+
+        def runtime_capture(session_id: str) -> str:
+            return runtime.capture(session_id)
+
+        def knock(activity_id: str) -> str:
+            return deliver(store, runtime, activity_id)
+
+        reset_idle_clock(store, working=runtime_exists(sid))
 
         def start(session_id: str, cwd: Path) -> None:
             _session_start(
@@ -3856,7 +4183,7 @@ def cmd_supervise(args: list[str]) -> None:
                 assigned_id = enqueue_assigned(store, sid, repo, number, run_argv)
                 print(f"issue.assigned {assigned_id}")
                 queued = True
-            pane = runtime.capture(sid) if runtime.exists(sid) else ""
+            pane = runtime_capture(sid) if runtime_exists(sid) else ""
             from .grok_pane import grok_pane_is_working
             from .telegram_act import notify_status
 
@@ -3866,7 +4193,7 @@ def cmd_supervise(args: list[str]) -> None:
                 runtime,
                 sid,
                 start=start,
-                knock=lambda activity_id: deliver(store, runtime, activity_id),
+                knock=knock,
                 pane=pane,
                 working=working,
             )
@@ -3877,7 +4204,7 @@ def cmd_supervise(args: list[str]) -> None:
                     store,
                     sid,
                     line,
-                    working=runtime.exists(sid),
+                    working=runtime_exists(sid),
                 )
                 if posted == "telegram sent":
                     print(posted)
@@ -4007,8 +4334,10 @@ def main(argv: list[str] | None = None) -> None:
         COMMANDS[cmd](args[1:])
     except (StoreError, HubError) as exc:
         die(str(exc))
-    except ModelSlotsError as exc:
+    except PinnedModelSlotsError as exc:
         die(f"invalid models pinned on the task: {exc}")
+    except ModelSlotsError as exc:
+        die(str(exc))
 
 
 if __name__ == "__main__":

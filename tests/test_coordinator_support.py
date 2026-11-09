@@ -44,6 +44,8 @@ def write_accounts(home: Path) -> None:
     (home / "ai-accounts.json").write_text(
         json.dumps(
             {
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+                "models": {"first": "grok", "second": "codex"},
                 "accounts": {
                     "grok-w": {"provider": "grok", "config_dir": "/test/grok"},
                     "codex-w": {"provider": "codex", "config_dir": "/test/codex"},

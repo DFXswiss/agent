@@ -8,7 +8,7 @@ import json
 import pytest
 
 from agent_cli.a38_guard import LOCAL_CI_BEGIN, LOCAL_CI_END, choose_author_report
-from agent_cli.allow import codex_second_review_na
+from agent_cli.allow import second_review_na
 from agent_cli.a38_review import (
     BLOCKING_REVIEW_REASON,
     SECOND_REVIEW_MISSING,
@@ -1661,17 +1661,17 @@ def test_validate_declaration_accepts_second_run_only() -> None:
     assert validate_declaration(payload, head=HEAD, markdown_only=False) == []
 
 
-def test_codex_second_review_na_only_exact_evidence() -> None:
+def test_second_review_na_only_exact_evidence() -> None:
     markdown = f"markdown-only rebase, previously approved at {HEAD}"
-    assert not codex_second_review_na("codex_pr_quality", "")
-    assert not codex_second_review_na("codex_pr_logic", "")
-    assert not codex_second_review_na("codex_pr_quality", markdown)
-    assert not codex_second_review_na("codex_pr_logic", markdown)
-    assert not codex_second_review_na("codex_pr_quality", "something else")
-    assert not codex_second_review_na("grok_pr_quality", "second review not posted")
-    assert not codex_second_review_na("grok_pr_logic", "second review not posted")
-    assert codex_second_review_na("codex_pr_quality", "second review not posted")
-    assert codex_second_review_na("codex_pr_logic", "second review not posted")
+    assert not second_review_na("review_2_quality", "")
+    assert not second_review_na("review_2_logic", "")
+    assert not second_review_na("review_2_quality", markdown)
+    assert not second_review_na("review_2_logic", markdown)
+    assert not second_review_na("review_2_quality", "something else")
+    assert not second_review_na("review_1_quality", "second review not posted")
+    assert not second_review_na("review_1_logic", "second review not posted")
+    assert second_review_na("review_2_quality", "second review not posted")
+    assert second_review_na("review_2_logic", "second review not posted")
 
 
 def _covered(ancestor: str = OTHER) -> dict[str, str]:

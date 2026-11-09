@@ -12,18 +12,21 @@ from typing import Any, Mapping
 
 from .allow import (
     CHECKLIST_KEYS,
-    CODEX_SECOND_REVIEW_KEYS,
     GATE_UNAVAILABLE_KEYS,
     N_A_ALLOWED,
+    SECOND_REVIEW_KEYS,
     SECOND_REVIEW_NOT_POSTED,
-    codex_second_review_na,
+    second_review_na,
 )
 from .model_slots import (
-    DEFAULT_MODEL_SLOTS,
     SLOT_STAGES,
     ModelSlots,
+    canonical_checklist,
+    canonical_key,
+    canonical_stage,
     implementer_from_snapshot,
     models_from_snapshot,
+    parse_model_slots,
 )
 from .pr_guard_config import one_review_for
 
@@ -100,36 +103,36 @@ CHAINS: dict[str, tuple[Step, ...]] = {
         _step("local_check_pass", ("reviewer_approved",), "script"),
         _step("pushed", ("local_check_pass",), "script"),
         _step(
-            "grok_pr_quality",
+            "review_1_quality",
             ("pushed",),
             "agent",
             role="pr-reviewer-quality",
             slot="first",
         ),
         _step(
-            "grok_pr_logic",
+            "review_1_logic",
             ("pushed",),
             "agent",
             role="pr-reviewer-logic",
             slot="first",
         ),
         _step(
-            "codex_pr_quality",
-            ("grok_pr_quality", "grok_pr_logic"),
+            "review_2_quality",
+            ("review_1_quality", "review_1_logic"),
             "agent",
             role="pr-reviewer-quality",
             slot="second",
         ),
         _step(
-            "codex_pr_logic",
-            ("grok_pr_quality", "grok_pr_logic"),
+            "review_2_logic",
+            ("review_1_quality", "review_1_logic"),
             "agent",
             role="pr-reviewer-logic",
             slot="second",
         ),
         _step(
             "contributing_ok",
-            ("codex_pr_quality", "codex_pr_logic"),
+            ("review_2_quality", "review_2_logic"),
             "script",
         ),
         _step("deviation_declared", (), "human", spine=False),
@@ -139,34 +142,34 @@ CHAINS: dict[str, tuple[Step, ...]] = {
         _step("session_registered", (), "script"),
         _step("contributing_read", ("session_registered",), "human"),
         _step(
-            "grok_pr_quality",
+            "review_1_quality",
             ("contributing_read",),
             "agent",
             role="pr-reviewer-quality",
             slot="first",
         ),
         _step(
-            "grok_pr_logic",
+            "review_1_logic",
             ("contributing_read",),
             "agent",
             role="pr-reviewer-logic",
             slot="first",
         ),
         _step(
-            "codex_pr_quality",
-            ("grok_pr_quality", "grok_pr_logic"),
+            "review_2_quality",
+            ("review_1_quality", "review_1_logic"),
             "agent",
             role="pr-reviewer-quality",
             slot="second",
         ),
         _step(
-            "codex_pr_logic",
-            ("grok_pr_quality", "grok_pr_logic"),
+            "review_2_logic",
+            ("review_1_quality", "review_1_logic"),
             "agent",
             role="pr-reviewer-logic",
             slot="second",
         ),
-        _step("coverage_ok", ("codex_pr_quality", "codex_pr_logic"), "script"),
+        _step("coverage_ok", ("review_2_quality", "review_2_logic"), "script"),
         _step("handbook_ok", ("coverage_ok",), "script"),
         _step("contributing_ok", ("handbook_ok",), "script"),
         _step("deviation_declared", (), "human", spine=False),
@@ -191,45 +194,47 @@ CHAINS: dict[str, tuple[Step, ...]] = {
         _step("local_check_pass", ("reviewer_approved",), "script"),
         _step("pushed", ("local_check_pass",), "script"),
         _step(
-            "grok_pr_quality",
+            "review_1_quality",
             ("pushed",),
             "agent",
             role="pr-reviewer-quality",
             slot="first",
         ),
         _step(
-            "grok_pr_logic",
+            "review_1_logic",
             ("pushed",),
             "agent",
             role="pr-reviewer-logic",
             slot="first",
         ),
         _step(
-            "codex_pr_quality",
-            ("grok_pr_quality", "grok_pr_logic"),
+            "review_2_quality",
+            ("review_1_quality", "review_1_logic"),
             "agent",
             role="pr-reviewer-quality",
             slot="second",
         ),
         _step(
-            "codex_pr_logic",
-            ("grok_pr_quality", "grok_pr_logic"),
+            "review_2_logic",
+            ("review_1_quality", "review_1_logic"),
             "agent",
             role="pr-reviewer-logic",
             slot="second",
         ),
-        _step("mergeable", ("codex_pr_quality", "codex_pr_logic"), "script"),
+        _step("mergeable", ("review_2_quality", "review_2_logic"), "script"),
     ),
 }
 
 
 def _satisfied(key: str, checklist: dict[str, str]) -> bool:
+    key = canonical_key(key)
+    checklist = canonical_checklist(checklist)
     st = checklist.get(key)
     if st == "ja":
         return True
     if st == "n_a" and key in N_A_ALLOWED:
         return True
-    if st == "n_a" and key in CODEX_SECOND_REVIEW_KEYS:
+    if st == "n_a" and key in SECOND_REVIEW_KEYS:
         return True
     return False
 
@@ -246,6 +251,7 @@ def steps_for(workflow: str) -> tuple[Step, ...]:
 
 
 def find_step(workflow: str, key: str) -> Step | None:
+    key = canonical_key(key)
     for s in steps_for(workflow):
         if s.key == key:
             return s
@@ -259,6 +265,7 @@ def next_steps(
     spine_only: bool = True,
 ) -> list[Step]:
     """Steps whose needs are met and that are themselves still pending."""
+    checklist = canonical_checklist(checklist)
     out: list[Step] = []
     for s in steps_for(workflow):
         if spine_only and not s.spine:
@@ -297,6 +304,8 @@ def close_allowed(
     status: str = "ja",
 ) -> CloseVerdict:
     """May this key be set to ja/n_a/unavailable NOW? Only the current next step."""
+    key = canonical_key(key)
+    checklist = canonical_checklist(checklist)
     step = find_step(workflow, key)
     if step is None:
         return CloseVerdict(False, f"unknown key {key}", None)
@@ -304,30 +313,30 @@ def close_allowed(
         return CloseVerdict(False, "close-step --status must be ja|n_a|unavailable", step)
     if status == "unavailable" and key not in GATE_UNAVAILABLE_KEYS:
         return CloseVerdict(False, f"unavailable is not allowed for {key}", step)
-    skip_empty = status == "n_a" and key in CODEX_SECOND_REVIEW_KEYS
+    skip_empty = status == "n_a" and key in SECOND_REVIEW_KEYS
     if not skip_empty and (not evidence or not str(evidence).strip()):
         return CloseVerdict(False, f"{key} requires evidence", step)
     want = required_source(step)
     if source != want:
         return CloseVerdict(False, f"{key} requires --source {want} (got {source})", step)
-    # A posted Codex review replaces n_a with ja. n_a already satisfied the
+    # A posted second review replaces n_a with ja. n_a already satisfied the
     # chain, so the key is not a next step. The lane still starts. After ja,
-    # both Codex gates are required again. n_a alone does not grant them.
-    promote_codex = (
+    # both second-stage gates are required again. n_a alone does not grant them.
+    promote_second = (
         status == "ja"
-        and key in CODEX_SECOND_REVIEW_KEYS
+        and key in SECOND_REVIEW_KEYS
         and checklist.get(key) == "n_a"
     )
     ready = next_steps(workflow, checklist, spine_only=False)
-    if step not in ready and not promote_codex:
+    if step not in ready and not promote_second:
         pending = ",".join(s.key for s in next_steps(workflow, checklist, spine_only=True)) or "-"
         return CloseVerdict(
             False,
             f"{key} is not the next step (open: {pending})",
             step,
         )
-    if status == "n_a" and key in CODEX_SECOND_REVIEW_KEYS:
-        if not codex_second_review_na(key, evidence):
+    if status == "n_a" and key in SECOND_REVIEW_KEYS:
+        if not second_review_na(key, evidence):
             return CloseVerdict(
                 False,
                 f"{key} evidence must be {SECOND_REVIEW_NOT_POSTED}",
@@ -389,6 +398,7 @@ def _unavailable_gate_ok(step: Step, snapshot: dict[str, Any]) -> str:
 
 def _latest_agent(snapshot: dict[str, Any], role: str, slot: str | None) -> dict[str, Any] | None:
     """Newest agent row for this role, restricted to the slot's configured provider."""
+    # Recorded-row read: legacy tasks need their historical provider mapping.
     vendor = models_from_snapshot(snapshot).for_slot(slot) if slot else None
     agents = list(snapshot.get("agents") or [])
     hit = None
@@ -406,7 +416,10 @@ def _latest_gate(
 ) -> dict[str, Any] | None:
     hit = None
     for g in snapshot.get("gates") or []:
-        if g.get("stage") == stage and g.get("dimension") == dimension:
+        if (
+            canonical_stage(str(g.get("stage"))) == stage
+            and g.get("dimension") == dimension
+        ):
             hit = g
     return hit
 
@@ -423,6 +436,7 @@ def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:
         # A pinned task closes only with its configured implementer, like the start
         # check. A task created before model slots carries no pin and may hold a
         # codex implementer row; it closes with a row of either slot's provider.
+        # Recorded-row read: this closes only from agents already on the ledger.
         models = models_from_snapshot(snapshot)
         implementer = implementer_from_snapshot(snapshot)
         pinned = snapshot.get("models_pinned", True)
@@ -487,7 +501,11 @@ def _selection_snapshot(
 ) -> Mapping[str, Any]:
     if snapshot is not None:
         return snapshot
-    return {"models": (models or DEFAULT_MODEL_SLOTS).as_dict()}
+    if models is None:
+        # New handoff rendering has no recorded row to read; require configuration.
+        parse_model_slots(None)
+        raise AssertionError("unreachable")
+    return {"models": models.as_dict()}
 
 
 def step_vendor(
@@ -501,7 +519,11 @@ def step_vendor(
         return None
     if step.role == "implementer":
         return implementer_from_snapshot(_selection_snapshot(models, snapshot))
-    return (models or DEFAULT_MODEL_SLOTS).for_slot(step.slot)
+    if models is None:
+        # A provider-bearing step cannot invent a slot assignment.
+        parse_model_slots(None)
+        raise AssertionError("unreachable")
+    return models.for_slot(step.slot)
 
 
 def step_vendor_label(

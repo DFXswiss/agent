@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_cli.ai_accounts import AccountError
+from agent_cli.ai_accounts import LANE_EXECUTION_ERROR, AccountError
 from agent_cli.lane import (
     LANE_STRIP_ENV,
     LaneResult,
@@ -21,6 +22,7 @@ from agent_cli.lane import (
     tmux_wrap_argv,
 )
 from agent_cli.main import _sanitize_lane_output, main
+from agent_cli.model_slots import MODELS_NOT_CONFIGURED
 
 pytestmark = pytest.mark.no_pg
 
@@ -45,6 +47,8 @@ def write_operator_ai_accounts(
     positive cases; negative tests leave the home unconfigured.
     """
     data = {
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "models": {"first": "grok", "second": "codex"},
         "accounts": {
             "grok-a": {"provider": "grok", "config_dir": OPERATOR_GROK_HOME},
             "codex-a": {"provider": "codex", "config_dir": OPERATOR_CODEX_HOME},
@@ -337,7 +341,11 @@ def test_launch_requires_config_home_and_session_id(tmp_path: Path) -> None:
 
 
 def test_launch_unconfigured_lane_fails_before_runner(tmp_path: Path) -> None:
-    """Genuinely empty defaults: no ai-accounts.json, runner must not start."""
+    """Configured accounts without lane execution must not start the runner."""
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("lane_execution")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     spec = tmp_path / "spec.md"
     spec.write_text("do the thing\n", encoding="utf-8")
     called = {"n": 0}
@@ -346,7 +354,7 @@ def test_launch_unconfigured_lane_fails_before_runner(tmp_path: Path) -> None:
         called["n"] += 1
         raise AssertionError("runner must not be called for unconfigured lane")
 
-    with pytest.raises(AccountError, match="No AI session configured"):
+    with pytest.raises(AccountError, match=re.escape(LANE_EXECUTION_ERROR)):
         launch(
             role="implementer",
             vendor="grok",
@@ -359,6 +367,86 @@ def test_launch_unconfigured_lane_fails_before_runner(tmp_path: Path) -> None:
             session_id=DEFAULT_SESSION,
         )
     assert called["n"] == 0
+
+
+def test_launch_dry_run_does_not_require_lane_execution(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("lane_execution")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("inspect the lane command\n", encoding="utf-8")
+
+    def boom(_argv: list[str], _stdin_text: str | None) -> object:
+        raise AssertionError("runner must not be called on dry_run")
+
+    result = launch(
+        role="implementer",
+        vendor="grok",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=boom,
+        dry_run=True,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+    assert result.returncode == 0
+    assert OPERATOR_GROK_MODEL in result.argv
+
+
+def test_launch_unconfigured_models_fail_before_runner(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("models")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("do the thing\n", encoding="utf-8")
+    called = {"n": 0}
+
+    def boom(argv: list[str], stdin_text: str | None) -> object:
+        called["n"] += 1
+        raise AssertionError("runner must not be called for unconfigured models")
+
+    with pytest.raises(AccountError, match=re.escape(MODELS_NOT_CONFIGURED)):
+        launch(
+            role="implementer",
+            vendor="grok",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            runner=boom,
+            dry_run=False,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+    assert called["n"] == 0
+
+
+def test_launch_missing_binding_precedes_missing_models(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("models")
+    raw["sessions"][DEFAULT_SESSION]["lanes"].pop("grok:implementer")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("do the thing\n", encoding="utf-8")
+
+    with pytest.raises(
+        AccountError,
+        match=f"No AI lane configured for session {DEFAULT_SESSION} slot grok:implementer",
+    ):
+        launch(
+            role="implementer",
+            vendor="grok",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            runner=lambda *_args: (_ for _ in ()).throw(AssertionError("must not run")),
+            dry_run=False,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
 
 
 def test_launch_provider_mismatch_refused_before_runner(tmp_path: Path) -> None:
@@ -383,6 +471,71 @@ def test_launch_provider_mismatch_refused_before_runner(tmp_path: Path) -> None:
             spec_file=str(spec),
             cwd=str(tmp_path),
             runner=boom,
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+    assert called["n"] == 0
+
+
+@pytest.mark.parametrize(
+    "lane_execution",
+    [
+        None,
+        {},
+        {"mode": "remote"},
+        {"mode": "local"},
+        {"mode": "remote", "host": ""},
+        {"mode": "remote", "host": "lane;local"},
+        {"mode": "this-device-is-lane-host", "host": "unused"},
+    ],
+)
+def test_launch_invalid_lane_execution_fails_closed(
+    tmp_path: Path, lane_execution: object
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    if lane_execution is None:
+        raw.pop("lane_execution")
+    else:
+        raw["lane_execution"] = lane_execution
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    with pytest.raises(AccountError, match=re.escape(LANE_EXECUTION_ERROR)):
+        launch(
+            role="implementer",
+            vendor="grok",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            runner=lambda *_args: (_ for _ in ()).throw(AssertionError("must not run")),
+            tmux=False,
+            config_home=tmp_path,
+            session_id=DEFAULT_SESSION,
+        )
+
+
+def test_launch_remote_mode_is_rejected_before_runner(tmp_path: Path) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["lane_execution"] = {"mode": "remote", "host": "lane.example"}
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    called = {"n": 0}
+
+    def runner(_argv: list[str], _stdin_text: str | None) -> object:
+        called["n"] += 1
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with pytest.raises(AccountError, match="remote.*not supported"):
+        launch(
+            role="implementer",
+            vendor="grok",
+            spec_file=str(spec),
+            cwd=str(tmp_path),
+            runner=runner,
             tmux=False,
             config_home=tmp_path,
             session_id=DEFAULT_SESSION,
@@ -1095,13 +1248,25 @@ def test_cli_unknown_vendor_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_cli_unconfigured_lane_dies_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Empty defaults: CLI lane run must fail without starting a vendor process."""
+    """Configured accounts without lane execution must not start a vendor process."""
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("lane_execution")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
     monkeypatch.setenv("AGENT_HOME", str(tmp_path))
     spec = tmp_path / "spec.md"
     spec.write_text("implement\n", encoding="utf-8")
+    called = {"n": 0}
+
+    def boom(
+        argv: list[str], stdin_text: str | None, cwd: str | None = None
+    ) -> object:
+        called["n"] += 1
+        raise AssertionError("runner must not be called for unconfigured lane")
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", boom)
     # Do not mock launch: AccountError from real launch must surface via main.
-    # dry-run still resolves accounts before building argv, so no process starts.
-    with pytest.raises(SystemExit, match="No AI session configured"):
+    with pytest.raises(SystemExit, match=re.escape(LANE_EXECUTION_ERROR)):
         run(
             [
                 "lane",
@@ -1116,7 +1281,47 @@ def test_cli_unconfigured_lane_dies_before_launch(
                 str(spec),
                 "--cwd",
                 str(tmp_path),
-                "--dry-run",
                 "--no-tmux",
             ]
         )
+    assert called["n"] == 0
+
+
+def test_cli_unconfigured_models_die_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw.pop("models")
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    called = {"n": 0}
+
+    def boom(
+        argv: list[str], stdin_text: str | None, cwd: str | None = None
+    ) -> object:
+        called["n"] += 1
+        raise AssertionError("runner must not be called for unconfigured models")
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", boom)
+    with pytest.raises(SystemExit, match=re.escape(MODELS_NOT_CONFIGURED)):
+        run(
+            [
+                "lane",
+                "run",
+                "--role",
+                "implementer",
+                "--vendor",
+                "grok",
+                "--session",
+                DEFAULT_SESSION,
+                "--spec-file",
+                str(spec),
+                "--cwd",
+                str(tmp_path),
+                "--no-tmux",
+            ]
+        )
+    assert called["n"] == 0

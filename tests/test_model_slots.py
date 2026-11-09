@@ -17,19 +17,21 @@ from agent_cli.ai_accounts import (
 from agent_cli.allow import GATE_PAIRS, ready_for_done_blocking
 from agent_cli.chain import handoff_prompt, step_vendor_label, steps_for, to_json
 from agent_cli.coordinator_common import (
-    REQUIRED_LANE_SLOTS,
     checklist_key_for_stage,
     required_lane_slots,
 )
 from agent_cli.lane import claude_argv, launch, provider_argv
 from agent_cli.main import main
 from agent_cli.model_slots import (
-    DEFAULT_MODEL_SLOTS,
     IMPLEMENTER_PROVIDERS,
+    LEGACY_RECORDED_SLOTS,
     SUPPORTED_PROVIDERS,
     ModelSlots,
     ModelSlotsError,
+    canonical_key,
+    canonical_stage,
     implementer_from_snapshot,
+    models_for_new_record,
     models_from_snapshot,
     parse_implementer,
     parse_model_slots,
@@ -39,6 +41,10 @@ CLAUDE_DIR = "/operator/path/claude-profile"
 CODEX_DIR = "/operator/path/codex-profile"
 CLAUDE_MODEL = "operator-claude-model"
 CODEX_MODEL = "operator-codex-model"
+UNCONFIGURED_MODELS_MESSAGE = (
+    "models is not configured: the device's ai-accounts.json must name "
+    "models.first and models.second (set by the local harness)"
+)
 
 
 def write_claude_first(
@@ -58,6 +64,7 @@ def write_claude_first(
         "codex:pr-reviewer-logic": "second-reader",
     }
     data: dict = {
+        "lane_execution": {"mode": "this-device-is-lane-host"},
         "models": {"first": "claude", "second": "codex"},
         "accounts": {
             "claude-a": {"provider": "claude", "config_dir": CLAUDE_DIR},
@@ -83,12 +90,16 @@ def write_claude_first(
 
 
 @pytest.mark.no_pg
-def test_supported_providers_and_default_order() -> None:
+def test_supported_providers_and_legacy_recorded_order() -> None:
     assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
     assert IMPLEMENTER_PROVIDERS == frozenset({"grok", "codex", "claude", "deepseek"})
-    assert DEFAULT_MODEL_SLOTS == ModelSlots("grok", "codex")
-    assert parse_model_slots(None) == DEFAULT_MODEL_SLOTS
-    assert models_from_snapshot({}) == DEFAULT_MODEL_SLOTS
+    assert LEGACY_RECORDED_SLOTS == ModelSlots("grok", "codex")
+    with pytest.raises(ModelSlotsError) as excinfo:
+        parse_model_slots(None)
+    assert str(excinfo.value) == UNCONFIGURED_MODELS_MESSAGE
+    assert models_from_snapshot({}) == LEGACY_RECORDED_SLOTS
+    with pytest.raises(ModelSlotsError, match="task models is not configured"):
+        models_for_new_record({})
     assert models_from_snapshot({"models": {"first": "claude", "second": "grok"}}) == ModelSlots(
         "claude", "grok"
     )
@@ -117,8 +128,12 @@ def test_implementer_parsing_and_snapshot_fallback() -> None:
 def test_slots_resolve_stage_and_vendor() -> None:
     models = ModelSlots("claude", "codex")
     assert models.for_slot("first") == "claude"
+    assert models.for_stage("review-1") == "claude"
+    assert models.for_stage("review-2") == "codex"
+    # Keep legacy names here to verify stage and checklist alias compatibility.
     assert models.for_stage("grok-pr") == "claude"
-    assert models.for_stage("codex-pr") == "codex"
+    assert canonical_stage("codex-pr") == "review-2"
+    assert canonical_key("grok_pr_logic") == "review_1_logic"
     assert models.slot_of("codex") == "second"
     assert models.slot_of("grok") is None
     assert models.as_dict() == {"first": "claude", "second": "codex"}
@@ -197,12 +212,16 @@ def test_session_lanes_win_over_device_lanes(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_pg
-def test_unconfigured_home_keeps_historical_order_and_no_lanes(tmp_path: Path) -> None:
-    loaded = load_ai_accounts(tmp_path)
-    assert loaded.models == DEFAULT_MODEL_SLOTS
-    assert loaded.lanes == {}
-    with pytest.raises(AccountError, match="No AI session configured"):
-        loaded.for_lane("s", "implementer", "grok")
+@pytest.mark.parametrize("manifest", [None, {}, {"accounts": {}, "roles": {}, "sessions": {}}])
+def test_unconfigured_models_fail_closed(tmp_path: Path, manifest: dict | None) -> None:
+    if manifest is not None:
+        (tmp_path / "ai-accounts.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(AccountError, match="models is not configured") as excinfo:
+        load_ai_accounts(tmp_path)
+    assert str(excinfo.value) == UNCONFIGURED_MODELS_MESSAGE
+    with pytest.raises(AccountError) as slots_exc:
+        load_model_slots(tmp_path)
+    assert str(slots_exc.value) == UNCONFIGURED_MODELS_MESSAGE
 
 
 @pytest.mark.no_pg
@@ -343,19 +362,20 @@ def test_chain_steps_name_slots_not_vendors() -> None:
     steps = {s.key: s for s in steps_for("implement")}
     assert steps["implementer_done"].slot == "first"
     assert steps["reviewer_approved"].slot == "first"
-    assert steps["grok_pr_quality"].slot == "first"
-    assert steps["codex_pr_logic"].slot == "second"
+    assert steps["review_1_quality"].slot == "first"
+    assert steps["review_2_logic"].slot == "second"
     models = ModelSlots("claude", "codex")
     assert step_vendor_label(steps["reviewer_approved"], models) == "claude"
     assert step_vendor_label(steps["implementer_done"], models) == "claude"
-    assert step_vendor_label(steps["codex_pr_quality"], models) == "codex"
+    assert step_vendor_label(steps["review_2_quality"], models) == "codex"
     assert step_vendor_label(steps["session_registered"], models) == "-"
     assert "who=claude reviewer" in handoff_prompt(
         steps["reviewer_approved"], task_id="1", session_id="s", models=models
     )
-    assert to_json(steps["grok_pr_quality"], models)["vendor"] == "claude"
-    assert to_json(steps["grok_pr_quality"], models)["slot"] == "first"
-    assert to_json(steps["grok_pr_quality"])["vendor"] == "grok"
+    assert to_json(steps["review_1_quality"], models)["vendor"] == "claude"
+    assert to_json(steps["review_1_quality"], models)["slot"] == "first"
+    with pytest.raises(ModelSlotsError, match="models is not configured"):
+        to_json(steps["review_1_quality"])
     separate = {"models": models.as_dict(), "implementer": "deepseek"}
     assert (
         step_vendor_label(steps["implementer_done"], models, snapshot=separate)
@@ -375,15 +395,15 @@ def test_chain_steps_name_slots_not_vendors() -> None:
 def test_gate_pairs_follow_configured_models() -> None:
     assert [slot for _, _, slot in GATE_PAIRS] == ["first", "first", "second", "second"]
     gates = [
-        {"stage": "grok-pr", "dimension": "quality", "vendor": "claude", "verdict": "approved", "head_sha": "a" * 40},
-        {"stage": "grok-pr", "dimension": "logic", "vendor": "claude", "verdict": "approved", "head_sha": "a" * 40},
-        {"stage": "codex-pr", "dimension": "quality", "vendor": "codex", "verdict": "approved", "head_sha": "a" * 40},
-        {"stage": "codex-pr", "dimension": "logic", "vendor": "codex", "verdict": "approved", "head_sha": "a" * 40},
+        {"stage": "review-1", "dimension": "quality", "vendor": "claude", "verdict": "approved", "head_sha": "a" * 40},
+        {"stage": "review-1", "dimension": "logic", "vendor": "claude", "verdict": "approved", "head_sha": "a" * 40},
+        {"stage": "review-2", "dimension": "quality", "vendor": "codex", "verdict": "approved", "head_sha": "a" * 40},
+        {"stage": "review-2", "dimension": "logic", "vendor": "codex", "verdict": "approved", "head_sha": "a" * 40},
     ]
     checklist = {
         "session_registered": "ja", "contributing_read": "ja", "contributing_ok": "ja",
-        "coverage_ok": "ja", "handbook_ok": "ja", "grok_pr_quality": "ja", "grok_pr_logic": "ja",
-        "codex_pr_quality": "ja", "codex_pr_logic": "ja", "deviation_declared": "n_a",
+        "coverage_ok": "ja", "handbook_ok": "ja", "review_1_quality": "ja", "review_1_logic": "ja",
+        "review_2_quality": "ja", "review_2_logic": "ja", "deviation_declared": "n_a",
         "deviation_granted": "n_a",
     }
     task = {
@@ -396,7 +416,7 @@ def test_gate_pairs_follow_configured_models() -> None:
     legacy = dict(task)
     legacy.pop("models")
     blocking = ready_for_done_blocking(legacy)
-    assert any("grok-pr/quality=claude/approved" in b for b in blocking)
+    assert any("review-1/quality=claude/approved" in b for b in blocking)
 
 
 @pytest.mark.no_pg
@@ -410,9 +430,8 @@ def test_coordinator_slot_helpers() -> None:
         "codex:pr-reviewer-quality",
         "codex:pr-reviewer-logic",
     )
-    assert REQUIRED_LANE_SLOTS == required_lane_slots(DEFAULT_MODEL_SLOTS)
-    assert checklist_key_for_stage("grok-pr", "quality") == "grok_pr_quality"
-    assert checklist_key_for_stage("codex-pr", "logic") == "codex_pr_logic"
+    assert checklist_key_for_stage("review-1", "quality") == "review_1_quality"
+    assert checklist_key_for_stage("review-2", "logic") == "review_2_logic"
 
 
 # --- CLI with configured slots ----------------------------------------------
@@ -424,6 +443,16 @@ def _run(home: Path, argv: list[str]) -> None:
 
 
 def _task(home: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    if not (home / "ai-accounts.json").exists():
+        (home / "ai-accounts.json").write_text(
+            json.dumps(
+                {
+                    "models": {"first": "grok", "second": "codex"},
+                    "lane_execution": {"mode": "this-device-is-lane-host"},
+                }
+            ),
+            encoding="utf-8",
+        )
     _run(home, ["init"])
     _run(home, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine", "--skill", "review-loop", "--skill", "pr-review"])
     _run(home, ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"])
@@ -460,23 +489,288 @@ def test_cli_agent_start_follows_configured_first_slot(
         _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "reviewer", "--vendor", "codex", "--round", "1"])
 
 
+def test_cli_agent_start_records_agent_without_lane_execution(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
+    tid = _task(tmp_path, capsys)
+
+    _run(
+        tmp_path,
+        [
+            "agent",
+            "start",
+            "--session",
+            "s",
+            "--task",
+            tid,
+            "--role",
+            "pr-reviewer-quality",
+            "--vendor",
+            "grok",
+        ],
+    )
+    aid = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        row = store.row("agent", aid)
+        assert row is not None
+        assert row["task_id"] == tid
+        assert row["status"] == "working"
+    finally:
+        store.close()
+
+
 def test_cli_gate_record_requires_the_slot_provider(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_claude_first(tmp_path)
     tid = _task(tmp_path, capsys)
-    _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
-    grok_agent = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("agent ")][-1].split()[1]
-    _run(tmp_path, ["agent", "finish", "--id", grok_agent, "--verdict", "approved"])
-    capsys.readouterr()
-    with pytest.raises(SystemExit, match="stage grok-pr requires vendor claude"):
-        _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality", "--vendor", "grok", "--verdict", "approved", "--head", "abcdef0", "--agent", grok_agent])
+    with pytest.raises(SystemExit, match="stage review-1 requires --vendor claude"):
+        _run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "pr-reviewer-quality", "--stage", "review-1",
+                "--vendor", "grok",
+            ],
+        )
     _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "claude"])
     claude_agent = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("agent ")][-1].split()[1]
     _run(tmp_path, ["agent", "finish", "--id", claude_agent, "--verdict", "approved"])
     capsys.readouterr()
-    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality", "--vendor", "claude", "--verdict", "approved", "--head", "abcdef0", "--agent", claude_agent])
-    assert "gate grok-pr/quality=approved" in capsys.readouterr().out
+    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-1", "--dimension", "quality", "--vendor", "claude", "--verdict", "approved", "--head", "abcdef0", "--agent", claude_agent])
+    assert "gate review-1/quality=approved" in capsys.readouterr().out
+
+
+def _remove_task_models(home: Path, tid: str) -> None:
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(home)
+    store = open_store()
+    try:
+        task = {
+            key: value
+            for key, value in (store.row("task", tid) or {}).items()
+            if not key.startswith("_")
+        }
+        task.pop("models", None)
+        store.write("task", "update", tid, task)
+    finally:
+        store.close()
+
+
+def test_legacy_task_without_models_still_displays_recorded_gates(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import load_task_dict, open_store
+
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
+    aid = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("agent ")][-1].split()[1]
+    _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-1", "--dimension", "quality", "--vendor", "grok", "--verdict", "approved", "--head", "abcdef0", "--agent", aid])
+    _remove_task_models(tmp_path, tid)
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        displayed = load_task_dict(store, tid)
+    finally:
+        store.close()
+    assert displayed["models"] == {"first": "grok", "second": "codex"}
+    assert displayed["gates"][0]["vendor"] == "grok"
+
+
+def test_legacy_task_without_models_rejects_new_agent_and_gate_records(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
+    aid = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("agent ")][-1].split()[1]
+    _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    _remove_task_models(tmp_path, tid)
+
+    with pytest.raises(SystemExit, match="task models is not configured"):
+        _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-logic", "--vendor", "grok"])
+    with pytest.raises(SystemExit, match="task models is not configured"):
+        _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-1", "--dimension", "quality", "--vendor", "grok", "--verdict", "approved", "--head", "abcdef0", "--agent", aid])
+
+
+def test_legacy_gate_record_fails_before_historical_vendor_comparison(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_claude_first(tmp_path)
+    tid = _task(tmp_path, capsys)
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "pr-reviewer-quality", "--vendor", "claude",
+        ],
+    )
+    aid = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+    _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    _remove_task_models(tmp_path, tid)
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid, "--stage", "review-1",
+                "--dimension", "quality", "--vendor", "claude",
+                "--verdict", "approved", "--head", "abcdef0", "--agent", aid,
+            ],
+        )
+
+    message = str(excinfo.value).removeprefix("agent: ")
+    assert message.startswith("task models is not configured")
+    assert "requires vendor grok" not in message
+    assert "model slot pinned" not in message
+
+
+def test_gate_record_keeps_session_precondition_before_new_model_pin_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _task(tmp_path, capsys)
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "pr-reviewer-quality", "--vendor", "grok",
+        ],
+    )
+    aid = [
+        line for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+    _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
+    _remove_task_models(tmp_path, tid)
+    from agent_cli.main import open_store
+
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        session = store.row("session", "s")
+        assert session is not None
+        session["status"] = "closed"
+        store.write(
+            "session",
+            "update",
+            "s",
+            {key: value for key, value in session.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="session s is not active"):
+        _run(
+            tmp_path,
+            [
+                "gate", "record", "--task", tid, "--stage", "review-1",
+                "--dimension", "quality", "--vendor", "grok",
+                "--verdict", "approved", "--head", "abcdef0", "--agent", aid,
+            ],
+        )
+
+
+def test_legacy_task_reviewer_start_fails_before_historical_vendor_comparison(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["task", "state", tid, "implementing"])
+    _run(tmp_path, ["round", "start", "--task", tid])
+    _run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "grok", "--round", "1",
+        ],
+    )
+    implementer_id = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("agent ")
+    ][-1].split()[1]
+    _run(tmp_path, ["agent", "finish", "--id", implementer_id, "--verdict", "done"])
+    _remove_task_models(tmp_path, tid)
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            tmp_path,
+            [
+                "agent", "start", "--session", "s", "--task", tid,
+                "--role", "reviewer", "--vendor", "claude", "--round", "1",
+            ],
+        )
+
+    message = str(excinfo.value).removeprefix("agent: ")
+    assert message.startswith("task models is not configured")
+    assert "requires --vendor grok" not in message
+
+
+def test_legacy_task_without_models_rejects_a_new_lane_start(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _task(tmp_path, capsys)
+    _run(tmp_path, ["close-step", "--task", tid, "--key", "session_registered", "--source", "script", "--evidence", "registered"])
+    _run(tmp_path, ["close-step", "--task", tid, "--key", "spec_written", "--source", "human", "--evidence", "spec"])
+    _remove_task_models(tmp_path, tid)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="task models is not configured"):
+        _run(
+            tmp_path,
+            [
+                "run", "--task", tid, "--spec-file", str(spec),
+                "--cwd", str(tmp_path), "--no-tmux",
+            ],
+        )
+
+
+def test_legacy_task_without_models_rejects_new_work_queries_and_handoffs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _task(tmp_path, capsys)
+    _run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "session_registered",
+            "--source", "script", "--evidence", "registered",
+        ],
+    )
+    _run(
+        tmp_path,
+        [
+            "close-step", "--task", tid, "--key", "spec_written",
+            "--source", "human", "--evidence", "spec",
+        ],
+    )
+    _remove_task_models(tmp_path, tid)
+
+    for command in (
+        ["next", "--task", tid],
+        ["run", "--task", tid, "--dry-run"],
+        ["models", "--task", tid],
+    ):
+        with pytest.raises(SystemExit, match="task models is not configured"):
+            _run(tmp_path, command)
 
 
 def test_cli_next_prints_configured_vendor(
@@ -553,6 +847,10 @@ def test_cli_run_hands_off_a_separate_implementer_without_a_local_lane(
 
 @pytest.mark.no_pg
 def test_cli_models_prints_configured_slots(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
     _run(tmp_path, ["models"])
     assert capsys.readouterr().out == "first=grok\nsecond=codex\n"
     write_claude_first(tmp_path)
@@ -570,6 +868,40 @@ def test_cli_models_prints_configured_slots(tmp_path: Path, capsys: pytest.Captu
         _run(tmp_path, ["models", "third"])
     with pytest.raises(SystemExit, match="Usage: agent models"):
         _run(tmp_path, ["models", "--yaml"])
+
+
+def test_device_model_errors_are_not_reported_as_invalid_task_pins(
+    tmp_path: Path,
+) -> None:
+    manifest = {
+        "models": {"first": "claude", "second": "codex"},
+        "implementer": "gemini",
+    }
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as models_exc:
+        _run(tmp_path, ["models"])
+    models_message = str(models_exc.value).removeprefix("agent: ")
+    assert models_message.startswith("implementer must be one of")
+    assert "invalid models pinned on the task" not in str(models_exc.value)
+
+    manifest["implementer"] = "codex"
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _run(tmp_path, ["init"])
+    _run(
+        tmp_path,
+        ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"],
+    )
+    with pytest.raises(SystemExit) as configured_create_exc:
+        _run(
+            tmp_path,
+            [
+                "task", "create", "--session", "s", "--workflow", "implement",
+                "--title", "Ship",
+            ],
+        )
+    configured_create_message = str(configured_create_exc.value).removeprefix("agent: ")
+    assert configured_create_message == "implementer must differ from models.second"
 
 
 def test_coordinator_snapshots_carry_the_configured_models(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -606,14 +938,14 @@ def test_coordinator_snapshots_carry_the_configured_models(tmp_path: Path, capsy
 
 def test_task_pins_models_at_create(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A later device change does not re-label what a task already recorded."""
-    tid = _task(tmp_path, capsys)  # no manifest yet: historical order
+    tid = _task(tmp_path, capsys)  # explicit harness configuration: grok/codex
     _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-quality", "--vendor", "grok"])
     aid = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("agent ")][-1].split()[1]
     _run(tmp_path, ["agent", "finish", "--id", aid, "--verdict", "approved"])
     write_claude_first(tmp_path)  # device now says claude first
     capsys.readouterr()
-    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", "quality", "--vendor", "grok", "--verdict", "approved", "--head", "abcdef0", "--agent", aid])
-    assert "gate grok-pr/quality=approved" in capsys.readouterr().out
+    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-1", "--dimension", "quality", "--vendor", "grok", "--verdict", "approved", "--head", "abcdef0", "--agent", aid])
+    assert "gate review-1/quality=approved" in capsys.readouterr().out
     from agent_cli.main import load_task_dict, open_store
 
     os.environ["AGENT_HOME"] = str(tmp_path)
@@ -739,7 +1071,7 @@ def test_claude_lane_in_tmux_redirects_the_spec_file(tmp_path: Path) -> None:
 
 
 def test_gates_follow_a_non_default_pin(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """codex-pr needs claude grok-pr gates on a claude-first task; gate-blocked recovers on them."""
+    """review-2 needs claude review-1 gates on a claude-first task; gate-blocked recovers on them."""
     write_claude_first(tmp_path)
     tid = _task(tmp_path, capsys)
 
@@ -753,10 +1085,10 @@ def test_gates_follow_a_non_default_pin(tmp_path: Path, capsys: pytest.CaptureFi
     head = "abcdef0"
     for dim in ("quality", "logic"):
         aid = finished(f"pr-reviewer-{dim}", "claude")
-        _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "grok-pr", "--dimension", dim, "--vendor", "claude", "--verdict", "approved", "--head", head, "--agent", aid])
+        _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-1", "--dimension", dim, "--vendor", "claude", "--verdict", "approved", "--head", head, "--agent", aid])
     _run(tmp_path, ["task", "state", tid, "pr-review"])
     q = finished("pr-reviewer-quality", "codex")
-    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "codex-pr", "--dimension", "quality", "--vendor", "codex", "--verdict", "unavailable", "--head", head, "--agent", q, "--evidence", "cli down"])
+    _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-2", "--dimension", "quality", "--vendor", "codex", "--verdict", "unavailable", "--head", head, "--agent", q, "--evidence", "cli down"])
     from agent_cli.main import open_store
 
     os.environ["AGENT_HOME"] = str(tmp_path)
@@ -767,7 +1099,7 @@ def test_gates_follow_a_non_default_pin(tmp_path: Path, capsys: pytest.CaptureFi
         store.close()
     for dim in ("quality", "logic"):
         aid = finished(f"pr-reviewer-{dim}", "codex")
-        _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "codex-pr", "--dimension", dim, "--vendor", "codex", "--verdict", "approved", "--head", head, "--agent", aid])
+        _run(tmp_path, ["gate", "record", "--task", tid, "--stage", "review-2", "--dimension", dim, "--vendor", "codex", "--verdict", "approved", "--head", head, "--agent", aid])
     store = open_store()
     try:
         assert store.row("task", tid)["state"] == "pr-review"

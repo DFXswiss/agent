@@ -20,7 +20,11 @@ STANDING = (
 CONTINUE = "Continue."
 
 
-def tick(runtime: Runtime, session_id: str, state: dict[str, Any]) -> str:
+def tick(
+    runtime: Runtime,
+    session_id: str,
+    state: dict[str, Any],
+) -> str:
     """Advance one keep-working step. Mutates *state*."""
     if not runtime.exists(session_id):
         return "missing"

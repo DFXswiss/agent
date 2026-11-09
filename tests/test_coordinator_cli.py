@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_cli import main as cli
+from agent_cli.model_slots import MODELS_NOT_CONFIGURED
 from test_coordinator_config import config
 
 pytestmark = pytest.mark.no_pg
@@ -59,6 +60,30 @@ def test_script_follow_stops_when_worker_is_removed(configured, monkeypatch):
     monkeypatch.setitem(sys.modules, 'agent_cli.coordinator', SimpleNamespace(tick=tick))
     cli.cmd_coordinate(['--session', 'selected-session', '--follow'])
     assert calls == ['tick', 'close', 30]
+
+
+def test_preflight_block_does_not_end_script_follow(configured, monkeypatch, capsys):
+    calls = []
+    store = SimpleNamespace(close=lambda: calls.append('close'))
+    monkeypatch.setattr(cli, 'open_store', lambda: store)
+    monkeypatch.setattr(cli.time, 'sleep', lambda seconds: calls.append(seconds))
+
+    def tick(actual, worker):
+        assert actual is store
+        calls.append('tick')
+        if calls.count('tick') == 2:
+            (configured / 'coordinator.json').write_text('{}')
+        return [f'preflight blocked: {MODELS_NOT_CONFIGURED}']
+
+    monkeypatch.setitem(sys.modules, 'agent_cli.coordinator', SimpleNamespace(tick=tick))
+    cli.cmd_coordinate(['--session', 'selected-session', '--follow'])
+
+    assert calls == ['tick', 'close', 30, 'tick', 'close', 30]
+    assert capsys.readouterr().out == (
+        f'preflight blocked: {MODELS_NOT_CONFIGURED}\n'
+        f'preflight blocked: {MODELS_NOT_CONFIGURED}\n'
+        'coordinator disabled by configuration\n'
+    )
 
 
 def test_legacy_supervise_cannot_start_coordinator_session(configured, monkeypatch):

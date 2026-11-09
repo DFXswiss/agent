@@ -581,6 +581,7 @@ def test_truncated_outcome_keeps_the_surface_list(
         "title": "Fix",
         "state": "implementing",
         "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
         "payload": {
             "coordinator": {
                 "phase": "implement",
@@ -815,6 +816,109 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
     assert task["payload"]["coordinator"]["phase"] == "pr_gates_grok", lines
     assert fake.launched == launched_before
     assert "implementer" not in fake.launched[len(launched_before) :]
+
+
+def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    tid = "98989898-9898-4989-8989-989898989898"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "models": {"first": "grok", "second": "codex"},
+            "payload": {
+                "coordinator": {
+                    "phase": "pr_gates_grok",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-98989898",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                    "evidence": {"tests_pass": True, "tests_head": fake.head},
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    from agent_cli.coordinator_git import _write_marker
+
+    branch = "task-98989898"
+    fake.remotes = {
+        "origin": "https://github.com/example/project.git",
+        "publication": "https://github.com/example/project.git",
+    }
+    fake.branch = branch
+    fake.branches.add(branch)
+    _write_marker(
+        worker,
+        tid,
+        {
+            "phase": "ready",
+            "task_id": tid,
+            "session_id": worker.session_id,
+            "target_repo": "example/project",
+            "publication_repo": "example/project",
+            "branch": branch,
+            "base": "develop",
+            "base_sha": fake.base,
+            "worktree": str(wt),
+            "worker_login": "worker-bot",
+        },
+    )
+
+    def one_lane_fails(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        if "pr-reviewer-quality" in material:
+            raise RuntimeError("provider transport failed")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    lines = tick(store, worker, runner=fake, lane_runner=one_lane_fails)
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 2
+    assert all(row.get("status") == "done" for row in agents)
+    blockers = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and "outcome is uncertain" in str((row.get("payload") or {}).get("body") or "")
+    ]
+    assert len(blockers) == 1
+    assert lines == ["review-1 uncertain; blocked"]
 
 
 @pytest.mark.parametrize("dismissal_point", ["readiness", "evidence_comment"])

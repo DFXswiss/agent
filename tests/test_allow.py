@@ -25,10 +25,10 @@ def _approved_gates(head: str = "abc123") -> list[dict]:
             "head_sha": head,
         }
         for stage, dim, vendor in (
-            ("grok-pr", "quality", "grok"),
-            ("grok-pr", "logic", "grok"),
-            ("codex-pr", "quality", "codex"),
-            ("codex-pr", "logic", "codex"),
+            ("review-1", "quality", "grok"),
+            ("review-1", "logic", "grok"),
+            ("review-2", "quality", "codex"),
+            ("review-2", "logic", "codex"),
         )
     ]
 
@@ -216,7 +216,7 @@ class TestEvaluateAllow(unittest.TestCase):
 
     def test_task_done_unavailable_gate_key_blocks(self) -> None:
         task = _ready_task()
-        task["checklist"]["grok_pr_quality"] = "unavailable"
+        task["checklist"]["review_1_quality"] = "unavailable"
         r = evaluate_allow(
             "task-done",
             session_id="sess-a",
@@ -224,12 +224,12 @@ class TestEvaluateAllow(unittest.TestCase):
             session_tasks=[task],
         )
         self.assertFalse(r.allowed)
-        self.assertTrue(any("grok_pr_quality=unavailable" in b for b in r.blocking))
+        self.assertTrue(any("review_1_quality=unavailable" in b for b in r.blocking))
 
     def test_both_codex_n_a_skips_codex_ready_blockers(self) -> None:
         task = _ready_task()
-        task["checklist"]["codex_pr_quality"] = "n_a"
-        task["checklist"]["codex_pr_logic"] = "n_a"
+        task["checklist"]["review_2_quality"] = "n_a"
+        task["checklist"]["review_2_logic"] = "n_a"
         task["pull_opener"] = "alice"
         task["trusted_pr_guard"] = {
             "schema": "pr-guard/v1",
@@ -237,21 +237,21 @@ class TestEvaluateAllow(unittest.TestCase):
             "one_review_authors": ["alice"],
         }
         task["checklist_evidence"] = {
-            "codex_pr_quality": SECOND_REVIEW_NOT_POSTED,
-            "codex_pr_logic": SECOND_REVIEW_NOT_POSTED,
+            "review_2_quality": SECOND_REVIEW_NOT_POSTED,
+            "review_2_logic": SECOND_REVIEW_NOT_POSTED,
         }
-        task["gates"] = [g for g in task["gates"] if g["stage"] == "grok-pr"]
+        task["gates"] = [g for g in task["gates"] if g["stage"] == "review-1"]
         blocking = ready_for_done_blocking(task)
         joined = " ".join(blocking)
-        self.assertNotIn("codex_pr_quality", joined)
-        self.assertNotIn("codex_pr_logic", joined)
-        self.assertNotIn("codex-pr", joined)
+        self.assertNotIn("review_2_quality", joined)
+        self.assertNotIn("review_2_logic", joined)
+        self.assertNotIn("review-2", joined)
         self.assertEqual(blocking, [])
 
     def test_both_codex_n_a_without_the_evidence_still_blocks(self) -> None:
         task = _ready_task()
-        task["checklist"]["codex_pr_quality"] = "n_a"
-        task["checklist"]["codex_pr_logic"] = "n_a"
+        task["checklist"]["review_2_quality"] = "n_a"
+        task["checklist"]["review_2_logic"] = "n_a"
         task["pull_opener"] = "alice"
         task["trusted_pr_guard"] = {
             "schema": "pr-guard/v1",
@@ -259,50 +259,50 @@ class TestEvaluateAllow(unittest.TestCase):
             "one_review_authors": ["alice"],
         }
         task["checklist_evidence"] = {
-            "codex_pr_quality": "seed",
-            "codex_pr_logic": SECOND_REVIEW_NOT_POSTED,
+            "review_2_quality": "seed",
+            "review_2_logic": SECOND_REVIEW_NOT_POSTED,
         }
-        task["gates"] = [g for g in task["gates"] if g["stage"] == "grok-pr"]
+        task["gates"] = [g for g in task["gates"] if g["stage"] == "review-1"]
         blocking = ready_for_done_blocking(task)
         joined = " ".join(blocking)
-        self.assertIn("codex_pr_quality=n_a", joined)
-        self.assertIn("codex_pr_logic=n_a", joined)
+        self.assertIn("review_2_quality=n_a", joined)
+        self.assertIn("review_2_logic=n_a", joined)
 
     def test_both_codex_n_a_without_trusted_list_still_blocks(self) -> None:
         task = _ready_task()
-        task["checklist"]["codex_pr_quality"] = "n_a"
-        task["checklist"]["codex_pr_logic"] = "n_a"
-        task["gates"] = [g for g in task["gates"] if g["stage"] == "grok-pr"]
+        task["checklist"]["review_2_quality"] = "n_a"
+        task["checklist"]["review_2_logic"] = "n_a"
+        task["gates"] = [g for g in task["gates"] if g["stage"] == "review-1"]
         blocking = ready_for_done_blocking(task)
         joined = " ".join(blocking)
-        self.assertIn("codex_pr_quality=n_a", joined)
-        self.assertIn("codex_pr_logic=n_a", joined)
+        self.assertIn("review_2_quality=n_a", joined)
+        self.assertIn("review_2_logic=n_a", joined)
 
     def test_only_codex_quality_n_a_still_blocks(self) -> None:
         task = _ready_task()
-        task["checklist"]["codex_pr_quality"] = "n_a"
+        task["checklist"]["review_2_quality"] = "n_a"
         blocking = ready_for_done_blocking(task)
-        self.assertTrue(any("codex_pr_quality" in b for b in blocking))
+        self.assertTrue(any("review_2_quality" in b for b in blocking))
 
     def test_both_codex_n_a_still_blocks_grok_n_a(self) -> None:
         task = _ready_task()
-        task["checklist"]["codex_pr_quality"] = "n_a"
-        task["checklist"]["codex_pr_logic"] = "n_a"
-        task["checklist"]["grok_pr_quality"] = "n_a"
+        task["checklist"]["review_2_quality"] = "n_a"
+        task["checklist"]["review_2_logic"] = "n_a"
+        task["checklist"]["review_1_quality"] = "n_a"
         blocking = ready_for_done_blocking(task)
-        self.assertTrue(any("grok_pr_quality" in b for b in blocking))
+        self.assertTrue(any("review_1_quality" in b for b in blocking))
 
     def test_both_codex_n_a_still_blocks_missing_grok_gate(self) -> None:
         task = _ready_task()
-        task["checklist"]["codex_pr_quality"] = "n_a"
-        task["checklist"]["codex_pr_logic"] = "n_a"
+        task["checklist"]["review_2_quality"] = "n_a"
+        task["checklist"]["review_2_logic"] = "n_a"
         task["gates"] = [
             g
             for g in task["gates"]
-            if not (g["stage"] == "grok-pr" and g["dimension"] == "quality")
+            if not (g["stage"] == "review-1" and g["dimension"] == "quality")
         ]
         blocking = ready_for_done_blocking(task)
-        self.assertTrue(any("gate:grok-pr/quality" in b for b in blocking))
+        self.assertTrue(any("gate:review-1/quality" in b for b in blocking))
 
 
 if __name__ == "__main__":

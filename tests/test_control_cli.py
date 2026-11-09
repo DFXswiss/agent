@@ -3,14 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from agent_cli import main as main_mod
 from agent_cli.main import apply_control, main, should_sync_on_ws
 from agent_cli.runtime import Completed, Runtime
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 
 OPERATOR_INTERACTIVE_MODEL = "operator-interactive-model"
 OPERATOR_INTERACTIVE_MODEL_B = "operator-interactive-model-b"
@@ -36,6 +38,8 @@ def write_operator_interactive_ai_accounts(
     raw-shell starts (provider=None) must not rely on this helper.
     """
     data = {
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "models": {"first": "grok", "second": "codex"},
         "accounts": {
             account_name: {"provider": "grok", "config_dir": config_dir},
             "interactive-grok-b": {
@@ -95,6 +99,37 @@ def expected_ai_binding(
         "access": access,
         "configuration": hashlib.sha256(config_dir.encode()).hexdigest(),
     }
+
+
+def bind_interactive_runtime(home: Path, session_id: str) -> None:
+    store = Store(home)
+    try:
+        row = store.row("session", session_id)
+        assert row is not None
+        row["runtime"] = {
+            "control": "attached",
+            "tmux_session": f"agent-{session_id}",
+            "tmux_pane": f"agent-{session_id}:0.0",
+            "provider": "grok",
+            "model": OPERATOR_INTERACTIVE_MODEL,
+            "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "ai_binding": expected_ai_binding(),
+        }
+        store.write(
+            "session",
+            "update",
+            session_id,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+
+def remove_ai_setting(home: Path, setting: str) -> None:
+    path = home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop(setting)
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def run(home: Path, argv: list[str]) -> None:
@@ -157,6 +192,7 @@ def test_cli_start_provider_grok_mints_uuid_and_resumes(
         assert f"grok={gid}" in out
         assert row["runtime"]["ai_binding"] == expected_ai_binding()
         assert row["runtime"]["model"] == OPERATOR_INTERACTIVE_MODEL
+        assert "grok_start_pending" not in row["runtime"]
         first = [c for c in calls if c[:2] == ["tmux", "new-session"]][-1]
         assert "env" in first
         assert "ANTHROPIC_API_KEY" in first
@@ -462,6 +498,964 @@ def test_missing_interactive_account_refuses_before_process_start(
     assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
 
 
+def test_missing_models_refuses_after_interactive_binding_before_process_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("models")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        return Completed(1, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="models is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+def test_missing_lane_execution_refuses_interactive_process_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("lane_execution")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="lane_execution is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_interactive_configuration_is_checked_before_runtime_target_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop(missing)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (tmp_path / "runtime-targets.json").write_text(
+        json.dumps({SESSION_A: ["remote-runtime"]}), encoding="utf-8"
+    )
+    calls: list[list[str]] = []
+
+    def runtime_factory(*_args: object, **kwargs: object) -> Runtime:
+        targets = kwargs.get("tmux_targets")
+        assert targets == {SESSION_A: ["remote-runtime"]}
+        assert isinstance(targets, dict)
+        return Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", ""),
+            tmux_targets=targets,
+        )
+
+    monkeypatch.setattr(main_mod, "Runtime", runtime_factory)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_fresh_grok_start_rechecks_configuration_between_runtime_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            remove_ai_setting(tmp_path, missing)
+            return Completed(0, "tmux 3.3a", "")
+        return Completed(1, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert calls == [["tmux", "-V"]]
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_fresh_grok_start_rechecks_configuration_before_new_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+    has_session_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal has_session_calls
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            has_session_calls += 1
+            if has_session_calls == 2:
+                remove_ai_setting(tmp_path, missing)
+            return Completed(1, "", "session not found")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert has_session_calls == 2
+    assert not any(argv[:2] == ["tmux", "new-session"] for argv in calls)
+
+
+def test_fresh_grok_start_keeps_metadata_when_session_appears_between_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+    has_session_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal has_session_calls
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            has_session_calls += 1
+            if has_session_calls == 1:
+                return Completed(1, "", "session not found")
+            return Completed(0, "", "")
+        if argv[:2] == ["tmux", "new-session"]:
+            pytest.fail("the concurrent tmux session must not be replaced")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    original_runtime = {
+        "tmux_session": f"agent-{SESSION_A}",
+        "control": "stopped",
+        "keep_working": {"standing_sent": True},
+    }
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = original_runtime
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(
+        SystemExit,
+        match="tmux session already exists; Grok was not started",
+    ):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"] == original_runtime
+    finally:
+        store.close()
+    assert has_session_calls == 2
+    assert not any(argv[:2] == ["tmux", "new-session"] for argv in calls)
+    assert not any(argv[:2] == ["tmux", "resize-window"] for argv in calls)
+
+
+def test_failed_grok_start_marker_write_does_not_start_or_change_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    original_runtime = {
+        "tmux_session": f"agent-{SESSION_A}",
+        "control": "stopped",
+        "keep_working": {"standing_sent": True},
+    }
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = original_runtime
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    original_write = Store.write
+
+    def fail_start_marker_write(
+        self: Store, table: str, op: str, row_id: str, payload: dict
+    ) -> dict:
+        runtime = payload.get("runtime")
+        if (
+            table == "session"
+            and op == "update"
+            and row_id == SESSION_A
+            and isinstance(runtime, dict)
+            and runtime.get("grok_start_pending") is True
+        ):
+            raise StoreError("start marker write failed")
+        return original_write(self, table, op, row_id, payload)
+
+    monkeypatch.setattr(Store, "write", fail_start_marker_write)
+
+    with pytest.raises(SystemExit, match="start marker write failed"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert calls == []
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"] == original_runtime
+    finally:
+        store.close()
+
+
+def test_failed_grok_new_session_restores_original_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(1, "", "session not found")
+        if argv[:2] == ["tmux", "new-session"]:
+            return Completed(1, "", "new-session failed")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    original_runtime = {
+        "tmux_session": f"agent-{SESSION_A}",
+        "control": "stopped",
+        "keep_working": {"standing_sent": True},
+    }
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = original_runtime
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="new-session failed"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    assert any(argv[:2] == ["tmux", "new-session"] for argv in calls)
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"] == original_runtime
+    finally:
+        store.close()
+
+
+def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(1, "", "session not found")
+        return Completed(0, "", "")
+
+    original_write = Store.write
+
+    def fail_final_metadata_write(
+        self: Store, table: str, op: str, row_id: str, payload: dict
+    ) -> dict:
+        runtime = payload.get("runtime")
+        if (
+            table == "session"
+            and op == "update"
+            and row_id == SESSION_A
+            and isinstance(runtime, dict)
+            and runtime.get("provider") == "grok"
+            and runtime.get("grok_start_pending") is not True
+            and any(argv[:2] == ["tmux", "new-session"] for argv in calls)
+        ):
+            raise StoreError("final metadata write failed")
+        return original_write(self, table, op, row_id, payload)
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    monkeypatch.setattr(Store, "write", fail_final_metadata_write)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="final metadata write failed"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"]["grok_start_pending"] is True
+        assert row["runtime"]["ai_binding"] == expected_ai_binding()
+        assert "grok_session_id" not in row["runtime"]
+    finally:
+        store.close()
+
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["roles"]["interactive-builder"]["model"] = "changed-after-failed-write"
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    calls.clear()
+    with pytest.raises(SystemExit, match="interactive AI binding changed"):
+        run(tmp_path, ["session", "input", "--id", SESSION_A, "--data", "continue"])
+    assert calls == []
+
+
+def test_providerless_start_preflights_existing_grok_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    remove_ai_setting(tmp_path, "models")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="models is not configured"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A])
+
+    assert calls == []
+
+
+def test_control_resize_preflights_existing_grok_binding(
+    tmp_path: Path,
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    remove_ai_setting(tmp_path, "lane_execution")
+    calls: list[list[str]] = []
+    runtime = Runtime(
+        runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+    )
+    store = Store(tmp_path)
+    try:
+        ack = apply_control(
+            store,
+            runtime,
+            {
+                "type": "control",
+                "session_id": SESSION_A,
+                "action": "resize",
+                "payload": {"cols": 100, "rows": 40},
+            },
+        )
+    finally:
+        store.close()
+
+    assert ack["ok"] is False
+    assert "lane_execution is not configured" in ack["error"]
+    assert calls == []
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_session_input_preflights_before_grok_runtime_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    remove_ai_setting(tmp_path, missing)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(
+            tmp_path,
+            ["session", "input", "--id", SESSION_A, "--data", "continue"],
+        )
+
+    assert calls == []
+
+
+def test_raw_session_input_still_does_not_require_ai_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    run(
+        tmp_path,
+        ["session", "input", "--id", SESSION_A, "--data", "raw terminal"],
+    )
+
+    assert calls == [
+        [
+            "tmux",
+            "send-keys",
+            "-t",
+            "agent-sess-1",
+            "-l",
+            "--",
+            "raw terminal",
+        ]
+    ]
+
+
+def test_authorized_grok_input_preserves_runtime_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    (tmp_path / "runtime-targets.json").write_text(
+        json.dumps({SESSION_A: ["remote-runtime"]}), encoding="utf-8"
+    )
+    calls: list[list[str]] = []
+
+    def runtime_factory(*_args: object, **kwargs: object) -> Runtime:
+        targets = kwargs.get("tmux_targets")
+        assert targets == {SESSION_A: ["remote-runtime"]}
+        assert isinstance(targets, dict)
+        return Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", ""),
+            tmux_targets=targets,
+        )
+
+    monkeypatch.setattr(main_mod, "Runtime", runtime_factory)
+
+    run(
+        tmp_path,
+        ["session", "input", "--id", SESSION_A, "--data", "authorized"],
+    )
+
+    assert calls == [
+        [
+            "remote-runtime",
+            "tmux",
+            "send-keys",
+            "-t",
+            "agent-sess-1",
+            "-l",
+            "--",
+            "authorized",
+        ]
+    ]
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_keep_working_preflights_before_initial_runtime_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    remove_ai_setting(tmp_path, missing)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(
+            tmp_path,
+            ["session", "keep-working", "--id", SESSION_A, "--once"],
+        )
+
+    assert calls == []
+
+
+def test_keep_working_rechecks_preflight_before_each_iteration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "capture-pane"]:
+            return Completed(0, "Waiting for response… 1s [stop]", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    calls_before_configuration_removal: list[list[list[str]]] = []
+
+    def remove_configuration(_seconds: float) -> None:
+        calls_before_configuration_removal.append(list(calls))
+        remove_ai_setting(tmp_path, "lane_execution")
+
+    monkeypatch.setattr(main_mod.time, "sleep", remove_configuration)
+
+    with pytest.raises(SystemExit, match="lane_execution is not configured"):
+        run(
+            tmp_path,
+            ["session", "keep-working", "--id", SESSION_A, "--follow"],
+        )
+
+    assert len(calls_before_configuration_removal) == 1
+    assert calls == calls_before_configuration_removal[0]
+
+
+@pytest.mark.parametrize("missing", ["models", "lane_execution"])
+def test_knock_once_preflights_before_grok_runtime_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    store = Store(tmp_path)
+    try:
+        store.write(
+            "activity",
+            "insert",
+            "mail-preflight",
+            {
+                "id": "mail-preflight",
+                "session_id": "sender",
+                "type": "message",
+                "payload": {"to_session": SESSION_A, "body": "secret"},
+                "execution_status": "pending",
+            },
+        )
+        store.enqueue_wake("mail-preflight", SESSION_A)
+    finally:
+        store.close()
+    remove_ai_setting(tmp_path, missing)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "Runtime",
+        lambda *a, **k: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match=f"{missing} is not configured"):
+        run(tmp_path, ["knock", "--once"])
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("starter", ["watch", "supervise"])
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("models", "models is not configured"),
+        ("lane_execution", "lane_execution is not configured"),
+        ("binding", "interactive AI binding changed"),
+    ],
+)
+def test_assignment_starters_preflight_before_attached_runtime_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    starter: str,
+    mutation: str,
+    error: str,
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = {
+            "control": "attached",
+            "tmux_session": "agent-sess-1",
+            "grok_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "ai_binding": expected_ai_binding(),
+        }
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    path = tmp_path / "ai-accounts.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "binding":
+        config["roles"]["interactive-builder"]["model"] = "changed-after-attach"
+    else:
+        config.pop(mutation)
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    calls: list[list[str]] = []
+    runtime = Runtime(
+        runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+    )
+    monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
+
+    if starter == "watch":
+        monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
+        monkeypatch.setattr(
+            main_mod, "assigned_workspace_root", lambda _store: tmp_path
+        )
+        monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: SESSION_A)
+        monkeypatch.setattr(
+            main_mod,
+            "pending_assigned",
+            lambda _store, _sid: [{"id": "assignment"}],
+        )
+
+        def dispatch(
+            _store: object,
+            _activity_id: str,
+            *,
+            pane_up: Callable[[str], bool] | None = None,
+            **_kwargs: object,
+        ) -> str:
+            assert pane_up is not None
+            return "held" if pane_up(SESSION_A) else "started"
+
+        monkeypatch.setattr(main_mod, "dispatch_assigned", dispatch)
+        argv = ["watch", "assigned"]
+    else:
+        argv = ["supervise", "--session", SESSION_A, "--once"]
+
+    with pytest.raises(SystemExit, match=error):
+        main_mod.main(argv)
+    assert calls == []
+
+
+def test_supervise_preflights_fresh_grok_session_before_runtime_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "runner"])
+    remove_ai_setting(tmp_path, "models")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod,
+        "_runtime",
+        lambda: Runtime(
+            runner=lambda argv: calls.append(list(argv)) or Completed(0, "", "")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="models is not configured"):
+        main_mod.cmd_supervise(["--session", SESSION_A, "--once"])
+
+    assert calls == []
+
+
+def test_supervise_raw_terminal_still_does_not_require_ai_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agent_cli.telegram_act as telegram_mod
+
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "runner"])
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = {
+            "control": "attached",
+            "tmux_session": f"agent-{SESSION_A}",
+        }
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(0, "", "")
+        if argv[:2] == ["tmux", "capture-pane"]:
+            return Completed(0, "raw terminal", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "_runtime", lambda: Runtime(runner=runner))
+    monkeypatch.setattr(telegram_mod, "notify_status", lambda *a, **k: None)
+
+    main_mod.cmd_supervise(["--session", SESSION_A, "--once"])
+
+    assert any(argv[:2] == ["tmux", "has-session"] for argv in calls)
+
+
+@pytest.mark.parametrize("starter", ["watch", "supervise"])
+def test_assignment_knocks_use_preflight_runtime_in_deliver(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    starter: str,
+) -> None:
+    import agent_cli.knock as knock_mod
+    import agent_cli.supervise as supervise_mod
+    import agent_cli.telegram_act as telegram_mod
+
+    sid = "assigned-session"
+    store = SimpleNamespace(home=tmp_path, close=lambda: None)
+    runtime = Runtime(
+        runner=lambda _argv: Completed(0, "", "")
+    )
+    checked: list[str] = []
+    delivered: list[str] = []
+
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.setattr(main_mod, "open_store", lambda: store)
+    monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
+    monkeypatch.setattr(main_mod, "_interactive_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        main_mod,
+        "_interactive_runtime_preflight",
+        lambda _store, session_id, **_kwargs: checked.append(session_id),
+    )
+
+    def deliver(
+        _store: object,
+        _runtime: object,
+        activity_id: str,
+    ) -> str:
+        assert _runtime.exists(sid)
+        delivered.append(activity_id)
+        return "sent"
+
+    monkeypatch.setattr(knock_mod, "deliver", deliver)
+    if starter == "watch":
+        monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
+        monkeypatch.setattr(
+            main_mod, "assigned_workspace_root", lambda _store: tmp_path
+        )
+        monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: sid)
+        monkeypatch.setattr(
+            main_mod,
+            "pending_assigned",
+            lambda _store, _sid: [{"id": "assignment"}],
+        )
+
+        def dispatch(
+            _store: object,
+            activity_id: str,
+            *,
+            knock: Callable[[str], str],
+            **_kwargs: object,
+        ) -> str:
+            return knock(activity_id)
+
+        monkeypatch.setattr(main_mod, "dispatch_assigned", dispatch)
+        main_mod.cmd_watch(["assigned"])
+    else:
+        monkeypatch.setattr(telegram_mod, "reset_idle_clock", lambda *a, **k: None)
+        monkeypatch.setattr(telegram_mod, "notify_status", lambda *a, **k: None)
+
+        def supervise_tick(
+            *_args: object,
+            knock: Callable[[str], str],
+            **_kwargs: object,
+        ) -> str:
+            knock("assignment")
+            return "supervise commission"
+
+        monkeypatch.setattr(supervise_mod, "tick", supervise_tick)
+        main_mod.cmd_supervise(["--session", sid, "--once"])
+
+    assert delivered == ["assignment"]
+    assert checked
+    assert set(checked) == {sid}
+
+
+def test_assignment_starters_forward_the_workspace_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sid = "assigned-session"
+    store = SimpleNamespace(home=tmp_path, close=lambda: None)
+    runtime = Runtime(runner=lambda _argv: Completed(1, "", ""))
+    starts: list[tuple[str, str | None]] = []
+
+    def session_start(
+        _store: object,
+        _runtime: object,
+        session_id: str,
+        _command: str | None,
+        _cols: int | None,
+        _rows: int | None,
+        **kwargs: object,
+    ) -> str:
+        cwd = kwargs.get("cwd")
+        assert cwd is None or isinstance(cwd, str)
+        starts.append((session_id, cwd))
+        return "tmux-name"
+
+    monkeypatch.setenv("AGENT_HOME", str(tmp_path))
+    monkeypatch.setattr(main_mod, "open_store", lambda: store)
+    monkeypatch.setattr(main_mod, "_runtime", lambda: runtime)
+    monkeypatch.setattr(main_mod, "_session_start", session_start)
+    monkeypatch.setattr(
+        main_mod, "_interactive_runtime_preflight", lambda *a, **k: None
+    )
+    monkeypatch.setattr(main_mod, "scan_assigned", lambda *a, **k: ([], 0))
+    monkeypatch.setattr(main_mod, "assigned_workspace_root", lambda _store: tmp_path / "watch")
+    monkeypatch.setattr(main_mod, "assigned_session_id", lambda _home: sid)
+    monkeypatch.setattr(main_mod, "pending_assigned", lambda _store, _sid: [{"id": "assignment"}])
+
+    def dispatch(
+        _store: object,
+        _activity_id: str,
+        *,
+        start: Callable[[str, Path], None],
+        workspace_root: Path,
+        **_kwargs: object,
+    ) -> str:
+        start(sid, workspace_root / sid)
+        return "started"
+
+    monkeypatch.setattr(main_mod, "dispatch_assigned", dispatch)
+    main_mod.cmd_watch(["assigned"])
+
+    import agent_cli.supervise as supervise_mod
+    import agent_cli.telegram_act as telegram_mod
+
+    supervise_cwd = tmp_path / "supervise" / sid
+
+    def tick(
+        *_args: object,
+        start: Callable[[str, Path], None],
+        **_kwargs: object,
+    ) -> str:
+        start(sid, supervise_cwd)
+        return "supervise commission"
+
+    monkeypatch.setattr(supervise_mod, "tick", tick)
+    monkeypatch.setattr(telegram_mod, "reset_idle_clock", lambda *a, **k: None)
+    monkeypatch.setattr(telegram_mod, "notify_status", lambda *a, **k: None)
+    main_mod.cmd_supervise(["--session", sid, "--once"])
+
+    assert starts == [
+        (sid, str(tmp_path / "watch" / sid)),
+        (sid, str(supervise_cwd)),
+    ]
+
+
+def test_remote_interactive_mode_is_rejected_before_process_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {"mode": "remote", "host": "lane.example"}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+
+    with pytest.raises(SystemExit, match="remote.*not supported"):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+
+
 def test_two_sessions_use_different_interactive_accounts_and_models(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -558,6 +1552,51 @@ def test_resume_refuses_account_config_role_or_model_change_before_process_start
         run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
     after = len([c for c in calls if c[:2] == ["tmux", "new-session"]])
     assert after == before
+
+
+def test_resume_accepts_legacy_binding_with_lane_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    bind_interactive_runtime(tmp_path, SESSION_A)
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"]["ai_binding"]["lane_execution"] = {
+            "mode": "this-device-is-lane-host"
+        }
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            return Completed(0, "", "")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"]["ai_binding"] == expected_ai_binding()
+    finally:
+        store.close()
 
 
 def test_legacy_grok_session_without_ai_binding_refuses_resume(

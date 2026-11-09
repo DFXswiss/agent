@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +13,12 @@ from agent_cli.store import Store, StoreError, utcnow
 
 
 def _runner_session(store: Store) -> None:
+    # The local harness configures device model slots before creating tasks.
+    if not (store.home / "ai-accounts.json").exists():
+        (store.home / "ai-accounts.json").write_text(
+            json.dumps({"models": {"first": "grok", "second": "codex"}}),
+            encoding="utf-8",
+        )
     store.write(
         "session",
         "insert",
@@ -64,6 +71,28 @@ def _fix(store: Store, activity_id: str = "fix-1") -> None:
                 "fingerprint": "api|TimeoutError|abc|prod",
             },
             "execution_status": "pending",
+        },
+    )
+
+
+def _legacy_task(store: Store) -> None:
+    now = utcnow()
+    store.write(
+        "task",
+        "insert",
+        "legacy-error-fix-task",
+        {
+            "id": "legacy-error-fix-task",
+            "session_id": "runner-1",
+            "workflow": "implement",
+            "title": "Legacy error fix",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "created_at": now,
+            "updated_at": now,
         },
     )
 
@@ -268,6 +297,299 @@ def test_scan_error_fix_clone_failure_stays_pending_and_cleans_staging(
     assert row["execution_status"] == "pending"
     assert store.rows("task") == []
     assert not (tmp_path / "error-fix-work" / "pending-fix-1").exists()
+
+
+def test_scan_error_fix_pre_clone_session_race_stays_pending_and_cleans_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    staging = tmp_path / "error-fix-work" / "pending-fix-1"
+    staging.mkdir(parents=True)
+    active_checks = 0
+    require_active_session = error_fix_act_mod._require_active_session
+
+    def close_after_first_check(current_store: Store, session_id: str) -> dict:
+        nonlocal active_checks
+        active_checks += 1
+        session = require_active_session(current_store, session_id)
+        if active_checks == 1:
+            updated = {
+                key: value for key, value in session.items() if not key.startswith("_")
+            }
+            updated["status"] = "closed"
+            current_store.write("session", "update", session_id, updated)
+        return session
+
+    monkeypatch.setattr(
+        error_fix_act_mod,
+        "_require_active_session",
+        close_after_first_check,
+    )
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "pending"
+    assert row.get("execution_error") is None
+    assert row["result"] == {}
+    assert active_checks == 2
+    assert calls == []
+    assert store.rows("task") == []
+    assert not staging.exists()
+
+
+def test_scan_error_fix_waits_for_model_configuration_before_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    (tmp_path / "ai-accounts.json").unlink()
+    _seen(store)
+    _fix(store)
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["execution_error"].startswith("models is not configured:")
+    assert row["result"]["kind"] == "model-configuration"
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
+
+    assert scan_error_fix(store, _clone_runner(calls)) == []
+    assert calls == []
+
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
+    lines = scan_error_fix(store, _clone_runner(calls))
+    tasks = store.rows("task")
+    assert len(tasks) == 1
+    assert lines == [
+        f"error.fix fix-1 task={tasks[0]['id']} "
+        f"worktree={tmp_path / 'error-fix-work' / tasks[0]['id']}"
+    ]
+    assert calls[0][:3] == ["git", "clone", "--"]
+
+
+def test_scan_error_fix_requires_explicit_legacy_supersede_before_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    _legacy_task(store)
+    calls: list[list[str]] = []
+
+    lines = scan_error_fix(store, _clone_runner(calls))
+    legacy = store.row("task", "legacy-error-fix-task")
+    assert legacy is not None
+    assert legacy["state"] == "open"
+    assert lines == ["error.fix fix-1 error"]
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert (
+        "agent task state legacy-error-fix-task superseded"
+        in row["execution_error"]
+    )
+    first_fingerprint = row["result"]["configuration_fingerprint"]
+
+    assert scan_error_fix(store, _clone_runner(calls)) == []
+    assert calls == []
+
+    updated_legacy = {
+        key: value for key, value in legacy.items() if not key.startswith("_")
+    }
+    updated_legacy["state"] = "superseded"
+    store.write("task", "update", legacy["id"], updated_legacy)
+
+    lines = scan_error_fix(store, _clone_runner(calls))
+    tasks = store.rows("task")
+    replacements = [task for task in tasks if task["id"] != legacy["id"]]
+    assert len(replacements) == 1
+    replacement = replacements[0]
+    assert replacement["models"] == {"first": "grok", "second": "codex"}
+    assert lines == [
+        f"error.fix fix-1 task={replacement['id']} "
+        f"worktree={tmp_path / 'error-fix-work' / replacement['id']}"
+    ]
+    assert calls[0][:3] == ["git", "clone", "--"]
+    done = store.row("activity", "fix-1")
+    assert done is not None
+    assert done["execution_status"] == "done"
+    assert done["result"]["task_id"] == replacement["id"]
+    assert done["result"].get("configuration_fingerprint") is None
+    assert first_fingerprint
+
+
+@pytest.mark.parametrize("state", ["done", "failed", "superseded"])
+def test_lookup_implement_task_ignores_terminal_tasks(
+    tmp_path: Path, state: str
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _legacy_task(store)
+    task = store.row("task", "legacy-error-fix-task")
+    assert task is not None
+    updated = {key: value for key, value in task.items() if not key.startswith("_")}
+    updated["state"] = state
+    store.write("task", "update", task["id"], updated)
+
+    assert (
+        error_fix_act_mod._lookup_implement_task(
+            store, "runner-1", "error-seen-12345678"
+        )
+        is None
+    )
+
+
+def test_scan_error_fix_legacy_fingerprint_changes_with_model_configuration(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    (tmp_path / "ai-accounts.json").unlink()
+    _seen(store)
+    _fix(store)
+    _legacy_task(store)
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["result"]["kind"] == "model-configuration"
+    first_fingerprint = row["result"]["configuration_fingerprint"]
+    assert calls == []
+    assert len(store.rows("task")) == 1
+    legacy = store.row("task", "legacy-error-fix-task")
+    assert legacy is not None
+    assert legacy["state"] == "open"
+    assert not (tmp_path / "error-fix-work").exists()
+
+    assert scan_error_fix(store, _clone_runner(calls)) == []
+    assert calls == []
+
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
+    lines = scan_error_fix(store, _clone_runner(calls))
+    legacy = store.row("task", "legacy-error-fix-task")
+    assert legacy is not None
+    assert legacy["state"] == "open"
+    assert lines == ["error.fix fix-1 error"]
+    retried = store.row("activity", "fix-1")
+    assert retried is not None
+    assert retried["result"]["configuration_fingerprint"] != first_fingerprint
+    assert calls == []
+
+
+def test_generic_error_clears_stale_configuration_fingerprint(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    updated = {key: value for key, value in row.items() if not key.startswith("_")}
+    updated["result"] = {
+        "kind": "model-configuration",
+        "configuration_fingerprint": "stale",
+    }
+    store.write("activity", "update", row["id"], updated)
+    stale = store.row("activity", "fix-1")
+    assert stale is not None
+
+    error_fix_act_mod._mark(store, stale, status="error", error="ordinary failure")
+
+    marked = store.row("activity", "fix-1")
+    assert marked is not None
+    assert marked["result"] == {}
+    assert not error_fix_act_mod.is_retryable_configuration_error(marked)
+
+
+def test_scan_error_fix_rechecks_active_session_before_each_git_operation(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> Completed:
+        calls.append(list(argv))
+        if argv[:3] == ["git", "clone", "--"]:
+            Path(argv[-1]).joinpath(".git").mkdir(parents=True)
+            session = store.row("session", "runner-1")
+            assert session is not None
+            updated = {
+                key: value for key, value in session.items() if not key.startswith("_")
+            }
+            updated["status"] = "closed"
+            store.write("session", "update", session["id"], updated)
+        return Completed(0, "", "")
+
+    assert scan_error_fix(store, runner) == ["error.fix fix-1 error"]
+    assert len(calls) == 1
+    assert calls[0][:3] == ["git", "clone", "--"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert row["execution_error"] == "session is not active"
+    assert store.rows("task") == []
+
+
+def test_scan_error_fix_rejects_existing_task_with_invalid_implementer_before_git(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _seen(store)
+    _fix(store)
+    now = utcnow()
+    store.write(
+        "task",
+        "insert",
+        "invalid-implementer-task",
+        {
+            "id": "invalid-implementer-task",
+            "session_id": "runner-1",
+            "workflow": "implement",
+            "title": "Invalid implementer error fix",
+            "repo": "org/app",
+            "ref": None,
+            "payload": {"error_id": "error-seen-12345678", "repo": "org/app"},
+            "state": "open",
+            "current_round": 0,
+            "models": {"first": "grok", "second": "codex"},
+            "implementer": "not-a-provider",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    calls: list[list[str]] = []
+
+    assert scan_error_fix(store, _clone_runner(calls)) == ["error.fix fix-1 error"]
+    row = store.row("activity", "fix-1")
+    assert row is not None
+    assert row["execution_status"] == "error"
+    assert "implementer must be one of" in row["execution_error"]
+    assert calls == []
+    assert not (tmp_path / "error-fix-work").exists()
 
 
 def test_find_or_create_requires_active_session(tmp_path: Path) -> None:

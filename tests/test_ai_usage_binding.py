@@ -16,7 +16,7 @@ def test_automatic_usage_does_not_read_ambient_account(tmp_path, monkeypatch):
         _owned_grok_session(store)
         def forbidden(token):
             pytest.fail('Unconfigured usage must not contact a provider')
-        with pytest.raises(AuthStale, match='not configured'):
+        with pytest.raises(AccountError, match='models is not configured'):
             scan_usage(store, fetch=forbidden)
         with pytest.raises(AuthStale, match='explicitly configured'):
             load_grok_bearer()
@@ -33,6 +33,7 @@ def test_usage_uses_explicit_session_account_instead_of_newest_session(tmp_path,
     _auth_file(ambient, email='ambient@example.com')
     monkeypatch.setenv('GROK_HOME', str(ambient))
     (tmp_path / 'ai-accounts.json').write_text(json.dumps({
+        'models': {'first': 'grok', 'second': 'codex'},
         'accounts': {'chosen': {'provider': 'grok', 'config_dir': str(chosen)}},
         'roles': {'configured': {'account': 'chosen', 'model': 'explicit-model', 'access': 'read-only'}},
         'sessions': {'chosen-session': {'interactive': 'configured'}},
@@ -53,6 +54,9 @@ def test_usage_uses_explicit_session_account_instead_of_newest_session(tmp_path,
 @pytest.mark.no_pg
 @pytest.mark.parametrize('value', ['', 'missing', False, 42])
 def test_invalid_usage_selection_is_not_replaced_with_another_account(tmp_path, value):
-    (tmp_path / 'ai-accounts.json').write_text(json.dumps({'usage_session': value}))
+    (tmp_path / 'ai-accounts.json').write_text(json.dumps({
+        'models': {'first': 'grok', 'second': 'codex'},
+        'usage_session': value,
+    }))
     with pytest.raises(AccountError):
         load_ai_accounts(tmp_path)

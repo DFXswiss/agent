@@ -21,13 +21,13 @@ from agent_cli.coordinator_github import (
     phase_readiness,
 )
 from agent_cli.coordinator_runtime import (
-    REQUIRED_LANE_SLOTS,
     CoordinatorError,
     harden_grok_write_argv,
     parse_model_result,
     preflight_worker,
     review_is_approved,
 )
+from agent_cli.model_slots import MODELS_NOT_CONFIGURED
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_coordinator_support import (
@@ -237,6 +237,26 @@ def test_forbidden_implicit_account_selection(tmp_path: Path) -> None:
     assert any("preflight blocked" in line for line in lines)
 
 
+def test_missing_models_is_a_preflight_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("models")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+
+    assert tick(store, worker, runner=fake) == [
+        f"preflight blocked: {MODELS_NOT_CONFIGURED}"
+    ]
+
+
 def test_concurrent_lock_excludes_second_tick(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -414,10 +434,10 @@ def test_human_merge_only_completion(tmp_path: Path, monkeypatch: pytest.MonkeyP
             },
         )
     for stage, dim, vendor in (
-        ("grok-pr", "quality", "grok"),
-        ("grok-pr", "logic", "grok"),
-        ("codex-pr", "quality", "codex"),
-        ("codex-pr", "logic", "codex"),
+        ("review-1", "quality", "grok"),
+        ("review-1", "logic", "grok"),
+        ("review-2", "quality", "codex"),
+        ("review-2", "logic", "codex"),
     ):
         gid = f"g-{stage}-{dim}"
         store.write(
@@ -539,7 +559,7 @@ def _seed_one_review_merge(
     from agent_cli.allow import CHECKLIST_KEYS
 
     for key in CHECKLIST_KEYS["implement"]:
-        if key in ("codex_pr_quality", "codex_pr_logic"):
+        if key in ("review_2_quality", "review_2_logic"):
             status, evidence = "n_a", "second review not posted"
         elif key in ("deviation_declared", "deviation_granted"):
             status, evidence = "n_a", "seed"
@@ -570,7 +590,7 @@ def _seed_one_review_merge(
             {
                 "id": f"{tid}-grok-{dim}",
                 "task_id": tid,
-                "stage": "grok-pr",
+                "stage": "review-1",
                 "dimension": dim,
                 "vendor": "grok",
                 "verdict": "approved",
@@ -1667,11 +1687,6 @@ def test_revoked_assignment_stops_before_formal(
     assert any("no longer assigned" in line or "stopped" in line.lower() or "blocked" in line for line in lines)
 
 
-def test_required_lane_slots_constant() -> None:
-    assert "grok:implementer" in REQUIRED_LANE_SLOTS
-    assert "codex:pr-reviewer-logic" in REQUIRED_LANE_SLOTS
-
-
 def test_assignment_discovery_flattens_slurped_issue_pages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2258,7 +2273,7 @@ def _seed_ready_side_task(
         },
     )
     for key in CHECKLIST_KEYS["implement"]:
-        if key in ("codex_pr_quality", "codex_pr_logic") and key not in checklist_codex:
+        if key in ("review_2_quality", "review_2_logic") and key not in checklist_codex:
             continue
         status = checklist_codex.get(
             key,
@@ -2276,7 +2291,7 @@ def _seed_ready_side_task(
                 "status": status,
                 "evidence": (
                     "second review not posted"
-                    if status == "n_a" and key in ("codex_pr_quality", "codex_pr_logic")
+                    if status == "n_a" and key in ("review_2_quality", "review_2_logic")
                     else "seed"
                 ),
                 "source": "human" if key in ("spec_written", "deviation_declared", "deviation_granted") else "script",
@@ -2288,9 +2303,9 @@ def _seed_ready_side_task(
         )
     gates: list[tuple[str, str, str]] = []
     for dim in grok_gates:
-        gates.append(("grok-pr", dim, first_vendor))
+        gates.append(("review-1", dim, first_vendor))
     for dim in codex_gates:
-        gates.append(("codex-pr", dim, second_vendor))
+        gates.append(("review-2", dim, second_vendor))
     for stage, dim, vendor in gates:
         gid = f"{tid}-g-{stage}-{dim}"
         store.write(
@@ -2351,7 +2366,7 @@ def _list_opener(fake: FakeGh, login: str = "worker-bot") -> None:
     )
 
 
-def test_readiness_skips_codex_pr_when_opener_is_listed(
+def test_readiness_skips_review_2_when_opener_is_listed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -2363,14 +2378,14 @@ def test_readiness_skips_codex_pr_when_opener_is_listed(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     lines = phase_readiness(store, worker, task, fake)
     assert any(f"readiness ok on {fake.head[:7]}" in line for line in lines)
-    assert not any("missing approved gate codex-pr/" in line for line in lines)
+    assert not any("missing approved gate review-2/" in line for line in lines)
 
 
-def test_readiness_requires_codex_pr_when_file_is_missing(
+def test_readiness_requires_review_2_when_file_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -2381,13 +2396,13 @@ def test_readiness_requires_codex_pr_when_file_is_missing(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
-    with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+    with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
         phase_readiness(store, worker, task, fake)
 
 
-def test_readiness_still_requires_grok_pr_when_codex_checklist_na(
+def test_readiness_still_requires_review_1_when_codex_checklist_na(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -2398,33 +2413,33 @@ def test_readiness_still_requires_grok_pr_when_codex_checklist_na(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         grok_gates=("logic",),
     )
-    with pytest.raises(CoordinatorError, match="missing approved gate grok-pr/"):
+    with pytest.raises(CoordinatorError, match="missing approved gate review-1/"):
         phase_readiness(store, worker, task, fake)
 
 
-def test_readiness_requires_codex_pr_when_only_one_key_na(
+def test_readiness_requires_review_2_when_only_one_key_na(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
     cases = (
         (
             "aa000001-0000-4000-8000-000000000011",
-            {"codex_pr_quality": "n_a", "codex_pr_logic": "ja"},
+            {"review_2_quality": "n_a", "review_2_logic": "ja"},
         ),
         (
             "aa000001-0000-4000-8000-000000000012",
-            {"codex_pr_quality": "ja", "codex_pr_logic": "n_a"},
+            {"review_2_quality": "ja", "review_2_logic": "n_a"},
         ),
         (
             "aa000001-0000-4000-8000-000000000013",
-            {"codex_pr_quality": "n_a"},
+            {"review_2_quality": "n_a"},
         ),
         (
             "aa000001-0000-4000-8000-000000000014",
-            {"codex_pr_logic": "n_a"},
+            {"review_2_logic": "n_a"},
         ),
     )
     for tid, checklist_codex in cases:
@@ -2436,11 +2451,11 @@ def test_readiness_requires_codex_pr_when_only_one_key_na(
             phase="readiness",
             checklist_codex=checklist_codex,
         )
-        with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+        with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
             phase_readiness(store, worker, task, fake)
 
 
-def test_readiness_requires_codex_pr_when_both_keys_ja_and_gates_missing(
+def test_readiness_requires_review_2_when_both_keys_ja_and_gates_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -2451,13 +2466,13 @@ def test_readiness_requires_codex_pr_when_both_keys_ja_and_gates_missing(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
     )
-    with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+    with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
         phase_readiness(store, worker, task, fake)
 
 
-def test_readiness_requires_codex_pr_when_unavailable_with_na(
+def test_readiness_requires_review_2_when_unavailable_with_na(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -2468,13 +2483,13 @@ def test_readiness_requires_codex_pr_when_unavailable_with_na(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"codex_pr_quality": "unavailable", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "unavailable", "review_2_logic": "n_a"},
     )
-    with pytest.raises(CoordinatorError, match="missing approved gate codex-pr/"):
+    with pytest.raises(CoordinatorError, match="missing approved gate review-2/"):
         phase_readiness(store, worker, task, fake)
 
 
-def test_formal_approve_skips_codex_pr_when_opener_is_listed(
+def test_formal_approve_skips_review_2_when_opener_is_listed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
@@ -2486,11 +2501,11 @@ def test_formal_approve_skips_codex_pr_when_opener_is_listed(
         fake,
         tid=tid,
         phase="formal_approve",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         extra_evidence={"readiness_head": fake.head},
     )
     lines = phase_formal_approve(store, worker, task, fake)
-    assert not any("missing approved gate codex-pr/" in line for line in lines)
+    assert not any("missing approved gate review-2/" in line for line in lines)
     assert any(
         "formal APPROVE" in line or "formal approval not yet verified" in line
         for line in lines
@@ -2516,7 +2531,7 @@ def test_leave_draft_comment_names_one_run_only_for_the_exception() -> None:
     assert "Still not merge; a human merges." in two
 
 
-def test_leave_draft_skips_codex_pr_when_opener_is_listed(
+def test_leave_draft_skips_review_2_when_opener_is_listed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch, patch_github=True)
@@ -2528,7 +2543,7 @@ def test_leave_draft_skips_codex_pr_when_opener_is_listed(
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -2536,7 +2551,7 @@ def test_leave_draft_skips_codex_pr_when_opener_is_listed(
         },
     )
     lines = phase_leave_draft(store, worker, task, fake)
-    assert not any("missing approved gate codex-pr/" in line for line in lines)
+    assert not any("missing approved gate review-2/" in line for line in lines)
     assert any("left draft" in line for line in lines)
     assert fake.ready_calls == 1
 
@@ -2579,7 +2594,7 @@ def test_leave_draft_does_not_ready_when_the_exception_is_revoked_after_the_comm
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -2637,7 +2652,7 @@ def test_leave_draft_posts_the_revoked_comment_on_a_later_tick(
         fake,
         tid=tid,
         phase="leave_draft",
-        checklist_codex={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        checklist_codex={"review_2_quality": "n_a", "review_2_logic": "n_a"},
         seed_formal_review=True,
         extra_evidence={
             "formal_head": fake.head,
@@ -2673,7 +2688,7 @@ def test_leave_draft_posts_the_revoked_comment_on_a_later_tick(
     assert "Two review runs are required." in bodies
 
 
-def test_readiness_accepts_approved_codex_pr_when_checklist_not_both_na(
+def test_readiness_accepts_approved_review_2_when_checklist_not_both_na(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
@@ -2684,7 +2699,7 @@ def test_readiness_accepts_approved_codex_pr_when_checklist_not_both_na(
         fake,
         tid=tid,
         phase="readiness",
-        checklist_codex={"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
         codex_gates=("quality", "logic"),
     )
     lines = phase_readiness(store, worker, task, fake)
@@ -2727,6 +2742,7 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             },
             "state": "pr-review",
             "current_round": 1,
+            "models": {"first": "grok", "second": "codex"},
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z",
             "change_summary_en": "Reviewed.",
@@ -2736,8 +2752,8 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
     before = {
         "session_registered",
         "contributing_read",
-        "grok_pr_quality",
-        "grok_pr_logic",
+        "review_1_quality",
+        "review_1_logic",
     }
     for key in CHECKLIST_KEYS["review"]:
         if key in codex_status:
@@ -2765,8 +2781,8 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             },
         )
     for stage, dim, vendor in (
-        ("grok-pr", "quality", "grok"),
-        ("grok-pr", "logic", "grok"),
+        ("review-1", "quality", "grok"),
+        ("review-1", "logic", "grok"),
     ):
         gid = f"{tid}-{stage}-{dim}"
         store.write(
@@ -2787,7 +2803,7 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             },
         )
     for dim in codex_dims:
-        gid = f"{tid}-codex-pr-{dim}"
+        gid = f"{tid}-review-2-{dim}"
         store.write(
             "review_gate",
             "insert",
@@ -2795,7 +2811,7 @@ def _seed_posted_codex_task(store, worker, tid: str, *, codex_dims: tuple[str, .
             {
                 "id": gid,
                 "task_id": tid,
-                "stage": "codex-pr",
+                "stage": "review-2",
                 "dimension": dim,
                 "vendor": "codex",
                 "verdict": "approved",
@@ -2840,6 +2856,249 @@ def _patch_pr_gate_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     )
 
 
+def _codex_prelaunch_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tid: str
+) -> tuple[Store, Any, dict[str, Any]]:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+    )
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    return store, worker, task
+
+
+def _record_blocker_publications(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    published: list[str] = []
+
+    def execute(store, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store.row("activity", activity_id)
+            assert row is not None
+            assert row.get("type") == "comment.post"
+            published.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            updated["execution_status"] = "done"
+            updated["result"] = {
+                "repo": "example/project",
+                "number": 7,
+                "url": "https://x/comment",
+                "id": len(published),
+            }
+            store.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr("agent_cli.coordinator_github.execute_github", execute)
+    return published
+
+
+def test_codex_preparation_oserror_closes_prepared_agents_before_one_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import advance_one
+
+    tid = "aa000001-0000-4000-8000-000000000062"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    published = _record_blocker_publications(monkeypatch)
+    real_mkstemp = coordinator_lanes.tempfile.mkstemp
+    mkstemp_calls = 0
+    output_paths: list[Path] = []
+
+    def fail_second_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
+        nonlocal mkstemp_calls
+        mkstemp_calls += 1
+        if mkstemp_calls == 2:
+            raise OSError("cannot prepare output")
+        fd, path = real_mkstemp(dir=tmp_path)
+        output_paths.append(Path(path))
+        return fd, path
+
+    monkeypatch.setattr(coordinator_lanes.tempfile, "mkstemp", fail_second_mkstemp)
+    lines = advance_one(
+        store,
+        worker,
+        runner=fake,
+        lane_runner=lambda _argv, _stdin=None: Completed(
+            0, "STATUS: complete\nRESULT: approved\n", ""
+        ),
+    )
+
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 1
+    assert agents[0]["status"] == "done"
+    assert agents[0]["note"] == "prelaunch aborted"
+    assert output_paths and all(not path.exists() for path in output_paths)
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert published == [comments[0]["id"]]
+    assert "cannot prepare output" in str(comments[0].get("payload"))
+    assert "phase-error" in str(comments[0].get("payload"))
+    assert "gate-prelaunch" not in str(comments[0].get("payload"))
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["question_activity_id"] == comments[0]["id"]
+    assert lines == [
+        "blocked: cannot prepare output",
+        "blocker published on example/project#7",
+    ]
+
+
+def test_preparation_failure_after_mkstemp_removes_owned_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    tid = "aa000001-0000-4000-8000-000000000064"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    real_mkstemp = coordinator_lanes.tempfile.mkstemp
+    output_paths: list[Path] = []
+
+    def tracked_mkstemp(*_args: Any, **_kwargs: Any) -> tuple[int, str]:
+        fd, path = real_mkstemp(dir=tmp_path)
+        output_paths.append(Path(path))
+        return fd, path
+
+    monkeypatch.setattr(coordinator_lanes.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "provider_argv",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("provider argv failed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="provider argv failed"):
+        coordinator_lanes._prepare_pr_review_agent(
+            store,
+            worker,
+            task,
+            role="pr-reviewer-quality",
+            vendor="codex",
+            stage="review-2",
+            head=_POSTED_HEAD,
+            spec_body="Review.",
+        )
+
+    assert output_paths and all(not path.exists() for path in output_paths)
+    assert [row for row in store.rows("agent") if row.get("task_id") == tid] == []
+
+
+def test_run_prepared_returns_decode_failure_and_removes_owned_output(
+    tmp_path: Path,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    output = tmp_path / "provider-output.txt"
+    output.write_bytes(b"\xff")
+    prepared = {
+        "agent_id": "agent-1",
+        "role": "pr-reviewer-quality",
+        "vendor": "codex",
+        "argv": ["codex"],
+        "stdin_text": None,
+        "codex_output": str(output),
+        "worktree": str(tmp_path),
+    }
+
+    agent_id, outcome = coordinator_lanes._run_prepared(
+        prepared,
+        timeout=1,
+        lane_runner=lambda _argv, _stdin=None: Completed(0, "", ""),
+    )
+
+    assert agent_id == "agent-1"
+    assert isinstance(outcome, UnicodeDecodeError)
+    assert not output.exists()
+
+
+def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.coordinator_runtime import advance_one
+
+    tid = "aa000001-0000-4000-8000-000000000063"
+    store, worker, _task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    published = _record_blocker_publications(monkeypatch)
+    start_calls = 0
+    provider_calls: list[list[str]] = []
+    joined: list[threading.Thread] = []
+    real_start = threading.Thread.start
+    real_join = threading.Thread.join
+
+    def fail_second_start(thread: threading.Thread) -> None:
+        nonlocal start_calls
+        start_calls += 1
+        if start_calls == 2:
+            raise RuntimeError("thread start failed")
+        real_start(thread)
+
+    def track_join(thread: threading.Thread, *args: Any, **kwargs: Any) -> None:
+        real_join(thread, *args, **kwargs)
+        joined.append(thread)
+
+    monkeypatch.setattr(
+        coordinator_lanes.threading.Thread, "start", fail_second_start
+    )
+    monkeypatch.setattr(coordinator_lanes.threading.Thread, "join", track_join)
+
+    def lane_runner(argv: list[str], _stdin: str | None = None) -> Completed:
+        provider_calls.append(argv)
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=lane_runner)
+
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 2
+    assert all(row.get("status") == "done" for row in agents)
+    assert all(row.get("note") == "prelaunch aborted" for row in agents)
+    assert provider_calls == []
+    assert len(joined) == 1
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert published == [comments[0]["id"]]
+    assert "thread start failed" in str(comments[0].get("payload"))
+    assert "phase-error" in str(comments[0].get("payload"))
+    assert "gate-prelaunch" not in str(comments[0].get("payload"))
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    assert checkpoint["question_activity_id"] == comments[0]["id"]
+    assert lines == [
+        "blocked: thread start failed",
+        "blocker published on example/project#7",
+    ]
+
+
 def test_approved_codex_stage_replaces_n_a_on_a_later_tick(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2857,7 +3116,7 @@ def test_approved_codex_stage_replaces_n_a_on_a_later_tick(
         worker,
         tid,
         codex_dims=("quality", "logic"),
-        codex_status={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -2867,13 +3126,13 @@ def test_approved_codex_stage_replaces_n_a_on_a_later_tick(
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     lines = phase_pr_gates(
-        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="codex-pr"
+        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="review-2"
     )
     assert launched == []
     assert any("already complete" in line for line in lines)
     status = _checklist_status(store, tid)
-    assert status["codex_pr_quality"] == "ja"
-    assert status["codex_pr_logic"] == "ja"
+    assert status["review_2_quality"] == "ja"
+    assert status["review_2_logic"] == "ja"
     saved = store.row("task", tid)
     assert saved["payload"]["coordinator"]["phase"] == "ci"
     assert saved["payload"]["coordinator"].get("phase") != "blocked"
@@ -2896,7 +3155,7 @@ def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
         worker,
         tid,
         codex_dims=("quality",),
-        codex_status={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -2910,14 +3169,14 @@ def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     lines = phase_pr_gates(
-        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="codex-pr"
+        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="review-2"
     )
     assert launched == ["pr-reviewer-logic"]
     assert any("cached" in line for line in lines)
     assert any("logic=approved" in line for line in lines)
     status = _checklist_status(store, tid)
-    assert status["codex_pr_quality"] == "ja"
-    assert status["codex_pr_logic"] == "ja"
+    assert status["review_2_quality"] == "ja"
+    assert status["review_2_logic"] == "ja"
     saved = store.row("task", tid)
     assert saved["payload"]["coordinator"]["phase"] == "ci"
 
@@ -2939,7 +3198,7 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
         worker,
         tid,
         codex_dims=(),
-        codex_status={"codex_pr_quality": "n_a", "codex_pr_logic": "n_a"},
+        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -2953,12 +3212,12 @@ def test_codex_lanes_still_start_when_the_checklist_is_n_a(
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     phase_pr_gates(
-        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="codex-pr"
+        store, worker, task, lambda argv: Completed(0, "", ""), run, vendor="codex", stage="review-2"
     )
     assert set(launched) == {"pr-reviewer-quality", "pr-reviewer-logic"}
     status = _checklist_status(store, tid)
-    assert status["codex_pr_quality"] == "ja"
-    assert status["codex_pr_logic"] == "ja"
+    assert status["review_2_quality"] == "ja"
+    assert status["review_2_logic"] == "ja"
 
 
 def test_approved_retry_does_not_promote_a_pending_codex_key(
@@ -2978,7 +3237,7 @@ def test_approved_retry_does_not_promote_a_pending_codex_key(
         worker,
         tid,
         codex_dims=("quality", "logic"),
-        codex_status={"codex_pr_quality": "pending", "codex_pr_logic": "n_a"},
+        codex_status={"review_2_quality": "pending", "review_2_logic": "n_a"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     lines = phase_pr_gates(
@@ -2988,12 +3247,12 @@ def test_approved_retry_does_not_promote_a_pending_codex_key(
         lambda argv: Completed(0, "", ""),
         None,
         vendor="codex",
-        stage="codex-pr",
+        stage="review-2",
     )
     assert any("already complete" in line for line in lines)
     status = _checklist_status(store, tid)
-    assert status["codex_pr_quality"] == "pending"
-    assert status["codex_pr_logic"] == "ja"
+    assert status["review_2_quality"] == "pending"
+    assert status["review_2_logic"] == "ja"
     saved = store.row("task", tid)
     assert saved["payload"]["coordinator"]["phase"] == "ci"
 
@@ -3014,8 +3273,8 @@ def test_pr_review_scope_keeps_the_compliance_reminder_and_states_a_missing_issu
     assert "Logic:" in logic
 
 
-def test_execution_binding_unchanged_without_models_block(tmp_path: Path) -> None:
-    """A device without a models block keeps the hash of tasks accepted before model slots."""
+def test_execution_binding_includes_explicit_models_block(tmp_path: Path) -> None:
+    """The coordinator hashes the required device model assignment."""
     from agent_cli.coordinator_runtime import execution_binding
 
     store = Store(tmp_path)
@@ -3023,7 +3282,6 @@ def test_execution_binding_unchanged_without_models_block(tmp_path: Path) -> Non
     worker = make_worker(tmp_path)
     repo = next(iter(worker.repositories))
     before = execution_binding(store, worker, repo)
-    # The hash a task accepted before model slots carries: literal six-slot tuple, no models key.
     import hashlib
     from dataclasses import asdict
 
@@ -3031,7 +3289,7 @@ def test_execution_binding_unchanged_without_models_block(tmp_path: Path) -> Non
     from agent_cli.coordinator_runtime import repo_cfg
     from agent_cli.github_accounts import load_accounts
 
-    legacy_slots = (
+    configured_slots = (
         "grok:implementer",
         "grok:reviewer",
         "grok:pr-reviewer-quality",
@@ -3041,21 +3299,20 @@ def test_execution_binding_unchanged_without_models_block(tmp_path: Path) -> Non
     )
     ai = load_ai_accounts(store.home)
     github = load_accounts(store.home)
-    legacy = {
+    selected = {
         "repository": asdict(repo_cfg(worker, repo)), "workspace": str(worker.workspace_root),
         "worker_session": worker.session_id, "review_session": worker.review_session,
         "reply_logins": worker.reply_logins,
         "github": [asdict(github.for_session(sid)) for sid in (worker.session_id, worker.review_session)],
-        "lanes": [asdict(ai.for_lane(worker.session_id, s.split(":", 1)[1], s.split(":", 1)[0])) for s in legacy_slots],
+        "models": {"first": "grok", "second": "codex"},
+        "lane_execution": {"mode": "this-device-is-lane-host"},
+        "lanes": [asdict(ai.for_lane(worker.session_id, s.split(":", 1)[1], s.split(":", 1)[0])) for s in configured_slots],
     }
     assert before == hashlib.sha256(
-        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     path = store.home / "ai-accounts.json"
     data = json.loads(path.read_text())
-    data["models"] = {"first": "grok", "second": "codex"}
-    path.write_text(json.dumps(data))
-    assert execution_binding(store, worker, repo) == before  # default written out
     data["models"] = {"first": "grok", "second": "claude"}
     data["accounts"]["claude-w"] = {"provider": "claude", "config_dir": "/test/claude"}
     data["roles"]["claude-reader"] = {"account": "claude-w", "model": "m", "access": "read-only"}
@@ -3064,7 +3321,96 @@ def test_execution_binding_unchanged_without_models_block(tmp_path: Path) -> Non
     assert execution_binding(store, worker, repo) != before
     data.pop("models")
     path.write_text(json.dumps(data))
-    assert execution_binding(store, worker, repo) == before
+    from agent_cli.ai_accounts import AccountError
+
+    with pytest.raises(AccountError, match="models is not configured"):
+        execution_binding(store, worker, repo)
+
+
+@pytest.mark.parametrize("nondefault_models", [False, True])
+def test_accepted_legacy_execution_binding_is_repinned_once(
+    tmp_path: Path, nondefault_models: bool
+) -> None:
+    """Both old hash forms migrate; subsequent execution changes still stop."""
+    from agent_cli.coordinator_runtime import (
+        _legacy_execution_binding,
+        execution_binding,
+        refresh_execution_binding,
+    )
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    path = store.home / "ai-accounts.json"
+    configuration = json.loads(path.read_text())
+    if nondefault_models:
+        configuration["models"] = {"first": "claude", "second": "codex"}
+        configuration["accounts"]["claude-w"] = {
+            "provider": "claude",
+            "config_dir": "/test/claude",
+        }
+        configuration["roles"]["claude-impl"] = {
+            "account": "claude-w",
+            "model": "claude-model",
+            "access": "workspace-write",
+        }
+        configuration["roles"]["claude-rev"] = {
+            "account": "claude-w",
+            "model": "claude-model",
+            "access": "read-only",
+        }
+        lanes = configuration["sessions"]["worker-session"]["lanes"]
+        configuration["sessions"]["worker-session"]["lanes"] = {
+            key.replace("grok:", "claude:"): (
+                "claude-impl" if value == "impl" else "claude-rev"
+            )
+            for key, value in lanes.items()
+            if key.startswith("grok:")
+        } | {
+            key: value for key, value in lanes.items() if key.startswith("codex:")
+        }
+        path.write_text(json.dumps(configuration))
+
+    from agent_cli.ai_accounts import load_ai_accounts
+
+    ai = load_ai_accounts(store.home)
+    legacy = _legacy_execution_binding(store, worker, repo, ai)
+    tid = (
+        "aa000001-0000-4000-8000-0000000000e1"
+        if nondefault_models
+        else "aa000001-0000-4000-8000-0000000000e0"
+    )
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "open",
+        "payload": {
+            "coordinator": {
+                "source": {"repo": repo},
+                "execution_binding": legacy,
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    stored = store.row("task", tid)
+    assert stored is not None
+
+    refresh_execution_binding(store, worker, stored)
+
+    migrated = store.row("task", tid)
+    assert migrated is not None
+    assert migrated["payload"]["coordinator"]["execution_binding"] == execution_binding(
+        store, worker, repo
+    )
+
+    configuration = json.loads(path.read_text())
+    selected_implementer = "claude-impl" if nondefault_models else "impl"
+    configuration["roles"][selected_implementer]["model"] = "changed-model"
+    path.write_text(json.dumps(configuration))
+    with pytest.raises(CoordinatorError, match="task execution configuration changed"):
+        refresh_execution_binding(store, worker, migrated)
 
 
 def test_preflight_refuses_codex_as_first_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3081,6 +3427,45 @@ def test_preflight_refuses_codex_as_first_model(tmp_path: Path, monkeypatch: pyt
     patch_account_runners(monkeypatch, fake)
     with pytest.raises(CoordinatorError, match="models.first = codex"):
         preflight_worker(store, worker, fake)
+
+
+def test_preflight_refuses_missing_lane_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data.pop("lane_execution")
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+
+    with pytest.raises(CoordinatorError, match="lane_execution is not configured"):
+        preflight_worker(store, worker, fake)
+
+
+def test_preflight_refuses_remote_lane_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["lane_execution"] = {"mode": "remote", "host": "lane.example"}
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+
+    with pytest.raises(CoordinatorError, match="remote.*not supported"):
+        preflight_worker(store, worker, fake)
+    assert fake.launched == []
 
 
 def test_preflight_refuses_a_separate_implementer(
@@ -3173,14 +3558,14 @@ def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:
         "payload": {"coordinator": {"worktree": str(worktree)}},
     }
     prep = _prepare_pr_review_agent(
-        store, worker, task, role="pr-reviewer-quality", vendor="claude", head="a" * 40,
+        store, worker, task, role="pr-reviewer-quality", vendor="claude",
+        stage="review-1", head="a" * 40,
         spec_body="Review this.",
     )
     argv = prep["argv"]
     assert "claude" in argv and "--print" in argv
     assert "--setting-sources" in argv and "Bash" in argv[argv.index("--disallowedTools") + 1 :]
     assert "Review this." in (prep.get("stdin_text") or "")
-
 
 
 def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3216,7 +3601,7 @@ def test_accepted_task_pins_models_and_phases_use_the_pin(tmp_path: Path, monkey
     )
     coordinator_lanes.phase_pr_gates_grok(store, worker, task, fake, None)
     coordinator_lanes.phase_pr_gates_codex(store, worker, task, fake, None)
-    assert seen == [("claude", "grok-pr"), ("codex", "codex-pr")]
+    assert seen == [("claude", "review-1"), ("codex", "review-2")]
 
 
 
@@ -3237,7 +3622,7 @@ def test_readiness_uses_the_providers_pinned_on_the_task(
         store, worker, fake, tid="aa000001-0000-4000-8000-0000000000c2", phase="readiness",
         checklist_codex={}, codex_gates=("quality", "logic"), models=pinned, first_vendor="grok",
     )
-    with pytest.raises(CoordinatorError, match="missing approved gate grok-pr/"):
+    with pytest.raises(CoordinatorError, match="missing approved gate review-1/"):
         phase_readiness(store, worker, task, fake)
 
 
@@ -3255,7 +3640,8 @@ def test_first_slot_vendor_refuses_a_codex_pin() -> None:
                 "implementer": "deepseek",
             }
         )
-    assert _first_slot_vendor({}) == "grok"
+    with pytest.raises(CoordinatorError, match="task models is not configured"):
+        _first_slot_vendor({})
 
 
 
@@ -3271,8 +3657,8 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
         store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d1", phase="pr_gates_codex",
         checklist_codex={}, models=pinned, first_vendor="grok",
     )
-    with pytest.raises(CoordinatorError, match="codex-pr requires approved grok-pr/"):
-        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="codex", stage="codex-pr")
+    with pytest.raises(CoordinatorError, match="review-2 requires approved review-1/"):
+        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="codex", stage="review-2")
 
     task = _seed_ready_side_task(
         store, worker, fake, tid="aa000001-0000-4000-8000-0000000000d2", phase="pr_gates_grok",
@@ -3288,5 +3674,5 @@ def test_pr_gates_ignore_gates_from_another_provider(tmp_path: Path, monkeypatch
         lambda *a, **k: launched.append(k["role"]) or (_ for _ in ()).throw(CoordinatorError("stop")),
     )
     with pytest.raises(CoordinatorError, match="stop"):
-        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="claude", stage="grok-pr")
+        coordinator_lanes.phase_pr_gates(store, worker, task, fake, None, vendor="claude", stage="review-1")
     assert launched  # grok gates on a claude-pinned task are not taken as cached

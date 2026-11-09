@@ -2,7 +2,8 @@
 
 Operators supply ``$AGENT_HOME/ai-accounts.json``. Installation creates no
 accounts, roles, or selections. Credentials stay in each account's provider CLI
-configuration directory; this manifest stores only directory paths. Static launch sites resolve these bindings before invoking a provider.
+configuration directory; this manifest stores only directory paths. Static
+launch sites resolve these bindings before invoking a provider.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from typing import Any
 
 from .lane import LANE_STRIP_ENV
 from .model_slots import (
-    DEFAULT_MODEL_SLOTS,
     SUPPORTED_PROVIDERS,
     ModelSlots,
     ModelSlotsError,
@@ -25,7 +25,24 @@ from .store import StoreError
 
 CONFIG_FILE = "ai-accounts.json"
 TOP_LEVEL_KEYS = frozenset(
-    {"accounts", "roles", "sessions", "usage_session", "models", "implementer", "lanes"}
+    {
+        "accounts",
+        "roles",
+        "sessions",
+        "usage_session",
+        "models",
+        "implementer",
+        "lanes",
+        "lane_execution",
+    }
+)
+LANE_EXECUTION_ERROR = (
+    "lane_execution is not configured: lanes never run on a work device; "
+    "start lanes through the local harness's lane starter on an external lane host, "
+    "or mark this device as a lane host"
+)
+REMOTE_LANE_EXECUTION_ERROR = (
+    f'{LANE_EXECUTION_ERROR}; lane_execution mode "remote" is not supported'
 )
 # Provider CLI configuration-directory variable per supported provider.
 PROVIDER_HOME_ENV = {
@@ -53,6 +70,15 @@ _CLEAR_ENV = (
 
 class AccountError(StoreError):
     """Configuration does not authorize this AI account or role selection."""
+
+
+def _model_configuration(raw: dict[str, Any]) -> tuple[ModelSlots, str]:
+    """Translate model-selection errors into the configuration error channel."""
+    try:
+        models = parse_model_slots(raw.get("models"))
+        return models, parse_implementer(raw.get("implementer"), models)
+    except ModelSlotsError as exc:
+        raise AccountError(str(exc)) from exc
 
 
 def _text(value: Any, field: str) -> str:
@@ -134,19 +160,62 @@ class AISessionBinding:
 
 
 @dataclass(frozen=True)
+class LaneExecution:
+    mode: str
+
+
+@dataclass(frozen=True)
 class AIAccounts:
     accounts: dict[str, AIAccount]
     roles: dict[str, AIRole]
     sessions: dict[str, AISessionBinding]
+    # Explicit provider assignment for model slots ``first`` and ``second``.
+    _models: ModelSlots | None
+    # Effective implementation provider; absent configuration resolves to models.first.
+    _implementer: str | None
     usage_session: str | None = None
-    # Which provider fills model slot ``first`` and ``second`` on this device.
-    models: ModelSlots = DEFAULT_MODEL_SLOTS
     # Device-wide lane bindings (slot → role) used when a session binds none.
     lanes: dict[str, str] = field(default_factory=dict)
-    # Effective implementation provider; absent configuration resolves to models.first.
-    implementer: str = DEFAULT_MODEL_SLOTS.first
+    # Explicit declaration that prevents a work device from running model lanes.
+    lane_execution: LaneExecution | None = None
+    lane_execution_error: str = LANE_EXECUTION_ERROR
+    model_configuration_error: str | None = None
 
-    def for_lane(self, session_id: str, role: str, vendor: str) -> AIRole:
+    def require_model_configuration(self) -> tuple[ModelSlots, str]:
+        """Return the explicit slot selection or its deferred configuration error."""
+        if self._models is None or self._implementer is None:
+            raise AccountError(
+                self.model_configuration_error
+                or "models configuration is invalid"
+            )
+        return self._models, self._implementer
+
+    @property
+    def models(self) -> ModelSlots:
+        return self.require_model_configuration()[0]
+
+    @property
+    def implementer(self) -> str:
+        return self.require_model_configuration()[1]
+
+    def require_lane_execution(self) -> LaneExecution:
+        if self.lane_execution is None:
+            raise AccountError(self.lane_execution_error)
+        return self.lane_execution
+
+    def for_lane(
+        self,
+        session_id: str,
+        role: str,
+        vendor: str,
+        *,
+        require_execution: bool = True,
+    ) -> AIRole:
+        """Resolve a lane binding before optionally checking its execution host.
+
+        Launchers with additional established preconditions defer the execution
+        check and call :meth:`require_lane_execution` at their start boundary.
+        """
         slot = f"{vendor}:{role}"
         binding = self.sessions.get(session_id)
         role_name = binding.lanes.get(slot) if binding is not None else None
@@ -165,6 +234,8 @@ class AIAccounts:
             raise AccountError(
                 f"Workflow kind {role} requires read-only access; refusing writable binding"
             )
+        if require_execution:
+            self.require_lane_execution()
         return selected
 
     def for_session(self, session_id: str) -> AIRole:
@@ -176,23 +247,38 @@ class AIAccounts:
         return self.roles[binding.interactive]
 
 
-def load_ai_accounts(home: Path) -> AIAccounts:
+def load_ai_accounts(
+    home: Path, *, defer_model_configuration: bool = False
+) -> AIAccounts:
     path = home / CONFIG_FILE
     if not path.exists():
-        return AIAccounts({}, {}, {})
+        # Device configuration has no built-in model assignment.
+        model_configuration_error: str | None = None
+        try:
+            _model_configuration({})
+        except AccountError as exc:
+            if not defer_model_configuration:
+                raise
+            model_configuration_error = str(exc)
+        return AIAccounts(
+            {},
+            {},
+            {},
+            None,
+            None,
+            model_configuration_error=model_configuration_error,
+        )
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
-            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, implementer, and lanes"
+            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, "
+            "models, implementer, lanes, and lane_execution"
         )
-    try:
-        models = parse_model_slots(raw.get("models"))
-        implementer = parse_implementer(raw.get("implementer"), models)
-    except ModelSlotsError as exc:
-        raise AccountError(str(exc)) from exc
+    lane_execution_raw = raw.get("lane_execution")
+    lane_execution = _parse_lane_execution(lane_execution_raw)
     accounts_raw = raw.get("accounts")
     roles_raw = raw.get("roles")
     sessions_raw = raw.get("sessions")
@@ -285,43 +371,78 @@ def load_ai_accounts(home: Path) -> AIAccounts:
         selected = roles[sessions[usage_session].interactive]
         if selected.account.provider != "grok":
             raise AccountError("usage_session currently supports the Grok billing adapter only")
+    models: ModelSlots | None = None
+    implementer: str | None = None
+    model_configuration_error: str | None = None
+    try:
+        # New model checks follow the manifest's established account, role, and
+        # session preconditions. Interactive launchers may defer this check
+        # until their older launch preconditions have run.
+        models, implementer = _model_configuration(raw)
+    except AccountError as exc:
+        if not defer_model_configuration:
+            raise
+        model_configuration_error = str(exc)
     return AIAccounts(
         accounts=accounts,
         roles=roles,
         sessions=sessions,
         usage_session=usage_session,
-        models=models,
+        _models=models,
         lanes=device_lanes,
-        implementer=implementer,
+        _implementer=implementer,
+        lane_execution=lane_execution,
+        lane_execution_error=_lane_execution_error(lane_execution_raw),
+        model_configuration_error=model_configuration_error,
     )
+
+
+def _parse_lane_execution(value: Any) -> LaneExecution | None:
+    """Parse the harness declaration; invalid or absent values stay fail-closed.
+
+    The full manifest also serves read-only model/account lookup paths, so this
+    parser deliberately records an invalid declaration as unconfigured.  A
+    launch calls ``require_lane_execution`` and emits the single public error.
+    """
+    if not isinstance(value, dict):
+        return None
+    mode = value.get("mode")
+    if mode == "this-device-is-lane-host" and set(value) == {"mode"}:
+        return LaneExecution(mode=mode)
+    return None
+
+
+def _lane_execution_error(value: Any) -> str:
+    if isinstance(value, dict) and value.get("mode") == "remote":
+        return REMOTE_LANE_EXECUTION_ERROR
+    return LANE_EXECUTION_ERROR
 
 
 def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
     """The device's review slots and effective implementer selection."""
     path = home / CONFIG_FILE
     if not path.exists():
-        return DEFAULT_MODEL_SLOTS, DEFAULT_MODEL_SLOTS.first
+        # Use the central fail-closed error for an unconfigured device.
+        return _model_configuration({})
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError) as exc:
         raise AccountError(f"Cannot read {CONFIG_FILE}") from exc
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
-            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, models, implementer, and lanes"
+            f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, "
+            "models, implementer, lanes, and lane_execution"
         )
-    try:
-        models = parse_model_slots(raw.get("models"))
-        return models, parse_implementer(raw.get("implementer"), models)
-    except ModelSlotsError as exc:
-        raise AccountError(str(exc)) from exc
+    # Device-configuration read: task creation never supplies a built-in assignment.
+    return _model_configuration(raw)
 
 
 def load_model_slots(home: Path) -> ModelSlots:
-    """The device's model slot configuration (historical order when unset).
+    """The device's explicitly configured model slots.
 
     Checks the file is readable JSON with known top-level keys and validates the
     ``models`` and ``implementer`` selections; errors inside ``accounts``,
-    ``roles``, ``sessions`` or ``lanes`` do not stop task creation. Launches
-    still validate the whole file.
+    ``roles``, ``sessions``, ``lanes`` or ``lane_execution`` do not stop task
+    creation. Launches still validate the whole file.
     """
     return load_model_configuration(home)[0]

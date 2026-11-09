@@ -17,6 +17,9 @@ from agent_cli.chain import (
     required_source,
     steps_for,
 )
+from agent_cli.model_slots import ModelSlots
+
+CONFIGURED_MODELS = ModelSlots("grok", "codex")
 
 
 def _pending(workflow: str) -> dict[str, str]:
@@ -62,7 +65,7 @@ class TestNextSteps(unittest.TestCase):
         ):
             cl[k] = "ja"
         nxt = {s.key for s in next_steps("implement", cl)}
-        self.assertEqual(nxt, {"grok_pr_quality", "grok_pr_logic"})
+        self.assertEqual(nxt, {"review_1_quality", "review_1_logic"})
 
     def test_codex_waits_for_both_grok_gates(self) -> None:
         cl = _pending("implement")
@@ -73,26 +76,47 @@ class TestNextSteps(unittest.TestCase):
             "reviewer_approved",
             "local_check_pass",
             "pushed",
-            "grok_pr_quality",
+            "review_1_quality",
         ):
             cl[k] = "ja"
         nxt = {s.key for s in next_steps("implement", cl)}
-        self.assertEqual(nxt, {"grok_pr_logic"})
-        self.assertNotIn("codex_pr_quality", nxt)
+        self.assertEqual(nxt, {"review_1_logic"})
+        self.assertNotIn("review_2_quality", nxt)
+
+    def test_stored_legacy_first_review_keys_satisfy_new_dependency(self) -> None:
+        cl = _pending("implement")
+        for key in (
+            "session_registered",
+            "spec_written",
+            "implementer_done",
+            "reviewer_approved",
+            "local_check_pass",
+            "pushed",
+        ):
+            cl[key] = "ja"
+        # Keep legacy keys here to verify stored-checklist compatibility.
+        del cl["review_1_quality"]
+        del cl["review_1_logic"]
+        cl["grok_pr_quality"] = "ja"
+        cl["grok_pr_logic"] = "ja"
+
+        nxt = {step.key for step in next_steps("implement", cl)}
+
+        self.assertEqual(nxt, {"review_2_quality", "review_2_logic"})
 
     def test_n_a_counts_as_satisfied_need(self) -> None:
         cl = _pending("review")
         cl["session_registered"] = "ja"
         cl["contributing_read"] = "n_a"
         nxt = {s.key for s in next_steps("review", cl)}
-        self.assertEqual(nxt, {"grok_pr_quality", "grok_pr_logic"})
+        self.assertEqual(nxt, {"review_1_quality", "review_1_logic"})
 
     def test_review_gates_before_contributing_ok(self) -> None:
         cl = _pending("review")
         cl["session_registered"] = "ja"
         cl["contributing_read"] = "ja"
         nxt = {s.key for s in next_steps("review", cl)}
-        self.assertEqual(nxt, {"grok_pr_quality", "grok_pr_logic"})
+        self.assertEqual(nxt, {"review_1_quality", "review_1_logic"})
         self.assertNotIn("contributing_ok", nxt)
 
 
@@ -252,7 +276,7 @@ class TestCloseAllowed(unittest.TestCase):
             cl[k] = "ja"
         v = close_allowed(
             "implement",
-            "grok_pr_quality",
+            "review_1_quality",
             checklist=cl,
             source="script",
             evidence="review",
@@ -261,14 +285,14 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertFalse(v.allowed)
         v2 = close_allowed(
             "implement",
-            "grok_pr_quality",
+            "review_1_quality",
             checklist=cl,
             source="script",
             evidence="review",
             snapshot={
                 "gates": [
                     {
-                        "stage": "grok-pr",
+                        "stage": "review-1",
                         "dimension": "quality",
                         "vendor": "grok",
                         "verdict": "approved",
@@ -297,26 +321,34 @@ class TestCloseAllowed(unittest.TestCase):
 
     def test_handoff_names_only_this_key(self) -> None:
         step = next(s for s in steps_for("implement") if s.key == "implementer_done")
-        text = handoff_prompt(step, task_id="31", session_id="sess")
+        text = handoff_prompt(
+            step, task_id="31", session_id="sess", models=CONFIGURED_MODELS
+        )
         self.assertIn("key=implementer_done", text)
         self.assertIn("close-step", text)
-        self.assertNotIn("grok_pr_quality", text)
+        self.assertNotIn("review_1_quality", text)
 
     def test_handoff_implementer_names_the_first_slot(self) -> None:
         impl = next(s for s in steps_for("implement") if s.key == "implementer_done")
         self.assertEqual(impl.slot, "first")
-        text = handoff_prompt(impl, task_id="31", session_id="sess")
+        text = handoff_prompt(
+            impl, task_id="31", session_id="sess", models=CONFIGURED_MODELS
+        )
         self.assertIn("who=grok implementer", text)
         self.assertNotIn("grok|codex", text)
         conflicts = next(
             s for s in steps_for("resolve-conflicts") if s.key == "conflicts_resolved"
         )
         self.assertEqual(conflicts.slot, "first")
-        conflicts_text = handoff_prompt(conflicts, task_id="31", session_id="sess")
+        conflicts_text = handoff_prompt(
+            conflicts, task_id="31", session_id="sess", models=CONFIGURED_MODELS
+        )
         self.assertIn("who=grok implementer", conflicts_text)
         reviewer = next(s for s in steps_for("implement") if s.key == "reviewer_approved")
         self.assertEqual(reviewer.slot, "first")
-        reviewer_text = handoff_prompt(reviewer, task_id="31", session_id="sess")
+        reviewer_text = handoff_prompt(
+            reviewer, task_id="31", session_id="sess", models=CONFIGURED_MODELS
+        )
         self.assertIn("who=grok reviewer", reviewer_text)
         script = next(s for s in steps_for("implement") if s.key == "session_registered")
         script_text = handoff_prompt(script, task_id="31", session_id="sess")
@@ -335,14 +367,14 @@ class TestCloseAllowed(unittest.TestCase):
             cl[k] = "ja"
         v = close_allowed(
             "implement",
-            "grok_pr_quality",
+            "review_1_quality",
             checklist=cl,
             source="script",
             evidence="lane 402",
             snapshot={
                 "gates": [
                     {
-                        "stage": "grok-pr",
+                        "stage": "review-1",
                         "dimension": "quality",
                         "vendor": "grok",
                         "verdict": "approved",
@@ -354,14 +386,14 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertFalse(v.allowed)
         v2 = close_allowed(
             "implement",
-            "grok_pr_quality",
+            "review_1_quality",
             checklist=cl,
             source="script",
             evidence="lane 402",
             snapshot={
                 "gates": [
                     {
-                        "stage": "grok-pr",
+                        "stage": "review-1",
                         "dimension": "quality",
                         "vendor": "grok",
                         "verdict": "unavailable",
@@ -472,19 +504,19 @@ class TestCloseAllowed(unittest.TestCase):
             "pushed",
         ):
             cl[k] = "ja"
-        cl["grok_pr_quality"] = "unavailable"
+        cl["review_1_quality"] = "unavailable"
         nxt = {s.key for s in next_steps("implement", cl)}
-        self.assertIn("grok_pr_quality", nxt)
-        self.assertIn("grok_pr_logic", nxt)
-        self.assertNotIn("codex_pr_quality", nxt)
-        self.assertNotIn("codex_pr_logic", nxt)
+        self.assertIn("review_1_quality", nxt)
+        self.assertIn("review_1_logic", nxt)
+        self.assertNotIn("review_2_quality", nxt)
+        self.assertNotIn("review_2_logic", nxt)
 
     def test_codex_n_a_second_review_not_posted(self) -> None:
         cl = _pending("review")
         cl["session_registered"] = "ja"
         cl["contributing_read"] = "ja"
-        cl["grok_pr_quality"] = "ja"
-        cl["grok_pr_logic"] = "ja"
+        cl["review_1_quality"] = "ja"
+        cl["review_1_logic"] = "ja"
         listed = {
             "pull_opener": "alice",
             "trusted_pr_guard": {
@@ -495,7 +527,7 @@ class TestCloseAllowed(unittest.TestCase):
         }
         allowed = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence="second review not posted",
@@ -505,7 +537,7 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertTrue(allowed.allowed)
         denied_standard = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence="second review not posted",
@@ -515,7 +547,7 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertFalse(denied_standard.allowed)
         denied = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence="something else",
@@ -529,7 +561,7 @@ class TestCloseAllowed(unittest.TestCase):
         grok["contributing_read"] = "ja"
         grok_denied = close_allowed(
             "review",
-            "grok_pr_quality",
+            "review_1_quality",
             checklist=grok,
             source="script",
             evidence="second review not posted",
@@ -546,19 +578,19 @@ class TestCloseAllowed(unittest.TestCase):
             "reviewer_approved",
             "local_check_pass",
             "pushed",
-            "grok_pr_quality",
-            "grok_pr_logic",
+            "review_1_quality",
+            "review_1_logic",
         ):
             cl[key] = "ja"
-        cl["codex_pr_quality"] = "n_a"
-        cl["codex_pr_logic"] = "n_a"
-        self.assertTrue(_satisfied("codex_pr_quality", cl))
-        self.assertTrue(_satisfied("codex_pr_logic", cl))
-        self.assertFalse(_satisfied("grok_pr_quality", {"grok_pr_quality": "n_a"}))
+        cl["review_2_quality"] = "n_a"
+        cl["review_2_logic"] = "n_a"
+        self.assertTrue(_satisfied("review_2_quality", cl))
+        self.assertTrue(_satisfied("review_2_logic", cl))
+        self.assertFalse(_satisfied("review_1_quality", {"review_1_quality": "n_a"}))
         nxt = {s.key for s in next_steps("resolve-conflicts", cl)}
         self.assertIn("mergeable", nxt)
-        cl["codex_pr_logic"] = "pending"
-        self.assertFalse(_satisfied("codex_pr_logic", cl))
+        cl["review_2_logic"] = "pending"
+        self.assertFalse(_satisfied("review_2_logic", cl))
         nxt = {s.key for s in next_steps("resolve-conflicts", cl)}
         self.assertNotIn("mergeable", nxt)
 
@@ -567,42 +599,42 @@ class TestCloseAllowed(unittest.TestCase):
         for key in (
             "session_registered",
             "contributing_read",
-            "grok_pr_quality",
-            "grok_pr_logic",
+            "review_1_quality",
+            "review_1_logic",
         ):
             cl[key] = "ja"
-        cl["codex_pr_quality"] = "n_a"
-        cl["codex_pr_logic"] = "n_a"
+        cl["review_2_quality"] = "n_a"
+        cl["review_2_logic"] = "n_a"
         snap = {
             "gates": [
                 {
-                    "stage": "codex-pr",
+                    "stage": "review-2",
                     "dimension": "quality",
                     "vendor": "codex",
                     "verdict": "approved",
                 },
                 {
-                    "stage": "codex-pr",
+                    "stage": "review-2",
                     "dimension": "logic",
                     "vendor": "codex",
                     "verdict": "approved",
                 },
             ]
         }
-        for key, dim in (("codex_pr_quality", "quality"), ("codex_pr_logic", "logic")):
+        for key, dim in (("review_2_quality", "quality"), ("review_2_logic", "logic")):
             verdict = close_allowed(
                 "review",
                 key,
                 checklist=cl,
                 source="script",
-                evidence=f"codex-pr/{dim} on head",
+                evidence=f"review-2/{dim} on head",
                 snapshot=snap,
                 status="ja",
             )
             self.assertTrue(verdict.allowed, verdict.reason)
         empty = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence="  ",
@@ -613,7 +645,7 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertIn("evidence", empty.reason)
         wrong_source = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="human",
             evidence="posted",
@@ -623,7 +655,7 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertFalse(wrong_source.allowed)
         missing_gate = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence="posted",
@@ -633,17 +665,17 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertFalse(missing_gate.allowed)
         self.assertIn("not approved", missing_gate.reason)
         grok = dict(cl)
-        grok["grok_pr_quality"] = "n_a"
+        grok["review_1_quality"] = "n_a"
         denied = close_allowed(
             "review",
-            "grok_pr_quality",
+            "review_1_quality",
             checklist=grok,
             source="script",
             evidence="posted",
             snapshot={
                 "gates": [
                     {
-                        "stage": "grok-pr",
+                        "stage": "review-1",
                         "dimension": "quality",
                         "vendor": "grok",
                         "verdict": "approved",
