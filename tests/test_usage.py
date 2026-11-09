@@ -90,6 +90,7 @@ def _openrouter_config(store: Store, config_dir: Path) -> None:
     (store.home / "ai-accounts.json").write_text(
         json.dumps(
             {
+                "models": {"first": "grok", "second": "codex"},
                 "accounts": {
                     "router-a": {
                         "provider": "openrouter",

@@ -11,6 +11,7 @@ from typing import Any
 
 from .allow import CHECKLIST_KEYS, TERMINAL_STATES
 from .model_slots import (
+    EXTERNAL_SECOND_TASK_CREATION_ERROR,
     ModelSlotsError,
     implementer_for_new_record,
     models_for_new_record,

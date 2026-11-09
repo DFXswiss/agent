@@ -16,6 +16,7 @@ from .allow import (
     N_A_ALLOWED,
     SECOND_REVIEW_KEYS,
     SECOND_REVIEW_NOT_POSTED,
+    external_second_review_evidence_ok,
     second_review_na,
 )
 from .model_slots import (
@@ -362,13 +363,13 @@ def close_allowed(
     snap = snapshot or {}
     if (
         status == "ja"
-        and key in CODEX_SECOND_REVIEW_KEYS
+        and key in SECOND_REVIEW_KEYS
         and models_from_snapshot(snap).second is None
     ):
         if not external_second_review_evidence_ok(snap, evidence):
             return CloseVerdict(
                 False,
-                f"{key} requires coordinator A38 evidence at the approved grok-pr head",
+                f"{key} requires coordinator A38 evidence at the approved review-1 head",
                 step,
             )
         return CloseVerdict(True, "allow", step)

@@ -576,8 +576,8 @@ class TestCloseAllowed(unittest.TestCase):
         for key in (
             "session_registered",
             "contributing_read",
-            "grok_pr_quality",
-            "grok_pr_logic",
+            "review_1_quality",
+            "review_1_logic",
         ):
             cl[key] = "ja"
         evidence = f"external second review by reviewer at {head}: https://example.invalid/review"
@@ -586,7 +586,7 @@ class TestCloseAllowed(unittest.TestCase):
             "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
             "gates": [
                 {
-                    "stage": "grok-pr",
+                    "stage": "review-1",
                     "dimension": dimension,
                     "vendor": "grok",
                     "verdict": "approved",
@@ -597,7 +597,7 @@ class TestCloseAllowed(unittest.TestCase):
         }
         allowed = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence=evidence,
@@ -606,7 +606,7 @@ class TestCloseAllowed(unittest.TestCase):
         self.assertTrue(allowed.allowed, allowed.reason)
         stale = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence=f"external second review by reviewer at {'b' * 40}: https://example.invalid/review",
@@ -626,7 +626,7 @@ class TestCloseAllowed(unittest.TestCase):
             self.assertFalse(
                 close_allowed(
                     "review",
-                    "codex_pr_quality",
+                    "review_2_quality",
                     checklist=cl,
                     source="script",
                     evidence=evidence,
@@ -636,7 +636,7 @@ class TestCloseAllowed(unittest.TestCase):
         without_marker = {**snapshot, "payload": {}}
         denied = close_allowed(
             "review",
-            "codex_pr_quality",
+            "review_2_quality",
             checklist=cl,
             source="script",
             evidence=evidence,

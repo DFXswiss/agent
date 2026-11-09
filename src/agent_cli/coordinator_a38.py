@@ -692,9 +692,9 @@ def phase_first_comment(
     if not isinstance(vendor, str):
         raise CoordinatorError("A38 first review provider is not pinned")
     for dimension in ("quality", "logic"):
-        gate = gates.get(("grok-pr", dimension))
+        gate = gates.get(("review-1", dimension))
         if gate is None or gate.get("verdict") != "approved" or gate.get("head_sha") != head or gate.get("vendor") != vendor:
-            raise CoordinatorError(f"missing first review gate grok-pr/{dimension} on {head[:7]}")
+            raise CoordinatorError(f"missing first review gate review-1/{dimension} on {head[:7]}")
     a38 = _a38_state(c)
     existing = a38.get("first_comment")
     if isinstance(existing, dict) and existing.get("head") == head:
@@ -708,7 +708,7 @@ def phase_first_comment(
     for dimension, lane_id in (("quality", "conformity-a"), ("logic", "logic-a")):
         item = gate_prompt_evidence(
             store,
-            gates.get(("grok-pr", dimension)),
+            gates.get(("review-1", dimension)),
             head=head,
             dimension=dimension,
             vendor=vendor,
@@ -1209,8 +1209,8 @@ def intake_second_reviews(
         # Every passing review records its evidence, so a pass after an earlier
         # block on the same head (for example after the merge) still closes the keys.
         # This pass is now the last posted review, so it is the deciding one.
-        set_checklist(store, task, "codex_pr_quality", "ja", evidence, source="script")
-        set_checklist(store, task, "codex_pr_logic", "ja", evidence, source="script")
+        set_checklist(store, task, "review_2_quality", "ja", evidence, source="script")
+        set_checklist(store, task, "review_2_logic", "ja", evidence, source="script")
         if c.get("phase") == "await_second_review":
             c["phase"] = "ci"
         save_task(store, task)

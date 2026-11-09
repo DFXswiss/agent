@@ -4,8 +4,8 @@ Static scripts that load this manifest select AI provider accounts and
 user-defined roles from `$AGENT_HOME/ai-accounts.json`. Installation creates no
 accounts, roles, or session selections. A missing file or an otherwise valid
 manifest without `models` fails with `models is not configured`. When `models`
-is set, null or empty `accounts`, `roles`, `sessions`, and `lanes` leave those
-collections empty. An absent `implementer` uses
+is set, null or empty `accounts`, `roles`, `sessions`, `lanes`, and
+`usage_accounts` leave those collections empty. An absent `implementer` uses
 `models.first`; neither selection authorizes a launch without lane bindings.
 Every model-lane launch also requires an explicit top-level `lane_execution`
 declaration written by the local harness. Missing or invalid declarations fail
@@ -16,13 +16,14 @@ implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
 This device-local manifest is used by `agent lane run`, the lane steps of
-`agent run`, interactive Grok session starts, optional Grok and OpenRouter usage polling,
+`agent run`, interactive Grok session starts, optional Grok and OpenRouter usage reads,
 and, for its `models` and `implementer` keys only, by every task creation (`agent task create`,
 the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, an
 unknown top-level key or a malformed model selection therefore stops task
 creation. `agent task create` and error-fix tasks ignore errors inside
-`accounts`, `roles`, `sessions` or `lanes`; the issue coordinator validates the
-whole manifest, including `lane_execution`, before it accepts a task.
+`accounts`, `roles`, `sessions`, `lanes` or `usage_accounts`; the issue
+coordinator validates the whole manifest, including `lane_execution`, before it
+accepts a task.
 It does not implement the complete issue-to-PR coordinator or a sandbox.
 
 The following is an **operator-supplied example**, never an installed default.
@@ -153,6 +154,14 @@ and stored rows remain readable without a database rewrite. Coordinator phases `
 `models` block has no slot assignment; task creation, device model display, and
 launch configuration fail loudly.
 
+Tasks recorded before model slots existed may use the historical `grok`, then
+`codex` mapping only to read or display their existing agent and gate rows; they
+cannot start a new lane or write a new agent or gate row.
+`agent models` prints `second=external` (or `external` for the selected slot)
+for a pinned null second slot; JSON output preserves `null`. A null second slot
+does not authorize an ordinary workflow to omit a review. The issue coordinator
+accepts it only for a worker with explicit A38 mode and external reviewers.
+
 A task pins the device's `models` when it is created (`task create`, the issue
 coordinator, error-fix tasks). When the configured implementer differs from
 `models.first`, the task also pins it in its own top-level `implementer` field;
@@ -217,8 +226,8 @@ which carries no pin, also accepts a finished row of the second provider); `agen
 `agent models implementer [--task <uuid>]` prints the device selection or task
 pin by the same rules as `agent models first|second`.
 
-For a task pinned with `second: null`, `gate record --stage codex-pr` is refused;
-the external result is recorded in the two `codex_pr_*` checklist keys with
+For a task pinned with `second: null`, `gate record --stage review-2` is refused;
+the external result is recorded in the two `review_2_*` checklist keys with
 `external second review by ...` evidence. That evidence counts only on a
 coordinator A38 task whose stored second review for the evidence head is
 posted and whose newest review does not block the merge.

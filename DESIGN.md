@@ -628,13 +628,13 @@ machine such as `CREATED` / `ANALYZING` / `READY_FOR_PR`.
 
 Draft publication timing is [docs/pull-request-lifecycle.md](docs/pull-request-lifecycle.md): open the draft as soon as the first signed task commit exists; full tests and reviews are Ready-for-review gates, not draft gates. A draft plus local tests is not done. A check records the local suite. When spine and pr-review are attached, a gate records each vendor dimension on **this** head, and leave-draft (Ready for review) needs two review runs. Each names this head, or a commit after the pull request base that this head still contains. CI on this head must be green. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. Without those skills, the target repository’s written contributing rules apply. `agent allow --action pr-ready` only checks that a task is in `pushing` or `pr-review`; it is not the leave-draft verdict. `task-done` still needs the workflow checklist and both summary sentences; ledger `task-done` is not pull-request completion.
 
-Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex` or `claude`) fills a review slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later review check for that task uses the pinned value. The optional `implementer` selection accepts those providers plus `deepseek`, must differ from `models.second`, and defaults to `models.first`; a task stores a separate top-level implementer pin only when it differs from `models.first`. Older tasks without that field resolve the implementer to their first slot. There is no built-in slot assignment: missing device configuration fails closed, and an older task without `models` may use the historical `grok`, then `codex` mapping only to read or display recorded agent and gate rows, never to start a lane or write a new row. Gate stages are `review-1` and `review-2`; their checklist prefixes are `review_1_` and `review_2_`. The old stage names `grok-pr` and `codex-pr` and checklist names `grok_pr_*` and `codex_pr_*` remain deprecated CLI input aliases with a warning; stored legacy rows stay readable without migration, while new writes store only the canonical names. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
+Quality and logic of one model slot run together. The order is model slot `first`, then model slot `second`. Which provider (`grok`, `codex`, `claude` or `openrouter`) fills a review slot is device configuration in `ai-accounts.json` (`models`); each task pins the device's `models` when it is created and every later review check for that task uses the pinned value. The optional `implementer` selection accepts those providers plus `deepseek`, must differ from `models.second`, and defaults to `models.first`; a task stores a separate top-level implementer pin only when it differs from `models.first`. Older tasks without that field resolve the implementer to their first slot. There is no built-in slot assignment: missing device configuration fails closed, and an older task without `models` may use the historical `grok`, then `codex` mapping only to read or display recorded agent and gate rows, never to start a lane or write a new row. Gate stages are `review-1` and `review-2`; their checklist prefixes are `review_1_` and `review_2_`. The old stage names `grok-pr` and `codex-pr` and checklist names `grok_pr_*` and `codex_pr_*` remain deprecated CLI input aliases with a warning; stored legacy rows stay readable without migration, while new writes store only the canonical names. The second slot runs only after both first-slot dimensions are `approved`. The session that authored the diff does not sit those PR reviews. If a vendor cannot run, abort loudly: record `unavailable` with evidence (`agent gate record --verdict unavailable`, then `close-step --status unavailable` for the matching gate key); do not record `approved`; do not substitute another vendor. Empty, partial, timeout, or unavailable review output is not zero findings.
 
 Besides the `one_review_authors` one-review exception above, the only other
 second-slot exception is a coordinator A38 task pinned with
 `models.second: null`. Its second review is an external review by a team member
-delivered as session mail, bound to the approved `grok-pr` head and recorded as
-`codex_pr_*` checklist evidence. The coordinator launches no second-slot model
+delivered as session mail, bound to the approved `review-1` head and recorded as
+`review_2_*` checklist evidence. The coordinator launches no second-slot model
 for that task. `models.second: null` is refused everywhere else.
 
 CI on this head is a script-measured fact whose applicability comes from the target repository's written rules. The frozen `dfx-local-ci/v1` format and legacy `agent local-ci verify` behavior do not by themselves adopt A38 or grant permission to skip GitHub CI. For A38 adopters, follow the central [A38 standard](docs/a38.md) and [guard guide](docs/a38-guard.md): private visibility alone is not opt-in, and private local code-gate equivalence requires trusted-base opt-in through a valid A38 manifest, assessment against the canonical active policy, and a separate live join against the newest author report that meets the requirements and was created after the head commit, falling back to an older qualifying report when a newer one does not meet them. Public A38 adopters publish and validate the author report in addition to retaining cumulative GitHub CI; private repositories without that trusted-base opt-in and non-A38 repositories retain their existing written CI rules. For applicable GitHub CI checks, `skipped` and `cancelled` are not green unless the workflow documents that skip. A verified author A38 report on this head may treat a matching required check that concluded `skipped` or `neutral` as green; `cancelled` and failed still block. Independently required GitHub-only checks, technical merge restrictions, review gates, and human merge remain required. Stay draft until the applicable rules hold. Two review runs are required. The first review run is required, and so is the second. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. One comment whose lanes are the first review run, and a later comment whose lanes are the second review run. The first comment stays valid when a later commit still contains that head and that head is after the pull request base. Then mark Ready for review (`isDraft=false`). A retry reuses the existing draft. Ready for review is still not merge and not completion. A human merges; claim completion only after that merge is verified.
@@ -739,8 +739,8 @@ the workflow is enabled on a deployment:
   `models.second: null`: the script runs and verifies the repository A38 suite,
   publishes the author report and two validated author review comments, and
   relays an allowlisted external team-member second-review result from session
-  mail. That result is bound to the approved `grok-pr` head and recorded as
-  `codex_pr_*` checklist evidence; no second-slot model is launched. For that
+  mail. That result is bound to the approved `review-1` head and recorded as
+  `review_2_*` checklist evidence; no second-slot model is launched. For that
   review path the hub remains the sanctioned
   person-ping/session-mail relay; a required assignment mandate is separately
   verified from its website-origin `assignment.created` event with the envelope,
@@ -750,7 +750,7 @@ the workflow is enabled on a deployment:
   inner payload is exactly `deviation: {"declared": false, "stated_by":
   "<same actor>"}`. Before the
   owner-scoped A38 default writes `contributing_ok=ja` with `conformity-a
-  approved at <head>`, it requires the recorded `grok-pr` quality gate to be
+  approved at <head>`, it requires the recorded `review-1` quality gate to be
   approved on that exact head. The coordinator never posts a formal
   approval and never marks the pull request Ready; it observes the PR guard
   making the unchanged head Ready, then waits for the verified human merge. If
@@ -781,7 +781,7 @@ device's hub identity or transfer ownership of store rows.
 
 [AI configuration](docs/ai-accounts.md) supplies arbitrarily named account
 profiles and roles, explicit models/access and session-to-role bindings. It is
-used by lane launches, interactive Grok starts and optional Grok usage reads.
+used by lane launches, interactive Grok starts and optional Grok/OpenRouter usage reads.
 Its `lane_execution` declaration is required for every vendor-lane start and
 only explicitly marks the current device as a lane host. The local harness's
 lane starter must start Agent on the external lane host; absence, invalid
@@ -797,7 +797,7 @@ mapping only when their existing agent and gate rows are read or displayed.
 They cannot start a new lane or write a new agent or gate row and must be
 recreated with the configured device selection. Task creation and `agent models`
 read both selections.
-Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude
+Absent configuration authorizes no AI launch. Fixed workflow kinds and the Grok/Codex/Claude/OpenRouter
 provider adapters are protocol capabilities, not installed account or role
 selections. A38 visibility lookup uses an explicitly bound GitHub
 session, or operator-supplied visibility without a GitHub lookup.

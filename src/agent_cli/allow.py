@@ -165,11 +165,12 @@ def external_second_review_ok(
         external = models_from_snapshot(task).second is None
     except (TypeError, ValueError):
         return False
-    recorded = evidence if isinstance(evidence, Mapping) else {}
+    canonical_statuses = canonical_checklist(statuses)
+    recorded = canonical_checklist(evidence) if isinstance(evidence, Mapping) else {}
     return external and all(
-        statuses.get(key) == "ja"
+        canonical_statuses.get(key) == "ja"
         and external_second_review_evidence_ok(task, recorded.get(key))
-        for key in CODEX_SECOND_REVIEW_KEYS
+        for key in SECOND_REVIEW_KEYS
     )
 
 
@@ -194,7 +195,7 @@ def external_second_review_evidence_ok(
         return False
     latest = _latest_gates(list(task.get("gates") or []))
     for dimension in ("quality", "logic"):
-        gate = latest.get(("grok-pr", dimension))
+        gate = latest.get(("review-1", dimension))
         if (
             gate is None
             or gate.get("vendor") != first_vendor
@@ -264,6 +265,11 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     trusted = task.get("trusted_pr_guard")
     opener = task.get("pull_opener")
     recorded = task.get("checklist_evidence")
+    external_second = external_second_review_ok(
+        task,
+        checklist,
+        recorded if isinstance(recorded, Mapping) else None,
+    )
     skip_second_gates = both_second_reviews_na(
         checklist,
         recorded if isinstance(recorded, Mapping) else None,
@@ -314,6 +320,8 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     all_gates_ok = True
     for stage, dim, slot in GATE_PAIRS:
         vendor = models.for_slot(slot)
+        if slot == "second" and external_second:
+            continue
         if skip_second_gates and stage == "review-2":
             continue
         if vendor is None:

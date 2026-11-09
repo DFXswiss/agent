@@ -29,6 +29,7 @@ from .model_slots import (
 )
 from .allow import CHECKLIST_KEYS
 from .coordinator_common import (
+    check_label,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
     REQUIRED_WORKER_SKILLS,
@@ -186,16 +187,32 @@ def execution_binding(
     ``ai`` lets a caller hash the same manifest read it pins ``models`` from.
     """
     ai = ai if ai is not None else load_ai_accounts(store.home)
-    selected = _execution_binding_fields(store, worker, repo, ai)
+    selected = _execution_binding_fields(
+        store,
+        worker,
+        repo,
+        ai,
+        repository_config=repository_config,
+        owner_scoped=owner_scoped,
+    )
     encoded = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
 def _execution_binding_fields(
-    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts
+    store: Store,
+    worker: WorkerConfig,
+    repo: str,
+    ai: AIAccounts,
+    *,
+    repository_config: RepositoryConfig | None = None,
+    owner_scoped: bool = False,
 ) -> dict[str, Any]:
     """Return the current binding fields from one AI-manifest snapshot."""
-    cfg = repo_cfg(worker, repo)
+    cfg = repository_config or repo_cfg(worker, repo)
+    owner = repo.split("/", 1)[0].casefold() if "/" in repo else ""
+    if owner_scoped and owner not in worker.repository_owners:
+        raise CoordinatorError(f"repository owner {owner or '?'} is no longer configured")
     github = load_accounts(store.home)
     lanes = [
         asdict(
@@ -212,28 +229,54 @@ def _execution_binding_fields(
         "repository": asdict(cfg),
         "workspace": str(worker.workspace_root),
         "worker_session": worker.session_id,
-        "review_session": worker.review_session,
         "reply_logins": worker.reply_logins,
+        **({"repository_owner": owner} if owner_scoped else {}),
+        **({"require_hub_assignment": True} if worker.require_hub_assignment else {}),
         "github": [
             asdict(github.for_session(sid))
-            for sid in (worker.session_id, worker.review_session)
+            for sid in (
+                (worker.session_id,)
+                if worker.a38
+                else (worker.session_id, worker.review_session)
+            )
         ],
         "models": ai.models.as_dict(),
         "lane_execution": asdict(ai.require_lane_execution()),
         "lanes": lanes,
     }
+    if worker.a38:
+        selected["a38"] = {
+            "enabled": True,
+            "second_reviewers": worker.second_reviewers,
+            "second_review_timeout_seconds": worker.second_review_timeout_seconds,
+        }
+    else:
+        selected["review_session"] = worker.review_session
     return selected
 
 
 def _legacy_execution_binding(
-    store: Store, worker: WorkerConfig, repo: str, ai: AIAccounts
+    store: Store,
+    worker: WorkerConfig,
+    repo: str,
+    ai: AIAccounts,
+    *,
+    repository_config: RepositoryConfig | None = None,
+    owner_scoped: bool = False,
 ) -> str:
     """Reproduce the pre-lane-execution hash for accepted-task migration only.
 
     The old formula omitted ``lane_execution`` and omitted ``models`` when the
     historical grok/codex mapping was selected. All other fields remain pinned.
     """
-    selected = _execution_binding_fields(store, worker, repo, ai)
+    selected = _execution_binding_fields(
+        store,
+        worker,
+        repo,
+        ai,
+        repository_config=repository_config,
+        owner_scoped=owner_scoped,
+    )
     selected.pop("lane_execution")
     if ai.models == LEGACY_RECORDED_SLOTS:
         selected.pop("models")
@@ -249,11 +292,27 @@ def refresh_execution_binding(
     source = checkpoint.get("source") or {}
     repo = str(source.get("repo") or "")
     ai = load_ai_accounts(store.home)
-    current = execution_binding(store, worker, repo, ai)
+    cfg = repo_cfg(worker, repo, task)
+    owner_scoped = bool(source.get("owner_scoped"))
+    current = execution_binding(
+        store,
+        worker,
+        repo,
+        ai,
+        repository_config=cfg,
+        owner_scoped=owner_scoped,
+    )
     stored = checkpoint.get("execution_binding")
     if stored == current:
         return
-    if stored != _legacy_execution_binding(store, worker, repo, ai):
+    if stored != _legacy_execution_binding(
+        store,
+        worker,
+        repo,
+        ai,
+        repository_config=cfg,
+        owner_scoped=owner_scoped,
+    ):
         raise CoordinatorError("task execution configuration changed or is unpinned")
     # Accepted tasks keep working across the binding-formula upgrade. Repin
     # immediately so a later real models/lane/device change stops.
@@ -1525,8 +1584,41 @@ def advance_one(
     task = tasks[0]
     c = coord(task)
     phase = str(c.get("phase") or "accept")
+    source = c.get("source") or {}
+    final_blocker = phase == "blocked" and not c.get("resume_phase")
+    if (
+        worker.a38
+        and as_int(c.get("pr_number")) is not None
+        and phase not in ("await_merge", "done")
+        and not final_blocker
+    ):
+        # Once the pull request exists the guard may make it Ready and a human may
+        # merge it in any phase, also while asking or recoverably blocked; check that
+        # first. A non-recoverable blocker (no resume phase, e.g. after a merge) stays.
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            verb = "merged" if live_state == "MERGED" else "closed"
+            return [f"PR {verb} during {phase}; verifying the merge"]
+        if live_state is None and phase in A38_PUBLISHED_RERUN_PHASES:
+            return [f"PR state temporarily unavailable before {phase}; retrying"]
     try:
-        refresh_execution_binding(store, worker, task)
+        if (
+            source.get("owner_scoped")
+            and (
+                phase == "accept"
+                or (phase == "blocked" and c.get("resume_phase") == "accept")
+            )
+            and not c.get("execution_binding")
+        ):
+            if source.get("require_hub_assignment") is not worker.require_hub_assignment:
+                raise CoordinatorError("task hub-assignment requirement changed before acceptance")
+            # Owner-scoped acceptance has no repository configuration yet, so it
+            # is bound once the accepted task pins its publication route.
+            pass
+        else:
+            refresh_execution_binding(store, worker, task)
     except (CoordinatorError, StoreError) as exc:
         message = str(exc)
         binding_blocker_activity_id = c.get("binding_blocker_activity_id")

@@ -429,6 +429,7 @@ def test_openrouter_always_sets_claude_config_dir_for_default_named_path(
     write_config(
         tmp_path,
         {
+            "models": {"first": "grok", "second": "codex"},
             "accounts": {
                 "or": {"provider": "openrouter", "config_dir": default_dir}
             },

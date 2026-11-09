@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from .ai_accounts import load_ai_accounts
 from .allow import GATE_PAIRS, both_second_reviews_na, evaluate_allow
 from .model_slots import (
     ModelSlots,
@@ -1301,14 +1302,14 @@ def _apply_readiness_checklist(
 ) -> None:
     """Close contributing/deviation from trusted readiness before Ready. No inferred grants."""
     if readiness.get("owner_a38_default") is True:
-        gate = latest_gates(store, task["id"]).get(("grok-pr", "quality"))
+        gate = latest_gates(store, task["id"]).get(("review-1", "quality"))
         if (
             gate is None
             or gate.get("verdict") != "approved"
             or gate.get("head_sha") != head
         ):
             raise CoordinatorError(
-                "owner A38 readiness requires approved grok-pr/quality gate on current head"
+                "owner A38 readiness requires approved review-1/quality gate on current head"
             )
         source_raw = coord(task).get("source")
         source = source_raw if isinstance(source_raw, dict) else {}
@@ -1538,13 +1539,22 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         save_task(store, task)
         return [retry]
     latest = latest_gates(store, task["id"])
-    skip_second = _second_review_skip(store, worker, task, runner, phase="readiness", head=head)
-    if isinstance(skip_second, list):
-        return skip_second
     models = _task_models(task)
-    for stage, dimension, slot in GATE_PAIRS:
-        if stage == "review-2" and skip_second:
-            continue
+    if worker.a38:
+        from .coordinator_a38 import require_ready_evidence
+
+        require_ready_evidence(store, task, head)
+        gate_pairs = tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
+    else:
+        skip_second = _second_review_skip(
+            store, worker, task, runner, phase="readiness", head=head
+        )
+        if isinstance(skip_second, list):
+            return skip_second
+        gate_pairs = tuple(
+            pair for pair in GATE_PAIRS if not (pair[0] == "review-2" and skip_second)
+        )
+    for stage, dimension, slot in gate_pairs:
         vendor = models.for_slot(slot)
         g = latest.get((stage, dimension))
         if g is None or g.get("verdict") != "approved" or g.get("head_sha") != head or g.get("vendor") != vendor:

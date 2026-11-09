@@ -91,8 +91,10 @@ def write_claude_first(
 
 @pytest.mark.no_pg
 def test_supported_providers_and_legacy_recorded_order() -> None:
-    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
-    assert IMPLEMENTER_PROVIDERS == frozenset({"grok", "codex", "claude", "deepseek"})
+    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude", "openrouter"})
+    assert IMPLEMENTER_PROVIDERS == frozenset(
+        {"grok", "codex", "claude", "openrouter", "deepseek"}
+    )
     assert LEGACY_RECORDED_SLOTS == ModelSlots("grok", "codex")
     with pytest.raises(ModelSlotsError) as excinfo:
         parse_model_slots(None)
@@ -464,6 +466,95 @@ def test_coordinator_slot_helpers() -> None:
     )
     assert checklist_key_for_stage("review-1", "quality") == "review_1_quality"
     assert checklist_key_for_stage("review-2", "logic") == "review_2_logic"
+    assert checklist_key_for_stage("grok-pr", "quality") == "review_1_quality"
+    assert checklist_key_for_stage("codex-pr", "logic") == "review_2_logic"
+    assert required_lane_slots(ModelSlots("grok", None)) == (
+        "grok:implementer",
+        "grok:reviewer",
+        "grok:pr-reviewer-quality",
+        "grok:pr-reviewer-logic",
+    )
+
+
+@pytest.mark.no_pg
+def test_external_second_review_satisfies_done_gate_without_second_gate_rows() -> None:
+    head = "a" * 40
+    checklist = {
+        "session_registered": "ja",
+        "contributing_read": "ja",
+        "contributing_ok": "ja",
+        "coverage_ok": "ja",
+        "handbook_ok": "ja",
+        "review_1_quality": "ja",
+        "review_1_logic": "ja",
+        "review_2_quality": "ja",
+        "review_2_logic": "ja",
+        "deviation_declared": "n_a",
+        "deviation_granted": "n_a",
+    }
+    prefix = f"external second review by reviewer at {head}: "
+    task = {
+        "id": "task",
+        "workflow": "review",
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
+        "checklist": checklist,
+        "checklist_evidence": {
+            "review_2_quality": prefix + "https://example.invalid/comment",
+            "review_2_logic": prefix + "https://example.invalid/comment",
+        },
+        "gates": [
+            {"stage": "review-1", "dimension": "quality", "vendor": "grok", "verdict": "approved", "head_sha": head},
+            {"stage": "review-1", "dimension": "logic", "vendor": "grok", "verdict": "approved", "head_sha": head},
+        ],
+        "local_checks": [],
+        "summaries": {"en": "Done.", "de": "Erledigt."},
+    }
+    assert ready_for_done_blocking(task) == []
+    task["checklist_evidence"]["review_2_logic"] = (
+        f"external second review by reviewer at {'b' * 40}: https://example.invalid/comment"
+    )
+    assert any(
+        "review-2/logic=external_review_missing" in item
+        for item in ready_for_done_blocking(task)
+    )
+    task["checklist_evidence"]["review_2_logic"] = prefix + "https://example.invalid/comment"
+    task.pop("payload")
+    assert any(
+        "review-2/quality=external_review_missing" in item
+        for item in ready_for_done_blocking(task)
+    )
+    task["payload"] = {"coordinator": {"a38": {"enabled": True}}}
+    task["checklist_evidence"]["review_2_logic"] = "ordinary evidence"
+    assert any("review-2/logic=external_review_missing" in item for item in ready_for_done_blocking(task))
+
+
+@pytest.mark.no_pg
+def test_models_cli_prints_external_for_null_second(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": None}}),
+        encoding="utf-8",
+    )
+    _run(tmp_path, ["models"])
+    assert capsys.readouterr().out.splitlines() == ["first=grok", "second=external"]
+    _run(tmp_path, ["models", "second", "--json"])
+    assert json.loads(capsys.readouterr().out) == {"second": None}
+
+
+def test_task_create_refuses_external_second_slot_outside_coordinator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": None}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        SystemExit,
+        match="models.second = null is allowed only for coordinator A38 task creation",
+    ):
+        _task(tmp_path, capsys)
 
 
 def test_gate_record_refuses_external_second_slot_on_direct_task_row(
@@ -518,7 +609,7 @@ def test_gate_record_refuses_external_second_slot_on_direct_task_row(
                 "--task",
                 tid,
                 "--stage",
-                "codex-pr",
+                "review-2",
                 "--dimension",
                 "quality",
                 "--vendor",

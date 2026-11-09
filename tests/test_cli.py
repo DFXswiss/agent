@@ -596,6 +596,10 @@ def test_task_pr_refuses_error_fix_task(
 
     error_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     _seed_cli_error_seen_for_conclusion(tmp_path)
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
     store = Store(tmp_path)
     try:
         tid, _ = find_or_create_implement_task(
@@ -2548,6 +2552,10 @@ def test_knock_daemon_auth_stale_is_silent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(tmp_path, ["init"])
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": "codex"}}),
+        encoding="utf-8",
+    )
     capsys.readouterr()
     listen_calls = {"n": 0}
 

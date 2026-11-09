@@ -38,8 +38,13 @@ from .lane import (
     OUTPUT_FILE_VENDORS,
     SPEC_VIA_STDIN,
     LaneResult,
+    finalize_lane_output,
+    hide_config_dir,
+    openrouter_path_error,
     provider_argv,
+    record_lane_run,
 )
+from .allow import EXTERNAL_SECOND_REVIEW_PREFIX, SECOND_REVIEW_KEYS
 from .model_slots import (
     SLOT_STAGES,
     ModelSlots,
@@ -193,15 +198,14 @@ def launch_lane(
     spec_text = spec_path.read_text(encoding="utf-8")
 
     aid = str(uuid.uuid4())
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    lane_output: str | None = None
     try:
         try:
             ai.require_lane_execution()
         except AIAccountError as exc:
             raise CoordinatorError(str(exc)) from exc
         if vendor in OUTPUT_FILE_VENDORS:
-            fd, codex_output = tempfile.mkstemp(
+            fd, lane_output = tempfile.mkstemp(
                 prefix=f"agent-coord-{vendor}-", suffix=".txt"
             )
             os.close(fd)
@@ -232,6 +236,9 @@ def launch_lane(
                 "round": round_num,
                 "role": role,
                 "vendor": vendor,
+                "provider": vendor,
+                "model": selected.model,
+                "prompt": spec_text,
                 "status": "working",
                 "started_at": utcnow(),
                 "finished_at": None,
@@ -577,7 +584,7 @@ def set_checklist(
     if current == status:
         if (
             status == "ja"
-            and key in CODEX_SECOND_REVIEW_KEYS
+            and key in SECOND_REVIEW_KEYS
             and models_from_snapshot(task).second is None
             and evidence.startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
         ):
@@ -878,15 +885,14 @@ def _prepare_pr_review_agent(
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(spec_text, encoding="utf-8")
     aid = str(uuid.uuid4())
-    write = selected.access == "workspace-write"
-    codex_output: str | None = None
+    lane_output: str | None = None
     try:
         ai.require_lane_execution()
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     try:
         if vendor in OUTPUT_FILE_VENDORS:
-            fd, codex_output = tempfile.mkstemp(
+            fd, lane_output = tempfile.mkstemp(
                 prefix=f"agent-coord-{vendor}-", suffix=".txt"
             )
             os.close(fd)
@@ -898,7 +904,8 @@ def _prepare_pr_review_agent(
                 cwd=worktree,
                 write=write,
                 model=selected.model,
-                output_file=codex_output,
+                output_file=lane_output,
+                read_dirs=read_dirs,
             ),
         ]
         stdin_text = spec_text if vendor in SPEC_VIA_STDIN else None
@@ -913,6 +920,11 @@ def _prepare_pr_review_agent(
                 "round": None,
                 "role": role,
                 "vendor": vendor,
+                "provider": vendor,
+                "model": selected.model,
+                "prompt": spec_text,
+                "head_sha": head,
+                "dimension": "quality" if role.endswith("quality") else "logic",
                 "stage": stage,
                 "status": "working",
                 "started_at": utcnow(),
@@ -921,9 +933,9 @@ def _prepare_pr_review_agent(
             },
         )
     except BaseException:
-        if codex_output:
+        if lane_output:
             try:
-                os.unlink(codex_output)
+                os.unlink(lane_output)
             except OSError:
                 pass
         raise
@@ -951,42 +963,63 @@ def _run_prepared(
     argv = list(prepared["argv"])
     stdin_text = prepared["stdin_text"]
     worktree = prepared["worktree"]
-    codex_output = prepared.get("codex_output")
+    output_file = prepared.get("output_file")
     try:
-        try:
-            if lane_runner is not None:
-                completed = lane_runner(argv, stdin_text)
-            else:
-                completed = run_bounded(
-                    argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
-                )
-            stdout = str(getattr(completed, "stdout") or "")
-            stderr = str(getattr(completed, "stderr") or "")
-            returncode = int(getattr(completed, "returncode"))
-            if codex_output:
-                try:
-                    file_text = Path(str(codex_output)).read_text(encoding="utf-8")
-                except OSError:
-                    file_text = ""
-                if file_text:
-                    stdout = file_text
-            return prepared["agent_id"], LaneResult(
-                role=str(prepared["role"]),
-                vendor=str(prepared["vendor"]),
-                status=parse_model_result(stdout, returncode)[0],
-                argv=argv,
-                returncode=returncode,
-                stdout=stdout,
-                stderr=stderr,
+        if lane_runner is not None:
+            completed = lane_runner(argv, stdin_text)
+        else:
+            completed = run_bounded(
+                argv, timeout=timeout, cwd=worktree, stdin_text=stdin_text
             )
-        except Exception as exc:  # noqa: BLE001
-            return prepared["agent_id"], exc
-    finally:
-        if codex_output:
+    except Exception as exc:  # noqa: BLE001
+        if output_file:
             try:
-                os.unlink(str(codex_output))
+                os.unlink(str(output_file))
             except OSError:
                 pass
+        return prepared["agent_id"], exc
+    stdout = str(getattr(completed, "stdout") or "")
+    stderr = hide_config_dir(
+        str(getattr(completed, "stderr") or ""), prepared.get("config_dir")
+    )
+    returncode = int(getattr(completed, "returncode"))
+    output_file_text = ""
+    if output_file:
+        try:
+            output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            try:
+                os.unlink(str(output_file))
+            except OSError:
+                pass
+            return prepared["agent_id"], exc
+        except OSError:
+            output_file_text = ""
+        try:
+            os.unlink(str(output_file))
+        except OSError:
+            pass
+    finalized = finalize_lane_output(
+        str(prepared["vendor"]),
+        stdout,
+        output_file_text,
+        cwd=str(worktree),
+        stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
+        config_dir=prepared.get("config_dir"),
+    )
+    return prepared["agent_id"], LaneResult(
+        role=str(prepared["role"]),
+        vendor=str(prepared["vendor"]),
+        model=str(prepared["model"]),
+        status=parse_model_result(finalized.text, returncode)[0],
+        argv=argv,
+        returncode=returncode,
+        stdout=finalized.text,
+        stderr=stderr,
+        usage=finalized.usage,
+        tools=finalized.tools,
+        tools_truncated=finalized.tools_truncated,
+    )
 
 
 def _abort_prepared_pr_reviews(
@@ -997,10 +1030,10 @@ def _abort_prepared_pr_reviews(
 ) -> None:
     """Close every persisted preparation and leave publication to advance_one."""
     for prepared in prepared_list:
-        codex_output = prepared.get("codex_output")
-        if codex_output:
+        output_file = prepared.get("output_file")
+        if output_file:
             try:
-                os.unlink(str(codex_output))
+                os.unlink(str(output_file))
             except OSError:
                 pass
     for prepared in prepared_list:
@@ -1278,6 +1311,15 @@ def phase_pr_gates(
             agent["finished_at"] = utcnow()
             agent["note"] = redact(outcome.stdout or outcome.stderr or "")
             store.write("agent", "update", agent["id"], strip_row(agent))
+            _record_lane_audit(
+                store,
+                worker,
+                c,
+                outcome,
+                task_id=str(task["id"]),
+                agent_id=str(prep["agent_id"]),
+                round_num=None,
+            )
             outcomes.append((prep, outcome))
 
     if failed_agents:

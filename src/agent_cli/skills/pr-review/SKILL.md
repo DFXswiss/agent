@@ -8,7 +8,7 @@ description: >-
 # Pull-request review contract
 
 Requires **spine**. Roles: `pr-reviewer-quality`, `pr-reviewer-logic`.
-Order: model slot `first`, then model slot `second`. The provider of each slot (`grok`, `codex` or `claude`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`). Both slots must be configured; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
+Order: model slot `first`, then model slot `second` (a coordinator A38 task has no second slot; see Gates). The provider of each slot (`grok`, `codex`, `claude` or `openrouter`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`). Both slots must be configured; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
 The same manifest must declare the current device as a lane host. The local
 harness's lane starter starts review lanes on that external host; Agent has no
 remote SSH execution mode.
@@ -35,6 +35,9 @@ script monitors events and informs a lane when further work is useful.
 Two dimensions (quality, logic) and two slot stages (`review-1` = slot first,
 then `review-2` = slot second). The second stage runs only if
 both first-slot dimensions are `approved`.
+Exception: a coordinator A38 task pins `models.second: null`; it runs no
+second-slot lane, and its second review comes from a human second reviewer as described in
+[docs/issue-coordinator.md](../../../../docs/issue-coordinator.md).
 
 ```bash
 agent agent start --session <session-id> --task <uuid> --role pr-reviewer-quality --stage review-1 --vendor <first-slot-provider>

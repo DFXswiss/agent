@@ -92,7 +92,7 @@ class ModelSlots:
             return self.second
         raise ModelSlotsError(f"unknown model slot {slot}")
 
-    def for_stage(self, stage: str) -> str:
+    def for_stage(self, stage: str) -> str | None:
         slot = STAGE_SLOTS.get(canonical_stage(stage))
         if slot is None:
             raise ModelSlotsError(f"unknown gate stage {stage}")

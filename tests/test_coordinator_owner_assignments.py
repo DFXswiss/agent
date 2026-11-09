@@ -887,6 +887,8 @@ def test_hub_configuration_errors_block_with_reply_checkpoint(monkeypatch, tmp_p
 
 
 def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, tmp_path):
+    write_accounts(tmp_path)
+    store = SimpleNamespace(home=tmp_path)
     task = _accept_task()
     checkpoint = task["payload"]["coordinator"]
     checkpoint.update(
@@ -907,7 +909,7 @@ def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, 
         lambda *_a, **kwargs: published.append(kwargs) or ["published"],
     )
     assert advance_one(
-        object(), make_worker(tmp_path), runner=object(), lane_runner=None
+        store, make_worker(tmp_path), runner=object(), lane_runner=None
     ) == ["published"]
     assert checkpoint["phase"] == "ask"
     assert checkpoint["resume_phase"] == "implement"
@@ -927,6 +929,8 @@ def test_runtime_configuration_error_in_ask_keeps_reply_checkpoint(monkeypatch, 
 def test_runtime_configuration_error_in_ci_resumes_when_binding_is_restored(
     monkeypatch, tmp_path
 ):
+    write_accounts(tmp_path)
+    store = SimpleNamespace(home=tmp_path)
     task = _accept_task()
     checkpoint = task["payload"]["coordinator"]
     checkpoint.update(phase="ci", execution_binding="pinned-binding")
@@ -965,13 +969,13 @@ def test_runtime_configuration_error_in_ci_resumes_when_binding_is_restored(
     )
 
     assert advance_one(
-        object(), make_worker(tmp_path), runner=object(), lane_runner=None
+        store, make_worker(tmp_path), runner=object(), lane_runner=None
     ) == ["published"]
     assert checkpoint["phase"] == "ci"
     assert checkpoint["binding_blocker"] == "configuration changed"
     broken["value"] = False
     assert advance_one(
-        object(), make_worker(tmp_path), runner=object(), lane_runner=None
+        store, make_worker(tmp_path), runner=object(), lane_runner=None
     ) == ["CI resumed"]
     assert checkpoint["phase"] == "ci"
     assert "binding_blocker" not in checkpoint
@@ -981,6 +985,8 @@ def test_runtime_configuration_error_in_ci_resumes_when_binding_is_restored(
 def test_restored_binding_retries_failed_accept_blocker_without_overwriting_it(
     monkeypatch, tmp_path
 ):
+    write_accounts(tmp_path)
+    store = SimpleNamespace(home=tmp_path)
     task = _accept_task()
     checkpoint = task["payload"]["coordinator"]
     checkpoint.update(
@@ -1015,14 +1021,14 @@ def test_restored_binding_retries_failed_accept_blocker_without_overwriting_it(
     monkeypatch.setattr("agent_cli.coordinator_github.save_task", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_cli.coordinator_github.post_issue_comment", post)
 
-    advance_one(object(), make_worker(tmp_path), runner=object(), lane_runner=None)
+    advance_one(store, make_worker(tmp_path), runner=object(), lane_runner=None)
     assert checkpoint["blocker"] == "device is not paired with a hub"
     assert "blocker_activity_id" not in checkpoint
     assert checkpoint["binding_blocker"] == "configuration changed"
     assert checkpoint["binding_blocker_activity_id"] == "published-1"
 
     broken["value"] = False
-    advance_one(object(), make_worker(tmp_path), runner=object(), lane_runner=None)
+    advance_one(store, make_worker(tmp_path), runner=object(), lane_runner=None)
     assert posts == [
         "Blocked: configuration changed",
         "Blocked: device is not paired with a hub",
@@ -1281,7 +1287,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
             {
                 "id": f"{task_id}-{dimension}",
                 "task_id": task_id,
-                "stage": "grok-pr",
+                "stage": "review-1",
                 "dimension": dimension,
                 "vendor": "grok",
                 "verdict": "approved",
@@ -1349,7 +1355,7 @@ def test_owner_a38_default_readiness_without_verified_actor_requires_configurati
             assert table == "review_gate"
             return [{
                 "task_id": "task-1",
-                "stage": "grok-pr",
+                "stage": "review-1",
                 "dimension": "quality",
                 "verdict": "approved",
                 "head_sha": "a" * 40,
@@ -1409,7 +1415,7 @@ def test_owner_a38_default_refuses_non_explicit_deviation_statements(
             assert table == "review_gate"
             return [{
                 "task_id": "task-1",
-                "stage": "grok-pr",
+                "stage": "review-1",
                 "dimension": "quality",
                 "verdict": "approved",
                 "head_sha": "a" * 40,
@@ -1451,12 +1457,12 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
         def rows(self, table):
             assert table == "review_gate"
             return [{
-                "task_id": "task-1", "stage": "grok-pr", "dimension": "quality",
+                "task_id": "task-1", "stage": "review-1", "dimension": "quality",
                 "verdict": verdict, "head_sha": head,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
 
-    with pytest.raises(CoordinatorError, match="approved grok-pr/quality"):
+    with pytest.raises(CoordinatorError, match="approved review-1/quality"):
         _apply_readiness_checklist(
             GateStore(),
             replace(make_worker(tmp_path), a38=True, review_session=None),
@@ -1548,7 +1554,7 @@ def _owner_a38_early_merge_task(store, worker, *, explicit_statement):
         {
             "id": f"{task_id}-quality",
             "task_id": task_id,
-            "stage": "grok-pr",
+            "stage": "review-1",
             "dimension": "quality",
             "vendor": "grok",
             "verdict": "approved",

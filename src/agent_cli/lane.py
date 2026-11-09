@@ -652,14 +652,17 @@ def launch(
         raise SystemExit(f"role must be {'|'.join(LANE_ROLES)}")
     if vendor not in LANE_VENDORS:
         raise SystemExit(f"vendor must be {PROVIDER_CHOICES}")
-    from .ai_accounts import load_ai_accounts
-
     if not session_id or config_home is None:
         raise SystemExit("lane requires an explicit session and AI configuration home")
+    from .ai_accounts import load_ai_accounts
+
     ai = load_ai_accounts(config_home, defer_model_configuration=True)
-    selected = ai.for_lane(
-        session_id, role, vendor, require_execution=False
-    )
+    if binding is None:
+        selected = ai.for_lane(session_id, role, vendor, require_execution=False)
+    else:
+        selected = binding
+        if selected.account.provider != vendor:
+            raise SystemExit("lane binding provider does not match requested vendor")
 
     path = Path(spec_file)
     if not path.is_file():
@@ -673,9 +676,15 @@ def launch(
 
     ai.require_model_configuration()
     write = selected.access == "workspace-write"
+    if vendor in ("claude", "openrouter") and write and read_dirs:
+        raise SystemExit("write lane takes no extra directories")
+    if vendor == "openrouter":
+        overlap = openrouter_path_error(selected.account.config_dir, cwd, read_dirs)
+        if overlap is not None:
+            raise SystemExit(overlap)
     if not dry_run:
         ai.require_lane_execution()
-    codex_output_file: str | None = None
+    lane_output_file: str | None = None
     output_file: str | None = None
     if vendor in OUTPUT_FILE_VENDORS or (vendor == "claude" and tmux):
         if dry_run:

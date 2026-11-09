@@ -30,6 +30,7 @@ TOP_LEVEL_KEYS = frozenset(
         "roles",
         "sessions",
         "usage_session",
+        "usage_accounts",
         "models",
         "implementer",
         "lanes",
@@ -181,6 +182,8 @@ class AIAccounts:
     lane_execution: LaneExecution | None = None
     lane_execution_error: str = LANE_EXECUTION_ERROR
     model_configuration_error: str | None = None
+    # OpenRouter accounts whose API-key usage is polled. Empty is unconfigured.
+    usage_accounts: tuple[str, ...] = ()
 
     def require_model_configuration(self) -> tuple[ModelSlots, str]:
         """Return the explicit slot selection or its deferred configuration error."""
@@ -276,7 +279,7 @@ def load_ai_accounts(
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
             f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, "
-            "models, implementer, lanes, and lane_execution"
+            "usage_accounts, models, implementer, lanes, and lane_execution"
         )
     lane_execution_raw = raw.get("lane_execution")
     lane_execution = _parse_lane_execution(lane_execution_raw)
@@ -384,6 +387,24 @@ def load_ai_accounts(
         if not defer_model_configuration:
             raise
         model_configuration_error = str(exc)
+    usage_accounts_raw = raw.get("usage_accounts")
+    if usage_accounts_raw is None:
+        usage_accounts_raw = []
+    if not isinstance(usage_accounts_raw, list):
+        raise AccountError("usage_accounts must be a list or null")
+    usage_accounts: list[str] = []
+    for value in usage_accounts_raw:
+        account_name = _text(value, "usage_accounts entry")
+        account = accounts.get(account_name)
+        if account is None:
+            raise AccountError(f"usage_accounts references unknown account {account_name}")
+        if account.provider != "openrouter":
+            raise AccountError(
+                f"usage_accounts account {account_name} must use provider openrouter"
+            )
+        if account_name in usage_accounts:
+            raise AccountError(f"usage_accounts contains duplicate account {account_name}")
+        usage_accounts.append(account_name)
     return AIAccounts(
         accounts=accounts,
         roles=roles,
@@ -395,6 +416,7 @@ def load_ai_accounts(
         lane_execution=lane_execution,
         lane_execution_error=_lane_execution_error(lane_execution_raw),
         model_configuration_error=model_configuration_error,
+        usage_accounts=tuple(usage_accounts),
     )
 
 
@@ -432,7 +454,7 @@ def load_model_configuration(home: Path) -> tuple[ModelSlots, str]:
     if not isinstance(raw, dict) or set(raw) - TOP_LEVEL_KEYS:
         raise AccountError(
             f"{CONFIG_FILE} accepts only accounts, roles, sessions, usage_session, "
-            "models, implementer, lanes, and lane_execution"
+            "usage_accounts, models, implementer, lanes, and lane_execution"
         )
     # Device-configuration read: task creation never supplies a built-in assignment.
     return _model_configuration(raw)
@@ -443,7 +465,8 @@ def load_model_slots(home: Path) -> ModelSlots:
 
     Checks the file is readable JSON with known top-level keys and validates the
     ``models`` and ``implementer`` selections; errors inside ``accounts``,
-    ``roles``, ``sessions``, ``lanes`` or ``lane_execution`` do not stop task
+    ``roles``, ``sessions``, ``lanes``, ``lane_execution`` or ``usage_accounts``
+    do not stop task
     creation. Launches still validate the whole file.
     """
     return load_model_configuration(home)[0]

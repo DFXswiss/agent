@@ -56,9 +56,11 @@ from .lane import (
     LANE_VENDORS,
     LaneResult,
     launch,
+    record_lane_run,
 )
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .model_slots import (
+    EXTERNAL_SECOND_TASK_CREATION_ERROR,
     IMPLEMENTER_PROVIDER_CHOICES,
     IMPLEMENTER_PROVIDERS,
     PROVIDER_CHOICES,
@@ -1593,6 +1595,11 @@ def cmd_gate(args: list[str]) -> None:
         # authorize or constrain a new gate record. The strict pin check remains
         # at the write boundary so the existing precondition order is preserved.
         models = None if task.get("models") is None else models_from_snapshot(task)
+        if stage == "review-2" and models is not None and models.second is None:
+            die(
+                "gate record --stage review-2 is unavailable: the second review is external; "
+                "record it through the review_2_quality/review_2_logic checklist evidence"
+            )
         if models is not None:
             expected_vendor = models.for_stage(stage)
             if vendor != expected_vendor:
@@ -3544,7 +3551,7 @@ def cmd_run(args: list[str]) -> None:
                 ai = load_ai_accounts(
                     store.home, defer_model_configuration=True
                 )
-                ai.for_lane(
+                selected_lane = ai.for_lane(
                     session_id, role, vendor, require_execution=False
                 )
                 ai.require_model_configuration()
