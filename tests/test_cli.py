@@ -2598,7 +2598,9 @@ def test_knock_daemon_scans_configured_openrouter_usage(
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
     monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
-    monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home: Accounts())
+    monkeypatch.setattr(
+        "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
+    )
     monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
@@ -2629,7 +2631,9 @@ def test_knock_daemon_skips_openrouter_without_usage_accounts(
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
     monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
-    monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home: Accounts())
+    monkeypatch.setattr(
+        "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
+    )
     monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", forbidden_scan)
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
@@ -2639,6 +2643,39 @@ def test_knock_daemon_skips_openrouter_without_usage_accounts(
 
     with pytest.raises(SystemExit, match="stop"):
         run(tmp_path, ["knock"])
+
+
+@pytest.mark.parametrize("config", [None, {"accounts": {}, "roles": {}, "sessions": {}}])
+def test_knock_daemon_usage_precheck_ignores_missing_models(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    config: dict[str, object] | None,
+) -> None:
+    run(tmp_path, ["init"])
+    capsys.readouterr()
+    if config is not None:
+        (tmp_path / "ai-accounts.json").write_text(json.dumps(config), encoding="utf-8")
+
+    def stop_listen(*_args: object, **_kwargs: object) -> None:
+        raise SystemExit("stop")
+
+    monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
+    monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
+
+    def forbidden_scan(_store: object) -> list[str]:
+        raise AssertionError("OpenRouter scan must be skipped without usage_accounts")
+
+    monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", forbidden_scan)
+    monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
+    monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.mail_act.scan_mail", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.error_fix_act.scan_error_fix", lambda _store, _runner: [])
+    monkeypatch.setattr("agent_cli.main.knock_listen", stop_listen)
+
+    with pytest.raises(SystemExit, match="stop"):
+        run(tmp_path, ["knock"])
+    assert capsys.readouterr().err == ""
 
 
 def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
@@ -2669,7 +2706,9 @@ def test_knock_daemon_reports_openrouter_errors_and_keeps_looping(
 
     monkeypatch.setattr("agent_cli.main.usage_poll_due", lambda *_a, **_k: True)
     monkeypatch.setattr("agent_cli.main.scan_usage", lambda _store: None)
-    monkeypatch.setattr("agent_cli.main.load_ai_accounts", lambda _home: Accounts())
+    monkeypatch.setattr(
+        "agent_cli.main.load_ai_accounts", lambda _home, **_kwargs: Accounts()
+    )
     monkeypatch.setattr("agent_cli.main.scan_openrouter_usage", fake_scan)
     monkeypatch.setattr("agent_cli.main.scan_merged", lambda _store, _runner: ([], 0))
     monkeypatch.setattr("agent_cli.github_act.scan_github", lambda _store, _runner: [])

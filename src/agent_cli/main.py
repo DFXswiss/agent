@@ -2079,6 +2079,30 @@ def _canonicalize_snapshot_names(snapshot: dict[str, Any]) -> None:
             item["key"] = canonical_key(str(item["key"]))
 
 
+def _usage_dashboard_rows(activity: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the newest usage snapshot per provider account for the dashboard."""
+    seen: set[tuple[str, str]] = set()
+    rows: list[dict[str, Any]] = []
+    for event in activity:
+        if not isinstance(event, dict) or event.get("type") != "usage.snapshot":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        provider = payload.get("provider") or payload.get("vendor")
+        account = (
+            payload.get("account")
+            if provider == "openrouter"
+            else payload.get("account_email")
+        )
+        key = (str(provider), str(account))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(event)
+    return rows
+
+
 def cmd_dashboard(args: list[str]) -> None:
     port = 7845
     if args:
@@ -2120,6 +2144,7 @@ def cmd_dashboard(args: list[str]) -> None:
                 for session in snap.get("sessions") or []:
                     session["can_control"] = session.get("_origin_device_id") == device
                     session["control_connected"] = True
+                snap["usage"] = _usage_dashboard_rows(snap.get("activity") or [])
                 _canonicalize_snapshot_names(snap)
                 self._json(200, snap)
                 return
@@ -4023,7 +4048,9 @@ def cmd_knock(args: list[str]) -> None:
                 except StoreError as exc:
                     print(f"usage.snapshot error: {exc}", file=sys.stderr)
                 try:
-                    if load_ai_accounts(store.home).usage_accounts:
+                    if load_ai_accounts(
+                        store.home, defer_model_configuration=True
+                    ).usage_accounts:
                         for activity_id in scan_openrouter_usage(store):
                             print(f"usage.snapshot {activity_id}")
                 except OpenRouterUsageError as exc:

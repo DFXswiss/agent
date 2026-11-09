@@ -168,21 +168,15 @@
         document.getElementById("dev").textContent = data.device_id;
         document.getElementById("login").textContent = data.login || "not paired";
 
-        const usageSeen = {};
-        const usageRows = [];
-        (data.activity || []).forEach(ev => {
-          if (ev.type !== "usage.snapshot") return;
+        document.querySelector("#usage tbody").innerHTML = (data.usage || []).map(ev => {
           const p = ev.payload || {};
-          const provider = p.provider || p.vendor;
-          const key = provider + "\0" + p.account_email;
-          if (usageSeen[key]) return;
-          usageSeen[key] = true;
-          usageRows.push(ev);
-        });
-        document.querySelector("#usage tbody").innerHTML = usageRows.map(ev => {
-          const p = ev.payload || {};
-          const used = typeof p.used_percent === "number" ? p.used_percent + "%" : "";
-          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(p.account_email)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(used)}</td><td>${esc(p.period_end)}</td><td>${esc(p.fetched_at)}</td></tr>`;
+          const openrouter = (p.provider || p.vendor) === "openrouter";
+          const account = openrouter ? p.account : p.account_email;
+          const used = openrouter
+            ? (typeof p.usage_usd === "number" ? "$" + p.usage_usd + " / $" + (typeof p.limit_usd === "number" ? p.limit_usd : "unlimited") : "")
+            : (typeof p.used_percent === "number" ? p.used_percent + "%" : "");
+          const reset = openrouter ? p.limit_reset : p.period_end;
+          return `<tr><td>${esc(ev._origin_device_id)}</td><td>${esc(account)}</td><td>${esc(p.provider || p.vendor)}</td><td>${esc(p.tier)}</td><td>${esc(used)}</td><td>${esc(reset)}</td><td>${esc(p.fetched_at)}</td></tr>`;
         }).join("") || empty(7);
 
         sessionsById = {};
