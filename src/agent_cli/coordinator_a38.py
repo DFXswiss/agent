@@ -700,7 +700,21 @@ def phase_first_comment(
     if isinstance(existing, dict) and existing.get("head") == head:
         row = store.row("activity", str(existing.get("activity_id") or ""))
         if row is not None and row.get("execution_status") == "done":
-            send_second_review_requests(store, worker, task, force=head_review_blocks(c, head))
+            result = row.get("result") if isinstance(row.get("result"), dict) else {}
+            if not isinstance(result.get("url"), str) or not result["url"]:
+                raise CoordinatorError("A38 review comment URL was not verified")
+            existing.update(id=result.get("id"), url=result["url"])
+            save_task(store, task)
+            request_key = (
+                f"first-comment:{head}:{max(1, int(a38.get('first_review_passes') or 0))}"
+            )
+            send_second_review_requests(
+                store,
+                worker,
+                task,
+                force=head_review_blocks(c, head),
+                request_key=request_key,
+            )
             c["phase"] = "await_second_review"
             save_task(store, task)
             return [f"first A38 review comment already posted on {head[:7]}"]
@@ -744,15 +758,29 @@ def phase_first_comment(
     rules_bound = review_rules_bound(store, worker, runner, task)
     body = _render_review_comment(task, payload, rules_bound=rules_bound)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
+    request_key = f"first-comment:{head}:{payload['passes']}"
+    request_plan = _prepare_second_review_request(
+        store,
+        worker,
+        task,
+        force=head_review_blocks(c, head),
+        request_key=request_key,
+    )
+    comment_intent = (
+        dict(existing)
+        if isinstance(existing, dict) and existing.get("head") == head
+        else {}
+    )
+    comment_intent.update(head=head, activity_id=activity_id)
+    a38["first_comment"] = comment_intent
+    # Save both outside-effect intents before either the GitHub comment or a ping
+    # is sent. Their deterministic ids make the incomplete steps resumable.
+    save_task(store, task)
     result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
-    a38["first_comment"] = {
-        "head": head,
-        "activity_id": activity_id,
-        "id": result.get("id"),
-        "url": result.get("url"),
-    }
-    # A head kept after a blocking review (an implementer without changes) asks again.
-    send_second_review_requests(store, worker, task, force=head_review_blocks(c, head))
+    comment_intent.update(id=result.get("id"), url=result.get("url"))
+    # Checkpoint the external comment result as soon as the executor has verified it.
+    save_task(store, task)
+    _write_second_review_request_pings(store, task, request_plan)
     c["phase"] = "await_second_review"
     save_task(store, task)
     return [f"first A38 review comment posted on {head[:7]}"]
@@ -789,23 +817,55 @@ def head_review_blocks(c: dict[str, Any], head: str) -> bool:
 
 
 def send_second_review_requests(
-    store: Store, worker: WorkerConfig, task: dict[str, Any], *, force: bool = False
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    *,
+    force: bool = False,
+    request_key: str | None = None,
 ) -> bool:
+    requested, plan = _prepare_second_review_request(
+        store,
+        worker,
+        task,
+        force=force,
+        request_key=request_key,
+    )
+    # The task intent must exist before the first ping row. On a retry the same
+    # plan fills only missing deterministic ping ids.
+    save_task(store, task)
+    _write_second_review_request_pings(store, task, plan)
+    return requested
+
+
+def _prepare_second_review_request(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    *,
+    force: bool = False,
+    request_key: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
     c = coord(task)
     head = str(c.get("head_sha") or "")
     if not is_sha(head):
         raise CoordinatorError("second review request requires current head")
     a38 = _a38_state(c)
     prior = a38.get("second_review")
-    if isinstance(prior, dict) and prior.get("head") == head and not force:
-        return False
+    same_head = isinstance(prior, dict) and prior.get("head") == head
+    same_request = (
+        same_head
+        and request_key is not None
+        and prior.get("request_key") == request_key
+    )
+    requested = not same_head or (force and not same_request)
     # After a blocking review drops the state, continue the counter so new ping ids are fresh.
     occurrence = (
         int(prior.get("request_count") or 0)
-        if isinstance(prior, dict)
+        if same_head
         else int(a38.get("second_review_next_occurrence") or 0)
     )
-    if force:
+    if force and requested:
         occurrence += 1
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
@@ -816,23 +876,51 @@ def send_second_review_requests(
     if not isinstance(sender, str) or not sender:
         raise CoordinatorError("device must be paired before sending second-review pings")
     now = utcnow()
-    requested_at = (
-        prior.get("requested_at")
-        if isinstance(prior, dict) and prior.get("head") == head
-        else now
-    )
+    requested_at = (prior.get("requested_at") or now) if same_head else now
     # A re-ping of the same head keeps every review already posted for it.
-    state = dict(prior) if isinstance(prior, dict) and prior.get("head") == head else {}
-    state.update(
-        head=head,
-        requested_at=requested_at,
-        last_requested_at=now,
-        request_count=occurrence,
-        pinged=list(worker.second_reviewers),
-    )
+    state = dict(prior) if same_head else {}
+    if requested:
+        state.update(
+            head=head,
+            requested_at=requested_at,
+            last_requested_at=now,
+            request_count=occurrence,
+            pinged=list(worker.second_reviewers),
+        )
+        if request_key is None:
+            state.pop("request_key", None)
+        else:
+            state["request_key"] = request_key
+    else:
+        # Upgrade older request state to a complete durable intent without
+        # changing its timeout or occurrence.
+        state.setdefault("head", head)
+        state.setdefault("requested_at", now)
+        state.setdefault("last_requested_at", state["requested_at"])
+        state.setdefault("request_count", occurrence)
+        state.setdefault("pinged", list(worker.second_reviewers))
+        if request_key is not None:
+            state.setdefault("request_key", request_key)
     state.setdefault("status", "requested")
     a38["second_review"] = state
-    for login in worker.second_reviewers:
+    return requested, {
+        "head": head,
+        "occurrence": occurrence,
+        "note": note,
+        "sender": sender.casefold(),
+        "created_at": str(state.get("last_requested_at") or now),
+        "recipients": list(worker.second_reviewers),
+    }
+
+
+def _write_second_review_request_pings(
+    store: Store,
+    task: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> None:
+    head = str(plan["head"])
+    occurrence = int(plan["occurrence"])
+    for login in plan["recipients"]:
         pid = _ping_id(str(task["id"]), head, login, occurrence)
         if store.row("ping", pid) is not None:
             continue
@@ -842,17 +930,15 @@ def send_second_review_requests(
             pid,
             {
                 "id": pid,
-                "from_login": sender.casefold(),
+                "from_login": plan["sender"],
                 "to_login": login,
                 "kind": "review-request",
                 "task_id": task["id"],
-                "body": note,
-                "created_at": now,
+                "body": plan["note"],
+                "created_at": plan["created_at"],
                 "acked_at": None,
             },
         )
-    save_task(store, task)
-    return True
 
 
 def _mark_message_read(store: Store, worker: WorkerConfig, message_id: str) -> None:

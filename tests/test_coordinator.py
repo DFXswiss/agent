@@ -5601,16 +5601,13 @@ def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
     assert len(receipts) == 1
 
 
-def test_a38_first_comment_ping_and_external_mail_happy_path(
+def _a38_first_comment_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+) -> tuple[Store, Any, FakeGh, str]:
     from dataclasses import replace
 
-    from agent_cli.a38_guard import status_context_enforce, status_context_observe
-    from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
-    from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
-    from agent_cli.coordinator_github import phase_await_merge
-    from agent_cli.coordinator_lanes import invalidate_head_evidence
+    from agent_cli.a38_review import COMPLIANCE_PROMPT
+    from agent_cli.coordinator_runtime import execution_binding
 
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -5656,6 +5653,9 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
                     "assigned_id": "assigned-a38",
                     "base": "develop",
                 },
+                "execution_binding": execution_binding(
+                    store, worker, "example/project"
+                ),
                 "a38": {
                     "enabled": True,
                     "report": {"head": fake.head, "activity_id": "report"},
@@ -5690,7 +5690,17 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
             "review_gate",
             "insert",
             gid,
-            {"id": gid, "task_id": tid, "stage": "review-1", "dimension": dimension, "vendor": "grok", "verdict": "approved", "head_sha": fake.head, "agent_id": aid, "recorded_at": "2026-01-01T00:00:00Z"},
+            {
+                "id": gid,
+                "task_id": tid,
+                "stage": "review-1",
+                "dimension": dimension,
+                "vendor": "grok",
+                "verdict": "approved",
+                "head_sha": fake.head,
+                "agent_id": aid,
+                "recorded_at": "2026-01-01T00:00:00Z",
+            },
         )
     checklist = {
         "session_registered": "ja", "spec_written": "ja", "implementer_done": "ja",
@@ -5701,7 +5711,12 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     }
     for key, status in checklist.items():
         cid = f"check-{key}"
-        store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
+        store.write(
+            "checklist_item",
+            "insert",
+            cid,
+            {"id": cid, "task_id": tid, "key": key, "status": status},
+        )
     store.write(
         "local_check",
         "insert",
@@ -5717,6 +5732,110 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
             "head_sha": fake.head,
         },
     )
+    return store, worker, fake, tid
+
+
+def test_a38_first_comment_crash_resumes_without_duplicate_and_takes_merged_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
+    real_write_pings = coordinator_a38._write_second_review_request_pings
+
+    def write_pings_then_crash(*args, **kwargs):  # noqa: ANN002, ANN003
+        real_write_pings(*args, **kwargs)
+        raise RuntimeError("crash after first comment and review ping")
+
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_write_second_review_request_pings",
+        write_pings_then_crash,
+    )
+    with pytest.raises(RuntimeError, match="crash after first comment and review ping"):
+        phase_first_comment(store, worker, store.row("task", tid), fake)
+
+    crashed = store.row("task", tid)
+    checkpoint = crashed["payload"]["coordinator"]
+    assert checkpoint["phase"] == "a38_first_comment"
+    assert checkpoint["a38"]["first_comment"]["head"] == fake.head
+    assert checkpoint["a38"]["first_comment"]["id"] == 99
+    assert checkpoint["a38"]["second_review"]["head"] == fake.head
+    assert checkpoint["a38"]["second_review"]["pinged"] == ["outside-reviewer"]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 1
+    assert len(store.rows("ping")) == 1
+
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_write_second_review_request_pings",
+        real_write_pings,
+    )
+    assert phase_first_comment(store, worker, crashed, fake) == [
+        f"first A38 review comment already posted on {fake.head[:7]}"
+    ]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 1
+    assert len(store.rows("ping")) == 1
+
+    fake.pr.update(
+        {
+            "state": "MERGED",
+            "isDraft": False,
+            "mergedAt": "2026-09-01T12:00:00Z",
+            "mergeCommit": {"oid": "d" * 40},
+            "mergedBy": {"login": "human-owner", "type": "User"},
+        }
+    )
+    review = _a38_second_review_payload(tid, fake.head)
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="merged-review-mail",
+        login="outside-reviewer",
+        payload=review,
+        second=2,
+    )
+    waiting = store.row("task", tid)
+    waiting["payload"]["coordinator"].setdefault("evidence", {})[
+        "readiness_head"
+    ] = fake.head
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in waiting.items() if not key.startswith("_")},
+    )
+
+    assert advance_one(store, worker, runner=fake, lane_runner=None) == [
+        "PR merged during await_second_review; verifying the merge"
+    ]
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    completed = store.row("task", tid)
+    assert completed["state"] == "done"
+    assert completed["payload"]["coordinator"]["phase"] == "done"
+    assert completed["payload"]["coordinator"]["a38"]["second_review"][
+        "status"
+    ] == "posted"
+    assert any("external second review" in line for line in lines)
+    assert not any("merged-without-second-review" in line for line in lines)
+
+
+def test_a38_first_comment_ping_and_external_mail_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.a38_guard import status_context_enforce, status_context_observe
+    from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
+    from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
+    from agent_cli.coordinator_github import phase_await_merge
+    from agent_cli.coordinator_lanes import invalidate_head_evidence
+
+    store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
 
     saved = store.row("task", tid)
     invalidate_head_evidence(saved["payload"]["coordinator"], fake.head)
