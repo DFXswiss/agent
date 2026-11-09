@@ -6065,8 +6065,13 @@ def test_a38_first_comment_ping_and_external_mail_happy_path(
     assert acknowledgements[0]["payload"]["assigned_id"] == "assigned-a38"
 
     blocking_tid = "22222222-2222-4222-8222-222222222222"
+    base_task = {
+        key: value
+        for key, value in copy.deepcopy(store.row("task", tid)).items()
+        if not key.startswith("_")
+    }
     blocking_task = {
-        **task,
+        **base_task,
         "id": blocking_tid,
         "state": "pr-review",
         "payload": {
