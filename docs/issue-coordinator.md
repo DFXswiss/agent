@@ -59,7 +59,7 @@ mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
 Both stay in the local worker config: the task stores only repository, base and
 publication target, and the execution binding pins the commands' hash.
 In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
-the latest recorded first-slot quality gate (`grok-pr` / `quality`) is approved
+the latest recorded first-slot quality gate (`review-1` / `quality`) is approved
 on the exact current head; it then records `conformity-a approved at <head>` and
 closes the deviation keys only from the accepted hub `assignment.created` row.
 That row must contain the exact inner statement
@@ -648,12 +648,15 @@ process that wrote the mail: an allowlisted second reviewer vouches for every
 second-review mail sent from a device paired to that login, as the A38 standard
 expects of the person named in the second review comment. The worker validates
 the mail and guard declaration, publishes the `conformity-b` / `logic-b`
-comment as the pull request author, and marks both historical `codex_pr_*`
-checklist keys with the evidence of every passing external review, so
+comment as the pull request author, and marks both `review_2_*` checklist keys
+with the evidence of every passing external review, so
 the newest passing review is recorded and a pass after a block on the same head
 (also after the merge) closes them. It continues accepting
 unread reviews for that head through CI, readiness, Ready observation, and merge
 observation, and publishes one idempotent review comment for every valid mail.
+The old stages `grok-pr` and `codex-pr` and old keys `grok_pr_*` and
+`codex_pr_*` are legacy aliases: CLI input accepts and warns about them, and
+stored rows remain readable without a database rewrite.
 Each tick takes in all queued unread mail for the head, ordered by the mail
 row's replica change time (`updated_at`, equal times by row id), and the newest
 review decides. A review older than one already posted for the head is

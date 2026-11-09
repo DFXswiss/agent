@@ -1040,7 +1040,7 @@ def test_run_refuses_external_second_slot_without_launching_lane(
             tmp_path,
             tid,
             capsys,
-            stage="grok-pr",
+            stage="review-1",
             dimension=dimension,
             vendor="grok",
         )

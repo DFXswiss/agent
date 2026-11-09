@@ -4277,6 +4277,69 @@ def test_a38_intake_processes_all_reviews_for_one_head(
         assert "stale head" in observation
 
 
+def test_a38_new_head_second_review_updates_legacy_checklist_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews, require_ready_evidence
+
+    task_id = "abababab-0000-4000-8000-000000000020"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    old_head = "b" * 40
+    old_evidence = (
+        f"external second review by reviewer-one at {old_head}: https://x/old"
+    )
+    legacy_keys = {
+        "review_2_quality": "codex_pr_quality",
+        "review_2_logic": "codex_pr_logic",
+    }
+    for row in store.rows("checklist_item"):
+        legacy = legacy_keys.get(str(row.get("key")))
+        if row.get("task_id") != task_id or legacy is None:
+            continue
+        updated = {key: value for key, value in row.items() if not key.startswith("_")}
+        updated["key"] = legacy
+        updated["status"] = "ja"
+        updated["evidence"] = old_evidence
+        updated["source"] = "script"
+        store.write("checklist_item", "update", row["id"], updated)
+
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="new-head-review",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    rows = {
+        str(row.get("key")): row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    new_evidence = f"external second review by reviewer-one at {fake.head}: https://x"
+    for legacy in legacy_keys.values():
+        assert rows[legacy]["status"] == "ja"
+        assert rows[legacy]["evidence"] == new_evidence
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    checkpoint["a38"]["report"] = {"head": fake.head}
+    checkpoint["a38"]["first_comment"] = {"head": fake.head}
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+
+    require_ready_evidence(store, store.row("task", task_id), fake.head)
+
+
 def test_a38_later_phase_intake_routes_a_later_blocking_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6757,6 +6820,106 @@ def test_sequential_openrouter_lane_hides_its_config_dir(
     assert "<config_dir>/openrouter-api-key" in result.stderr
     runs = [row for row in store.rows("activity") if row.get("type") == "lane.run"]
     assert runs and "/opt/profiles/router" not in runs[0]["payload"]["final_text"]
+
+
+def test_sequential_openrouter_decode_failure_ends_agent_and_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    patch_execute_github(monkeypatch)
+    worktree = worker.workspace_root / "decode"
+    worktree.mkdir()
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["accounts"]["router"] = {"provider": "openrouter", "config_dir": "/opt/profiles/router"}
+    data["roles"]["router-builder"] = {
+        "account": "router", "model": "vendor/model", "access": "workspace-write"
+    }
+    data["sessions"]["worker-session"]["lanes"]["openrouter:implementer"] = "router-builder"
+    path.write_text(json.dumps(data))
+    task = {
+        "id": "aa000001-0000-4000-8000-0000000000e8",
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "implementing",
+        "models": {"first": "openrouter", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "worktree": str(worktree),
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", task["id"], task)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+    output_paths: list[Path] = []
+    launches = {"count": 0}
+
+    def decode_failure(argv: list[str], _stdin: str | None) -> Completed:
+        launches["count"] += 1
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        output = Path(argv[wrapper_index + 2])
+        output_paths.append(output)
+        output.write_bytes(b"\xff")
+        return Completed(0, "", "")
+
+    with pytest.raises(CoordinatorError, match="lane interrupted"):
+        launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="openrouter",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=decode_failure,
+        )
+
+    assert launches["count"] == 1
+    assert output_paths and not output_paths[0].exists()
+    agents = [row for row in store.rows("agent") if row.get("task_id") == task["id"]]
+    assert agents and all(row.get("status") != "working" for row in agents)
+    saved = store.row("task", task["id"])
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["lane"]["state"] != "running"
+    assert saved["payload"]["coordinator"].get("uncertain_lane") is True
+
+    def valid_output(argv: list[str], _stdin: str | None) -> Completed:
+        launches["count"] += 1
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        stream = json.dumps(
+            {"type": "result", "result": "STATUS: complete\nRESULT: done", "usage": {}}
+        ) + "\n"
+        Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
+        return Completed(0, "", "")
+
+    _agent, result = launch_lane(
+        store,
+        worker,
+        saved,
+        role="implementer",
+        vendor="openrouter",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=valid_output,
+    )
+
+    assert launches["count"] == 2
+    assert result.status == "complete"
 
 
 def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:

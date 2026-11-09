@@ -263,6 +263,25 @@ def launch_lane(
                     cwd=worktree,
                     stdin_text=stdin_text,
                 )
+            returncode = int(getattr(completed, "returncode"))
+            stdout = str(getattr(completed, "stdout") or "")
+            stderr = hide_config_dir(
+                str(getattr(completed, "stderr") or ""), selected.account.config_dir
+            )
+            output_file_text = ""
+            if lane_output is not None:
+                try:
+                    output_file_text = Path(lane_output).read_text(encoding="utf-8")
+                except OSError:
+                    output_file_text = ""
+            finalized = finalize_lane_output(
+                vendor,
+                stdout,
+                output_file_text,
+                cwd=worktree,
+                stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+                config_dir=selected.account.config_dir,
+            )
         except Exception as exc:
             agent = store.row("agent", aid)
             if agent is not None and agent.get("status") == "working":
@@ -284,26 +303,6 @@ def launch_lane(
                 "uncertain-lane",
             )
             raise CoordinatorError(f"lane interrupted: {redact(str(exc))}") from exc
-
-        returncode = int(getattr(completed, "returncode"))
-        stdout = str(getattr(completed, "stdout") or "")
-        stderr = hide_config_dir(
-            str(getattr(completed, "stderr") or ""), selected.account.config_dir
-        )
-        output_file_text = ""
-        if lane_output is not None:
-            try:
-                output_file_text = Path(lane_output).read_text(encoding="utf-8")
-            except OSError:
-                output_file_text = ""
-        finalized = finalize_lane_output(
-            vendor,
-            stdout,
-            output_file_text,
-            cwd=worktree,
-            stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
-            config_dir=selected.account.config_dir,
-        )
         result = LaneResult(
             role=role,
             vendor=vendor,
@@ -589,7 +588,10 @@ def set_checklist(
             and evidence.startswith(EXTERNAL_SECOND_REVIEW_PREFIX)
         ):
             for item in store.rows("checklist_item"):
-                if item.get("task_id") == task["id"] and item.get("key") == key:
+                if (
+                    item.get("task_id") == task["id"]
+                    and canonical_key(str(item.get("key"))) == key
+                ):
                     if item.get("evidence") == evidence and item.get("source") == source:
                         return
                     item["evidence"] = evidence
