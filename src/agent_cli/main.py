@@ -1135,9 +1135,6 @@ def cmd_agent(args: list[str]) -> None:
                             "review-2 requires approved "
                             "review-1/logic at the same head"
                         )
-            from .ai_accounts import load_ai_accounts
-
-            load_ai_accounts(store.home)
             aid = str(uuid.uuid4())
             store.write(
                 "agent",
@@ -2326,18 +2323,14 @@ def _session_start(
     meta = dict(raw) if isinstance(raw, dict) else {}
     command_argv: list[str] | None = None
     start_command = command
+    existing_s = ""
+    binding: dict[str, Any] = {}
     if provider == "grok":
         selected, binding, existing_s = _interactive_preflight(
             store, sid, meta=meta, model=model
         )
         new_id = grok_new_session_id() if not existing_s else ""
         resolved = grok_model(selected.model)
-        if not existing_s:
-            pending_meta = dict(meta)
-            pending_meta["grok_start_pending"] = True
-            pending_meta["ai_binding"] = binding
-            row["runtime"] = pending_meta
-            store.write("session", "update", sid, _strip(row))
         if not existing_s:
             meta["grok_session_id"] = new_id
         meta["provider"] = "grok"
@@ -2358,7 +2351,23 @@ def _session_start(
         start_command = None
     else:
         runtime = _preflight_runtime(store, runtime)
-    runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
+    started = runtime.start(
+        sid,
+        start_command,
+        cols,
+        rows,
+        command_argv=command_argv,
+        cwd=cwd,
+        require_new=provider == "grok" and not existing_s,
+    )
+    if provider == "grok" and not existing_s:
+        if not started:
+            die("tmux session already exists; Grok was not started")
+        pending_meta = dict(raw) if isinstance(raw, dict) else {}
+        pending_meta["grok_start_pending"] = True
+        pending_meta["ai_binding"] = binding
+        row["runtime"] = pending_meta
+        store.write("session", "update", sid, _strip(row))
     if provider == "grok":
         meta.pop("grok_start_pending", None)
     meta["tmux_session"] = name

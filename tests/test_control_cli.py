@@ -634,6 +634,67 @@ def test_fresh_grok_start_rechecks_configuration_before_new_session(
     assert not any(argv[:2] == ["tmux", "new-session"] for argv in calls)
 
 
+def test_fresh_grok_start_keeps_metadata_when_session_appears_between_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_interactive_ai_accounts(tmp_path)
+    calls: list[list[str]] = []
+    has_session_calls = 0
+
+    def runner(argv: list[str]) -> Completed:
+        nonlocal has_session_calls
+        calls.append(list(argv))
+        if argv[:2] == ["tmux", "-V"]:
+            return Completed(0, "tmux 3.3a", "")
+        if argv[:2] == ["tmux", "has-session"]:
+            has_session_calls += 1
+            if has_session_calls == 1:
+                return Completed(1, "", "session not found")
+            return Completed(0, "", "")
+        if argv[:2] == ["tmux", "new-session"]:
+            pytest.fail("the concurrent tmux session must not be replaced")
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(main_mod, "Runtime", lambda *a, **k: Runtime(runner=runner))
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    original_runtime = {
+        "tmux_session": f"agent-{SESSION_A}",
+        "control": "stopped",
+        "keep_working": {"standing_sent": True},
+    }
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        row["runtime"] = original_runtime
+        store.write(
+            "session",
+            "update",
+            SESSION_A,
+            {key: value for key, value in row.items() if not key.startswith("_")},
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(
+        SystemExit,
+        match="tmux session already exists; Grok was not started",
+    ):
+        run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "grok"])
+
+    store = Store(tmp_path)
+    try:
+        row = store.row("session", SESSION_A)
+        assert row is not None
+        assert row["runtime"] == original_runtime
+    finally:
+        store.close()
+    assert has_session_calls == 2
+    assert not any(argv[:2] == ["tmux", "new-session"] for argv in calls)
+    assert not any(argv[:2] == ["tmux", "resize-window"] for argv in calls)
+
+
 def test_failed_final_grok_metadata_write_keeps_binding_and_rejects_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

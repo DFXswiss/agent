@@ -4054,6 +4054,36 @@ def test_agent_start_allows_deepseek_only_for_the_pinned_implementer(
         )
 
 
+def test_agent_start_uses_task_pins_after_device_models_are_removed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tid = _spine_session_task(tmp_path, capsys)
+    run(tmp_path, ["round", "start", "--task", tid])
+    capsys.readouterr()
+    config_path = tmp_path / "ai-accounts.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config.pop("models")
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    run(
+        tmp_path,
+        [
+            "agent", "start", "--session", "s", "--task", tid,
+            "--role", "implementer", "--vendor", "grok", "--round", "1",
+        ],
+    )
+    agent_id = _last_agent_id(capsys.readouterr().out)
+
+    store = Store(tmp_path)
+    try:
+        agent = store.row("agent", agent_id)
+        assert agent is not None
+        assert agent["task_id"] == tid
+        assert agent["vendor"] == "grok"
+    finally:
+        store.close()
+
+
 def test_checklist_unavailable_on_gate_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     tid = _spine_session_task(tmp_path, capsys)
     run(

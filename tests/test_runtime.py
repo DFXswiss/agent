@@ -43,12 +43,12 @@ def test_start_stop_input_argv() -> None:
         return Completed(0, "", "")
 
     rt = Runtime(runner=runner)
-    rt.start("sess-1", None, None, None)
+    assert rt.start("sess-1", None, None, None) is True
     assert ["tmux", "new-session", "-d", "-s", "agent-sess-1"] in calls
 
     calls.clear()
     rt = Runtime(runner=runner)
-    rt.start("sess-1", "bash -l", 80, 24)
+    assert rt.start("sess-1", "bash -l", 80, 24) is True
     assert [
         "tmux",
         "new-session",
@@ -75,9 +75,15 @@ def test_start_stop_input_argv() -> None:
         return Completed(0, "", "")
 
     rt = Runtime(runner=runner_exists)
-    rt.start("sess-1", None, 100, 40)
+    assert rt.start("sess-1", None, 100, 40) is False
     assert ["tmux", "new-session", "-d", "-s", "agent-sess-1"] not in calls
     assert ["tmux", "resize-window", "-t", "agent-sess-1", "-x", "100", "-y", "40"] in calls
+
+    calls.clear()
+    rt = Runtime(runner=runner_exists)
+    assert rt.start("sess-1", None, 100, 40, require_new=True) is False
+    assert not any(c[:2] == ["tmux", "new-session"] for c in calls)
+    assert not any(c[:2] == ["tmux", "resize-window"] for c in calls)
 
     calls.clear()
 
