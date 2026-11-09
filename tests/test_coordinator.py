@@ -3592,11 +3592,2849 @@ def test_create_implement_task_refuses_a_separate_implementer(tmp_path: Path) ->
             number=7,
             title="Fix widget",
             assigned_id="assigned-7",
-            publication_repo="example/project",
-            base="develop",
+            repository_config=worker.repositories["example/project"],
             body="Please fix",
         )
     assert store.rows("task") == []
+
+
+def test_preflight_refuses_external_second_for_non_a38_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    with pytest.raises(CoordinatorError, match="only for A38 workers"):
+        preflight_worker(store, worker, fake)
+
+
+def test_a38_preflight_requires_null_second_and_excludes_worker_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    with pytest.raises(CoordinatorError, match="models.second = null"):
+        preflight_worker(store, worker, fake)
+
+    path = store.home / "ai-accounts.json"
+    data = json.loads(path.read_text())
+    data["models"] = {"first": "grok", "second": None}
+    path.write_text(json.dumps(data))
+    preflight_worker(store, worker, fake)
+
+    from agent_cli.coordinator_runtime import execution_binding
+
+    binding = execution_binding(store, worker, "example/project")
+    assert execution_binding(
+        store, replace(worker, review_session="ignored-session"), "example/project"
+    ) == binding
+    assert execution_binding(
+        store, replace(worker, second_reviewers=("another-reviewer",)), "example/project"
+    ) != binding
+
+    own_reviewer = replace(worker, second_reviewers=("worker-bot",))
+    with pytest.raises(CoordinatorError, match="worker GitHub login"):
+        preflight_worker(store, own_reviewer, fake)
+
+
+def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.allow import CHECKLIST_KEYS
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_common import save_task as real_save_task
+    from agent_cli.coordinator_github import phase_blocked
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    store.set_meta("github_login", "worker-bot")
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.verify_signed_clean_head",
+        lambda *args, **kwargs: _POSTED_HEAD,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.review_rules_bound",
+        lambda *args, **kwargs: True,
+    )
+    tid = "aa000001-0000-4000-8000-000000000062"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir(parents=True)
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "review",
+        "state": "pr-review",
+        "title": "A38 review retry",
+        "repo": "example/project",
+        "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "change_summary_en": "The unavailable launch is excluded from the pass count.",
+        "change_summary_de": "Der nicht verfügbare Start zählt nicht als Review-Durchlauf.",
+        "payload": {
+            "coordinator": {
+                "phase": "pr_gates_grok",
+                "worktree": str(worktree),
+                "base_sha": "b" * 40,
+                "head_sha": _POSTED_HEAD,
+                "pr_number": 42,
+                "pr_url": "https://github.com/example/project/pull/42",
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {"enabled": True},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for key in CHECKLIST_KEYS["review"]:
+        status = "ja" if key in {"session_registered", "contributing_read"} else "pending"
+        store.write(
+            "checklist_item",
+            "insert",
+            f"{tid}-{key}",
+            {
+                "id": f"{tid}-{key}",
+                "task_id": tid,
+                "key": key,
+                "status": status,
+                "evidence": "seed" if status == "ja" else None,
+                "source": "script",
+            },
+        )
+
+    fake.model_outputs["pr-reviewer-quality"] = "STATUS: unavailable\n"
+    fake.model_outputs["pr-reviewer-logic"] = "STATUS: complete\nRESULT: approved\n"
+    first_lines = phase_pr_gates(
+        store,
+        worker,
+        store.row("task", tid),
+        fake,
+        lane_runner(fake),
+        vendor="grok",
+        stage="grok-pr",
+    )
+    blocked = store.row("task", tid)
+    assert any("unavailable; blocked" in line for line in first_lines)
+    assert "first_review_passes" not in blocked["payload"]["coordinator"]["a38"]
+
+    question_id = blocked["payload"]["coordinator"]["question_activity_id"]
+    question = store.row("activity", question_id)
+    fake.comments = [
+        {"id": 1, "body": question["payload"]["body"], "user": {"login": "worker-bot"}},
+        {"id": 2, "body": "Provider restored; resume.", "user": {"login": "human-owner"}},
+    ]
+    resume_lines = phase_blocked(store, worker, blocked, fake)
+    resumed = store.row("task", tid)
+    assert any("resuming pr_gates_grok" in line for line in resume_lines)
+    assert resumed["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+
+    fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: approved\n"
+
+    def crash_before_final_save(store_arg: Store, task_arg: dict[str, Any]) -> None:
+        phase = task_arg["payload"]["coordinator"].get("phase")
+        if phase == "a38_first_comment":
+            raise RuntimeError("simulated crash before final gate save")
+        real_save_task(store_arg, task_arg)
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.save_task", crash_before_final_save
+    )
+    with pytest.raises(RuntimeError, match="simulated crash before final gate save"):
+        phase_pr_gates(
+            store,
+            worker,
+            resumed,
+            fake,
+            lane_runner(fake),
+            vendor="grok",
+            stage="grok-pr",
+        )
+    monkeypatch.setattr("agent_cli.coordinator_lanes.save_task", real_save_task)
+
+    approved = store.row("task", tid)
+    assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+    assert approved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    approved_gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("verdict") == "approved"
+    ]
+    assert {gate.get("dimension") for gate in approved_gates} == {"quality", "logic"}
+
+    recovery_lines = phase_pr_gates(
+        store,
+        worker,
+        approved,
+        fake,
+        lane_runner(fake),
+        vendor="grok",
+        stage="grok-pr",
+    )
+    assert recovery_lines == ["grok-pr already complete on ccccccc"]
+    approved = store.row("task", tid)
+    assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+
+    phase_first_comment(store, worker, approved, fake)
+    comments = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and row.get("payload", {}).get("target") == "pr"
+    ]
+    assert len(comments) == 1
+    body = comments[0]["payload"]["body"]
+    assert "Ready after 1 review passes." in body
+    assert "Bereit nach 1 Review-Durchläufen." in body
+
+
+def test_a38_ci_and_readiness_route_to_guard_ready_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_github import phase_ci
+
+    store, ordinary_worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    worker = replace(
+        ordinary_worker,
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    tid = "44444444-4444-4444-8444-444444444444"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="ci",
+        checklist_codex={"codex_pr_quality": "ja", "codex_pr_logic": "ja"},
+        models={"first": "grok", "second": None},  # type: ignore[dict-item]
+    )
+    evidence = f"external second review by outside-reviewer at {fake.head}: https://x/comment"
+    for row in store.rows("checklist_item"):
+        if row.get("task_id") == tid and row.get("key") in {
+            "codex_pr_quality",
+            "codex_pr_logic",
+        }:
+            updated = {key: value for key, value in row.items() if not key.startswith("_")}
+            updated["evidence"] = evidence
+            updated["source"] = "script"
+            store.write("checklist_item", "update", row["id"], updated)
+    current = store.row("task", tid)
+    current["payload"]["coordinator"]["a38"] = {
+        "enabled": True,
+        "report": {"head": fake.head},
+        "first_comment": {"head": fake.head},
+        "second_review": {"head": fake.head, "status": "posted",
+            "reviews": [{"reviewer": "outside-reviewer", "blocks_merge": False, "at": "2026-01-01T00:00:00Z"}],
+        },
+    }
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in current.items() if not key.startswith("_")},
+    )
+
+    assert "CI green" in phase_ci(store, worker, store.row("task", tid), fake)[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "readiness"
+    lines = phase_readiness(store, worker, store.row("task", tid), fake)
+    assert "readiness ok" in lines[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_ready"
+
+
+def _a38_second_review_payload(
+    task_id: str, head: str, *, blocks_merge: bool = False
+) -> dict[str, Any]:
+    from agent_cli.a38_review import COMPLIANCE_PROMPT
+
+    defects = 1 if blocks_merge else 0
+    return {
+        "kind": "a38.second-review/v1",
+        "task_id": task_id,
+        "head": head,
+        "defects": defects,
+        "blocks_merge": blocks_merge,
+        "findings": "A blocking defect." if defects else "",
+        "lanes": [
+            {
+                "id": lane_id,
+                "provider": "OpenAI",
+                "model": "Reviewer Model 2",
+                "model_number": "reviewer-model-2",
+                "prompt": COMPLIANCE_PROMPT,
+                "status": "complete",
+                "result": "pass",
+            }
+            for lane_id in ("conformity-b", "logic-b")
+        ],
+    }
+
+
+def _a38_review_mail(
+    store: Store,
+    worker: Any,
+    *,
+    message_id: str,
+    login: str,
+    payload: dict[str, Any],
+    second: int,
+) -> None:
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": message_id,
+            "origin_device_id": f"{message_id}-device",
+            "github_login": login,
+            "payload": {
+                "id": message_id,
+                "session_id": f"{login}-session",
+                "type": "message",
+                "payload": {"to_session": worker.session_id, "payload": payload},
+                "execution_status": "pending",
+            },
+            "updated_at": f"2026-01-01T00:00:{second:02d}Z",
+        }
+    )
+
+
+def _a38_external_review_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    task_id: str,
+) -> tuple[Store, Any, FakeGh, dict[str, Any]]:
+    from dataclasses import replace
+
+    store, ordinary_worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    worker = replace(
+        ordinary_worker,
+        review_session=None,
+        a38=True,
+        second_reviewers=("reviewer-one", "reviewer-two"),
+    )
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=task_id,
+        phase="await_second_review",
+        checklist_codex={"codex_pr_quality": "pending", "codex_pr_logic": "pending"},
+        models={"first": "grok", "second": None},
+    )
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["a38"]["second_review"] = {
+        "head": fake.head,
+        "pinged": list(worker.second_reviewers),
+        "status": "requested",
+        "last_requested_at": "2026-01-01T00:00:00Z",
+    }
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    patch_execute_github(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_a38.review_rules_bound", lambda *a: True)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    return store, worker, fake, saved
+
+
+@pytest.mark.parametrize(
+    ("blocking", "expected_comments", "expected_phase"),
+    [
+        ((True,), 1, "implement"),
+        ((False, True), 2, "implement"),
+        ((False, False), 2, "ci"),
+    ],
+)
+def test_a38_intake_processes_all_reviews_for_one_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    blocking: tuple[bool, ...],
+    expected_comments: int,
+    expected_phase: str,
+) -> None:
+    from agent_cli import coordinator_a38
+
+    task_id = "55555555-5555-4555-8555-555555555555"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    for index, blocks_merge in enumerate(blocking, start=1):
+        message_id = f"review-mail-{index}"
+        _a38_review_mail(
+            store,
+            worker,
+            message_id=message_id,
+            login=f"reviewer-{'one' if index == 1 else 'two'}",
+            payload=_a38_second_review_payload(
+                task_id, fake.head, blocks_merge=blocks_merge
+            ),
+            second=index,
+        )
+    if blocking == (False, False):
+        store.apply_replica_row(
+            {
+                "table": "activity",
+                "row_id": "foreign-read",
+                "origin_device_id": "foreign-device",
+                "payload": {
+                    "id": "foreign-read",
+                    "session_id": worker.session_id,
+                    "type": "message.read",
+                    "payload": {"message_id": "review-mail-1"},
+                    "execution_status": "done",
+                },
+                "updated_at": "2026-01-01T00:00:03Z",
+            }
+        )
+        store.write(
+            "activity",
+            "insert",
+            "pending-local-read",
+            {
+                "id": "pending-local-read",
+                "session_id": worker.session_id,
+                "type": "message.read",
+                "payload": {"message_id": "review-mail-2"},
+                "execution_status": "pending",
+            },
+        )
+    checklist_calls: list[str] = []
+    real_set_checklist = coordinator_a38.set_checklist
+
+    def counted_set_checklist(*args, **kwargs):  # noqa: ANN002, ANN003
+        checklist_calls.append(str(args[2]))
+        return real_set_checklist(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_a38, "set_checklist", counted_set_checklist)
+
+    lines = coordinator_a38.intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == expected_comments
+    saved = store.row("task", task_id)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == expected_phase
+    passing = [flag for flag in blocking if not flag]
+    if blocking[0]:
+        assert checklist_calls == []
+    else:
+        # Every passing review records the evidence.
+        assert checklist_calls == ["codex_pr_quality", "codex_pr_logic"] * len(passing)
+    if expected_phase == "ci":
+        second_review = checkpoint["a38"]["second_review"]
+        assert second_review["reviewer"] == "reviewer-one"
+        assert [review["reviewer"] for review in second_review["reviews"]] == [
+            "reviewer-one",
+            "reviewer-two",
+        ]
+        assert all(
+            set(review) == {"reviewer", "activity_id", "id", "url", "blocks_merge", "at", "mail_id"}
+            for review in second_review["reviews"]
+        )
+        assert all(review["blocks_merge"] is False for review in second_review["reviews"])
+        local_reads = [
+            row
+            for row in store.rows("activity")
+            if row.get("type") == "message.read"
+            and row.get("execution_status") == "done"
+            and row.get("_origin_device_id") == store.device_id()
+        ]
+        assert {
+            row["payload"]["message_id"] for row in local_reads
+        } >= {"review-mail-1", "review-mail-2"}
+        assert coordinator_a38.intake_second_reviews(
+            store, worker, saved, fake, fake.head
+        ) is None
+        assert len(
+            [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+        ) == expected_comments
+        stale = _a38_second_review_payload(task_id, "b" * 40)
+        _a38_review_mail(
+            store,
+            worker,
+            message_id="stale-later-mail",
+            login="reviewer-two",
+            payload=stale,
+            second=4,
+        )
+        assert coordinator_a38.intake_second_reviews(
+            store, worker, store.row("task", task_id), fake, fake.head
+        ) is None
+        stale_task = store.row("task", task_id)
+        assert stale_task is not None
+        observation = stale_task["payload"]["coordinator"]["observations"][-1]["text"]
+        assert "stale head" in observation
+
+
+def test_a38_later_phase_intake_routes_a_later_blocking_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "66666666-6666-4666-8666-666666666666"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "ci"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="later-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert any("routing to implementer" in line for line in lines)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["state"] == "implementing"
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 2
+
+
+@pytest.mark.parametrize("pr_state", ["MERGED", "CLOSED"])
+def test_a38_await_merge_skips_second_review_intake_once_the_pr_is_not_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "77777777-7777-4777-8777-777777777777"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    saved["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = pr_state
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="late-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge observed"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    after = store.row("task", task_id)
+    assert after is not None
+    assert after["payload"]["coordinator"]["phase"] == "await_merge"
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    if pr_state == "MERGED":
+        # The merged head's review is still taken in, but never reopens work.
+        assert any("left the open state" in line for line in lines)
+        assert len(comments) == 2
+    else:
+        assert lines == ["merge observed"]
+        assert len(comments) == 1
+
+
+@pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness", "await_ready"])
+@pytest.mark.parametrize(
+    ("pr_state", "expected_phase"),
+    [("OPEN", "blocked"), ("MERGED", "await_merge"), ("CLOSED", "await_merge")],
+)
+def test_a38_revoked_assignment_in_await_ready_blocks_unless_the_pr_left_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    pr_state: str,
+    expected_phase: str,
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000001"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.issues[0]["assignees"] = []
+    fake.pr["state"] = pr_state
+    for name in ("phase_a38_await_ready", "phase_await_second_review", "phase_ci", "phase_readiness"):
+        monkeypatch.setattr(coordinator_runtime, name, lambda *args, **kwargs: ["ready handler"])
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert "ready handler" not in lines
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == expected_phase
+    if expected_phase == "await_merge":
+        verb = "merged" if pr_state == "MERGED" else "closed"
+        assert lines == [f"PR {verb} during {phase}; verifying the merge"]
+
+
+@pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness", "await_ready"])
+def test_a38_unassigned_source_with_unreadable_pr_state_retries_without_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000000b"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.issues[0]["assignees"] = []
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *args, **kwargs: None)
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [f"PR state temporarily unavailable during {phase}; retrying"]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == phase
+    assert "blocker" not in saved["payload"]["coordinator"]
+
+
+@pytest.mark.parametrize("unreadable", ["head", "state"])
+def test_a38_unreadable_pr_before_second_review_intake_retries_the_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unreadable: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000000e"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    if unreadable == "head":
+        monkeypatch.setattr(coordinator_runtime, "fresh_pr_head", lambda *a, **k: None)
+    else:
+        monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: None)
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge handler"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [
+        "PR state temporarily unavailable before second-review intake in await_merge; retrying"
+    ]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_await_merge_posts_no_second_review_after_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000002"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    saved = store.row("task", task_id)
+    assert saved is not None
+    saved["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "OPEN"
+    fake.issues[0]["assignees"] = []
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="late-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge observed"]
+    )
+
+    assert advance_one(store, worker, runner=fake, lane_runner=None) == ["merge observed"]
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 1
+
+
+def test_a38_later_phase_ignores_mail_for_a_head_replaced_by_a_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000003"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-review-mail",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="old-head-blocking-mail",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=2,
+    )
+    fake.pr["headRefOid"] = "c" * 40
+    monkeypatch.setattr(coordinator_runtime, "phase_ci", lambda *args, **kwargs: ["ci handler"])
+
+    assert advance_one(store, worker, runner=fake, lane_runner=None) == ["ci handler"]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(comments) == 1
+
+
+def test_a38_await_second_review_stops_on_a_closed_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    task_id = "abababab-0000-4000-8000-000000000004"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "CLOSED"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="mail-after-close",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+
+    with pytest.raises(CoordinatorError, match="not open while awaiting second review"):
+        phase_await_second_review(store, worker, task, fake)
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert comments == []
+
+
+@pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
+@pytest.mark.parametrize("phase", ["await_second_review", "ci", "readiness"])
+def test_a38_human_merge_during_a_wait_phase_goes_to_the_merge_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, pr_state: str, verb: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000005"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = pr_state
+    for name in ("phase_await_second_review", "phase_ci", "phase_readiness"):
+        monkeypatch.setattr(coordinator_runtime, name, lambda *args, **kwargs: ["handler ran"])
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [f"PR {verb} during {phase}; verifying the merge"]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_await_second_review_hands_a_merged_pr_to_the_merge_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    task_id = "abababab-0000-4000-8000-000000000006"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "MERGED"
+
+    assert phase_await_second_review(store, worker, task, fake) == [
+        "PR merged while awaiting second review; verifying the merge"
+    ]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_blocking_review_after_a_merge_does_not_reopen_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000007"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-after-merge",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    fake.pr["state"] = "MERGED"
+
+    lines = intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None and "left the open state" in lines[-1]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "implementing"
+
+
+def test_a38_pass_posted_after_a_tied_block_decides_like_the_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000d"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="a-blocking",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=9,
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="b-passing",
+        login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=9,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+
+    lines = intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert lines is not None and "posted" in lines[-1]
+    assert _checklist_status(store, task_id)["codex_pr_quality"] == "ja"
+
+
+def test_a38_older_review_delivered_after_a_newer_post_is_not_posted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000010"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store, worker, message_id="newer-pass", login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head), second=20,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    posted = len([row for row in store.rows("activity") if row.get("type") == "comment.post"])
+    _a38_review_mail(
+        store, worker, message_id="older-block", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True), second=5,
+    )
+
+    lines = intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    c = store.row("task", task_id)["payload"]["coordinator"]
+    assert len([row for row in store.rows("activity") if row.get("type") == "comment.post"]) == posted
+    assert c["phase"] == "ci"
+    assert any("superseded" in o["text"] for o in c["observations"])
+    assert lines is None or not any("routing to implementer" in line for line in lines)
+
+
+def test_a38_same_time_review_arriving_later_is_superseded_by_mail_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000011"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    _a38_review_mail(
+        store, worker, message_id="b-pass", login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head), second=7,
+    )
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    _a38_review_mail(
+        store, worker, message_id="a-block", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True), second=7,
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    c = store.row("task", task_id)["payload"]["coordinator"]
+    assert [r["mail_id"] for r in c["a38"]["second_review"]["reviews"]] == ["b-pass"]
+    assert c["phase"] == "ci"
+
+
+@pytest.mark.parametrize(("pr_state", "phase"), [("MERGED", "await_merge"), ("OPEN", "implement")])
+def test_a38_implement_after_a_block_checks_for_a_merge_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, phase: str
+) -> None:  # the later rerun phases are covered below
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000012"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    c = task["payload"]["coordinator"]
+    c["phase"] = "implement"
+    c["a38"]["second_review"] = {
+        "head": fake.head, "status": "posted", "reviews": [{"blocks_merge": True, "at": "t"}]
+    }
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: pr_state)
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_implement", lambda *a, **k: ["implementer started"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == phase
+    assert ("implementer started" in lines) is (pr_state == "OPEN")
+
+
+@pytest.mark.parametrize(
+    "phase", ["inner_review", "tests", "publish_draft", "pr_gates_grok", "a38_first_comment"]
+)
+@pytest.mark.parametrize(("pr_state", "expected"), [("MERGED", "await_merge"), (None, None)])
+def test_a38_published_rerun_phases_check_for_a_merge_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, pr_state, expected
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000013"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: pr_state)
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved_phase = store.row("task", task_id)["payload"]["coordinator"]["phase"]
+    if expected is None:
+        assert lines == [f"PR state temporarily unavailable before {phase}; retrying"]
+        assert saved_phase == phase
+    else:
+        assert saved_phase == expected
+
+
+@pytest.mark.parametrize("phase", ["blocked", "ask", "await_second_review"])
+def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000014"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = phase
+    if phase == "blocked":
+        task["payload"]["coordinator"]["resume_phase"] = "ci"
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, **k: "MERGED")
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == [f"PR merged during {phase}; verifying the merge"]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+@pytest.mark.parametrize(
+    "kind", ["merged-with-blocking-second-review", "merged-without-second-review", "closed-unmerged"]
+)
+def test_a38_final_merge_blocker_stays_blocked_on_later_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000015"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    c = task["payload"]["coordinator"]
+    c.update(phase="blocked", blocker=kind)
+    c.pop("resume_phase", None)
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    states: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime, "pr_state", lambda *a, **k: states.append("read") or "MERGED"
+    )
+    _a38_review_mail(
+        store, worker, message_id="late-pass", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head), second=50,
+    )
+
+    for _ in range(2):
+        advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "blocked"
+    assert not [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post" and row["payload"].get("target") == "pr"
+    ]
+    assert states == []
+
+
+def test_check_label_hides_owner_commands() -> None:
+    from agent_cli.coordinator_common import check_label
+    from agent_cli.coordinator_config import RepositoryConfig
+
+    cfg = RepositoryConfig("Example/repo", "main", "Example/repo", ("/opt/secret/check", "--token=x"), ())
+    assert check_label({"source": {"owner_scoped": True}}, cfg) == "owner_check_argv"
+    assert check_label({"source": {}}, cfg) == "/opt/secret/check --token=x"
+
+
+def test_a38_crash_after_a_post_keeps_an_older_late_review_unposted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000016"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    _a38_review_mail(
+        store, worker, message_id="newer-pass", login="reviewer-two",
+        payload=_a38_second_review_payload(task_id, fake.head), second=20,
+    )
+    real_post = coordinator_a38._post_comment
+
+    def post_then_crash(*args, **kwargs):
+        real_post(*args, **kwargs)
+        raise RuntimeError("crash after the post")
+
+    monkeypatch.setattr(coordinator_a38, "_post_comment", post_then_crash)
+    with pytest.raises(RuntimeError):
+        intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    monkeypatch.setattr(coordinator_a38, "_post_comment", real_post)
+    _a38_review_mail(
+        store, worker, message_id="older-block", login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True), second=5,
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    state = store.row("task", task_id)["payload"]["coordinator"]["a38"]["second_review"]
+    assert [review["mail_id"] for review in state["reviews"]] == ["newer-pass"]
+    assert "pending_post" not in state
+    posts = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(posts) == 1
+
+
+def test_a38_unchanged_head_after_a_block_asks_the_reviewers_again() -> None:
+    from agent_cli.coordinator_a38 import head_review_blocks
+
+    head = "a" * 40
+    blocked = {"a38": {"second_review": {"head": head, "reviews": [{"blocks_merge": True}]}}}
+    passed = {"a38": {"second_review": {"head": head, "reviews": [{"blocks_merge": False}]}}}
+    other_head = {"a38": {"second_review": {"head": "b" * 40, "reviews": [{"blocks_merge": True}]}}}
+
+    assert head_review_blocks(blocked, head) is True
+    assert head_review_blocks(passed, head) is False
+    assert head_review_blocks(other_head, head) is False
+    assert head_review_blocks({"a38": {}}, head) is False
+
+
+def test_a38_routing_a_block_keeps_the_review_history_of_the_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    task_id = "abababab-0000-4000-8000-00000000000f"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-kept",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=3,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    c = store.row("task", task_id)["payload"]["coordinator"]
+    assert c["phase"] == "implement"
+    assert _a38_second_review_outcome(c, fake.head) == "blocking"
+
+
+def test_a38_late_older_blocking_review_keeps_the_newer_block_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000c"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    newer = _a38_second_review_payload(task_id, fake.head, blocks_merge=True)
+    newer["findings"] = "Newer blocking finding."
+    _a38_review_mail(
+        store, worker, message_id="newer-block", login="reviewer-one", payload=newer, second=20
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *a, **k: "OPEN")
+    monkeypatch.setattr(coordinator_a38, "_route_newest_blocking_review", lambda *a, **k: None)
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+    older = _a38_second_review_payload(task_id, fake.head, blocks_merge=True)
+    older["findings"] = "Older blocking finding."
+    _a38_review_mail(
+        store, worker, message_id="older-block", login="reviewer-two", payload=older, second=5
+    )
+
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    block = store.row("task", task_id)["payload"]["coordinator"]["second_review_block"]
+    assert "Newer blocking finding." in block["findings"]
+    assert block["reviewer"] == "reviewer-one"
+
+
+def test_a38_blocking_review_in_await_merge_on_an_open_pr_reopens_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000000a"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    task["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-on-a-ready-pr",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    fake.pr["state"] = "OPEN"
+    monkeypatch.setattr(
+        coordinator_runtime, "phase_await_merge", lambda *args, **kwargs: ["merge handler"]
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert "merge handler" not in lines
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert saved["state"] == "implementing"
+
+
+@pytest.mark.parametrize(
+    ("reviews", "expected"),
+    [
+        (None, "missing"),
+        ([{"blocks_merge": False}], "passed"),
+        ([{"blocks_merge": False}, {"blocks_merge": True}], "blocking"),
+        ([{"blocks_merge": True}, {"blocks_merge": False}], "passed"),
+    ],
+)
+def test_a38_second_review_outcome_for_a_merged_head(reviews, expected) -> None:
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    head = "a" * 40
+    c: dict = {"a38": {}}
+    if reviews is not None:
+        c["a38"]["second_review"] = {"head": head, "status": "posted", "reviews": reviews}
+    assert _a38_second_review_outcome(c, head) == expected
+    assert _a38_second_review_outcome(c, "b" * 40) == "missing"
+
+
+def test_a38_merge_without_second_review_waits_then_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_github
+
+    task_id = "abababab-0000-4000-8000-000000000008"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    worker = replace(worker, second_review_timeout_seconds=600)
+    published: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda _store, _worker, _task, _runner, message, *, kind="blocker", **_kw: (
+            published.append((kind, message)) or [f"blocker {kind}"]
+        ),
+    )
+    clock = iter(["2026-11-05T10:00:00Z", "2026-11-05T10:05:00Z", "2026-11-05T10:11:00Z"])
+    monkeypatch.setattr(coordinator_github, "utcnow", lambda: next(clock))
+
+    first = coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=False
+    )
+    second = coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=False
+    )
+    third = coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=False
+    )
+
+    assert "awaiting the external second review" in first[0]
+    assert "awaiting the external second review" in second[0]
+    assert third == ["blocker merged-without-second-review"]
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def test_a38_merge_with_blocking_second_review_blocks_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+
+    task_id = "abababab-0000-4000-8000-000000000009"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(
+        coordinator_github,
+        "publish_blocker",
+        lambda _store, _worker, _task, _runner, message, *, kind="blocker", **_kw: [f"blocker {kind}"],
+    )
+
+    assert coordinator_github._await_second_review_after_merge(
+        store, worker, task, fake, fake.head, blocking=True
+    ) == ["blocker merged-with-blocking-second-review"]
+    assert task["payload"]["coordinator"]["phase"] == "blocked"
+
+
+def test_a38_blocking_review_with_unknown_pr_state_retries_without_rerouting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000a"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="blocking-unknown-state",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_args: None)
+
+    lines = intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None and "retrying the blocking second review" in lines[-1]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] != "implement"
+    assert "blocking-unknown-state" not in _read_message_ids(store, worker)
+
+
+def test_a38_await_second_review_with_unknown_pr_state_takes_no_mail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    task_id = "abababab-0000-4000-8000-00000000000b"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="mail-unknown-state",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=1,
+    )
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_args: None)
+
+    assert phase_await_second_review(store, worker, task, fake) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert [row for row in store.rows("activity") if row.get("type") == "comment.post"] == []
+
+
+@pytest.mark.parametrize("variant", ["no_login", "unauthorized", "malformed", "stale"])
+def test_a38_rejected_review_mail_stays_unread_when_the_observation_save_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-00000000000c"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    payload = _a38_second_review_payload(task_id, fake.head)
+    login = "reviewer-one"
+    if variant == "no_login":
+        login = ""
+    elif variant == "unauthorized":
+        login = "someone-else"
+    elif variant == "malformed":
+        payload = {**payload, "defects": -1}
+    else:
+        payload = _a38_second_review_payload(task_id, "b" * 40)
+    _a38_review_mail(
+        store, worker, message_id="rejected-mail", login=login, payload=payload, second=1
+    )
+
+    def fail_save(*_args, **_kwargs):
+        raise RuntimeError("save failed")
+
+    monkeypatch.setattr(coordinator_a38, "save_task", fail_save)
+    with pytest.raises(RuntimeError, match="save failed"):
+        intake_second_reviews(store, worker, task, fake, fake.head)
+    assert "rejected-mail" not in _read_message_ids(store, worker)
+
+
+def test_a38_public_prompt_hides_local_paths(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import public_prompt
+    from agent_cli.coordinator_common import control_dir
+
+    worker = replace(make_worker(tmp_path), a38=True)
+    task = {
+        "id": "abababab-0000-4000-8000-00000000000d",
+        "payload": {"coordinator": {"worktree": str(worker.workspace_root / "task-tree")}},
+    }
+    ctrl = control_dir(worker, task["id"])
+    prompt = (
+        f"Diff artifact: {ctrl}/pr-diff.patch\n"
+        f"Worktree: {worker.workspace_root / 'task-tree'}\n"
+        f"Other: {worker.workspace_root}/cache and {Path.home()}/notes\n"
+    )
+
+    published = public_prompt(prompt, worker, task)
+
+    assert "<control-dir>/pr-diff.patch" in published
+    assert "<worktree>" in published
+    assert "<workspace>/cache" in published
+    assert "~/notes" in published
+    assert str(worker.workspace_root) not in published
+    assert str(Path.home()) not in published
+
+
+def test_a38_public_prompt_replaces_resolved_symlinked_paths_whole(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import public_prompt
+
+    real = tmp_path / "real-workspace"
+    real.mkdir()
+    link = tmp_path / "ws"
+    link.symlink_to(real)
+    worker = replace(make_worker(tmp_path), a38=True, workspace_root=link)
+    task = {"id": "abababab-0000-4000-8000-00000000000e", "payload": {"coordinator": {}}}
+
+    published = public_prompt(f"Cache: {real.resolve()}/cache and {link}/other", worker, task)
+
+    assert published == "Cache: <workspace>/cache and <workspace>/other"
+
+
+def test_a38_passing_review_after_a_blocking_one_on_a_merged_head_closes_the_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    task_id = "abababab-0000-4000-8000-00000000000f"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "MERGED"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="first-blocking",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    intake_second_reviews(store, worker, task, fake, fake.head)
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="later-pass",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=2,
+    )
+    intake_second_reviews(store, worker, store.row("task", task_id), fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert _a38_second_review_outcome(saved["payload"]["coordinator"], fake.head) == "passed"
+    statuses = {
+        row["key"]: row["status"]
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    assert statuses["codex_pr_quality"] == "ja"
+    assert statuses["codex_pr_logic"] == "ja"
+
+
+def test_a38_after_a_merge_every_waiting_review_is_taken_in_and_the_newest_decides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+    from agent_cli.coordinator_github import _a38_second_review_outcome
+
+    task_id = "abababab-0000-4000-8000-000000000010"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    fake.pr["state"] = "MERGED"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="merged-block",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="merged-pass",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=2,
+    )
+
+    intake_second_reviews(store, worker, task, fake, fake.head)
+
+    read = _read_message_ids(store, worker)
+    assert {"merged-block", "merged-pass"} <= read
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert _a38_second_review_outcome(saved["payload"]["coordinator"], fake.head) == "passed"
+
+
+def test_a38_open_pr_newer_pass_supersedes_an_older_block_in_the_same_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000011"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="older-block",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+        second=1,
+    )
+    _a38_review_mail(
+        store,
+        worker,
+        message_id="newer-pass",
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=2,
+    )
+
+    intake_second_reviews(store, worker, task, fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert saved["state"] != "implementing"
+
+
+def test_a38_tests_refuses_a_foreign_row_on_the_report_activity_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_a38
+
+    task_id = "abababab-0000-4000-8000-000000000012"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    monkeypatch.setattr(coordinator_a38, "verify_signed_clean_head", lambda *_a: fake.head)
+    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task_id}:{fake.head}"))
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": activity_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": activity_id,
+                "session_id": worker.session_id,
+                "type": "comment.post",
+                "payload": {"repo": "example/project", "number": 42, "body": "x", "exact_body": True},
+                "execution_status": "done",
+                "result": {"url": "https://github.com/example/project/pull/42#issuecomment-1"},
+            },
+            "updated_at": "2026-01-01T00:00:03Z",
+        }
+    )
+
+    with pytest.raises(CoordinatorError, match="did not write"):
+        coordinator_a38.phase_tests(store, worker, task, fake)
+
+
+def test_a38_block_on_open_pr_then_block_after_merge_does_not_reopen_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000013"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    for index, message_id in enumerate(("block-open", "block-merged"), start=1):
+        _a38_review_mail(
+            store,
+            worker,
+            message_id=message_id,
+            login="reviewer-one",
+            payload=_a38_second_review_payload(task_id, fake.head, blocks_merge=True),
+            second=index,
+        )
+    states = iter(["OPEN", "MERGED", "MERGED", "MERGED"])
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_args: next(states))
+
+    intake_second_reviews(store, worker, task, fake, fake.head)
+
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "implementing"
+
+
+def test_a38_saved_newest_block_routes_on_a_later_tick_after_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000014"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    c = task["payload"]["coordinator"]
+    c.setdefault("a38", {})["second_review"] = {
+        "head": fake.head,
+        "status": "posted",
+        "reviews": [{"reviewer": "reviewer-one", "activity_id": "a", "id": 1, "url": "u", "blocks_merge": True}],
+    }
+    c["second_review_block"] = {"head": fake.head, "findings": "Fix it.", "reviewer": "reviewer-one"}
+    fake.pr["state"] = "OPEN"
+
+    lines = intake_second_reviews(store, worker, task, fake, fake.head)
+
+    assert lines is not None and "routing to implementer" in lines[-1]
+    saved = store.row("task", task_id)
+    assert saved is not None
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert saved["payload"]["coordinator"]["findings"] == "Fix it."
+
+
+@pytest.mark.parametrize(
+    ("reviews", "expected"),
+    [
+        ([{"blocks_merge": True, "at": "t1"}, {"blocks_merge": False, "at": "t2"}], False),
+        ([{"blocks_merge": False, "at": "t1"}, {"blocks_merge": True, "at": "t2"}], True),
+        # Same second: the last posted review decides, as the guard reads the comments.
+        ([{"blocks_merge": True, "at": "t2"}, {"blocks_merge": False, "at": "t2"}], False),
+        ([{"blocks_merge": False, "at": "t2"}, {"blocks_merge": True, "at": "t2"}], True),
+        ([{"blocks_merge": False}], False),
+        ([], False),
+    ],
+)
+def test_a38_newest_reviews_block_follows_the_posting_order(reviews, expected) -> None:
+    from agent_cli.coordinator_a38 import newest_reviews_block
+
+    assert newest_reviews_block(reviews) is expected
+
+
+def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_a38
+
+    store, worker, _fake, _task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id="88888888-8888-4888-8888-888888888888"
+    )
+    ack_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-a38-message-read:"
+            f"{store.device_id()}:{worker.session_id}:occupied-mail",
+        )
+    )
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": ack_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": ack_id,
+                "session_id": worker.session_id,
+                "type": "message.read",
+                "payload": {"message_id": "other-mail"},
+                "execution_status": "done",
+            },
+            "updated_at": "2026-01-01T00:00:03Z",
+        }
+    )
+
+    coordinator_a38._mark_message_read(store, worker, "occupied-mail")
+    coordinator_a38._mark_message_read(store, worker, "occupied-mail")
+
+    assert "occupied-mail" in coordinator_a38._read_message_ids(store, worker)
+    assert "other-mail" not in coordinator_a38._read_message_ids(store, worker)
+    receipts = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "message.read"
+        and row.get("payload", {}).get("message_id") == "occupied-mail"
+    ]
+    assert len(receipts) == 1
+
+
+def test_a38_first_comment_ping_and_external_mail_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.a38_guard import status_context_enforce, status_context_observe
+    from agent_cli.a38_review import COMPLIANCE_PROMPT, parse_review_block, validate_visible
+    from agent_cli.coordinator_a38 import phase_await_ready, phase_await_second_review, phase_first_comment
+    from agent_cli.coordinator_github import phase_await_merge
+    from agent_cli.coordinator_lanes import invalidate_head_evidence
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    manifest = store.home / "ai-accounts.json"
+    ai = json.loads(manifest.read_text())
+    ai["models"] = {"first": "grok", "second": None}
+    manifest.write_text(json.dumps(ai))
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    store.set_meta("github_login", "worker-bot")
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: fake.head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.review_rules_bound", lambda *a: True)
+    tid = "11111111-1111-4111-8111-111111111111"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "pr-review",
+        "title": "A38 task",
+        "repo": "example/project",
+        "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "change_summary_en": "The coordinator supports an external second review.",
+        "change_summary_de": "Der Koordinator unterstützt einen externen zweiten Review.",
+        "payload": {
+            "coordinator": {
+                "phase": "a38_first_comment",
+                "head_sha": fake.head,
+                "worktree": str(worker.workspace_root / tid),
+                "pr_number": 42,
+                "pr_url": "https://github.com/example/project/pull/42",
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "assigned_id": "assigned-a38",
+                    "base": "develop",
+                },
+                "a38": {
+                    "enabled": True,
+                    "report": {"head": fake.head, "activity_id": "report"},
+                    "first_review_passes": 1,
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for dimension in ("quality", "logic"):
+        gid = f"grok-{dimension}"
+        aid = f"grok-{dimension}-agent"
+        store.write(
+            "agent",
+            "insert",
+            aid,
+            {
+                "id": aid,
+                "session_id": worker.session_id,
+                "task_id": tid,
+                "role": f"pr-reviewer-{dimension}",
+                "vendor": "grok",
+                "provider": "grok",
+                "model": "grok-model",
+                "prompt": COMPLIANCE_PROMPT + f" Check {dimension}.",
+                "head_sha": fake.head,
+                "dimension": dimension,
+                "status": "done",
+            },
+        )
+        store.write(
+            "review_gate",
+            "insert",
+            gid,
+            {"id": gid, "task_id": tid, "stage": "grok-pr", "dimension": dimension, "vendor": "grok", "verdict": "approved", "head_sha": fake.head, "agent_id": aid, "recorded_at": "2026-01-01T00:00:00Z"},
+        )
+    checklist = {
+        "session_registered": "ja", "spec_written": "ja", "implementer_done": "ja",
+        "reviewer_approved": "ja", "local_check_pass": "ja", "pushed": "ja",
+        "grok_pr_quality": "ja", "grok_pr_logic": "ja",
+        "codex_pr_quality": "pending", "codex_pr_logic": "pending",
+        "contributing_ok": "ja", "deviation_declared": "n_a", "deviation_granted": "n_a",
+    }
+    for key, status in checklist.items():
+        cid = f"check-{key}"
+        store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
+    store.write(
+        "local_check",
+        "insert",
+        "a38-local-check",
+        {
+            "id": "a38-local-check",
+            "task_id": tid,
+            "name": "a38",
+            "command": "/operator/a38",
+            "result": "pass",
+            "output": "ok",
+            "ran_at": "2026-01-01T00:00:00Z",
+            "head_sha": fake.head,
+        },
+    )
+
+    saved = store.row("task", tid)
+    invalidate_head_evidence(saved["payload"]["coordinator"], fake.head)
+    assert saved["payload"]["coordinator"]["a38"]["report"]["head"] == fake.head
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in saved.items() if not key.startswith("_")},
+    )
+    saved = store.row("task", tid)
+    assert "first A38 review comment posted" in phase_first_comment(store, worker, saved, fake)[0]
+    comments = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    first_body = comments[0]["payload"]["body"]
+    first_declaration = parse_review_block(first_body)
+    assert {lane["id"] for lane in first_declaration["lanes"]} == {"conformity-a", "logic-a"}
+    assert len(first_body) < 65_536
+    prompt_by_dimension = {
+        str(row["dimension"]): row["prompt"]
+        for row in store.rows("agent")
+        if row.get("task_id") == tid
+    }
+    assert next(
+        lane["prompt"] for lane in first_declaration["lanes"] if lane["id"] == "conformity-a"
+    ) == prompt_by_dimension["quality"]
+    assert next(
+        lane["prompt"] for lane in first_declaration["lanes"] if lane["id"] == "logic-a"
+    ) == prompt_by_dimension["logic"]
+    assert validate_visible(first_body, 1) == []
+    assert len(store.rows("ping")) == 1
+    ping_body = store.rows("ping")[0]["body"]
+    assert len(ping_body) <= 1000
+    assert "worker-session" in ping_body
+    assert "docs/issue-coordinator.md" in ping_body
+    assert "https://github.com/example/project/pull/42" in ping_body
+    assert '"to_session"' not in ping_body
+    phase_first_comment(store, worker, store.row("task", tid), fake)
+    assert len(store.rows("ping")) == 1
+
+    second = {
+        "kind": "a38.second-review/v1", "task_id": tid, "head": fake.head,
+        "defects": 0, "blocks_merge": False, "findings": "",
+        "lanes": [
+            {"id": "conformity-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
+            {"id": "logic-b", "provider": "OpenAI", "model": "Reviewer Model 2", "model_number": "reviewer-model-2", "prompt": COMPLIANCE_PROMPT, "status": "complete", "result": "pass"},
+        ],
+    }
+
+    def mail(row_id: str, login: str, payload: object) -> None:
+        store.apply_replica_row(
+            {"table": "activity", "row_id": row_id, "origin_device_id": f"{row_id}-device", "github_login": login, "payload": {"id": row_id, "session_id": "reviewer-session", "type": "message", "payload": {"to_session": worker.session_id, "payload": payload}, "execution_status": "pending"}, "updated_at": "2026-01-01T00:00:01Z"}
+        )
+
+    mail("unauthorized-mail", "not-allowed", second)
+    assert phase_await_second_review(store, worker, store.row("task", tid), fake) == ["awaiting external second review"]
+    assert "unauthorized" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    stale = {**second, "head": "b" * 40}
+    mail("stale-mail", "outside-reviewer", stale)
+    phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "stale head" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    mail("malformed-mail", "outside-reviewer", {"kind": "a38.second-review/v1", "task_id": tid})
+    phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "malformed" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    invalid_blocking = {**second, "blocks_merge": True}
+    mail("invalid-blocking-mail", "outside-reviewer", invalid_blocking)
+    phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "blocking defects" in store.row("task", tid)["payload"]["coordinator"]["observations"][-1]["text"]
+
+    waiting = store.row("task", tid)
+    waiting["payload"]["coordinator"]["a38"]["second_review"]["last_requested_at"] = "2026-01-01T00:00:00Z"
+    store.write("task", "update", tid, {key: value for key, value in waiting.items() if not key.startswith("_")})
+    monkeypatch.setattr("agent_cli.coordinator_a38.utcnow", lambda: "2026-01-02T00:00:00Z")
+    assert "re-sent" in phase_await_second_review(store, worker, store.row("task", tid), fake)[0]
+    assert len(store.rows("ping")) == 2
+
+    mail("second-mail", "outside-reviewer", second)
+    comments_before = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+
+    def fail_checklist(*_args, **_kwargs):
+        raise RuntimeError("simulated checklist write failure")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            "agent_cli.coordinator_a38.set_checklist", fail_checklist
+        )
+        with pytest.raises(RuntimeError, match="checklist write failure"):
+            phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert not any(
+        row.get("type") == "message.read"
+        and row.get("payload", {}).get("message_id") == "second-mail"
+        for row in store.rows("activity")
+    )
+    comments_after_failure = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+    assert comments_after_failure == comments_before + 1
+    lines = phase_await_second_review(store, worker, store.row("task", tid), fake)
+    assert "external second review" in lines[0]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == comments_after_failure
+    final = store.row("task", tid)
+    assert final["payload"]["coordinator"]["phase"] == "ci"
+    statuses = {row["key"]: row for row in store.rows("checklist_item") if row.get("task_id") == tid}
+    assert statuses["codex_pr_quality"]["status"] == "ja"
+    assert statuses["codex_pr_logic"]["evidence"].startswith("external second review by outside-reviewer")
+
+    awaiting = store.row("task", tid)
+    awaiting["payload"]["coordinator"]["phase"] = "await_ready"
+    # The test skips phase_readiness; record that readiness ran on this head.
+    awaiting["payload"]["coordinator"].setdefault("evidence", {})["readiness_head"] = fake.head
+    store.write("task", "update", tid, {key: value for key, value in awaiting.items() if not key.startswith("_")})
+    enforce_context = status_context_enforce("develop")
+    observe_context = status_context_observe("develop")
+    fake.statuses = [
+        {
+            "context": enforce_context,
+            "state": "pending",
+            "description": "Waiting for guard policy",
+        }
+    ]
+    writes_before = len(store.rows("activity"))
+    assert "Waiting for guard policy" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
+    waiting = store.row("task", tid)
+    assert waiting["payload"]["coordinator"]["a38"]["guard_status"]["description"] == "Waiting for guard policy"
+    assert len(store.rows("activity")) == writes_before
+    fake.pr["isDraft"] = False
+    assert phase_await_ready(store, worker, store.row("task", tid), fake) == [
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    ]
+    not_ready = store.row("task", tid)["payload"]["coordinator"]
+    assert not_ready["phase"] == "await_ready"
+    assert not_ready["observations"][-1]["text"] == (
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    )
+    fake.statuses = [
+        {
+            "context": observe_context,
+            "state": "success",
+            "description": "Observe passed",
+        }
+    ]
+    assert phase_await_ready(store, worker, store.row("task", tid), fake) == [
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    ]
+    observed_only = store.row("task", tid)["payload"]["coordinator"]
+    assert observed_only["phase"] == "await_ready"
+    assert observed_only["a38"]["guard_status"]["context"] is None
+    fake.statuses = [
+        {
+            "context": observe_context,
+            "state": "success",
+            "description": "Observe passed",
+        },
+        {
+            "context": enforce_context,
+            "state": "failure",
+            "description": "Enforce failed",
+        },
+    ]
+    assert phase_await_ready(store, worker, store.row("task", tid), fake) == [
+        f"PR left draft without a successful A38 status on {fake.head[:7]}"
+    ]
+    enforce_red = store.row("task", tid)["payload"]["coordinator"]
+    assert enforce_red["phase"] == "await_ready"
+    assert enforce_red["a38"]["guard_status"]["context"] == enforce_context
+    assert enforce_red["a38"]["guard_status"]["state"] == "failure"
+    fake.statuses = [
+        {
+            "context": enforce_context,
+            "state": "success",
+            "description": "A38 passed",
+        }
+    ]
+    assert "awaiting human merge" in phase_await_ready(store, worker, store.row("task", tid), fake)[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
+    fake.pr["isDraft"] = True
+    assert "returned to draft" in phase_await_merge(
+        store, worker, store.row("task", tid), fake
+    )[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_ready"
+    fake.pr["isDraft"] = False
+    assert "awaiting human merge" in phase_await_ready(
+        store, worker, store.row("task", tid), fake
+    )[0]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "await_merge"
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+    fake.pr["mergeCommit"] = {"oid": "dddddddddddddddddddddddddddddddddddddddd"}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+    # A later blocking review of the merged head wins over the earlier passing one,
+    # even though task-done would already be allowed.
+    import copy
+
+    from agent_cli import coordinator_github
+
+    blocked_variant = copy.deepcopy(store.row("task", tid))
+    variant_reviews = blocked_variant["payload"]["coordinator"]["a38"]["second_review"].setdefault(
+        "reviews", []
+    )
+    variant_reviews.append(
+        {"reviewer": "outside-reviewer", "blocks_merge": True, "at": "2999-01-01 00:00:00+00:00"}
+    )
+    with monkeypatch.context() as variant_patch:
+        variant_patch.setattr(coordinator_github, "save_task", lambda *_args: None)
+        variant_patch.setattr(
+            coordinator_github,
+            "publish_blocker",
+            lambda *_args, kind="blocker", **_kwargs: [f"blocker {kind}"],
+        )
+        assert phase_await_merge(store, worker, blocked_variant, fake) == [
+            "blocker merged-with-blocking-second-review"
+        ]
+    assert blocked_variant["payload"]["coordinator"]["phase"] == "blocked"
+    lines = phase_await_merge(store, worker, store.row("task", tid), fake)
+    assert lines == ["human merge verified example/project#42; task done"]
+    assert store.row("task", tid)["state"] == "done"
+    acknowledgements = [
+        row for row in store.rows("activity") if row.get("type") == "issue.assigned.ack"
+    ]
+    assert len(acknowledgements) == 1
+    assert acknowledgements[0]["payload"]["assigned_id"] == "assigned-a38"
+
+    blocking_tid = "22222222-2222-4222-8222-222222222222"
+    blocking_task = {
+        **task,
+        "id": blocking_tid,
+        "state": "pr-review",
+        "payload": {
+            "coordinator": {
+                "phase": "await_second_review",
+                "head_sha": fake.head,
+                "worktree": str(worker.workspace_root / blocking_tid),
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {
+                    "enabled": True,
+                    "second_review": {
+                        "head": fake.head,
+                        "status": "requested",
+                        "last_requested_at": "2026-01-01T00:00:00Z",
+                    }
+                },
+            }
+        },
+    }
+    store.write("task", "insert", blocking_tid, blocking_task)
+    # The second scenario uses a fresh, still open draft pull request.
+    fake.pr["state"] = "OPEN"
+    blocking_result = {
+        **second,
+        "task_id": blocking_tid,
+        "defects": 1,
+        "blocks_merge": True,
+        "findings": "The result contains a defect that must be fixed.",
+    }
+    mail("blocking-mail", "outside-reviewer", blocking_result)
+    comments_before = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+
+    def fail_save(*_args, **_kwargs):
+        raise RuntimeError("simulated task save failure")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr("agent_cli.coordinator_a38.save_task", fail_save)
+        with pytest.raises(RuntimeError, match="task save failure"):
+            phase_await_second_review(
+                store, worker, store.row("task", blocking_tid), fake
+            )
+    assert not any(
+        row.get("type") == "message.read"
+        and row.get("payload", {}).get("message_id") == "blocking-mail"
+        for row in store.rows("activity")
+    )
+    comments_after_failure = len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    )
+    # The ordering watermark is saved before the post, so a failed save posts nothing.
+    assert comments_after_failure == comments_before
+    blocking_lines = phase_await_second_review(
+        store, worker, store.row("task", blocking_tid), fake
+    )
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == comments_before + 1
+    assert "routing to implementer" in blocking_lines[-1]
+    blocked = store.row("task", blocking_tid)
+    assert blocked["state"] == "implementing"
+    assert blocked["payload"]["coordinator"]["phase"] == "implement"
+    assert blocked["payload"]["coordinator"]["findings"] == blocking_result["findings"]
+    kept = blocked["payload"]["coordinator"]["a38"]["second_review"]
+    assert kept["head"] == fake.head
+    assert kept["reviews"][-1]["blocks_merge"] is True
+
+
+def test_a38_await_second_review_retries_transient_pr_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_await_second_review
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = replace(make_worker(tmp_path), a38=True)
+    head = "a" * 40
+    task = {
+        "id": "77777777-7777-4777-8777-777777777777",
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "await_second_review",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+
+    def unavailable(_argv: list[str]) -> Completed:
+        return Completed(1, "", "connection reset")
+
+    def malformed_head(_argv: list[str]) -> Completed:
+        return Completed(0, json.dumps({"headRefOid": "not-a-sha"}), "")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped", lambda _store, _session, runner: runner
+    )
+    lines = phase_await_second_review(store, worker, task, unavailable)
+
+    assert lines == ["PR state temporarily unavailable; retrying"]
+    assert task["payload"]["coordinator"]["phase"] == "await_second_review"
+    with pytest.raises(CoordinatorError, match="cannot read current pull request head"):
+        phase_await_second_review(store, worker, task, malformed_head)
+
+
+def test_a38_await_ready_retries_transient_pr_and_status_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_await_ready
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = replace(make_worker(tmp_path), a38=True)
+    head = "a" * 40
+    task = {
+        "id": "88888888-8888-4888-8888-888888888888",
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "await_ready",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {
+                    "repo": "example/project",
+                    "number": 7,
+                    "base": "develop",
+                },
+            }
+        },
+    }
+
+    def unavailable(_argv: list[str]) -> Completed:
+        return Completed(1, "", "connection reset")
+
+    def statuses_unavailable(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(
+                0,
+                json.dumps({"headRefOid": head, "isDraft": True, "state": "OPEN"}),
+                "",
+            )
+        return Completed(1, "", "connection reset")
+
+    def malformed_draft(_argv: list[str]) -> Completed:
+        return Completed(
+            0,
+            json.dumps({"headRefOid": head, "isDraft": "unknown", "state": "OPEN"}),
+            "",
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped", lambda _store, _session, runner: runner
+    )
+    assert phase_await_ready(store, worker, task, unavailable) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert phase_await_ready(store, worker, task, statuses_unavailable) == [
+        "PR state temporarily unavailable; retrying"
+    ]
+    assert task["payload"]["coordinator"]["phase"] == "await_ready"
+    with pytest.raises(CoordinatorError, match="draft state is unavailable"):
+        phase_await_ready(store, worker, task, malformed_draft)
+
+
+@pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])
+def test_a38_await_ready_hands_a_merged_pr_to_await_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_state: str, verb: str
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_await_ready
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = replace(make_worker(tmp_path), a38=True)
+    head = "a" * 40
+    task = {
+        "id": "99999999-9999-4999-8999-999999999999",
+        "session_id": worker.session_id,
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "await_ready",
+                "head_sha": head,
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7, "base": "develop"},
+            }
+        },
+    }
+
+    def merged(_argv: list[str]) -> Completed:
+        return Completed(
+            0, json.dumps({"headRefOid": head, "isDraft": False, "state": pr_state}), ""
+        )
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped", lambda _store, _session, runner: runner
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.save_task", lambda *_args: None)
+
+    assert phase_await_ready(store, worker, task, merged) == [
+        f"PR {verb} while awaiting guard Ready; verifying the merge"
+    ]
+    assert task["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_second_review_pings_get_fresh_ids_after_a_blocking_review_on_the_same_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import _ping_id, send_second_review_requests
+    from agent_cli.coordinator_common import coord
+    from agent_cli.coordinator_lanes import invalidate_head_evidence
+
+    task_id = "aaaaaaaa-0000-4000-8000-000000000001"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    store.set_meta("github_login", "worker-bot")
+    c = coord(task)
+    c.setdefault("a38", {})["second_review"] = {
+        "head": fake.head,
+        "request_count": 2,
+        "status": "posted",
+    }
+    invalidate_head_evidence(c, "")
+    assert "second_review" not in c["a38"]
+    assert c["a38"]["second_review_next_occurrence"] == 3
+    c["head_sha"] = fake.head
+
+    assert send_second_review_requests(store, worker, task) is True
+
+    for login in worker.second_reviewers:
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 3)) is not None
+
+
+def test_a38_forced_second_review_reping_keeps_posted_reviews_of_the_same_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import send_second_review_requests
+    from agent_cli.coordinator_common import coord
+
+    task_id = "aaaaaaaa-0000-4000-8000-000000000002"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    store.set_meta("github_login", "worker-bot")
+    c = coord(task)
+    c["head_sha"] = fake.head
+    reviews = [{"reviewer": "reviewer-one", "blocks_merge": True, "at": "2026-01-01T00:00:00Z"}]
+    c["a38"]["second_review"] = {
+        "head": fake.head,
+        "request_count": 1,
+        "status": "posted",
+        "reviews": reviews,
+        "requested_at": "2026-01-01T00:00:00Z",
+    }
+
+    assert send_second_review_requests(store, worker, task, force=True) is True
+
+    state = c["a38"]["second_review"]
+    assert state["status"] == "posted"
+    assert state["reviews"] == reviews
+    assert state["request_count"] == 2
+    assert state["requested_at"] == "2026-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize("missing_evidence", ["agent_id", "prompt"])
+def test_a38_first_comment_reruns_approved_gate_without_prompt_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_evidence: str,
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    suffix = "1" if missing_evidence == "prompt" else "0"
+    tid = f"44444444-4444-4444-8444-44444444444{suffix}"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "review",
+        "state": "pr-review",
+        "title": "A38 prompt provenance",
+        "repo": "example/project",
+        "models": {"first": "grok", "second": None},
+        "payload": {
+            "coordinator": {
+                "phase": "a38_first_comment",
+                "head_sha": _POSTED_HEAD,
+                "worktree": str(worktree),
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {"enabled": True, "first_review_passes": 1},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for dimension in ("quality", "logic"):
+        cid = f"{tid}-check-{dimension}"
+        store.write(
+            "checklist_item",
+            "insert",
+            cid,
+            {
+                "id": cid,
+                "task_id": tid,
+                "key": f"grok_pr_{dimension}",
+                "status": "ja",
+                "evidence": "seed",
+                "source": "script",
+            },
+        )
+        aid = f"{tid}-agent-{dimension}"
+        if dimension == "logic" or missing_evidence == "prompt":
+            agent = {
+                "id": aid,
+                "session_id": worker.session_id,
+                "task_id": tid,
+                "role": f"pr-reviewer-{dimension}",
+                "vendor": "grok",
+                "provider": "grok",
+                "model": "grok-model",
+                "head_sha": _POSTED_HEAD,
+                "dimension": dimension,
+                "status": "done",
+            }
+            if dimension == "logic":
+                agent["prompt"] = "Review the logic."
+            store.write("agent", "insert", aid, agent)
+        gid = f"{tid}-gate-{dimension}"
+        gate = {
+            "id": gid,
+            "task_id": tid,
+            "stage": "grok-pr",
+            "dimension": dimension,
+            "vendor": "grok",
+            "verdict": "approved",
+            "head_sha": _POSTED_HEAD,
+            "recorded_at": "2026-01-01T00:00:00Z",
+        }
+        if dimension == "logic" or missing_evidence == "prompt":
+            gate["agent_id"] = aid
+        store.write("review_gate", "insert", gid, gate)
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.verify_signed_clean_head",
+        lambda *args: _POSTED_HEAD,
+    )
+    lines = phase_first_comment(
+        store,
+        worker,
+        store.row("task", tid),
+        lambda argv: Completed(0, "", ""),
+    )
+    assert lines == ["first review quality prompt evidence missing; re-running gate"]
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    launched: list[str] = []
+
+    def run(argv, stdin=None):  # noqa: ANN001
+        text = " ".join(str(part) for part in argv) + "\n" + (stdin or "")
+        if "pr-reviewer-quality" in text or "Quality:" in text:
+            launched.append("quality")
+        elif "pr-reviewer-logic" in text or "Logic:" in text:
+            launched.append("logic")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    phase_pr_gates(
+        store,
+        worker,
+        saved,
+        lambda argv: Completed(0, "", ""),
+        run,
+        vendor="grok",
+        stage="grok-pr",
+    )
+    assert launched == ["quality"]
+
+
+@pytest.mark.parametrize("failing", ["precheck", "policy", "run", "verify"])
+def test_a38_tests_failure_routes_to_implementer_without_a_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    tid = "33333333-3333-4333-8333-33333333333f"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+    }
+    store.write("task", "insert", tid, task)
+    store.write("checklist_item", "insert", "a38-fail-local", {"id": "a38-fail-local", "task_id": tid, "key": "local_check_pass", "status": "pending"})
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.run_bounded",
+        lambda argv, **_k: Completed(1 if failing == "precheck" else 0, "precheck output", ""),
+    )
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, "b" * 40 + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    calls: list[str] = []
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        calls.append(argv[0])
+        if argv[0] == "run":
+            Path(argv[argv.index("--output") + 1]).write_text("report", encoding="utf-8")
+        return Completed(1 if argv[0] == failing else 0, f"{argv[0]} output", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+
+    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+
+    saved = store.row("task", tid)
+    c = saved["payload"]["coordinator"]
+    prefix = "Trusted precheck failed" if failing == "precheck" else "A38 failed"
+    assert lines == [f"{prefix.lower() if failing == 'precheck' else prefix} on {head[:7]}; routing to implementer"]
+    assert c["phase"] == "implement"
+    assert saved["state"] == "implementing"
+    assert c["findings"].startswith(f"{prefix} on {head[:7]}")
+    if failing != "precheck":
+        assert c["evidence"]["tests_pass"] is False
+    assert "report" not in c.get("a38", {})
+    assert not [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post" and row["payload"].get("exact_body")
+    ]
+    if failing == "precheck":
+        assert calls == []
+
+
+@pytest.mark.parametrize("failing", ["none", "run"])
+def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    tid = "33333333-3333-4333-8333-33333333334f"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+    }
+    store.write("task", "insert", tid, task)
+    store.write("checklist_item", "insert", "a38-fail-local", {"id": "a38-fail-local", "task_id": tid, "key": "local_check_pass", "status": "pending"})
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.run_bounded",
+        lambda argv, **_k: Completed(1 if failing == "precheck" else 0, "precheck output", ""),
+    )
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, "b" * 40 + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    calls: list[str] = []
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        calls.append(argv[0])
+        if argv[0] == "run":
+            Path(argv[argv.index("--output") + 1]).write_text("report", encoding="utf-8")
+        return Completed(1 if argv[0] == failing else 0, f"{argv[0]} output", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.pr_state", lambda *a, **k: "MERGED")
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.ensure_draft",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not push a merged PR")),
+    )
+
+    lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
+
+    saved = store.row("task", tid)
+    assert lines == ["PR merged during the A38 suite; verifying the merge"]
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_pr_left_open_routes_only_a_definite_merge_or_close(monkeypatch) -> None:
+    from agent_cli import coordinator_runtime
+
+    saved: list[str] = []
+    monkeypatch.setattr(coordinator_runtime, "save_task", lambda _store, task: saved.append(task["payload"]["coordinator"]["phase"]))
+    for state, expected in (("MERGED", "await_merge"), ("CLOSED", "await_merge"), ("OPEN", None), (None, None)):
+        task = {"payload": {"coordinator": {"phase": "implement"}}}
+        monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *a, _s=state, **k: _s)
+        lines = coordinator_runtime._a38_pr_left_open(object(), object(), task, object(), "implement")
+        assert (lines is None) is (expected is None)
+        if expected:
+            assert task["payload"]["coordinator"]["phase"] == expected
+
+
+def test_a38_tests_run_policy_run_verify_and_post_exact_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    base = "b" * 40
+    tid = "33333333-3333-4333-8333-333333333333"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid, "session_id": worker.session_id, "workflow": "implement",
+        "state": "local-check", "title": "A38 tests", "repo": "example/project", "ref": 42,
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
+    }
+    store.write("task", "insert", tid, task)
+    checklist = {
+        "session_registered": "ja", "spec_written": "ja", "implementer_done": "ja",
+        "reviewer_approved": "ja", "local_check_pass": "pending", "pushed": "pending",
+        "grok_pr_quality": "pending", "grok_pr_logic": "pending",
+        "codex_pr_quality": "pending", "codex_pr_logic": "pending",
+        "contributing_ok": "pending", "deviation_declared": "pending", "deviation_granted": "pending",
+    }
+    for key, status in checklist.items():
+        cid = f"a38-check-{key}"
+        store.write("checklist_item", "insert", cid, {"id": cid, "task_id": tid, "key": key, "status": status})
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
+    monkeypatch.setattr("agent_cli.coordinator_a38.scoped", lambda *a, **k: lambda argv: Completed(0, "false", ""))
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    prechecks: list[list[str]] = []
+
+    def fake_bounded(argv, **_kwargs):  # noqa: ANN001
+        prechecks.append(argv)
+        return Completed(0, "trusted check passed", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_bounded)
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, base + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    calls: list[str] = []
+    report_body = "<!-- DFX-LOCAL-CI:v1 -->\nverified report\n<!-- /DFX-LOCAL-CI:v1 -->"
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        calls.append(argv[0])
+        if argv[0] == "run":
+            Path(argv[argv.index("--output") + 1]).write_text(report_body, encoding="utf-8")
+        return Completed(0, "ok", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
+
+    def crash_before_task_save(*_args, **_kwargs):
+        raise RuntimeError("simulated task save failure")
+
+    def runner(_argv: list[str]) -> Completed:
+        return Completed(0, "", "")
+
+    with monkeypatch.context() as crash_patch:
+        crash_patch.setattr("agent_cli.coordinator_a38.save_task", crash_before_task_save)
+        with pytest.raises(RuntimeError, match="task save failure"):
+            phase_a38_tests(store, worker, store.row("task", tid), runner)
+    assert calls == ["policy", "run", "verify"]
+    assert len(prechecks) == 1
+    report_rows = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert report_rows[0]["payload"]["body"] == report_body
+    assert report_rows[0]["payload"]["exact_body"] is True
+    checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
+    assert any(row.get("name") == "a38" and row.get("result") == "pass" for row in checks)
+
+    errored = store.row("activity", report_rows[0]["id"])
+    assert errored is not None
+    errored = {key: value for key, value in errored.items() if not key.startswith("_")}
+    errored["execution_status"] = "error"
+    errored["execution_error"] = "temporary GitHub failure"
+    errored.pop("result", None)
+    store.write("activity", "update", errored["id"], errored)
+    retried_bodies: list[str] = []
+
+    def retry_github(store_arg, runner_arg, *, activity_ids):  # noqa: ANN001
+        assert callable(runner_arg)
+        assert activity_ids == (errored["id"],)
+        row = store_arg.row("activity", errored["id"])
+        assert row is not None and row["execution_status"] == "pending"
+        retried_bodies.append(row["payload"]["body"])
+        updated = {key: value for key, value in row.items() if not key.startswith("_")}
+        updated["execution_status"] = "done"
+        updated.pop("execution_error", None)
+        updated["result"] = {"id": 99, "url": "https://x"}
+        store_arg.write("activity", "update", errored["id"], updated)
+        return []
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.execute_github", retry_github)
+
+    lines = phase_a38_tests(store, worker, store.row("task", tid), runner)
+
+    assert calls == ["policy", "run", "verify"]
+    assert len(prechecks) == 1
+    assert retried_bodies == [report_body]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 1
+    assert "already posted" in lines[0]
+    saved = store.row("task", tid)
+    recovered_report = saved["payload"]["coordinator"]["a38"]["report"]
+    assert recovered_report["head"] == head
+    assert recovered_report["activity_id"] == report_rows[0]["id"]
+    assert recovered_report["url"] == "https://x"
+    assert saved["payload"]["coordinator"]["evidence"]["tests_pass"] is True
+    assert saved["payload"]["coordinator"]["evidence"]["tests_head"] == head
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
+    local_check = next(
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == tid and row.get("key") == "local_check_pass"
+    )
+    assert local_check["status"] == "ja"
+    assert local_check["evidence"] == f"A38 pass on {head}"
 
 
 def _claude_first_manifest(home: Path) -> None:

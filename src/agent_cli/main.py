@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-from .ai_accounts import load_model_configuration
+from .ai_accounts import load_ai_accounts, load_model_configuration, load_model_slots
 from .allow import (
     ACTIONS,
     GATE_PAIRS,
@@ -257,6 +257,12 @@ def _store_model_pins(store: Any) -> dict[str, Any]:
         store_home if isinstance(store_home, Path) else home()
     )
     return model_pins(models, implementer)
+
+
+def _store_models(store: Any) -> ModelSlots:
+    """The device's review slots for this store (historical order when unset)."""
+    store_home = getattr(store, "home", None)
+    return load_model_slots(store_home if isinstance(store_home, Path) else home())
 
 
 def home() -> Path:
@@ -3530,6 +3536,8 @@ def cmd_run(args: list[str]) -> None:
                 models = models_for_new_record(snap)
                 vendor = step_vendor(step, models, snapshot=snap)
                 if vendor is None:
+                    if step.slot == "second" and models.second is None:
+                        die("model slot second is external; no agent lane can be started")
                     die(f"{step.key} has no model provider")
                 session_id = str(snap.get("session_id") or "")
                 if vendor not in LANE_VENDORS:
@@ -3907,7 +3915,7 @@ def cmd_models(args: list[str]) -> None:
         if as_json:
             print(json.dumps({slot: vendor}, sort_keys=True))
         else:
-            print(vendor)
+            print(vendor or "external")
         return
     if as_json:
         print(json.dumps(models.as_dict(), sort_keys=True))

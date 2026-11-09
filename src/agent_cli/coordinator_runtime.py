@@ -151,6 +151,10 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
     try:
         ai = load_ai_accounts(store.home)
         _refuse_codex_first(ai.models.first, ai.implementer)
+        if worker.a38 and ai.models.second is not None:
+            raise CoordinatorError("A38 workers require models.second = null")
+        if not worker.a38 and ai.models.second is None:
+            raise CoordinatorError("models.second = null is allowed only for A38 workers")
         for slot in required_lane_slots(ai.models):
             vendor, role = slot.split(":", 1)
             selected = ai.for_lane(
@@ -379,6 +383,21 @@ def _create_implement_task(
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     _refuse_codex_first(ai.models.first, ai.implementer)
+    source = {
+        "repo": repo,
+        "number": number,
+        "assigned_id": assigned_id,
+        "title": title,
+        "body": redact(body, limit=2000),
+    }
+    if repository_config is not None:
+        source.update(
+            publication_repo=repository_config.publication_repo,
+            base=repository_config.base,
+        )
+    else:
+        source["owner_scoped"] = True
+        source["require_hub_assignment"] = worker.require_hub_assignment
     c = {
         "phase": "accept",
         "source": source,

@@ -69,7 +69,11 @@ def canonical_checklist(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class ModelSlotsError(ValueError):
-    """The model-slot or implementer selection is invalid."""
+    """The model-slot or implementer selection is invalid.
+
+    The ``models`` configuration does not describe valid first/second slots, or
+    the optional ``implementer`` selection is invalid.
+    """
 
 
 class PinnedModelSlotsError(ModelSlotsError):

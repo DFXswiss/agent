@@ -16,7 +16,7 @@ implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
 This device-local manifest is used by `agent lane run`, the lane steps of
-`agent run`, interactive Grok session starts, optional Grok usage polling,
+`agent run`, interactive Grok session starts, optional Grok and OpenRouter usage polling,
 and, for its `models` and `implementer` keys only, by every task creation (`agent task create`,
 the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, an
 unknown top-level key or a malformed model selection therefore stops task
@@ -130,7 +130,7 @@ of each review slot:
   externally
 
 The optional top-level `implementer` names the implementation provider. It may
-be `grok`, `codex`, `claude`, or `deepseek`. It must differ from
+be `grok`, `codex`, `claude`, `openrouter`, or `deepseek`. It must differ from
 `models.second`; matching `models.first` is allowed and means there is no
 separate implementation provider. When the key is absent, the implementer is
 `models.first`. `deepseek` is an implementer value only and remains invalid in
@@ -216,6 +216,12 @@ which carries no pin, also accepts a finished row of the second provider); `agen
 --stage S --vendor X` requires `X` to be the provider of the slot `S` stands for.
 `agent models implementer [--task <uuid>]` prints the device selection or task
 pin by the same rules as `agent models first|second`.
+
+For a task pinned with `second: null`, `gate record --stage codex-pr` is refused;
+the external result is recorded in the two `codex_pr_*` checklist keys with
+`external second review by ...` evidence. That evidence counts only on a
+coordinator A38 task whose stored second review for the evidence head is
+posted and whose newest review does not block the merge.
 
 ## Required fields
 

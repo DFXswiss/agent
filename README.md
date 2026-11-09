@@ -116,6 +116,7 @@ agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>
 agent work list --session <session-id>
 agent models [first|second|implementer] [--task <uuid>] [--json]   # device setting, or the pin of a task
+agent activity add --session OWN_SID --type message --payload-file ./second-review-mail.json
 agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>

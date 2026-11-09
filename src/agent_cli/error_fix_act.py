@@ -23,11 +23,17 @@ _MODEL_CONFIGURATION_ERROR = "model-configuration"
 
 
 def _device_model_pins(store: Store) -> dict[str, Any]:
-    """Pin the device's review slots and any separate implementer on a new task."""
+    """Pin the device's review slots and implementer on a new task.
+
+    Error-fix tasks are not coordinator A38 tasks, so an external second review
+    (``models.second = null``) is refused before a task row is written.
+    """
     from .ai_accounts import load_model_configuration
     from .model_slots import model_pins
 
     models, implementer = load_model_configuration(store.home)
+    if models.second is None:
+        raise StoreError(EXTERNAL_SECOND_TASK_CREATION_ERROR)
     return model_pins(models, implementer)
 
 

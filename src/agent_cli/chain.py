@@ -547,7 +547,7 @@ def step_vendor_label(
     """Provider name for a pinned agent step, ``-`` otherwise."""
     if step.kind != "agent" or step.slot is None:
         return "-"
-    return str(step_vendor(step, models, snapshot=snapshot))
+    return step_vendor(step, models, snapshot=snapshot) or "external"
 
 
 def handoff_prompt(

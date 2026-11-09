@@ -122,6 +122,15 @@ def test_implementer_parsing_and_snapshot_fallback() -> None:
         parse_implementer("codex", models)
     with pytest.raises(ModelSlotsError, match="models.first must be one of"):
         parse_model_slots({"first": "deepseek", "second": "codex"})
+    assert parse_model_slots(
+        {"first": "openrouter", "second": "claude"}
+    ) == ModelSlots("openrouter", "claude")
+    assert parse_model_slots(
+        {"first": "grok", "second": "openrouter"}
+    ) == ModelSlots("grok", "openrouter")
+    assert parse_model_slots({"first": "grok", "second": None}) == ModelSlots(
+        "grok", None
+    )
 
 
 @pytest.mark.no_pg
