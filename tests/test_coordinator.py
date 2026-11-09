@@ -5479,6 +5479,181 @@ def test_a38_tests_refuses_a_foreign_row_on_the_report_activity_id(
         coordinator_a38.phase_tests(store, worker, task, fake)
 
 
+def test_a38_first_review_comment_refuses_a_foreign_deterministic_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_first_comment
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    captured: dict[str, str] = {}
+
+    def capture_body(*_args, body: str, **_kwargs):
+        captured["body"] = body
+        raise RuntimeError("captured first review body")
+
+    with monkeypatch.context() as capture_patch:
+        capture_patch.setattr(coordinator_a38, "_post_comment", capture_body)
+        with pytest.raises(RuntimeError, match="captured first review body"):
+            phase_first_comment(store, worker, store.row("task", task_id), fake)
+
+    activity_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task_id}:{fake.head}")
+    )
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": activity_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": activity_id,
+                "session_id": worker.session_id,
+                "type": "comment.post",
+                "payload": {
+                    "repo": "example/project",
+                    "number": 42,
+                    "body": captured["body"],
+                    "target": "pr",
+                },
+                "execution_status": "done",
+                "result": {"url": "https://x/foreign-first"},
+            },
+            "updated_at": "2026-01-01T00:00:03Z",
+        }
+    )
+
+    with pytest.raises(CoordinatorError, match="did not write"):
+        phase_first_comment(store, worker, store.row("task", task_id), fake)
+
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["phase"] == "a38_first_comment"
+    assert store.rows("ping") == []
+    assert store.row("activity", activity_id)["_origin_device_id"] == "foreign-device"
+
+
+def test_a38_second_review_comment_refuses_a_foreign_deterministic_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000015"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    message_id = "foreign-collision-mail"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id=message_id,
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=4,
+    )
+    captured: dict[str, str] = {}
+
+    def capture_body(*_args, body: str, **_kwargs):
+        captured["body"] = body
+        raise RuntimeError("captured second review body")
+
+    with monkeypatch.context() as capture_patch:
+        capture_patch.setattr(coordinator_a38, "_post_comment", capture_body)
+        with pytest.raises(RuntimeError, match="captured second review body"):
+            intake_second_reviews(store, worker, task, fake, fake.head)
+
+    activity_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"coordinator-a38-second:{task_id}:{fake.head}:{message_id}",
+        )
+    )
+    store.apply_replica_row(
+        {
+            "table": "activity",
+            "row_id": activity_id,
+            "origin_device_id": "foreign-device",
+            "payload": {
+                "id": activity_id,
+                "session_id": worker.session_id,
+                "type": "comment.post",
+                "payload": {
+                    "repo": "example/project",
+                    "number": 42,
+                    "body": captured["body"],
+                    "target": "pr",
+                },
+                "execution_status": "done",
+                "result": {"url": "https://x/foreign-second"},
+            },
+            "updated_at": "2026-01-01T00:00:05Z",
+        }
+    )
+
+    with pytest.raises(CoordinatorError, match="did not write"):
+        intake_second_reviews(
+            store, worker, store.row("task", task_id), fake, fake.head
+        )
+
+    saved = store.row("task", task_id)
+    state = saved["payload"]["coordinator"]["a38"]["second_review"]
+    assert saved["payload"]["coordinator"]["phase"] == "await_second_review"
+    assert state.get("status") != "posted"
+    assert state.get("reviews") in (None, [])
+    assert message_id not in _read_message_ids(store, worker)
+
+
+def test_a38_second_review_comment_reuses_its_own_row_after_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import _read_message_ids, intake_second_reviews
+
+    task_id = "abababab-0000-4000-8000-000000000016"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    message_id = "own-row-retry-mail"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id=message_id,
+        login="reviewer-one",
+        payload=_a38_second_review_payload(task_id, fake.head),
+        second=6,
+    )
+
+    def crash_after_comment(*_args, **_kwargs):
+        raise RuntimeError("crash after second review comment")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            "agent_cli.coordinator_a38.set_checklist",
+            crash_after_comment,
+        )
+        with pytest.raises(RuntimeError, match="crash after second review comment"):
+            intake_second_reviews(store, worker, task, fake, fake.head)
+
+    comments = [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert comments[0]["_origin_device_id"] == store.device_id()
+    assert message_id not in _read_message_ids(store, worker)
+
+    lines = intake_second_reviews(
+        store, worker, store.row("task", task_id), fake, fake.head
+    )
+
+    assert lines == [f"external second review by @reviewer-one posted on {fake.head[:7]}"]
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 1
+    assert message_id in _read_message_ids(store, worker)
+
+
 def test_a38_block_on_open_pr_then_block_after_merge_does_not_reopen_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5735,95 +5910,101 @@ def _a38_first_comment_env(
     return store, worker, fake, tid
 
 
-def test_a38_first_comment_crash_resumes_without_duplicate_and_takes_merged_review(
+def test_a38_first_comment_crash_before_post_resumes_comment_and_all_pings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from dataclasses import replace
+
     from agent_cli import coordinator_a38
     from agent_cli.coordinator_a38 import phase_first_comment
-    from agent_cli.coordinator_runtime import advance_one
 
     store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
-    real_write_pings = coordinator_a38._write_second_review_request_pings
-
-    def write_pings_then_crash(*args, **kwargs):  # noqa: ANN002, ANN003
-        real_write_pings(*args, **kwargs)
-        raise RuntimeError("crash after first comment and review ping")
-
-    monkeypatch.setattr(
-        coordinator_a38,
-        "_write_second_review_request_pings",
-        write_pings_then_crash,
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
     )
-    with pytest.raises(RuntimeError, match="crash after first comment and review ping"):
-        phase_first_comment(store, worker, store.row("task", tid), fake)
+
+    def crash_before_post(*_args, **_kwargs):
+        raise RuntimeError("crash immediately before first comment")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(coordinator_a38, "_post_comment", crash_before_post)
+        with pytest.raises(RuntimeError, match="immediately before first comment"):
+            phase_first_comment(store, worker, store.row("task", tid), fake)
 
     crashed = store.row("task", tid)
     checkpoint = crashed["payload"]["coordinator"]
     assert checkpoint["phase"] == "a38_first_comment"
     assert checkpoint["a38"]["first_comment"]["head"] == fake.head
-    assert checkpoint["a38"]["first_comment"]["id"] == 99
     assert checkpoint["a38"]["second_review"]["head"] == fake.head
-    assert checkpoint["a38"]["second_review"]["pinged"] == ["outside-reviewer"]
+    assert checkpoint["a38"]["second_review"]["pinged"] == list(
+        worker.second_reviewers
+    )
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 0
+    assert store.rows("ping") == []
+
+    assert phase_first_comment(store, worker, crashed, fake) == [
+        f"first A38 review comment posted on {fake.head[:7]}"
+    ]
     assert len(
         [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     ) == 1
-    assert len(store.rows("ping")) == 1
+    pings = store.rows("ping")
+    assert len(pings) == len(worker.second_reviewers)
+    assert sorted(row["to_login"] for row in pings) == sorted(worker.second_reviewers)
+    assert len({row["id"] for row in pings}) == len(worker.second_reviewers)
 
-    monkeypatch.setattr(
-        coordinator_a38,
-        "_write_second_review_request_pings",
-        real_write_pings,
+
+def test_a38_first_comment_partial_ping_crash_adds_only_the_missing_ping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_first_comment
+
+    store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
     )
+    real_write_pings = coordinator_a38._write_second_review_request_pings
+
+    def write_first_ping_then_crash(store_arg, task_arg, plan):  # noqa: ANN001
+        partial = dict(plan)
+        partial["recipients"] = list(plan["recipients"][:1])
+        real_write_pings(store_arg, task_arg, partial)
+        raise RuntimeError("crash after first review ping")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_write_second_review_request_pings",
+            write_first_ping_then_crash,
+        )
+        with pytest.raises(RuntimeError, match="crash after first review ping"):
+            phase_first_comment(store, worker, store.row("task", tid), fake)
+
+    crashed = store.row("task", tid)
+    assert crashed["payload"]["coordinator"]["phase"] == "a38_first_comment"
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 1
+    first_ping = store.rows("ping")
+    assert len(first_ping) == 1
+    assert first_ping[0]["to_login"] == worker.second_reviewers[0]
+
     assert phase_first_comment(store, worker, crashed, fake) == [
         f"first A38 review comment already posted on {fake.head[:7]}"
     ]
+
     assert len(
         [row for row in store.rows("activity") if row.get("type") == "comment.post"]
     ) == 1
-    assert len(store.rows("ping")) == 1
-
-    fake.pr.update(
-        {
-            "state": "MERGED",
-            "isDraft": False,
-            "mergedAt": "2026-09-01T12:00:00Z",
-            "mergeCommit": {"oid": "d" * 40},
-            "mergedBy": {"login": "human-owner", "type": "User"},
-        }
-    )
-    review = _a38_second_review_payload(tid, fake.head)
-    _a38_review_mail(
-        store,
-        worker,
-        message_id="merged-review-mail",
-        login="outside-reviewer",
-        payload=review,
-        second=2,
-    )
-    waiting = store.row("task", tid)
-    waiting["payload"]["coordinator"].setdefault("evidence", {})[
-        "readiness_head"
-    ] = fake.head
-    store.write(
-        "task",
-        "update",
-        tid,
-        {key: value for key, value in waiting.items() if not key.startswith("_")},
-    )
-
-    assert advance_one(store, worker, runner=fake, lane_runner=None) == [
-        "PR merged during await_second_review; verifying the merge"
-    ]
-    lines = advance_one(store, worker, runner=fake, lane_runner=None)
-
-    completed = store.row("task", tid)
-    assert completed["state"] == "done"
-    assert completed["payload"]["coordinator"]["phase"] == "done"
-    assert completed["payload"]["coordinator"]["a38"]["second_review"][
-        "status"
-    ] == "posted"
-    assert any("external second review" in line for line in lines)
-    assert not any("merged-without-second-review" in line for line in lines)
+    pings = store.rows("ping")
+    assert len(pings) == len(worker.second_reviewers)
+    assert sorted(row["to_login"] for row in pings) == sorted(worker.second_reviewers)
+    assert len({row["id"] for row in pings}) == len(worker.second_reviewers)
 
 
 def test_a38_first_comment_ping_and_external_mail_happy_path(
@@ -6318,6 +6499,121 @@ def test_a38_second_review_pings_get_fresh_ids_after_a_blocking_review_on_the_sa
 
     for login in worker.second_reviewers:
         assert store.row("ping", _ping_id(task_id, fake.head, login, 3)) is not None
+
+
+def test_a38_same_head_no_change_after_block_sends_one_new_ping_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_a38 import phase_await_second_review, phase_first_comment
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
+    )
+
+    phase_first_comment(store, worker, store.row("task", task_id), fake)
+    assert len(store.rows("ping")) == len(worker.second_reviewers)
+
+    message_id = "same-head-blocking-review"
+    _a38_review_mail(
+        store,
+        worker,
+        message_id=message_id,
+        login="outside-reviewer",
+        payload=_a38_second_review_payload(
+            task_id, fake.head, blocks_merge=True
+        ),
+        second=8,
+    )
+    lines = phase_await_second_review(
+        store, worker, store.row("task", task_id), fake
+    )
+    assert "routing to implementer" in lines[-1]
+
+    # Apply the implementer's actual no-change protocol result. The intervening
+    # inner review, A38 suite and first gates are already represented by this
+    # fixture; they keep the same head and first-review pass count.
+    no_change = store.row("task", task_id)
+    no_change["payload"]["coordinator"]["lane_outcome"] = {
+        "role": "implementer",
+        "round": 1,
+        "status": "complete",
+        "result": "no-change",
+        "stdout": (
+            "STATUS: complete\n"
+            "RESULT: no-change\n"
+            "SUMMARY_EN: The coordinator supports an external second review.\n"
+            "SUMMARY_DE: Der Koordinator unterstützt einen externen zweiten Review.\n"
+            "REUSED: `src/agent_cli/coordinator_a38.py:1` existing coordinator.\n"
+            "ADDED: `tests/test_coordinator.py:1` retry coverage.\n"
+        ),
+        "applied": False,
+    }
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in no_change.items() if not key.startswith("_")},
+    )
+    with monkeypatch.context() as no_change_patch:
+        no_change_patch.setattr(
+            coordinator_runtime, "stage_sign_commit_if_changes", lambda *_a: None
+        )
+        no_change_patch.setattr(
+            coordinator_runtime, "ensure_draft", lambda *_a: []
+        )
+        no_change_patch.setattr(
+            coordinator_runtime, "refresh_draft_body", lambda *_a: []
+        )
+        no_change_patch.setattr(
+            coordinator_runtime, "review_rules_bound", lambda *_a: True
+        )
+        assert phase_implement(
+            store,
+            worker,
+            store.row("task", task_id),
+            fake,
+            lane_runner=None,
+        ) == ["implementer done round=1"]
+
+    no_change = store.row("task", task_id)
+    assert no_change["payload"]["coordinator"]["head_sha"] == fake.head
+    assert no_change["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+    no_change["state"] = "pr-review"
+    no_change["payload"]["coordinator"]["phase"] = "a38_first_comment"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in no_change.items() if not key.startswith("_")},
+    )
+
+    assert phase_first_comment(
+        store, worker, store.row("task", task_id), fake
+    ) == [f"first A38 review comment already posted on {fake.head[:7]}"]
+    pings_after_retry = store.rows("ping")
+    assert len(pings_after_retry) == 2 * len(worker.second_reviewers)
+    for login in worker.second_reviewers:
+        assert sum(row["to_login"] == login for row in pings_after_retry) == 2
+    state = store.row("task", task_id)["payload"]["coordinator"]["a38"][
+        "second_review"
+    ]
+    assert state["request_count"] == 1
+    assert message_id in state["request_key"]
+
+    # Simulate a restart from the last durable first-comment checkpoint. The
+    # blocking-review identity keeps this retry on the same deterministic ids.
+    restarted = store.row("task", task_id)
+    restarted["payload"]["coordinator"]["phase"] = "a38_first_comment"
+    phase_first_comment(store, worker, restarted, fake)
+    assert len(store.rows("ping")) == len(pings_after_retry)
+    assert len(
+        [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    ) == 2
 
 
 def test_a38_forced_second_review_reping_keeps_posted_reviews_of_the_same_head(

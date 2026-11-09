@@ -656,21 +656,58 @@ def _post_comment(
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 comment requires a pull request number")
+    payload = {
+        "repo": target_repo(task),
+        "number": number,
+        "body": body,
+        "target": "pr",
+    }
+    row = store.row("activity", activity_id)
+    if isinstance(row, dict) and not _own_comment_activity(
+        store, worker, row, payload
+    ):
+        raise CoordinatorError(
+            "A38 review comment activity id is held by a row this worker did not write"
+        )
     queue_activity(
         store,
         activity_id=activity_id,
         session_id=worker.session_id,
         typ="comment.post",
-        payload={"repo": target_repo(task), "number": number, "body": body, "target": "pr"},
+        payload=payload,
     )
+    row = store.row("activity", activity_id)
+    if not isinstance(row, dict) or not _own_comment_activity(
+        store, worker, row, payload
+    ):
+        raise CoordinatorError("A38 review comment activity intent is missing or foreign")
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
-    if row is None or row.get("execution_status") != "done":
+    if not isinstance(row, dict) or not _own_comment_activity(
+        store, worker, row, payload
+    ):
+        raise CoordinatorError("A38 review comment result is missing or foreign")
+    if row.get("execution_status") != "done":
         raise CoordinatorError("A38 review comment was not verified published")
     result = row.get("result") if isinstance(row.get("result"), dict) else {}
     if not isinstance(result.get("url"), str) or not result["url"]:
         raise CoordinatorError("A38 review comment URL was not verified")
     return result
+
+
+def _own_comment_activity(
+    store: Store,
+    worker: WorkerConfig,
+    activity: Mapping[str, Any],
+    payload: Mapping[str, Any],
+) -> bool:
+    """Only the exact local comment intent may occupy its deterministic id."""
+    return (
+        activity.get("_origin_device_id") == store.device_id()
+        and activity.get("session_id") == worker.session_id
+        and activity.get("type") == "comment.post"
+        and activity.get("payload") == payload
+    )
 
 
 def phase_first_comment(
@@ -697,27 +734,6 @@ def phase_first_comment(
             raise CoordinatorError(f"missing first review gate review-1/{dimension} on {head[:7]}")
     a38 = _a38_state(c)
     existing = a38.get("first_comment")
-    if isinstance(existing, dict) and existing.get("head") == head:
-        row = store.row("activity", str(existing.get("activity_id") or ""))
-        if row is not None and row.get("execution_status") == "done":
-            result = row.get("result") if isinstance(row.get("result"), dict) else {}
-            if not isinstance(result.get("url"), str) or not result["url"]:
-                raise CoordinatorError("A38 review comment URL was not verified")
-            existing.update(id=result.get("id"), url=result["url"])
-            save_task(store, task)
-            request_key = (
-                f"first-comment:{head}:{max(1, int(a38.get('first_review_passes') or 0))}"
-            )
-            send_second_review_requests(
-                store,
-                worker,
-                task,
-                force=head_review_blocks(c, head),
-                request_key=request_key,
-            )
-            c["phase"] = "await_second_review"
-            save_task(store, task)
-            return [f"first A38 review comment already posted on {head[:7]}"]
     lanes = []
     for dimension, lane_id in (("quality", "conformity-a"), ("logic", "logic-a")):
         item = gate_prompt_evidence(
@@ -758,7 +774,7 @@ def phase_first_comment(
     rules_bound = review_rules_bound(store, worker, runner, task)
     body = _render_review_comment(task, payload, rules_bound=rules_bound)
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
-    request_key = f"first-comment:{head}:{payload['passes']}"
+    request_key = _second_review_request_key(c, head, int(payload["passes"]))
     _requested, request_plan = _prepare_second_review_request(
         store,
         worker,
@@ -776,6 +792,11 @@ def phase_first_comment(
     # Save both outside-effect intents before either the GitHub comment or a ping
     # is sent. Their deterministic ids make the incomplete steps resumable.
     save_task(store, task)
+    existing_row = store.row("activity", activity_id)
+    already_posted = (
+        isinstance(existing_row, dict)
+        and existing_row.get("execution_status") == "done"
+    )
     result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
     comment_intent.update(id=result.get("id"), url=result.get("url"))
     # Checkpoint the external comment result as soon as the executor has verified it.
@@ -783,7 +804,8 @@ def phase_first_comment(
     _write_second_review_request_pings(store, task, request_plan)
     c["phase"] = "await_second_review"
     save_task(store, task)
-    return [f"first A38 review comment posted on {head[:7]}"]
+    verb = "already posted" if already_posted else "posted"
+    return [f"first A38 review comment {verb} on {head[:7]}"]
 
 
 def _ping_id(task_id: str, head: str, login: str, occurrence: int) -> str:
@@ -814,6 +836,24 @@ def head_review_blocks(c: dict[str, Any], head: str) -> bool:
         and isinstance(reviews, list)
         and newest_reviews_block(reviews)
     )
+
+
+def _second_review_request_key(c: dict[str, Any], head: str, passes: int) -> str:
+    base = f"first-comment:{head}:{passes}"
+    state = _a38_state(c).get("second_review")
+    reviews = state.get("reviews") if isinstance(state, dict) else None
+    entries = [review for review in reviews or [] if isinstance(review, dict)]
+    if not entries or not newest_reviews_block(entries):
+        return base
+    latest = entries[-1]
+    identity = latest.get("mail_id") or latest.get("activity_id")
+    if not isinstance(identity, str) or not identity:
+        identity = "|".join(
+            str(latest.get(key) or "") for key in ("at", "reviewer", "id", "url")
+        )
+    if not identity.strip("|"):
+        raise CoordinatorError("blocking second review has no durable identity")
+    return f"{base}:blocking-review:{identity}"
 
 
 def send_second_review_requests(
