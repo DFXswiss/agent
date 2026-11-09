@@ -240,67 +240,12 @@ class Runtime:
 
 
 class PreflightRuntime(Runtime):
-    """Run a session-specific authorization check before every runtime access."""
+    """Run a session-specific authorization check before every tmux command."""
 
     def __init__(self, runtime: Runtime, preflight: Callable[[str], None]) -> None:
         self._runtime = runtime
         self._preflight = preflight
 
-    def available(self, session_id: str = "") -> bool:
+    def _tmux(self, session_id: str, tmux_argv: list[str]) -> Completed:
         self._preflight(session_id)
-        return self._runtime.available(session_id)
-
-    def exists(self, session_id: str, *, target: str | None = None) -> bool:
-        self._preflight(session_id)
-        if target is None:
-            return self._runtime.exists(session_id)
-        return self._runtime.exists(session_id, target=target)
-
-    def is_busy(self, session_id: str, *, settle: float | None = None) -> bool:
-        self._preflight(session_id)
-        if settle is None:
-            return self._runtime.is_busy(session_id)
-        return self._runtime.is_busy(session_id, settle=settle)
-
-    def grok_working(self, session_id: str) -> bool:
-        self._preflight(session_id)
-        return self._runtime.grok_working(session_id)
-
-    def start(
-        self,
-        session_id: str,
-        command: str | None,
-        cols: int | None,
-        rows: int | None,
-        command_argv: list[str] | None = None,
-        cwd: str | None = None,
-    ) -> None:
-        self._preflight(session_id)
-        self._runtime.start(
-            session_id,
-            command,
-            cols,
-            rows,
-            command_argv=command_argv,
-            cwd=cwd,
-        )
-
-    def stop(self, session_id: str) -> None:
-        self._preflight(session_id)
-        self._runtime.stop(session_id)
-
-    def input_text(self, session_id: str, data: str, *, target: str | None = None) -> None:
-        self._preflight(session_id)
-        self._runtime.input_text(session_id, data, target=target)
-
-    def input_key(self, session_id: str, key: str, *, target: str | None = None) -> None:
-        self._preflight(session_id)
-        self._runtime.input_key(session_id, key, target=target)
-
-    def resize(self, session_id: str, cols: int, rows: int) -> None:
-        self._preflight(session_id)
-        self._runtime.resize(session_id, cols, rows)
-
-    def capture(self, session_id: str) -> str:
-        self._preflight(session_id)
-        return self._runtime.capture(session_id)
+        return self._runtime._tmux(session_id, tmux_argv)

@@ -144,10 +144,7 @@ def preflight_worker(store: Store, worker: WorkerConfig, runner: Runner) -> None
             if role != "implementer" and selected.access != "read-only":
                 raise CoordinatorError(f"{slot} requires read-only access")
     except AIAccountError as exc:
-        message = str(exc)
-        if message.startswith("models is not configured"):
-            message = "models is not configured"
-        raise CoordinatorError(message) from exc
+        raise CoordinatorError(str(exc)) from exc
     if not worker.repositories:
         raise CoordinatorError("worker has no repositories configured")
     if not worker.workspace_root.is_absolute():

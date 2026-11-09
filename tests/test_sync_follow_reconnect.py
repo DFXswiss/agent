@@ -10,6 +10,7 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 from agent_cli import main as main_mod
 from agent_cli.main import cmd_sync, open_store
 from agent_cli.hub import Hub, HubError
+from agent_cli.runtime import Completed, Runtime
 from agent_cli.store import Store, StoreConnectionError, StoreError
 
 
@@ -481,11 +482,17 @@ def test_websocket_exception_reconnects_instead_of_dying(
     assert len(calls) == 2, "a WebSocketException must be retried, not exit the process"
 
 
-class _FakeRuntime:
+class _FakeRuntime(Runtime):
     """Stands in for Runtime without shelling out to tmux."""
 
-    def capture(self, session_id: str) -> str:
-        return "some output"
+    def __init__(self) -> None:
+        super().__init__(
+            runner=lambda argv: Completed(
+                0,
+                "some output" if argv[:2] == ["tmux", "capture-pane"] else "",
+                "",
+            )
+        )
 
 
 def test_publish_terminals_send_failure_propagates_oserror_instead_of_die(
@@ -760,13 +767,16 @@ def test_publish_terminals_preflights_grok_without_blocking_raw_terminal(
             {"id": "raw", "runtime": {"control": "attached"}},
         )
 
-        class _RecordingRuntime:
+        class _RecordingRuntime(Runtime):
             def __init__(self) -> None:
+                super().__init__(runner=lambda _argv: Completed(0, "", ""))
                 self.captured: list[str] = []
 
-            def capture(self, session_id: str) -> str:
-                self.captured.append(session_id)
-                return f"output for {session_id}"
+            def _tmux(self, session_id: str, tmux_argv: list[str]) -> Completed:
+                if tmux_argv[:2] == ["tmux", "capture-pane"]:
+                    self.captured.append(session_id)
+                    return Completed(0, f"output for {session_id}", "")
+                return Completed(0, "", "")
 
         class _RecordingWs:
             def __init__(self) -> None:

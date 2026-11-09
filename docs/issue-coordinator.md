@@ -99,9 +99,11 @@ for worker in workers.values():
   present for the worker session; worker and review GitHub accounts configured,
   authenticated, and bound to **different** logins; worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
-  provider. A missing `models` block is reported as `preflight blocked: models
-  is not configured`; the outer `coordinate --follow` loop remains active and
-  retries later ticks after configuration is repaired.
+  provider. A missing `models` block reuses the shared error and is reported as
+  `preflight blocked: models is not configured: the device's ai-accounts.json
+  must name models.first and models.second (set by the local harness)`; the
+  outer `coordinate --follow` loop remains active and retries later ticks after
+  configuration is repaired.
 - Required AI slots, with `<first>` / `<second>` the providers of the device's
   model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
   `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,

@@ -27,6 +27,7 @@ from agent_cli.coordinator_runtime import (
     preflight_worker,
     review_is_approved,
 )
+from agent_cli.model_slots import MODELS_NOT_CONFIGURED
 from agent_cli.runtime import Completed
 from agent_cli.store import Store
 from test_coordinator_support import (
@@ -252,7 +253,7 @@ def test_missing_models_is_a_preflight_block(
     patch_account_runners(monkeypatch, fake)
 
     assert tick(store, worker, runner=fake) == [
-        "preflight blocked: models is not configured"
+        f"preflight blocked: {MODELS_NOT_CONFIGURED}"
     ]
 
 

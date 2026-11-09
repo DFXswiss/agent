@@ -2273,7 +2273,8 @@ def _interactive_runtime_preflight(
 def _is_grok_runtime(meta: dict[str, Any]) -> bool:
     binding = meta.get("ai_binding")
     return (
-        meta.get("provider") == "grok"
+        meta.get("grok_start_pending") is True
+        or meta.get("provider") == "grok"
         or bool(meta.get("grok_session_id"))
         or (isinstance(binding, dict) and binding.get("provider") == "grok")
     )
@@ -2332,6 +2333,11 @@ def _session_start(
         new_id = grok_new_session_id() if not existing_s else ""
         resolved = grok_model(selected.model)
         if not existing_s:
+            pending_meta = dict(meta)
+            pending_meta["grok_start_pending"] = True
+            row["runtime"] = pending_meta
+            store.write("session", "update", sid, _strip(row))
+        if not existing_s:
             meta["grok_session_id"] = new_id
         meta["provider"] = "grok"
         meta["model"] = resolved
@@ -2352,6 +2358,8 @@ def _session_start(
     else:
         runtime = _preflight_runtime(store, runtime)
     runtime.start(sid, start_command, cols, rows, command_argv=command_argv, cwd=cwd)
+    if provider == "grok":
+        meta.pop("grok_start_pending", None)
     meta["tmux_session"] = name
     meta["control"] = "attached"
     if cols is not None:
