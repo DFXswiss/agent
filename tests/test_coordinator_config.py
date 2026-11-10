@@ -183,7 +183,17 @@ def test_owner_scoped_worker_normalizes_distinct_owners_and_requires_checks(tmp_
     assert loaded.require_hub_assignment is True
 
 
-@pytest.mark.parametrize('owners', [['-bad'], ['bad-'], ['same', 'Same'], ['with_underscore']])
+@pytest.mark.parametrize(
+    'owners',
+    [
+        ['-bad'],
+        ['bad-'],
+        ['a--b'],
+        ['a' * 40],
+        ['same', 'Same'],
+        ['with_underscore'],
+    ],
+)
 def test_owner_scoped_worker_rejects_invalid_or_duplicate_owners(tmp_path, owners):
     data = config(tmp_path)
     worker = data['workers']['selected-session']

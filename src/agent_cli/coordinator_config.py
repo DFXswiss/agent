@@ -9,6 +9,11 @@ from pathlib import Path
 from .store import StoreError
 
 
+_GITHUB_LOGIN = re.compile(
+    r'[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}'
+)
+
+
 @dataclass(frozen=True)
 class RepositoryConfig:
     repo: str
@@ -52,11 +57,15 @@ def _repo(value: object) -> str:
     return name
 
 
+def _github_login(value: object, label: str, error: str) -> str:
+    login = _text(value, label).casefold()
+    if _GITHUB_LOGIN.fullmatch(login) is None:
+        raise StoreError(error)
+    return login
+
+
 def _owner(value: object) -> str:
-    owner = _text(value, 'repository owner').casefold()
-    if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?', owner):
-        raise StoreError('invalid repository owner')
-    return owner
+    return _github_login(value, 'repository owner', 'invalid repository owner')
 
 
 def validate_base(value: object) -> str:
@@ -145,10 +154,10 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
             reviewers_raw = []
         if not isinstance(reviewers_raw, list):
             raise StoreError('second_reviewers must be a list')
-        reviewers = tuple(_text(v, 'second reviewer').casefold() for v in reviewers_raw)
-        if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?', v) or '--' in v
-               for v in reviewers):
-            raise StoreError('invalid second reviewer login')
+        reviewers = tuple(
+            _github_login(v, 'second reviewer', 'invalid second reviewer login')
+            for v in reviewers_raw
+        )
         if len(set(reviewers)) != len(reviewers):
             raise StoreError('second_reviewers must be distinct')
         repos_raw = item.get('repositories', {})

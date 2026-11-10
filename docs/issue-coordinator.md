@@ -43,10 +43,13 @@ For an A38 worker, `check_timeout` must be long enough for the complete A38
 suite. The same existing worker timeout bounds the optional trusted precheck
 and each bounded A38 command; there is no separate A38 timeout setting.
 
-`repository_owners` is a distinct, case-insensitive list of GitHub organization
-or user logins. One paginated GitHub issue search per tick discovers assigned
-open issues under those owners. An explicit `repositories` entry wins for the
-same repository. At acceptance, an owner-scoped task pins the repository's
+`repository_owners` is a distinct, case-insensitive list of valid 1–39 character
+GitHub organization or user logins (no leading, trailing, or consecutive
+hyphens). Each owner gets its own owner-qualified, paginated GitHub issue search
+per tick. `incomplete_results`, a missing result count, or a `total_count` larger
+than the fetched item count fails that owner's discovery loudly instead of
+silently accepting a capped result set. An explicit `repositories` entry wins
+for the same repository. At acceptance, an owner-scoped task pins the repository's
 current default branch and its publication route: direct push when the worker
 has push permission, otherwise `<worker-login>/<repository-name>`. A missing
 fork is requested once per persisted request (a crash before the request is
@@ -305,7 +308,9 @@ for worker in workers.values():
      non-uncertain state so a missed boolean cannot wedge another recoverable
      path; status re-publishes keep the existing checkpoint. Uncertain lane
      outcomes refuse a second model start (a human reply must not silently
-     duplicate an uncertain process) and publish a GitHub-visible blocker.
+     duplicate an uncertain process), clear any stale `resume_phase`, and
+     publish a GitHub-visible blocker. `uncertain_lane` remains final even for
+     an older stored task that still contains recovery metadata.
 5. **Draft** as soon as the first signed task commit exists (`pr.open` on the
    **target** repo), before full tests/reviews. Each new signed head is pushed
    to the existing PR before later stages. No empty fake PR when there is no
@@ -321,15 +326,21 @@ for worker in workers.values():
    quality+logic the same way only after both first-slot dimensions are approved
    on that head. The persisted phase names `pr_gates_grok` and
    `pr_gates_codex` select stages `review-1` and `review-2`, respectively. Author
-   session does not sit those reviews. Incomplete/unavailable vendor output is a
-   GitHub-visible blocker with `resume_phase` of `pr_gates_grok` /
-   `pr_gates_codex` and a pinned `question_activity_id` — not a rejected
-   complete gate and not an implementer fix loop. Rejections publish
+   session does not sit those reviews. Incomplete/unavailable vendor output
+   records an `unavailable` gate and attempts to close the matching checklist
+   key as `unavailable` with bounded evidence for every affected dimension when
+   `close_allowed` permits it, then publishes a GitHub-visible blocker with
+   `resume_phase` of `pr_gates_grok` / `pr_gates_codex` and a pinned
+   `question_activity_id` — not a rejected complete gate and not an implementer
+   fix loop. Rejections publish
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
    head-specific evidence. A successful second-slot lane still starts when the
-   checklist keys are `n_a`. It replaces `n_a` with `ja` for
-   `review_2_quality` and `review_2_logic`, including on a later tick whose
-   gate is already approved. After `ja`, both second-slot gates are required again.
+   checklist keys are `n_a`. Every cached approved gate attempts to reconcile
+   its matching non-`ja` checklist key to `ja`, including after a crash between
+   the gate and checklist writes. Reconciliation closes a key only when
+   `close_allowed` permits that key; a denial keeps the coordinator in the gate
+   phase and returns a recoverable blocker naming the still-open key. After `ja`,
+   both second-slot gates are required again.
    `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing

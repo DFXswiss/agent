@@ -651,7 +651,10 @@ GitHub. The static script runs on the configured execution device. Deployment
 hostnames belong in the deployment configuration, not this public repository.
 
 1. The script detects assignments in explicit repositories or repositories of
-   explicitly approved GitHub owners. For an owner-scoped repository it pins
+   explicitly approved GitHub owners. Owner discovery uses one owner-qualified
+   search per configured owner and fails that owner's scan when GitHub reports
+   incomplete results or a result count larger than the fetched set. For an
+   owner-scoped repository it pins
    the default branch and a direct-push or verified fork publication route at
    acceptance. When configured to require a hub mandate, it accepts only a
    matching `assignment.created` query row. It queries the configured

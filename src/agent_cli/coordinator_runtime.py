@@ -594,37 +594,54 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
             lines.append(f"discover {repo}: {redact(str(exc))}")
             continue
         candidates.extend((repo, issue, repo_cfg_item) for issue in issues if isinstance(issue, dict))
-    if worker.repository_owners:
+    for owner in worker.repository_owners:
         try:
+            owner_row = gh_json(scoped_runner, ["gh", "api", f"users/{owner}"])
+            owner_type = owner_row.get("type") if isinstance(owner_row, dict) else None
+            if owner_type == "Organization":
+                owner_qualifier = "org"
+            elif owner_type == "User":
+                owner_qualifier = "user"
+            else:
+                raise CoordinatorError(
+                    f"repository owner {owner} has unsupported GitHub account type"
+                )
             search_result = gh_json(
                 scoped_runner,
                 [
                     "gh", "api", "--paginate", "--slurp",
-                    f"search/issues?q=is:issue+is:open+assignee:{login}+archived:false&per_page=100",
+                    f"search/issues?q=is:issue+is:open+assignee:{login}+"
+                    f"archived:false+{owner_qualifier}:{owner}&per_page=100",
                 ],
             )
             if isinstance(search_result, dict):
-                if search_result.get("incomplete_results") is True:
-                    raise CoordinatorError("owner issue search returned incomplete results")
-                found = search_result.get("items")
+                pages = [search_result]
             elif isinstance(search_result, list) and all(
                 isinstance(page, dict) for page in search_result
             ):
-                found = []
-                for page in search_result:
-                    if page.get("incomplete_results") is True:
-                        raise CoordinatorError("owner issue search returned incomplete results")
-                    items = page.get("items")
-                    if not isinstance(items, list):
-                        raise CoordinatorError("owner issue search page has no items array")
-                    found.extend(items)
+                pages = search_result
             else:
-                found = search_result
-            if not isinstance(found, list):
-                raise CoordinatorError("owner issue search returned no items array")
+                raise CoordinatorError("owner issue search returned no page object")
+            found: list[Any] = []
+            total_count = 0
+            for page in pages:
+                if page.get("incomplete_results") is True:
+                    raise CoordinatorError("owner issue search returned incomplete results")
+                page_total = page.get("total_count")
+                if isinstance(page_total, bool) or not isinstance(page_total, int):
+                    raise CoordinatorError("owner issue search page has no total_count")
+                total_count = max(total_count, page_total)
+                items = page.get("items")
+                if not isinstance(items, list):
+                    raise CoordinatorError("owner issue search page has no items array")
+                found.extend(items)
+            if total_count > len(found):
+                raise CoordinatorError(
+                    f"owner issue search was truncated ({len(found)} of {total_count} results)"
+                )
         except CoordinatorError as exc:
-            lines.append(f"discover owners: {redact(str(exc))}")
-            found = []
+            lines.append(f"discover owner {owner}: {redact(str(exc))}")
+            continue
         for issue in found:
             if not isinstance(issue, dict) or str(issue.get("state") or "").casefold() != "open":
                 continue
@@ -1586,7 +1603,9 @@ def advance_one(
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
-    final_blocker = phase == "blocked" and not c.get("resume_phase")
+    final_blocker = phase == "blocked" and (
+        bool(c.get("uncertain_lane")) or not c.get("resume_phase")
+    )
     if (
         worker.a38
         and as_int(c.get("pr_number")) is not None
@@ -1595,7 +1614,8 @@ def advance_one(
     ):
         # Once the pull request exists the guard may make it Ready and a human may
         # merge it in any phase, also while asking or recoverably blocked; check that
-        # first. A non-recoverable blocker (no resume phase, e.g. after a merge) stays.
+        # first. A non-recoverable or uncertain blocker stays final even if stale
+        # recovery metadata is present.
         live_state = pr_state(store, worker, task, runner)
         if live_state in ("MERGED", "CLOSED"):
             if live_state == "MERGED" and _source_still_assigned(

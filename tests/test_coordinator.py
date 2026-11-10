@@ -3116,10 +3116,60 @@ def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
     ]
 
 
-def test_approved_codex_stage_replaces_n_a_on_a_later_tick(
+def test_uncertain_prior_pr_lane_clears_stale_resume_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both gates already approved still write ja and do not start another lane."""
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    tid = "aa000001-0000-4000-8000-000000000065"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    task["payload"]["coordinator"]["resume_phase"] = "implement"
+    store.write(
+        "task", "update", tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    store.write(
+        "agent",
+        "insert",
+        "aa000001-0000-4000-8000-000000000066",
+        {
+            "id": "aa000001-0000-4000-8000-000000000066",
+            "session_id": "worker-session",
+            "task_id": tid,
+            "round": None,
+            "role": "pr-reviewer-quality",
+            "vendor": "codex",
+            "status": "working",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+            "note": None,
+        },
+    )
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+
+    with pytest.raises(CoordinatorError, match="uncertain prior lane outcome"):
+        phase_pr_gates(
+            store,
+            worker,
+            store.row("task", tid),
+            fake,
+            None,
+            vendor="codex",
+            stage="review-2",
+        )
+
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["uncertain_lane"] is True
+    assert checkpoint.get("resume_phase") is None
+
+
+def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cached gates repair pending keys when close_allowed permits both closes."""
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     store = Store(tmp_path)
@@ -3133,7 +3183,7 @@ def test_approved_codex_stage_replaces_n_a_on_a_later_tick(
         worker,
         tid,
         codex_dims=("quality", "logic"),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
@@ -3414,10 +3464,10 @@ def test_parallel_openrouter_missing_key_records_reason(
     assert not any("/test/openrouter" in row["note"] for row in agents)
 
 
-def test_approved_retry_does_not_promote_a_pending_codex_key(
+def test_approved_retry_does_not_advance_when_pending_codex_key_cannot_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only n_a is replaced. A pending key does not turn the early return into a block."""
+    """A cached approval stays recoverable when an earlier checklist hole denies close."""
     from agent_cli.coordinator_lanes import phase_pr_gates
 
     store = Store(tmp_path)
@@ -3433,6 +3483,20 @@ def test_approved_retry_does_not_promote_a_pending_codex_key(
         codex_dims=("quality", "logic"),
         codex_status={"review_2_quality": "pending", "review_2_logic": "n_a"},
     )
+    review_1_quality = store.row("checklist_item", f"{tid}-review_1_quality")
+    assert review_1_quality is not None
+    review_1_quality["status"] = "pending"
+    review_1_quality["evidence"] = None
+    store.write(
+        "checklist_item",
+        "update",
+        review_1_quality["id"],
+        {
+            key: value
+            for key, value in review_1_quality.items()
+            if not key.startswith("_")
+        },
+    )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     lines = phase_pr_gates(
         store,
@@ -3443,12 +3507,15 @@ def test_approved_retry_does_not_promote_a_pending_codex_key(
         vendor="codex",
         stage="review-2",
     )
-    assert any("already complete" in line for line in lines)
+    assert any(
+        "recoverable checklist blocker for review_2_quality" in line
+        for line in lines
+    )
     status = _checklist_status(store, tid)
     assert status["review_2_quality"] == "pending"
     assert status["review_2_logic"] == "ja"
     saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["phase"] == "ci"
+    assert saved["payload"]["coordinator"]["phase"] == "pr_gates_codex"
 
 
 def test_pr_review_scope_keeps_the_compliance_reminder_and_states_a_missing_issue_is_not_a_defect() -> None:
@@ -4926,6 +4993,42 @@ def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
 
     assert lines == [f"PR merged during {phase}; verifying the merge"]
     assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+
+def test_a38_uncertain_lane_with_stale_resume_is_final_after_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-000000000019"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint.update(
+        phase="blocked",
+        blocker="uncertain prior lane outcome",
+        uncertain_lane=True,
+        resume_phase="implement",
+    )
+    store.write(
+        "task", "update", task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    states: list[str] = []
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "pr_state",
+        lambda *args, **kwargs: states.append("read") or "MERGED",
+    )
+
+    advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "blocked"
+    assert saved["uncertain_lane"] is True
+    assert states == []
 
 
 @pytest.mark.parametrize(
@@ -7952,7 +8055,7 @@ def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
         worker,
         tid,
         codex_dims=(),
-        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
     Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
     _patch_pr_gate_git(monkeypatch, tmp_path)
@@ -8000,8 +8103,16 @@ def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
     assert len(runs) == 2
     assert all(row["payload"]["status"] == "unavailable" for row in runs)
     gates = [row for row in store.rows("review_gate") if row.get("task_id") == tid]
-    assert not [gate for gate in gates if gate.get("stage") == "review-2"]
-    assert _checklist_status(store, tid)["review_2_quality"] != "ja"
+    unavailable = [
+        gate
+        for gate in gates
+        if gate.get("stage") == "review-2" and gate.get("verdict") == "unavailable"
+    ]
+    assert {gate["dimension"] for gate in unavailable} == {"quality", "logic"}
+    assert all(gate.get("evidence") for gate in unavailable)
+    checklist = _checklist_status(store, tid)
+    assert checklist["review_2_quality"] == "unavailable"
+    assert checklist["review_2_logic"] == "unavailable"
 
     # The safe read-only review is retryable: no working agent blocks a new stage.
     from agent_cli.coordinator_lanes import vendor_stage_has_working_agents
