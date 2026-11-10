@@ -217,13 +217,14 @@ Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
 not OpenRouter prices.
 Stored file-tool targets are fail-closed host evidence. Complete terminal
 escapes are removed, separators are normalized, and regex backslash escapes are
-removed first. A target containing `..` anywhere, `~`, a drive-letter prefix,
-or `/` at the start or immediately after a character outside
-`[A-Za-z0-9._-]` is stored as `[redacted]`. The only absolute-path exception is
-a single plain whole target with no whitespace or regex metacharacters other
-than glob `*`, `?`, `[` and `]`, starting with the absolute worktree plus `/`;
-its relative remainder must pass the same checks and is then stored
-worktree-relative.
+removed first. A target containing `..` anywhere, `~`, a drive fragment, or `/`
+at the start or immediately after a character outside `[A-Za-z0-9._-]` is stored
+as `[redacted]`. A drive fragment is one ASCII letter followed by `:` at that
+same boundary, regardless of whether `/` follows. The only absolute-path
+exception is a single plain whole target with no whitespace or regex
+metacharacters other than glob `*`, `?`, `[` and `]`, starting with the absolute
+worktree plus `/`; its relative remainder must pass the same checks and is then
+stored worktree-relative.
 
 Lane final text, configured and reported model fields, diagnostics, agent notes,
 terminal output, and tool targets all use one shared sanitizer before secret

@@ -348,10 +348,13 @@ for worker in workers.values():
    checklist keys, while any cached rejection routes its recorded evidence to
    implementation and is never superseded by a new lane. Durable ledger insert
    order resolves gate rows that share a timestamp through one shared ordering
-   rule used by coordinator, CLI, allow, and chain readers; legacy conflicting
-   rows without an establishable order yield an unavailable verdict before a
-   checklist close or review publication. Legacy stage aliases are canonicalized
-   before grouping or comparison. Rejection recording, its task
+   rule used by coordinator, CLI, allow, and chain readers. The legacy fallback
+   parses aware ISO-8601 timestamps, normalizes them to UTC, and treats equivalent
+   representations as the same instant. Conflicting rows at one instant, and
+   histories with a missing or invalid timestamp whose order cannot be
+   established, yield an unavailable verdict before a checklist close or review
+   publication. Legacy stage aliases are canonicalized before grouping or
+   comparison. Rejection recording, its task
    transition, and the deterministic `review.post` intent share one local
    transaction. GitHub publication runs after that commit and a restart reuses
    the same pending intent. A transient publication error reopens that same
@@ -606,12 +609,13 @@ and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
 Failure to write the audit row itself is an observation and does not rewrite the
 lane verdict. File-tool targets use one fail-closed rule after terminal,
-separator, and regex-escape normalization: `..` anywhere, `~`, a drive prefix,
+separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
 or an absolute/UNC fragment at the start or after any character outside
-`[A-Za-z0-9._-]` redacts the whole target. The only exception is a single plain
-whole absolute path under the worktree whose relative remainder passes the same
-checks; it is stored worktree-relative and may contain glob `*`, `?`, `[` and
-`]` characters.
+`[A-Za-z0-9._-]` redacts the whole target. A drive fragment is one ASCII letter
+followed by `:` at that same boundary, whether the following path is absolute or
+drive-relative. The only exception is a single plain whole absolute path under
+the worktree whose relative remainder passes the same checks; it is stored
+worktree-relative and may contain glob `*`, `?`, `[` and `]` characters.
 
 ## Module layout
 
@@ -625,6 +629,7 @@ checks; it is stored worktree-relative and may contain glob `*`, `?`, `[` and
 | `coordinator_exec.py` | Bounded subprocess helper |
 | `coordinator_common.py` | Shared helpers / constants |
 | `gate_order.py` | Durable canonical gate ordering shared by every gate reader |
+| `timestamps.py` | Shared aware ISO-8601 parsing and UTC normalization |
 | `text_sanitize.py` | Shared terminal escape/control sanitization before redaction |
 | `coordinator_config.py` | Parent-owned explicit-repository and owner-scoped configuration loaders |
 | `hub_assign.py` | Paired-device client for operator assignment creation |

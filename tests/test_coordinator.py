@@ -253,6 +253,90 @@ def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
     )[("review-1", "quality")]["verdict"] == "unavailable"
 
 
+def test_legacy_gate_order_normalizes_mixed_utc_timestamp_formats() -> None:
+    from agent_cli.gate_order import ordered_gate_rows
+
+    common = {
+        "task_id": "task-1",
+        "stage": "review-1",
+        "dimension": "quality",
+        "vendor": "grok",
+        "head_sha": "a" * 40,
+    }
+    chronological = ordered_gate_rows(
+        [
+            {
+                "id": "approval",
+                **common,
+                "verdict": "approved",
+                "recorded_at": "2026-01-01T12:00:00Z",
+            },
+            {
+                "id": "rejection",
+                **common,
+                "verdict": "rejected",
+                "recorded_at": "2026-01-01T12:00:00.500000Z",
+            },
+        ]
+    )
+    assert [gate["verdict"] for gate in chronological] == ["approved", "rejected"]
+
+    equivalent_instants = ordered_gate_rows(
+        [
+            {
+                "id": "approval",
+                **common,
+                "verdict": "approved",
+                "recorded_at": "2026-01-01T12:00:00Z",
+            },
+            {
+                "id": "rejection",
+                **common,
+                "verdict": "rejected",
+                "recorded_at": "2026-01-01T13:00:00.000000+01:00",
+            },
+        ]
+    )
+    assert equivalent_instants[-1]["verdict"] == "unavailable"
+    assert equivalent_instants[-1]["head_sha"] == ""
+
+
+@pytest.mark.parametrize(
+    "recorded_at", [None, "", "not-a-time", "2026-01-01T12:00:01"]
+)
+def test_legacy_gate_order_fails_closed_for_unordered_invalid_timestamp(
+    recorded_at: object,
+) -> None:
+    from agent_cli.gate_order import ordered_gate_rows
+
+    common = {
+        "task_id": "task-1",
+        "stage": "review-1",
+        "dimension": "quality",
+        "vendor": "grok",
+        "head_sha": "a" * 40,
+    }
+    ordered = ordered_gate_rows(
+        [
+            {
+                "id": "valid",
+                **common,
+                "verdict": "approved",
+                "recorded_at": "2026-01-01T12:00:00Z",
+            },
+            {
+                "id": "unordered",
+                **common,
+                "verdict": "rejected",
+                "recorded_at": recorded_at,
+            },
+        ]
+    )
+
+    assert ordered[-1]["verdict"] == "unavailable"
+    assert ordered[-1]["head_sha"] == ""
+
+
 def test_signature_verification_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
