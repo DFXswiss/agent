@@ -337,7 +337,7 @@ v1 types (mechanism only):
 | `query.request` / `query.result` | — | AI / script | script (hub HTTP) |
 | `subscription.set` | — | AI or script | script |
 | `usage.snapshot` | — | script | — (configured Grok billing or OpenRouter key-usage GET on this device; no TUI knock). Missing or expired Grok login is not a scan failure: `agent watch grok-usage` prints `usage.snapshot skipped`; OpenRouter account failures are reported and never stored as zero values. |
-| `lane.run` | — | script | — (one completed lane process; configured/reported model, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). |
+| `lane.run` | — | script | — (one lane process, including an unavailable output-file read; bounded redacted configured/reported models, token usage when supplied, bounded redacted tool transcript and final text; no argv, environment, config path or credential). Lanes ignore ambient proxy and CA variables; the OpenRouter usage GET uses `trust_env=False`. |
 | `error.seen` | `error` | script | — (`NOTIFY` `agent_inbox`; error-fix skill, §21) |
 | `error.skip` | `error` | AI | — |
 | `error.fix` | `error` | AI | script + spine implement (draft pull request) |
@@ -513,7 +513,11 @@ human owner, creates and verifies the GitHub issue assignment, and records
 the repository exactly as supplied; the hub canonicalizes its repository
 spelling. `agent assign` requires `--no-deviation` and sends
 `deviation: {"declared": false}`; a deviation instead needs an explicit grant
-on the issue. The client does not print or persist the bearer anywhere new.
+on the issue. The client does not print or persist the bearer anywhere new, and
+hub failure detail or recovery URLs are bounded and redacted after the exact
+bearer is removed. A successful response is accepted only with a positive,
+non-boolean issue number and a credential-free HTTPS GitHub issue URL that names
+the same repository and number.
 
 ## 18. What “done” for the product still needs (operators)
 

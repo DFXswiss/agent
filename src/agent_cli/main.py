@@ -47,6 +47,7 @@ from .chain import (
     step_vendor_label,
     to_json as step_to_json,
 )
+from .coordinator_common import redact as redact_secrets
 from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
@@ -57,6 +58,7 @@ from .lane import (
     LaneResult,
     launch,
     record_lane_run,
+    redact_diagnostic,
 )
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .model_slots import (
@@ -3405,6 +3407,18 @@ def _parsed_lane_result(output: str) -> str | None:
     return matches[0].lower() if len(matches) == 1 else None
 
 
+# Implementer RESULT values that close the lane. ``done`` and ``no-change`` are
+# both an implemented round; ``blocked`` ends the task. Missing, duplicate or
+# role-invalid values (ask/approved/rejected) stay retryable.
+_IMPLEMENTER_VERDICTS = {"done": "done", "no-change": "done", "blocked": "blocked"}
+
+
+def _lane_diagnostic_note(result: LaneResult) -> str:
+    """Bounded, secret-redacted lane diagnostic for notes, evidence and stderr."""
+    raw = result.stderr.strip() or result.stdout.strip() or f"lane STATUS={result.status}"
+    return redact_diagnostic(_sanitize_lane_output(raw))
+
+
 def _agent_handoff_exit(
     step,
     tid: str,
@@ -3658,34 +3672,43 @@ def cmd_run(args: list[str]) -> None:
                         round_num=round_num,
                     )
                 except (Exception, SystemExit) as exc:  # noqa: BLE001 — StoreError is a SystemExit; audit failure cannot change verdict
-                    print(f"lane.run write failed: {exc}", file=sys.stderr)
+                    print(
+                        f"lane.run write failed: {redact_secrets(str(exc))}",
+                        file=sys.stderr,
+                    )
                 _print_lane_result(result)
-                if role == "implementer" and result.status == "complete":
+                # Re-read the task after the lane: finish/abort writes above the
+                # round and checklist, and a pure read of stale state could hand
+                # off with an outdated snapshot.
+                snap = _chain_snapshot(store, tid, extra_head=head)
+                semantic_result = _parsed_lane_result(result.stdout)
+                implementer_verdict: str | None = None
+                if (
+                    role == "implementer"
+                    and result.status == "complete"
+                    and semantic_result in _IMPLEMENTER_VERDICTS
+                ):
+                    implementer_verdict = _IMPLEMENTER_VERDICTS[semantic_result]
+                if implementer_verdict is not None:
                     working = _find_working_agent(
                         store, tid, role=role, vendor=vendor, round_num=round_num
                     )
                     if working is None:
                         die("implementer working agent not found after lane")
-                    semantic_result = _parsed_lane_result(result.stdout)
-                    verdict = "blocked" if semantic_result == "blocked" else "done"
                     cmd_agent(
                         [
                             "finish",
                             "--id",
                             str(working["id"]),
                             "--verdict",
-                            verdict,
+                            implementer_verdict,
                             "--note",
-                            (
-                                "lane STATUS=complete RESULT=blocked"
-                                if verdict == "blocked"
-                                else "lane STATUS=complete"
-                            ),
+                            f"lane STATUS=complete RESULT={semantic_result}",
                         ]
                     )
                     snap = _chain_snapshot(store, tid, extra_head=head)
                     task = _need(store, "task", tid)
-                    if verdict == "blocked":
+                    if implementer_verdict == "blocked":
                         _agent_handoff_exit(
                             step,
                             tid,
@@ -3699,10 +3722,16 @@ def cmd_run(args: list[str]) -> None:
                     )
                     if working is None:
                         die("implementer working agent not found after lane")
-                    note = result.stderr.strip() or result.stdout.strip()
-                    if not note:
-                        note = f"lane STATUS={result.status}"
+                    note = _lane_diagnostic_note(result)
+                    if result.status == "complete":
+                        # STATUS=complete without exactly one implementer RESULT
+                        # is a protocol failure, not an implemented round.
+                        note = (
+                            "invalid implementer RESULT: "
+                            f"{semantic_result or 'missing or duplicate'}; {note}"
+                        )
                     _abort_incomplete_agent(store, working, note)
+                    snap = _chain_snapshot(store, tid, extra_head=head)
                     _agent_handoff_exit(
                         step,
                         tid,
@@ -3716,9 +3745,7 @@ def cmd_run(args: list[str]) -> None:
                     )
                     if working is None:
                         die(f"{role} working agent not found after lane")
-                    note = result.stderr.strip() or result.stdout.strip()
-                    if not note:
-                        note = f"lane STATUS={result.status}"
+                    note = _lane_diagnostic_note(result)
                     if role == "reviewer":
                         _abort_incomplete_agent(store, working, note)
                     elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
@@ -3945,9 +3972,39 @@ def cmd_assign(args: list[str]) -> None:
         store.close()
     number = result.get("number")
     url = result.get("url")
-    if isinstance(number, bool) or not isinstance(number, int) or not isinstance(url, str):
+    issue = _assignment_issue_url(url)
+    if (
+        isinstance(number, bool)
+        or not isinstance(number, int)
+        or number < 1
+        or issue is None
+        or issue[0].casefold() != repo.casefold()
+        or issue[1] != number
+    ):
         die("hub returned an invalid assignment response")
     print(f"assigned {repo}#{number} {url}")
+
+
+_GITHUB_ISSUE_URL_RE = re.compile(
+    r"https:\/\/github\.com\/"
+    r"([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)"
+)
+
+
+def _assignment_issue_url(url: object) -> tuple[str, int] | None:
+    """Return ``(owner/name, number)`` for a credential-free HTTPS GitHub issue URL."""
+    if not isinstance(url, str) or url.strip() != url or not url:
+        return None
+    match = _GITHUB_ISSUE_URL_RE.fullmatch(url)
+    if match is None:
+        return None
+    try:
+        number = int(match.group(3))
+    except ValueError:
+        return None
+    if number < 1:
+        return None
+    return f"{match.group(1)}/{match.group(2)}", number
 
 
 def cmd_subscribe(args: list[str]) -> None:
@@ -4032,10 +4089,15 @@ def _print_lane_result(result: LaneResult) -> None:
     # by the time launch() returns, the tmux pane it was captured from is already
     # killed, so this is the only remaining chance to surface it. Without this, a
     # caller sees STATUS/rc but never the content a gate record --evidence needs.
+    # Vendor output can echo a provider credential; every printed diagnostic is
+    # bounded and passed through the shared redaction, like the stored notes.
     if result.stdout.strip():
-        print(_sanitize_lane_output(result.stdout.rstrip()))
+        print(redact_diagnostic(_sanitize_lane_output(result.stdout.rstrip())))
     if result.stderr.strip():
-        print(_sanitize_lane_output(result.stderr.rstrip()), file=sys.stderr)
+        print(
+            redact_diagnostic(_sanitize_lane_output(result.stderr.rstrip())),
+            file=sys.stderr,
+        )
     print(
         f"lane role={result.role} vendor={result.vendor} "
         f"STATUS={result.status} rc={result.returncode}"

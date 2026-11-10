@@ -263,7 +263,10 @@ The optional top-level `usage_accounts` is a list of explicitly named
 configured account is read from `<config_dir>/openrouter-api-key`; unknown names,
 accounts of another provider and duplicate names are rejected. `agent watch openrouter-usage`
 records changed USD key-usage values from OpenRouter's key endpoint as
-`usage.snapshot`, without storing the key, label, or provider ids.
+`usage.snapshot`, without storing the key, label, or provider ids. Its request
+uses an owned client with `trust_env=False`, so ambient proxy and CA
+environment variables are ignored and the bearer key cannot be routed through
+an intercepting proxy.
 
 Each session may include:
 
@@ -300,6 +303,14 @@ removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`
 variables are left for the child to inherit. This is process configuration
 isolation, not a sandbox and not a claim that the provider CLI is already
 authenticated for that profile.
+
+Every lane provider also removes the upper- and lower-case `HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` variables and the CA overrides
+`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`
+and `CURL_CA_BUNDLE`. A lane therefore never inherits an ambient proxy or CA
+trust that could read its provider credential. There is no opt-in for this
+stripping. The script-owned OpenRouter usage watcher builds its own HTTP client
+with `trust_env=False` for the same reason.
 
 ## Interactive selection
 

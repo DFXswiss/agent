@@ -80,7 +80,10 @@ verify an agent-assigned GitHub issue. Use `--body-file PATH` instead of
 `--body TEXT` for longer mandates. The required `--no-deviation` flag records
 the owner's explicit statement that no deviation is authorized; deviations
 instead need an explicit grant on the issue. The hub authorizes the human owner
-and records `assignment.created`; the client never prints the device token.
+and records `assignment.created`; the client never prints the device token,
+and hub failure detail or recovery URLs are redacted after the exact bearer is
+removed. A response counts as a mandate only with a positive issue number and a
+matching HTTPS GitHub issue URL.
 
 ## Record work
 
@@ -140,7 +143,7 @@ its outer object has `to_session`, and its `payload` is the strict
 `a38.second-review/v1` result documented in
 [Issue coordinator — A38 mode](docs/issue-coordinator.md#a38-mode).
 
-`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`.
+`agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`. An implementer lane closes the round only with exactly one role-valid `RESULT: done|no-change|blocked`; a missing, duplicate, or other `RESULT` aborts the row and leaves the round retryable. Failed-lane notes and printed diagnostics are bounded and secret-redacted.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
 
@@ -185,7 +188,14 @@ The error-fix executor find-or-creates the implement task and isolated worktree;
 and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
 processes record a script-owned `lane.run` activity after completion, including
 reported tokens, a bounded redacted file-tool transcript, and bounded final
-text. Neither activity stores argv, environment, profile paths, or credentials; a tool target outside the worktree is stored as `[redacted]`.
+text. Both configured and provider-reported model strings are bounded and
+redacted. Neither activity stores argv, environment, profile paths, or
+credentials; a tool target outside the worktree is stored as `[redacted]`,
+including a Glob pattern or a path fragment inside a Grep pattern. Lane
+processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
+`HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
+`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
+watch ignores them too.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 

@@ -74,7 +74,10 @@ deviation still needs an explicit grant through `owner_readiness_argv`.
 `require_hub_assignment` defaults to `false`. When true, acceptance also makes
 one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
 sends the repository spelling exactly as supplied and requires
-`--no-deviation`; the request carries `deviation: {"declared": false}`. The hub
+`--no-deviation`; the request carries `deviation: {"declared": false}`. The
+client accepts a success only with a positive, non-boolean issue number and a
+credential-free HTTPS GitHub issue URL that names the same repository and
+number, and it never prints the device bearer. The hub
 records the actor as `stated_by` in the mandate while canonicalizing the
 repository spelling. The coordinator therefore queries `payload.issue_key`
 with the configured
@@ -489,7 +492,11 @@ publish unrelated pending intents from other sessions.
 ### Lane outcomes and replies
 
 Implementer `RESULT` must be `done|ask|blocked|no-change` (empty / approved /
-rejected fail closed). Reviewer `RESULT` must be `approved|rejected`; `ask` /
+rejected fail closed). In `agent run` an implementer lane counts only when its
+lane status is `complete` and its output has exactly one role-valid `RESULT`:
+`done` and `no-change` close the round, `blocked` fails the task, and a
+missing, duplicate, `ask`, `approved` or `rejected` value aborts the row and
+leaves the same round retryable. Reviewer `RESULT` must be `approved|rejected`; `ask` /
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
 starting another model. Authorized replies (`reply_logins` only), listed with
@@ -538,10 +545,16 @@ subclass `SystemExit` and must not be mistaken for success). Preflight
 account/config failures can only report locally when GitHub is unavailable.
 No silent failure.
 
-Every completed lane process also writes script-owned `lane.run` evidence with
-the configured and provider-reported model, token usage when supplied, a bounded
-redacted file-tool transcript, and bounded final text. Failure to write this
-audit row is an observation and does not rewrite the lane verdict.
+Every lane process writes script-owned `lane.run` evidence with the configured
+and provider-reported model (both bounded and redacted), token usage when
+supplied, a bounded redacted file-tool transcript, and bounded final text.
+Failure to read or decode the lane output file (`OSError`,
+`UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
+result with a bounded, redacted diagnostic, its `lane.run` row is still written,
+and the normal provider-incomplete retry checkpoint (`resume_phase`, never
+`uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
+Failure to write the audit row itself is an observation and does not rewrite the
+lane verdict.
 
 ## Module layout
 

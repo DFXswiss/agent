@@ -359,7 +359,10 @@ def test_run_prints_vendor_stdout(
             status="complete",
             argv=lane_argv,
             returncode=0,
-            stdout="implemented the thing, distinctive-marker-run456\nSTATUS: complete\n",
+            stdout=(
+                "implemented the thing, distinctive-marker-run456\n"
+                "STATUS: complete\nRESULT: done\n"
+            ),
             stderr="",
         )
 
@@ -499,7 +502,7 @@ def test_run_store_error_on_lane_audit_keeps_the_verdict(
             status="complete",
             argv=["grok"],
             returncode=0,
-            stdout="STATUS: complete\n",
+            stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
         ),
     )
@@ -534,7 +537,7 @@ def test_run_spec_file_implementer_complete(
             status="complete",
             argv=["grok"],
             returncode=0,
-            stdout="STATUS: complete\n",
+            stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
         )
 
@@ -561,6 +564,153 @@ def test_run_spec_file_implementer_complete(
     assert seen.get("session_id") == "sess-1"
     assert seen.get("config_home") == tmp_path
     assert seen.get("spec_file") == str(spec)
+
+
+def test_parsed_lane_result_accepts_exactly_one_role_result() -> None:
+    from agent_cli.main import _parsed_lane_result
+
+    assert _parsed_lane_result("STATUS: complete\nRESULT: done\n") == "done"
+    assert _parsed_lane_result("STATUS: complete\nRESULT: blocked\n") == "blocked"
+    assert _parsed_lane_result("STATUS: complete\nRESULT: no-change\n") == "no-change"
+    assert _parsed_lane_result("STATUS: complete\n") is None
+    assert _parsed_lane_result("RESULT: done\nRESULT: done\n") is None
+    assert _parsed_lane_result("RESULT: done\nRESULT: blocked\n") is None
+    assert _parsed_lane_result("RESULT: done (not a result line)\n") is None
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "STATUS: complete\n",
+        "STATUS: complete\nRESULT: done\nRESULT: done\n",
+        "STATUS: complete\nRESULT: ask\nWhich error text?\n",
+        "STATUS: complete\nRESULT: approved\n",
+        "STATUS: complete\nRESULT: rejected\n",
+    ],
+)
+def test_run_implementer_complete_without_one_role_valid_result_is_retryable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--spec-file", str(spec),
+                    "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        assert _checklist(tmp_path, tid).get("implementer_done") != "ja"
+        assert _task_state(tmp_path, tid) == "implementing"
+        implementers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "implementer"
+        ]
+        assert len(implementers) == expected_count
+        assert all(agent["status"] == "done" for agent in implementers)
+        assert all("aborted incomplete lane" in str(agent["note"]) for agent in implementers)
+        assert all("invalid implementer RESULT" in str(agent["note"]) for agent in implementers)
+
+
+def test_run_implementer_no_change_counts_as_implemented(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: no-change\n",
+            stderr="",
+        ),
+    )
+    run(
+        tmp_path,
+        [
+            "run", "--task", tid, "--spec-file", str(spec),
+            "--no-tmux", "--cwd", str(tmp_path),
+        ],
+    )
+    capsys.readouterr()
+    assert _checklist(tmp_path, tid)["implementer_done"] == "ja"
+
+
+def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    secret = "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345"
+    marker = "\x1b[31m"
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="openrouter",
+            model=OPERATOR_GROK_MODEL,
+            status="unavailable",
+            argv=["claude"],
+            returncode=2,
+            stdout="",
+            stderr=f"Authorization: Bearer {secret}{marker}\n",
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run", "--task", tid, "--spec-file", str(spec),
+                "--no-tmux", "--cwd", str(tmp_path),
+            ],
+        )
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert secret not in captured.out + captured.err
+    assert marker not in captured.out + captured.err
+    assert "[redacted]" in captured.err
+    implementers = [
+        agent for agent in _agents(tmp_path, tid)
+        if agent.get("role") == "implementer"
+    ]
+    assert implementers
+    note = str(implementers[0]["note"])
+    assert secret not in note
+    assert marker not in note
+    assert "[redacted]" in note
 
 
 def test_run_only_parsed_implementer_blocked_result_fails_the_task(
@@ -1292,7 +1442,7 @@ def test_run_launches_the_provider_pinned_on_the_task(
         return LaneResult(
             role="implementer", vendor=kwargs["vendor"], model="claude-model",
             status="complete", argv=["claude"],
-            returncode=0, stdout="done\nSTATUS: complete\n", stderr="",
+            returncode=0, stdout="done\nSTATUS: complete\nRESULT: done\n", stderr="",
         )
 
     monkeypatch.setattr("agent_cli.main.launch", fake_launch)
