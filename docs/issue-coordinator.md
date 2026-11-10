@@ -347,16 +347,19 @@ for worker in workers.values():
    before preparing either dimension. Cached approvals reconcile their
    checklist keys, while any cached rejection routes its recorded evidence to
    implementation and is never superseded by a new lane. Durable ledger insert
-   order resolves gate rows that share a timestamp in every latest-gate,
-   checklist, readiness, and publication snapshot; legacy conflicting rows
-   without an establishable order yield an unavailable verdict before a
-   checklist close or review publication. Rejection recording, its task
+   order resolves gate rows that share a timestamp through one shared ordering
+   rule used by coordinator, CLI, allow, and chain readers; legacy conflicting
+   rows without an establishable order yield an unavailable verdict before a
+   checklist close or review publication. Legacy stage aliases are canonicalized
+   before grouping or comparison. Rejection recording, its task
    transition, and the deterministic `review.post` intent share one local
    transaction. GitHub publication runs after that commit and a restart reuses
    the same pending intent. A transient publication error reopens that same
-   deterministic intent and retries it on later coordinator ticks while
-   implementation may continue; it does not wait for a human reply or relaunch
-   a reviewer. `n_a` alone does not grant Ready or done. One review is enough only when
+   deterministic intent and retries it at the start of every later coordinator
+   tick, before phase dispatch and before an early merged/closed transition,
+   until the owned intent is verified done. Implementation and later phases may
+   continue; the retry does not wait for a human reply or relaunch a reviewer.
+   `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
    key, or an empty list keeps two reviews required. An entry that exists
@@ -593,18 +596,22 @@ No silent failure.
 Every lane process writes script-owned `lane.run` evidence with the configured
 and provider-reported model (both bounded and redacted), token usage when
 supplied, a bounded redacted file-tool transcript, and bounded final text.
+One shared sanitizer removes complete CSI, OSC, other ESC sequences, and
+remaining C0/C1 controls except newline and tab before secret redaction of final
+text, models, diagnostics, agent notes, terminal output, and tool targets.
 Failure to read or decode the lane output file (`OSError`,
 `UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
 and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
 Failure to write the audit row itself is an observation and does not rewrite the
-lane verdict. File-tool targets fail closed: every relative-traversal, absolute,
-home, UNC, or drive-letter path fragment in a Grep regex or Glob token is
-validated on its own, including fragments after assignment text, punctuation,
-quotes, and regex anchors. A target is redacted unless every such fragment is
-provably inside the worktree. Glob patterns containing parent traversal in any
-component (including after a wildcard) are also redacted.
+lane verdict. File-tool targets use one fail-closed rule after terminal,
+separator, and regex-escape normalization: `..` anywhere, `~`, a drive prefix,
+or an absolute/UNC fragment at the start or after any character outside
+`[A-Za-z0-9._-]` redacts the whole target. The only exception is a single plain
+whole absolute path under the worktree whose relative remainder passes the same
+checks; it is stored worktree-relative and may contain glob `*`, `?`, `[` and
+`]` characters.
 
 ## Module layout
 
@@ -617,6 +624,8 @@ component (including after a wildcard) are also redacted.
 | `coordinator_github.py` | Comments, CI, readiness, formal approve, Ready, merge, replies |
 | `coordinator_exec.py` | Bounded subprocess helper |
 | `coordinator_common.py` | Shared helpers / constants |
+| `gate_order.py` | Durable canonical gate ordering shared by every gate reader |
+| `text_sanitize.py` | Shared terminal escape/control sanitization before redaction |
 | `coordinator_config.py` | Parent-owned explicit-repository and owner-scoped configuration loaders |
 | `hub_assign.py` | Paired-device client for operator assignment creation |
 | `coordinator_a38.py` | A38 suite, author review comments, external review mail, guard Ready observation |

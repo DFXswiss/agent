@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from .coordinator_common import redact
 from .hub import Hub
+from .text_sanitize import sanitize_terminal_text
 
 _ASSIGNMENT_TEXT_LIMIT = 2000
 
@@ -23,10 +24,8 @@ def _without_bearer(text: str, token: str | None) -> str:
 
 def sanitized_assignment_text(text: str, token: str | None, *, limit: int) -> str:
     """Bounded, redacted, control-character-free hub text without the bearer."""
-    from .main import _sanitize_lane_output
-
     cleaned = _without_bearer(str(text or ""), token)
-    return redact(_sanitize_lane_output(cleaned), limit=limit)
+    return redact(sanitize_terminal_text(cleaned), limit=limit)
 
 
 class AssignmentFailure(Exception):

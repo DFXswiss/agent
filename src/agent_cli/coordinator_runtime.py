@@ -1606,6 +1606,12 @@ def advance_one(
     c = coord(task)
     phase = str(c.get("phase") or "accept")
     source = c.get("source") or {}
+    # A rejection comment is a durable task intent, not an implementation-phase
+    # side effect. Reconcile it before every dispatch or early PR-state branch so
+    # phase changes and a concurrently closed/merged pull request cannot strand it.
+    rejection_publication_lines = reconcile_rejection_review_intents(
+        store, worker, task, runner
+    )
     final_blocker = phase == "blocked" and (
         bool(c.get("uncertain_lane")) or not c.get("resume_phase")
     )
@@ -1630,9 +1636,15 @@ def advance_one(
             c["phase"] = "await_merge"
             save_task(store, task)
             verb = "merged" if live_state == "MERGED" else "closed"
-            return [f"PR {verb} during {phase}; verifying the merge"]
+            return [
+                *rejection_publication_lines,
+                f"PR {verb} during {phase}; verifying the merge",
+            ]
         if live_state is None and phase in A38_PUBLISHED_RERUN_PHASES:
-            return [f"PR state temporarily unavailable before {phase}; retrying"]
+            return [
+                *rejection_publication_lines,
+                f"PR state temporarily unavailable before {phase}; retrying",
+            ]
     try:
         if (
             source.get("owner_scoped")
@@ -1731,11 +1743,6 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
-        rejection_publication_lines = (
-            reconcile_rejection_review_intents(store, worker, task, runner)
-            if phase == "implement"
-            else []
-        )
         intake_lines: list[str] | None = None
         if worker.a38 and phase in {
             "ci",

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .model_slots import PROVIDER_CHOICES, SUPPORTED_PROVIDERS
+from .text_sanitize import sanitize_terminal_text
 
 if TYPE_CHECKING:
     from .ai_accounts import AIRole
@@ -352,104 +353,41 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-_WILDCARD_CHARS = frozenset("*?[{")
-# Windows drive and UNC paths are never inside a POSIX worktree root.
-_WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])")
-_PATH_FRAGMENT_BOUNDARY = r"[\s=:'\"`(\[\{,^]"
+_REGEX_ESCAPE_RE = re.compile(r"\\([^A-Za-z0-9])")
+_PLAIN_PATH_REGEX_META_RE = re.compile(r"[\^$+{}|()]")
+_DRIVE_PREFIX_RE = re.compile(r"[A-Za-z]:/")
+_ABSOLUTE_FRAGMENT_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))/")
 
 
-def _glob_static_prefix(value: str) -> str:
-    """Return the literal path prefix of a glob-style pattern."""
-    out: list[str] = []
-    escaped = False
-    for char in value:
-        if escaped:
-            out.append(char)
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
-        if char in _WILDCARD_CHARS:
-            break
-        out.append(char)
-    return "".join(out)
-
-
-def _path_stays_in_worktree(fragment: str, root: Path) -> bool:
-    """True when a (possibly wildcard-bearing) path fragment is inside ``root``."""
-    text = fragment.strip()
-    if text == "":
-        return True
-    if _WINDOWS_PATH.match(text):
-        return False
-    prefix = _glob_static_prefix(text)
-    if prefix == "":
-        # A pattern that starts with a wildcard is resolved under the worktree.
-        return True
-    try:
-        path = Path(prefix).expanduser()
-        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
-        resolved.relative_to(root)
-        return True
-    except (OSError, RuntimeError, ValueError):
-        return False
-
-
-def _normalized_path_views(value: str) -> tuple[str, ...]:
-    """Return separator-normalized and regex-unescaped views of one target."""
-    separator_view = value.replace("\\", "/")
-    regex_unescaped = re.sub(r"\\([^A-Za-z0-9])", r"\1", value).replace("\\", "/")
-    return tuple(dict.fromkeys((separator_view, regex_unescaped)))
+def _normalize_tool_target(value: str) -> str:
+    """Normalize terminal text, regex escapes and platform separators once."""
+    sanitized = sanitize_terminal_text(value)
+    regex_unescaped = _REGEX_ESCAPE_RE.sub(r"\1", sanitized)
+    return regex_unescaped.replace("\\", "/")
 
 
 def _contains_disallowed_path_fragment(value: str) -> bool:
-    """Fail closed on traversal or host-path fragments anywhere in a target."""
-    for normalized in _normalized_path_views(value):
-        if _contains_parent_component(normalized):
-            return True
-        if re.search(r"(?<![A-Za-z0-9_.~*?\[\]{}-])/", normalized):
-            return True
-        if re.search(r"(?<![A-Za-z0-9_.-])~(?:/|$)", normalized):
-            return True
-        if re.search(r"[A-Za-z]:(?:/|$)", normalized):
-            return True
-    return False
-
-
-def _contains_parent_component(value: str) -> bool:
-    pattern = (
-        r"(?:^|[/]|"
-        + _PATH_FRAGMENT_BOUNDARY
-        + r")\.\.(?=/|$|[\s\"'`),;\]\}])"
+    """Apply the one fail-closed traversal and host-path rule."""
+    return (
+        ".." in value
+        or "~" in value
+        or _DRIVE_PREFIX_RE.search(value) is not None
+        or _ABSOLUTE_FRAGMENT_RE.search(value) is not None
     )
-    return any(re.search(pattern, item) is not None for item in _normalized_path_views(value))
-
-
-def _relative_glob(pattern: str, root: Path) -> str:
-    """Relativize a pattern's literal prefix against the worktree root."""
-    prefix = _glob_static_prefix(pattern)
-    if prefix == "" or not Path(prefix).expanduser().is_absolute():
-        return pattern
-    try:
-        relative = Path(prefix).expanduser().resolve().relative_to(root)
-    except (OSError, RuntimeError, ValueError):
-        return pattern
-    separator = prefix[-1] if prefix.endswith(("/", "\\")) else ""
-    return f"{relative}{separator}{pattern[len(prefix):]}"
 
 
 def _plain_inside_worktree_target(value: str, root: Path) -> str | None:
     """Relativize only a whole, plain absolute target inside the worktree."""
-    normalized = value.replace("\\", "/")
+    normalized = _normalize_tool_target(value)
     root_text = root.as_posix().rstrip("/")
-    if normalized != root_text and not normalized.startswith(root_text + "/"):
+    if not normalized.startswith(root_text + "/"):
         return None
-    if _contains_parent_component(normalized[len(root_text) :]):
+    if re.search(r"\s", normalized) or _PLAIN_PATH_REGEX_META_RE.search(normalized):
         return None
-    if not _path_stays_in_worktree(normalized, root):
+    remainder = normalized[len(root_text) + 1 :]
+    if not remainder or _contains_disallowed_path_fragment(remainder):
         return None
-    return _relative_glob(normalized, root)
+    return remainder
 
 
 def _tool_target(
@@ -458,7 +396,7 @@ def _tool_target(
     """Keep worktree paths useful while retaining redaction outside it."""
     from .coordinator_common import redact
 
-    raw = str(target)
+    raw = sanitize_terminal_text(str(target))
     if raw == "":
         return ""
     if kind not in ("file_path", "path", "pattern"):
@@ -470,20 +408,21 @@ def _tool_target(
     inside = _plain_inside_worktree_target(raw, root)
     if inside is not None:
         return redact(inside[:300], limit=300)
-    if _contains_disallowed_path_fragment(raw):
+    normalized = _normalize_tool_target(raw)
+    if _contains_disallowed_path_fragment(normalized):
         return "[redacted]"
     if kind in ("file_path", "path"):
         try:
-            path = Path(raw).expanduser()
+            path = Path(normalized).expanduser()
             resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
         except (OSError, RuntimeError, ValueError):
             return "[redacted]"
         try:
-            raw = str(resolved.relative_to(root))
+            normalized = str(resolved.relative_to(root))
         except ValueError:
             # Any path outside the worktree is a host detail, whatever its prefix.
             return "[redacted]"
-    return redact(raw[:300], limit=300)
+    return redact(normalized[:300], limit=300)
 
 
 DIAGNOSTIC_LIMIT = 4000
@@ -493,7 +432,8 @@ def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
     """Bounded, shared-redacted, config-dir-hidden lane diagnostic text."""
     from .coordinator_common import redact
 
-    return hide_config_dir(redact(text or "", limit=DIAGNOSTIC_LIMIT), config_dir)
+    safe = sanitize_terminal_text(text or "")
+    return hide_config_dir(redact(safe, limit=DIAGNOSTIC_LIMIT), config_dir)
 
 
 def output_read_failure(exc: BaseException) -> str:
@@ -551,7 +491,14 @@ def finalize_lane_output(
     out = _finalize_lane_output(
         vendor, stdout, output_file_text, cwd=cwd, stream_from_output_file=stream_from_output_file
     )
-    return replace(out, text=hide_config_dir(out.text, config_dir))
+    usage = out.usage
+    if usage is not None and usage.model is not None:
+        usage = replace(usage, model=sanitize_terminal_text(usage.model))
+    return replace(
+        out,
+        text=hide_config_dir(sanitize_terminal_text(out.text), config_dir),
+        usage=usage,
+    )
 
 
 def _finalize_lane_output(
@@ -699,8 +646,13 @@ def record_lane_run(
             continue
         safe_tools.append(
             {
-                "tool": redact(str(item.get("tool") or ""), limit=100),
-                "target": redact(str(item.get("target") or "")[:300], limit=300),
+                "tool": redact(
+                    sanitize_terminal_text(str(item.get("tool") or "")), limit=100
+                ),
+                "target": redact(
+                    sanitize_terminal_text(str(item.get("target") or ""))[:300],
+                    limit=300,
+                ),
                 "error": item.get("error") is True,
             }
         )
@@ -711,9 +663,11 @@ def record_lane_run(
     payload = {
         "role": result.role,
         "vendor": result.vendor,
-        "model": redact(result.model, limit=LANE_MODEL_LIMIT),
+        "model": redact(
+            sanitize_terminal_text(result.model), limit=LANE_MODEL_LIMIT
+        ),
         "reported_model": (
-            redact(usage.model, limit=LANE_MODEL_LIMIT)
+            redact(sanitize_terminal_text(usage.model), limit=LANE_MODEL_LIMIT)
             if usage is not None and usage.model is not None
             else None
         ),
@@ -725,7 +679,7 @@ def record_lane_run(
         "usage": usage_payload,
         "tools": safe_tools,
         "tools_truncated": result.tools_truncated or len(result.tools) > 200,
-        "final_text": redact(final_text, limit=4000),
+        "final_text": redact(sanitize_terminal_text(final_text), limit=4000),
     }
     store.write(  # type: ignore[attr-defined]
         "activity",

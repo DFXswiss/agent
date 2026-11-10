@@ -12,6 +12,7 @@ from .github_accounts import Account, AccountError, load_accounts
 from .model_slots import SLOT_KEY_PREFIXES, STAGE_SLOTS, ModelSlots, canonical_stage
 from .runtime import Completed
 from .store import Store, StoreError, utcnow
+from .text_sanitize import sanitize_terminal_text
 
 Runner = Callable[[list[str]], Completed]
 LaneRunner = Callable[[list[str], str | None], Any]
@@ -102,7 +103,8 @@ class CiObservedFailureError(CoordinatorError):
 
 
 def redact(text: str, *, limit: int = OUTPUT_BOUND) -> str:
-    cleaned = _PRIVATE_KEY.sub('[redacted]', text or '')
+    cleaned = sanitize_terminal_text(text or '')
+    cleaned = _PRIVATE_KEY.sub('[redacted]', cleaned)
     cleaned = _AUTH_HEADER.sub('[redacted]', cleaned)
     cleaned = _BEARER.sub('[redacted]', cleaned)
     cleaned = SECRETISH.sub('[redacted]', cleaned)

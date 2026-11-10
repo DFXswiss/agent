@@ -49,6 +49,8 @@ from .chain import (
     to_json as step_to_json,
 )
 from .coordinator_common import parse_model_result, redact as redact_secrets
+from .gate_order import latest_gates as durable_latest_gates
+from .gate_order import ordered_snapshot_gates
 from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
@@ -96,6 +98,7 @@ from .runtime import (
 )
 from .skills import SKILL_NAMES, has_skill, skill_for_agent_role
 from .store import Store, StoreConnectionError, StoreError, utcnow
+from .text_sanitize import sanitize_terminal_text
 from .usage import (
     AuthStale,
     OpenRouterUsageError,
@@ -1403,7 +1406,7 @@ def cmd_agent(args: list[str]) -> None:
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
             if note is not None:
-                agent["note"] = note
+                agent["note"] = redact_secrets(sanitize_terminal_text(note))
             store.write("agent", "update", aid, _strip(agent))
             print(f"agent {aid} verdict={verdict}")
             return
@@ -2795,7 +2798,7 @@ def _publish_terminals(
             continue
         sid = session["id"]
         try:
-            text = runtime.capture(sid)
+            text = redact_secrets(sanitize_terminal_text(runtime.capture(sid)))
         except StoreConnectionError:
             raise
         except (SystemExit, StoreError, ValueError) as exc:
@@ -2832,15 +2835,7 @@ def _find_round(store: Store, task_id: str, round_num: object) -> dict:
 
 
 def _latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict]:
-    gates = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
-    # rows() is updated_at DESC (index 0 = newer). Keep newer rows last on ties.
-    indexed = list(enumerate(gates))
-    indexed.sort(key=lambda item: (item[1].get("recorded_at") or "", -item[0]))
-    ordered = [g for _, g in indexed]
-    latest: dict[tuple[str, str], dict] = {}
-    for g in ordered:
-        latest[(canonical_stage(str(g.get("stage"))), g.get("dimension"))] = g
-    return latest
+    return durable_latest_gates(store, task_id)
 
 
 def _all_gate_pairs_approved_same_head(
@@ -2897,12 +2892,7 @@ def load_task_dict(store: Store, tid: str) -> dict:
     local_checks = [
         {"name": name, "result": c.get("result")} for name, c in latest_by_name.items()
     ]
-    gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    indexed_gates = list(enumerate(gates_raw))
-    indexed_gates.sort(
-        key=lambda item: (item[1].get("recorded_at") or "", -item[0])
-    )
-    ordered_gates = [g for _, g in indexed_gates]
+    ordered_gates = ordered_snapshot_gates(store, tid)
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -3739,7 +3729,9 @@ def _abort_incomplete_agent(store: Store, agent: dict, note: str) -> None:
     """
     agent["status"] = "done"
     agent["finished_at"] = utcnow()
-    agent["note"] = f"aborted incomplete lane: {note}"
+    agent["note"] = redact_secrets(
+        sanitize_terminal_text(f"aborted incomplete lane: {note}")
+    )
     store.write("agent", "update", str(agent["id"]), _strip(agent))
 
 
@@ -4409,18 +4401,9 @@ def cmd_mail(args: list[str]) -> None:
         store.close()
 
 
-_LANE_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-
-
 def _sanitize_lane_output(text: str) -> str:
-    # The --no-tmux runner captures raw vendor subprocess output (unlike the tmux
-    # path, whose capture-pane already drops escape sequences), so an ESC-led CSI/OSC
-    # sequence (7-bit, \x1b-prefixed) or an 8-bit C1 control byte (\x80-\x9f, e.g. a
-    # bare CSI at \x9b) from a misbehaving vendor process could otherwise reach the
-    # terminal verbatim. Stripping C0/C1/DEL control bytes (keeping \t/\n/\r)
-    # neutralizes that without touching the printable content a human or
-    # --evidence actually needs.
-    return _LANE_CONTROL_CHARS_RE.sub("", text)
+    """Compatibility wrapper for the shared persisted/displayed-text sanitizer."""
+    return sanitize_terminal_text(text)
 
 
 def _print_lane_result(result: LaneResult) -> None:

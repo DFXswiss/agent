@@ -34,6 +34,7 @@ from .coordinator_common import (
 from .coordinator_config import WorkerConfig
 from .coordinator_exec import run_bounded
 from .coordinator_git import execute_github, queue_activity, verify_signed_clean_head, verify_checkout_identity
+from .gate_order import latest_gates, ordered_snapshot_gates
 from .lane import (
     OUTPUT_FILE_VENDORS,
     SPEC_VIA_STDIN,
@@ -58,6 +59,7 @@ from .model_slots import (
     models_from_snapshot,
 )
 from .store import Store, StoreError, utcnow
+from .text_sanitize import sanitize_terminal_text
 
 _IMPLEMENTER_RESULTS = frozenset({"done", "ask", "blocked", "no-change"})
 _REVIEWER_RESULTS = frozenset({"approved", "rejected"})
@@ -307,7 +309,9 @@ def launch_lane(
             if agent is not None and agent.get("status") == "working":
                 agent["status"] = "done"
                 agent["finished_at"] = utcnow()
-                agent["note"] = redact(f"interrupted: {exc}")
+                agent["note"] = redact(
+                    sanitize_terminal_text(f"interrupted: {exc}")
+                )
                 store.write("agent", "update", aid, strip_row(agent))
             c["lane"] = {"agent_id": aid, "state": "uncertain"}
             c["phase"] = "blocked"
@@ -353,7 +357,7 @@ def launch_lane(
     # its unavailable status even though there is no status line to parse.
     _, model_result = parse_model_result(result.stdout, result.returncode)
     status = result.status
-    note = redact(result.stdout or result.stderr or "")
+    note = redact(sanitize_terminal_text(result.stdout or result.stderr or ""))
     agent = store.row("agent", aid)
     assert agent is not None
     agent["status"] = "done"
@@ -660,75 +664,6 @@ def set_checklist(
             store.write("checklist_item", "update", item["id"], strip_row(item))
             return
     raise CoordinatorError(f"checklist key {key} missing for task {task['id']}")
-
-
-def latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict[str, Any]]:
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in ordered_snapshot_gates(store, task_id):
-        key = (canonical_stage(str(row.get("stage"))), str(row.get("dimension")))
-        latest[key] = row
-    return latest
-
-
-def ordered_snapshot_gates(store: Store, task_id: str) -> list[dict[str, Any]]:
-    """Order gate histories durably and fail closed when legacy order is unknowable."""
-    raw = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
-    insert_sequences = store.row_insert_sequences("review_gate")
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for gate in raw:
-        key = (
-            canonical_stage(str(gate.get("stage"))),
-            str(gate.get("dimension") or ""),
-        )
-        grouped.setdefault(key, []).append(gate)
-
-    ordered: list[dict[str, Any]] = []
-    for key in sorted(grouped):
-        rows = grouped[key]
-        durable: list[tuple[int, dict[str, Any]]] = []
-        origins: set[str] = set()
-        for row in rows:
-            row_id = str(row.get("id") or "")
-            sequence = insert_sequences.get(row_id)
-            if sequence is None or sequence[0] != str(
-                row.get("_origin_device_id") or ""
-            ):
-                durable = []
-                break
-            origins.add(sequence[0])
-            durable.append((sequence[1], row))
-        if (
-            len(durable) == len(rows)
-            and len(origins) == 1
-            and len({seq for seq, _ in durable}) == len(rows)
-        ):
-            ordered.extend(
-                row for _seq, row in sorted(durable, key=lambda item: item[0])
-            )
-            continue
-
-        by_time: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            by_time.setdefault(str(row.get("recorded_at") or ""), []).append(row)
-        for recorded_at in sorted(by_time):
-            tied = sorted(
-                by_time[recorded_at], key=lambda row: str(row.get("id") or "")
-            )
-            ordered.extend(tied)
-            outcomes = {
-                (
-                    str(row.get("vendor") or ""),
-                    str(row.get("verdict") or ""),
-                    str(row.get("head_sha") or ""),
-                )
-                for row in tied
-            }
-            if len(outcomes) > 1:
-                fail_closed = dict(tied[-1])
-                fail_closed["verdict"] = "unavailable"
-                fail_closed["head_sha"] = ""
-                ordered.append(fail_closed)
-    return ordered
 
 
 def _show_base_path(
@@ -1422,25 +1357,17 @@ def phase_pr_gates(
     # rejection (and its comment) but before the task transition is saved. Read
     # every current-head gate before preparing agents so that such a rejection
     # can never be superseded by a newly launched dimension.
-    rejected_by_dimension: dict[str, dict[str, Any]] = {}
-    for gate in store.rows("review_gate"):
-        dimension = str(gate.get("dimension") or "")
+    persisted_rejections: list[dict[str, Any]] = []
+    for dimension in ("quality", "logic"):
+        gate = latest.get((canonical_stage(stage), dimension))
         if (
-            gate.get("task_id") == task["id"]
-            and gate.get("stage") == stage
-            and dimension in {"quality", "logic"}
+            gate is not None
+            and canonical_stage(str(gate.get("stage"))) == canonical_stage(stage)
             and gate.get("head_sha") == head
             and gate.get("vendor") == vendor
             and gate.get("verdict") == "rejected"
         ):
-            # rows() is newest first. Keep the first rejection for each
-            # dimension even if a buggy older retry later wrote another verdict.
-            rejected_by_dimension.setdefault(dimension, gate)
-    persisted_rejections = [
-        rejected_by_dimension[dimension]
-        for dimension in ("quality", "logic")
-        if dimension in rejected_by_dimension
-    ]
+            persisted_rejections.append(gate)
     if persisted_rejections:
         recovered_evidence = [
             redact(str(gate.get("evidence") or f"{stage}/{gate.get('dimension')} rejected"))
@@ -1614,14 +1541,18 @@ def phase_pr_gates(
         if isinstance(outcome, Exception) or outcome is None:
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
-            agent["note"] = redact(f"uncertain: {outcome}")
+            agent["note"] = redact(
+                sanitize_terminal_text(f"uncertain: {outcome}")
+            )
             store.write("agent", "update", agent["id"], strip_row(agent))
             failed_agents.append(str(agent["id"]))
         else:
             assert isinstance(outcome, LaneResult)
             agent["status"] = "done"
             agent["finished_at"] = utcnow()
-            agent["note"] = redact(outcome.stdout or outcome.stderr or "")
+            agent["note"] = redact(
+                sanitize_terminal_text(outcome.stdout or outcome.stderr or "")
+            )
             store.write("agent", "update", agent["id"], strip_row(agent))
             _record_lane_audit(
                 store,

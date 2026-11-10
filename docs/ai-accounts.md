@@ -215,12 +215,21 @@ every added read directory. Launch is refused when those paths overlap. Claude
 Code's reported token counts and tool calls are stored in `lane.run`; its
 Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
 not OpenRouter prices.
-Stored file-tool targets are fail-closed host evidence. After separator and
-regex-escape normalization, a target containing any parent component or any
-absolute, home, UNC, or drive-letter path fragment is stored as `[redacted]`,
-including fragments after assignments, prefixes, quotes, or regex anchors. The
-only absolute-path exception is a plain whole target that starts with and stays
-inside the lane worktree; that target is stored worktree-relative.
+Stored file-tool targets are fail-closed host evidence. Complete terminal
+escapes are removed, separators are normalized, and regex backslash escapes are
+removed first. A target containing `..` anywhere, `~`, a drive-letter prefix,
+or `/` at the start or immediately after a character outside
+`[A-Za-z0-9._-]` is stored as `[redacted]`. The only absolute-path exception is
+a single plain whole target with no whitespace or regex metacharacters other
+than glob `*`, `?`, `[` and `]`, starting with the absolute worktree plus `/`;
+its relative remainder must pass the same checks and is then stored
+worktree-relative.
+
+Lane final text, configured and reported model fields, diagnostics, agent notes,
+terminal output, and tool targets all use one shared sanitizer before secret
+redaction. It removes complete CSI, OSC, and other ESC sequences, then remaining
+C0/C1 controls except newline and tab, so terminal formatting cannot split a
+credential and evade redaction.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;
