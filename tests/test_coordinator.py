@@ -5777,7 +5777,10 @@ def test_a38_read_receipt_survives_a_foreign_row_on_its_id(
 
 
 def _a38_first_comment_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    second_reviewers: tuple[str, ...] = ("outside-reviewer",),
 ) -> tuple[Store, Any, FakeGh, str]:
     from dataclasses import replace
 
@@ -5796,7 +5799,7 @@ def _a38_first_comment_env(
         make_worker(tmp_path),
         review_session=None,
         a38=True,
-        second_reviewers=("outside-reviewer",),
+        second_reviewers=second_reviewers,
     )
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
@@ -6141,15 +6144,14 @@ def test_a38_merge_after_saved_first_comment_intent_reconciles_publication(
 def test_a38_merge_after_first_initial_ping_fills_only_missing_ping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dataclasses import replace
-
     from agent_cli import coordinator_a38
     from agent_cli.coordinator_a38 import phase_first_comment
     from agent_cli.coordinator_runtime import advance_one
 
-    store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
-    worker = replace(
-        worker, second_reviewers=("outside-reviewer", "reviewer-two")
+    store, worker, fake, tid = _a38_first_comment_env(
+        tmp_path,
+        monkeypatch,
+        second_reviewers=("outside-reviewer", "reviewer-two"),
     )
     real_write_pings = coordinator_a38._write_second_review_request_pings
 
