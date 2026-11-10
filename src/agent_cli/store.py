@@ -588,6 +588,33 @@ class Store:
         return out
 
     @_wrap_pg_errors
+    def row_insert_sequences(self, table: str) -> dict[str, tuple[str, int]]:
+        """Return durable per-origin insert order for current materialized rows.
+
+        Snapshot-only replica rows may have no corresponding ledger insert. Callers
+        must treat a missing sequence as unordered rather than infer chronology from
+        ``row_data.updated_at``.
+        """
+        with self._lock:
+            found = self.conn.execute(
+                "SELECT materialized.row_id, materialized.origin_device_id, "
+                "MAX(events.origin_seq) AS origin_seq "
+                "FROM row_data AS materialized "
+                "LEFT JOIN ledger_event AS events "
+                "ON events.origin_device_id = materialized.origin_device_id "
+                "AND events.table_name = materialized.table_name "
+                "AND events.row_id = materialized.row_id AND events.op = 'insert' "
+                "WHERE materialized.table_name = %s "
+                "GROUP BY materialized.row_id, materialized.origin_device_id",
+                (table,),
+            ).fetchall()
+        return {
+            str(row["row_id"]): (str(row["origin_device_id"]), int(row["origin_seq"]))
+            for row in found
+            if row["origin_seq"] is not None
+        }
+
+    @_wrap_pg_errors
     def row(self, table: str, row_id: str) -> dict[str, Any] | None:
         with self._lock:
             found = self.conn.execute(

@@ -346,9 +346,12 @@ for worker in workers.values():
    On restart, the coordinator inspects durable current-head gate verdicts
    before preparing either dimension. Cached approvals reconcile their
    checklist keys, while any cached rejection routes its recorded evidence to
-   implementation and is never superseded by a new lane. Rejection recording
-   and that task transition share one local transaction; publication remains a
-   separately idempotent script action. `n_a` alone does not grant Ready or done. One review is enough only when
+   implementation and is never superseded by a new lane. Durable ledger insert
+   order resolves gate rows that share a timestamp; legacy conflicting rows
+   without an establishable order fail closed. Rejection recording, its task
+   transition, and the deterministic `review.post` intent share one local
+   transaction. GitHub publication runs after that commit and a restart reuses
+   the same pending intent. `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
    key, or an empty list keeps two reviews required. An entry that exists
@@ -367,7 +370,10 @@ for worker in workers.values():
    state: the coordinator stays in `ci`, creates no reply gate, and routes
    nothing to the implementer. For A38 workers, a verified author A38 report
    on this head may treat a matching required check that concluded `skipped`
-   or `neutral` as green; it does not waive a missing check. Failed,
+   or `neutral` as green. Report-covered rollup checks extend to workflow
+   inventory only through a unique Actions run identity (or an exact workflow
+   path), never a non-unique workflow display name. An unmapped rollup leaves
+   the inventory run uncovered. The report does not waive a missing check. Failed,
    `cancelled`, and pending checks still block. Hard
    protocol faults
    (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
@@ -449,7 +455,10 @@ for worker in workers.values():
    `allow pr-ready`, then leave draft and verify `isDraft=false`. **Never merge.**
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
     must be exactly `User` (missing type is not human; Bot is refused). Also
-    require merge SHA, timestamp, and base/target. Then existing `task-done`
+    require merge SHA, timestamp, and base/target. An A38 merge must also expose
+    a valid base SHA equal to the persisted evidence base; a changed base
+    invalidates base-bound evidence and returns to measurement before
+    `task-done`. Then existing `task-done`
     checklist / summary guard (summaries must already describe the actual
     result — no boilerplate invented at merge), then `issue.assigned.ack`. A
     Ready PR closed unmerged, or a non-human merge, is an intentionally
@@ -582,12 +591,12 @@ result with a bounded, redacted diagnostic, its `lane.run` row is still written,
 and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
 Failure to write the audit row itself is an observation and does not rewrite the
-lane verdict. File-tool targets fail closed: every absolute, home, UNC, or
-drive-letter path fragment in a Grep regex or Glob token is validated on its
-own, including fragments after assignment text, punctuation, quotes, and regex
-anchors. A target is redacted unless every such fragment is provably inside the
-worktree. Glob patterns containing parent traversal in any component (including
-after a wildcard) are also redacted.
+lane verdict. File-tool targets fail closed: every relative-traversal, absolute,
+home, UNC, or drive-letter path fragment in a Grep regex or Glob token is
+validated on its own, including fragments after assignment text, punctuation,
+quotes, and regex anchors. A target is redacted unless every such fragment is
+provably inside the worktree. Glob patterns containing parent traversal in any
+component (including after a wildcard) are also redacted.
 
 ## Module layout
 

@@ -3743,14 +3743,6 @@ def _abort_incomplete_agent(store: Store, agent: dict, note: str) -> None:
     store.write("agent", "update", str(agent["id"]), _strip(agent))
 
 
-def _parsed_lane_result(output: str) -> str | None:
-    matches = re.findall(
-        r"(?mi)^RESULT:[ \t]*(done|blocked|ask|approved|rejected|no-change)[ \t]*\r?$",
-        output or "",
-    )
-    return matches[0].lower() if len(matches) == 1 else None
-
-
 # Implementer RESULT values that close the lane. ``done`` and ``no-change`` are
 # both an implemented round; ``blocked`` ends the task. Missing, duplicate or
 # role-invalid values (ask/approved/rejected) stay retryable.

@@ -192,8 +192,9 @@ reported tokens, a bounded redacted file-tool transcript, and bounded final
 text. Both configured and provider-reported model strings are bounded and
 redacted. Neither activity stores argv, environment, profile paths, or
 credentials; a tool target outside the worktree is stored as `[redacted]`,
-including a Glob pattern or a path fragment inside a Grep pattern. Lane
-processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
+including a Glob pattern or an absolute or relative-traversal path fragment
+inside a Grep pattern, also when assignment text or punctuation precedes it.
+Lane processes do not inherit ambient proxy or CA settings (`HTTP_PROXY`,
 `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), and the OpenRouter usage
 watch ignores them too.

@@ -158,6 +158,79 @@ def test_invalid_review_never_approved() -> None:
     assert status == "complete" and result == "approved"
 
 
+def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_github import _ordered_snapshot_gates, _task_snapshot
+
+    store = Store(tmp_path)
+    task_id = "11111111-1111-4111-8111-111111111111"
+    store.write(
+        "task",
+        "insert",
+        task_id,
+        {
+            "id": task_id,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "state": "pr-review",
+            "models": {"first": "grok", "second": "codex"},
+            "payload": {"coordinator": {}},
+        },
+    )
+    common = {
+        "task_id": task_id,
+        "stage": "review-1",
+        "dimension": "quality",
+        "vendor": "grok",
+        "head_sha": "a" * 40,
+        "recorded_at": "2026-01-01T00:00:00Z",
+    }
+    store.write(
+        "review_gate",
+        "insert",
+        "22222222-2222-4222-8222-222222222222",
+        {
+            "id": "22222222-2222-4222-8222-222222222222",
+            **common,
+            "verdict": "approved",
+        },
+    )
+    store.write(
+        "review_gate",
+        "insert",
+        "33333333-3333-4333-8333-333333333333",
+        {
+            "id": "33333333-3333-4333-8333-333333333333",
+            **common,
+            "verdict": "rejected",
+        },
+    )
+
+    assert [gate["verdict"] for gate in _task_snapshot(store, task_id)["gates"]] == [
+        "approved",
+        "rejected",
+    ]
+
+    class UnorderedLegacyStore:
+        def rows(self, table: str) -> list[dict[str, Any]]:
+            assert table == "review_gate"
+            return [
+                {"id": "older", **common, "verdict": "approved"},
+                {"id": "newer", **common, "verdict": "rejected"},
+            ]
+
+        def row_insert_sequences(self, table: str) -> dict[str, tuple[str, int]]:
+            assert table == "review_gate"
+            return {}
+
+    ambiguous = _ordered_snapshot_gates(
+        UnorderedLegacyStore(), task_id  # type: ignore[arg-type]
+    )
+    assert ambiguous[-1]["verdict"] == "unavailable"
+    assert ambiguous[-1]["head_sha"] == ""
+
+
 def test_signature_verification_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -1177,6 +1250,7 @@ def test_a38_ci_accepts_report_covered_skipped_and_neutral(
         {
             "name": "tests",
             "workflowName": "CI",
+            "detailsUrl": "https://github.com/example/project/actions/runs/13/job/130",
             "conclusion": conclusion,
             "status": "completed",
         }
@@ -1317,6 +1391,43 @@ def test_a38_report_covered_rollup_does_not_cover_cancelled_workflow() -> None:
     )
 
     assert observation.kind == "failed"
+
+
+def test_a38_report_coverage_does_not_cross_duplicate_workflow_names() -> None:
+    from agent_cli.coordinator_github import _classify_rollup_and_inventory
+
+    rollup = [
+        {
+            "name": "tests",
+            "workflowName": "CI",
+            "detailsUrl": "https://github.com/example/project/actions/runs/13/job/130",
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    latest = {
+        ".github/workflows/ci-one.yml|pull_request": {
+            "id": 13,
+            "path": ".github/workflows/ci-one.yml",
+            "name": "CI",
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+        ".github/workflows/ci-two.yml|pull_request": {
+            "id": 14,
+            "path": ".github/workflows/ci-two.yml",
+            "name": "CI",
+            "status": "completed",
+            "conclusion": "skipped",
+        },
+    }
+
+    observation = _classify_rollup_and_inventory(
+        rollup, latest, passed_a38=frozenset({"tests"})
+    )
+
+    assert observation.kind == "failed"
+    assert observation.failures == (".github/workflows/ci-two.yml:skipped",)
 
 
 def test_ci_action_required_authorized_reply_resumes_ci_not_implementer(
@@ -3511,6 +3622,13 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
         codex_dims=(),
         codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
     )
+    task["payload"]["coordinator"]["pr_number"] = 42
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
     head = task["payload"]["coordinator"]["head_sha"]
     store.write(
         "review_gate",
@@ -3531,6 +3649,25 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
     )
     _patch_pr_gate_git(monkeypatch, tmp_path)
     launched: list[str] = []
+    published: list[str] = []
+
+    def execute_rejection(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None
+            assert row["type"] == "review.post"
+            assert row["execution_status"] == "pending"
+            published.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            updated["execution_status"] = "done"
+            store_.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.execute_github", execute_rejection
+    )
 
     def run(argv, stdin=None):  # noqa: ANN001
         launched.append("lane")
@@ -3552,6 +3689,12 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
     assert saved["state"] == "implementing"
     assert saved["payload"]["coordinator"]["phase"] == "implement"
     assert saved["payload"]["coordinator"]["findings"] == "Logic found a durable defect."
+    reviews = [
+        row for row in store.rows("activity") if row.get("type") == "review.post"
+    ]
+    assert len(reviews) == 1
+    assert published == [reviews[0]["id"]]
+    assert "codex logic — rejected" in reviews[0]["payload"]["body"]
 
 
 def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
