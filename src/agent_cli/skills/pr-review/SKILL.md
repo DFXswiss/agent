@@ -8,7 +8,7 @@ description: >-
 # Pull-request review contract
 
 Requires **spine**. Roles: `pr-reviewer-quality`, `pr-reviewer-logic`.
-Order: model slot `first`, then model slot `second` (a coordinator A38 task has no second slot; see Gates). The provider of each slot (`grok`, `codex`, `claude` or `openrouter`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`). Both slots must be configured; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
+Order: model slot `first`, then model slot `second` (a coordinator A38 task has no second slot; see Gates). The provider of each configured slot (`grok`, `codex`, `claude` or `openrouter`) is the `models` value pinned on the task when it was created (from the device's `ai-accounts.json`; read it with `agent models first|second --task <uuid>`). Non-A38 tasks require both slots. A coordinator A38 task requires `models.second: null`; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
 The same manifest must declare the current device as a lane host. The local
 harness's lane starter starts review lanes on that external host; Agent has no
 remote SSH execution mode.

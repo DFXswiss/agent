@@ -96,6 +96,13 @@ def test_the_documented_rejected_gate_command_carries_evidence() -> None:
     assert any('--evidence "' in ln for ln in rejected), rejected
 
 
+def test_pr_review_contract_distinguishes_a38_model_slots() -> None:
+    contract = (packaged_skills_dir() / "pr-review" / "SKILL.md").read_text()
+
+    assert "Non-A38 tasks require both slots" in contract
+    assert "A coordinator A38 task requires `models.second: null`" in contract
+
+
 def test_the_contract_says_what_evidence_should_look_like() -> None:
     # The evidence becomes the review body unaltered. Without this the
     # contract specified the mechanism and left the presentation unsaid, and what

@@ -1156,6 +1156,11 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
         )
     if obs.kind == "action_required":
         names = list(obs.action_required)
+        if worker.a38:
+            return [
+                f"CI authorization pending on {head[:7]} (guard-owned): "
+                + ", ".join(names[:5])
+            ]
         c["phase"] = "blocked"
         c["resume_phase"] = "ci"
         c["blocker"] = "CI action_required (external authorization)"
@@ -1252,6 +1257,11 @@ def _fresh_ci_still_green(
         raise CoordinatorError("PR head changed during readiness")
     if obs.kind == "protocol":
         raise CiObservationProtocolError(obs.detail)
+    if obs.kind == "action_required" and worker.a38:
+        return (
+            f"CI authorization pending on {head[:7]} (guard-owned); "
+            "retrying without Ready"
+        )
     if obs.kind == "action_required":
         raise CoordinatorError(
             "CI action_required on recheck: " + ", ".join(obs.action_required[:5])
@@ -1500,7 +1510,7 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
             scoped_runner,
             target,
             number,
-            "headRefOid,baseRefName,author,isDraft,state,mergeable",
+            "headRefOid,baseRefOid,baseRefName,author,isDraft,state,mergeable",
         )
     except CiObservationTransportError:
         # Unavailable fetch ≠ known mismatched identity/base/signature.
@@ -1513,6 +1523,16 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     account = account_for(store, worker.session_id)
     if str(pr.get("headRefOid") or "").lower() != head:
         raise CoordinatorError("PR head does not match clean signed head")
+    if worker.a38:
+        observed_base = str(pr.get("baseRefOid") or "").lower()
+        saved_base = str(c.get("base_sha") or "").lower()
+        if is_sha(saved_base) and observed_base != saved_base:
+            from .coordinator_a38 import invalidate_base_evidence
+
+            invalidate_base_evidence(c, observed_base)
+            c["phase"] = "tests"
+            save_task(store, task)
+            return ["PR base changed before readiness; invalidating A38 report evidence"]
     author = pr.get("author") if isinstance(pr.get("author"), dict) else {}
     if str(author.get("login") or "").casefold() != account.login.casefold():
         raise CoordinatorError("PR author does not match configured worker login")
@@ -1529,7 +1549,15 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
         raise CoordinatorError("PR must still be draft before readiness completes")
 
     evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
-    if not evidence.get("tests_pass") or evidence.get("tests_head") != head:
+    if worker.a38:
+        from .coordinator_a38 import local_test_gate_satisfied
+
+        tests_satisfied = local_test_gate_satisfied(task, head)
+    else:
+        tests_satisfied = bool(
+            evidence.get("tests_pass") and evidence.get("tests_head") == head
+        )
+    if not tests_satisfied:
         raise CoordinatorError("tests not green on current head")
     retry = _fresh_ci_still_green(store, worker, task, runner, head)
     if retry is not None:

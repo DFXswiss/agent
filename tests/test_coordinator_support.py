@@ -156,6 +156,7 @@ class FakeGh:
             "isDraft": True,
             "author": {"login": "worker-bot"},
             "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "baseRefName": "develop",
             "mergeable": "MERGEABLE",
             "statusCheckRollup": [],
