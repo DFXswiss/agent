@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .gate_order import latest_ordered_gate_rows
 from .allow import (
     CHECKLIST_KEYS,
     GATE_UNAVAILABLE_KEYS,
@@ -427,14 +428,9 @@ def _latest_agent(snapshot: dict[str, Any], role: str, slot: str | None) -> dict
 def _latest_gate(
     snapshot: dict[str, Any], stage: str, dimension: str
 ) -> dict[str, Any] | None:
-    hit = None
-    for g in snapshot.get("gates") or []:
-        if (
-            canonical_stage(str(g.get("stage"))) == stage
-            and g.get("dimension") == dimension
-        ):
-            hit = g
-    return hit
+    return latest_ordered_gate_rows(list(snapshot.get("gates") or [])).get(
+        (canonical_stage(stage), dimension)
+    )
 
 
 def _artifact_ok(step: Step, snapshot: dict[str, Any]) -> str:

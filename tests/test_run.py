@@ -674,6 +674,7 @@ def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
     spec.write_text("implement this\n", encoding="utf-8")
     secret = "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345"
     marker = "\x1b[31m"
+    split_secret = secret.replace("sk-or-", f"sk-or-{marker}")
     monkeypatch.setattr(
         "agent_cli.main.launch",
         lambda **_kwargs: LaneResult(
@@ -684,7 +685,7 @@ def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
             argv=["claude"],
             returncode=2,
             stdout="",
-            stderr=f"Authorization: Bearer {secret}{marker}\n",
+            stderr=f"provider output {split_secret}\n",
         ),
     )
 
@@ -701,6 +702,7 @@ def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
     assert exc.value.code == 2
     assert secret not in captured.out + captured.err
     assert marker not in captured.out + captured.err
+    assert "[31m" not in captured.out + captured.err
     assert "[redacted]" in captured.err
     implementers = [
         agent for agent in _agents(tmp_path, tid)
@@ -710,6 +712,7 @@ def test_run_failed_lane_diagnostic_is_redacted_in_note_and_terminal(
     note = str(implementers[0]["note"])
     assert secret not in note
     assert marker not in note
+    assert "[31m" not in note
     assert "[redacted]" in note
 
 

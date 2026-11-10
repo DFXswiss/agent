@@ -18,6 +18,7 @@ import httpx
 
 from .skills import has_skill
 from .store import Store, StoreError, utcnow
+from .text_sanitize import sanitize_terminal_text
 
 _EMAIL = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 _BEARER = re.compile(r"(?i)bearer\s+\S+")
@@ -44,7 +45,6 @@ _SECRET = re.compile(
 _AKIA = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
 _CLASS = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b")
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _ACCESS_LOG = re.compile(
     r"^(?:OPTIONS|GET|POST|PUT|PATCH|DELETE|HEAD|TRACE|CONNECT)\s+\S+\s+\d{3}\b"
 )
@@ -157,7 +157,7 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def strip_ansi(text: str) -> str:
-    return _ANSI.sub("", text)
+    return sanitize_terminal_text(text)
 
 
 def is_incident_line(line: str, cfg: dict[str, Any] | None = None) -> bool:

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import re
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+from .text_sanitize import sanitize_terminal_text
+
 WORKING_RE = re.compile(
     r"Thinking…|Thinking\.\.\.|Waiting for response|"
     r"\[stop\]|Esc:cancel|Preparing [A-Za-z0-9_]+|"
@@ -21,7 +22,7 @@ PERMISSION_HINT = "Tab:next option"
 
 
 def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text)
+    return sanitize_terminal_text(text)
 
 
 def grok_pane_is_working(pane: str) -> bool:

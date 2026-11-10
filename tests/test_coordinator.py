@@ -3667,8 +3667,16 @@ def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
     assert saved["payload"]["coordinator"].get("phase") != "blocked"
 
 
-def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("stored_stage", "stage", "vendor"),
+    [("grok-pr", "review-1", "grok"), ("codex-pr", "review-2", "codex")],
+)
+def test_persisted_legacy_rejected_gate_routes_to_implementer_without_relaunch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_stage: str,
+    stage: str,
+    vendor: str,
 ) -> None:
     """Crash recovery treats a current-head rejection as the durable verdict."""
     from agent_cli.coordinator_lanes import phase_pr_gates
@@ -3701,9 +3709,9 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
         {
             "id": "aa000001-0000-4000-8000-0000000000f2",
             "task_id": tid,
-            "stage": "review-2",
+            "stage": stored_stage,
             "dimension": "logic",
-            "vendor": "codex",
+            "vendor": vendor,
             "verdict": "rejected",
             "evidence": "Logic found a durable defect.",
             "head_sha": head,
@@ -3743,8 +3751,8 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
         task,
         lambda argv: Completed(0, "", ""),
         run,
-        vendor="codex",
-        stage="review-2",
+        vendor=vendor,
+        stage=stage,
     )
 
     assert launched == []
@@ -3758,10 +3766,10 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
     ]
     assert len(reviews) == 1
     assert published == [reviews[0]["id"]]
-    assert "codex logic — rejected" in reviews[0]["payload"]["body"]
+    assert f"{vendor} logic — rejected" in reviews[0]["payload"]["body"]
 
 
-def test_rejection_comment_transient_failure_retries_on_implementation_tick(
+def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_runtime
@@ -3819,7 +3827,7 @@ def test_rejection_comment_transient_failure_retries_on_implementation_tick(
             updated = {
                 key: value for key, value in row.items() if not key.startswith("_")
             }
-            if len(executions) == 1:
+            if len(executions) < 3:
                 updated["execution_status"] = "error"
                 updated["execution_error"] = "temporary GitHub failure"
             else:
@@ -3854,18 +3862,34 @@ def test_rejection_comment_transient_failure_retries_on_implementation_tick(
     ] == [reviews[0]["id"]]
     assert launched == []
 
-    monkeypatch.setattr(
-        coordinator_runtime,
-        "phase_implement",
-        lambda *args, **kwargs: ["implementation continued"],
-    )
-    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+    from agent_cli.coordinator_common import coord, save_task
+
+    def implementation_transition(store_, _worker, task_, *_args):  # noqa: ANN001
+        coord(task_)["phase"] = "inner_review"
+        save_task(store_, task_)
+        return ["implementation moved to inner review"]
+
+    monkeypatch.setattr(coordinator_runtime, "phase_implement", implementation_transition)
+    first_retry = advance_one(store, worker, runner=fake, lane_runner=None)
 
     assert executions == [reviews[0]["id"], reviews[0]["id"]]
+    assert "implementation moved to inner review" in first_retry
+    assert store.row("activity", reviews[0]["id"])["execution_status"] == "pending"
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "inner_review"
+
+    from dataclasses import replace
+
+    monkeypatch.setattr(coordinator_runtime, "pr_state", lambda *_args: "CLOSED")
+    closed_lines = advance_one(
+        store, replace(worker, a38=True), runner=fake, lane_runner=None
+    )
+
+    assert executions == [reviews[0]["id"], reviews[0]["id"], reviews[0]["id"]]
     assert store.row("activity", reviews[0]["id"])["execution_status"] == "done"
     saved = store.row("task", tid)
     assert "rejection_review_activity_ids" not in saved["payload"]["coordinator"]
-    assert "implementation continued" in lines
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert any("PR closed during inner_review" in line for line in closed_lines)
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
 
 

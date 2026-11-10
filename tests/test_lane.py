@@ -624,7 +624,7 @@ def test_finalize_lane_output_redacts_paths_in_glob_and_grep_patterns(
         {"tool": "Glob", "target": "[redacted]", "error": False},
         {"tool": "Glob", "target": "[redacted]", "error": False},
         {"tool": "Glob", "target": "[redacted]", "error": False},
-        {"tool": "Glob", "target": "src/**/*.py", "error": False},
+        {"tool": "Glob", "target": "[redacted]", "error": False},
         {"tool": "Glob", "target": "src/*.py", "error": False},
         {"tool": "Grep", "target": "[redacted]", "error": False},
     )
@@ -770,6 +770,67 @@ def test_tool_target_redacts_embedded_absolute_path_even_inside_worktree(
     assert _tool_target(pattern, str(worktree), "pattern", tool="Grep") == "[redacted]"
 
 
+@pytest.mark.parametrize("prefix", [";", "|", ")", ",", "'", '"', "=", ":"])
+@pytest.mark.parametrize(
+    "fragment", ["../private-repo/config.json", "/opt/private/config.json"]
+)
+def test_tool_target_redacts_traversal_and_absolute_fragments_after_any_prefix(
+    tmp_path: Path, prefix: str, fragment: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert (
+        _tool_target(f"needle{prefix}{fragment}", str(worktree), "pattern", tool="Grep")
+        == "[redacted]"
+    )
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        r"needle;..\private-repo\config.json",
+        r"needle;\.\.\/private-repo/config.json",
+        r"needle;\opt\private\config.json",
+        r"needle;\/opt/private/config.json",
+        "needle;\x1b[31m/opt/private/config.json",
+    ],
+)
+def test_tool_target_redacts_backslash_and_regex_escaped_fragments(
+    tmp_path: Path, target: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    assert _tool_target(target, str(worktree), "pattern", tool="Grep") == "[redacted]"
+
+
+def test_tool_target_only_relativizes_a_plain_whole_worktree_glob(tmp_path: Path) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    (worktree / "src").mkdir(parents=True)
+
+    assert (
+        _tool_target(
+            str(worktree / "src" / "*.py"), str(worktree), "pattern", tool="Glob"
+        )
+        == "src/*.py"
+    )
+    assert (
+        _tool_target(
+            f"{worktree}/src path=/opt/company/private-repo/config.json",
+            str(worktree),
+            "pattern",
+            tool="Grep",
+        )
+        == "[redacted]"
+    )
+
+
 def test_record_lane_run_bounds_and_redacts_both_models() -> None:
     class CaptureStore:
         row: dict | None = None
@@ -805,6 +866,37 @@ def test_record_lane_run_bounds_and_redacts_both_models() -> None:
     assert len(payload["model"]) <= 200
     assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345" not in payload["reported_model"]
     assert len(payload["reported_model"]) <= 200
+
+
+def test_record_lane_run_removes_escape_sequence_before_secret_redaction() -> None:
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, _table: str, _operation: str, _row_id: str, row: dict) -> None:
+            self.row = row
+
+    split_secret = "sk-or-\x1b[31mv1-abcdefghijklmnopqrstuvwxyz012345"
+    store = CaptureStore()
+    record_lane_run(
+        store,
+        session_id=DEFAULT_SESSION,
+        result=LaneResult(
+            role="implementer",
+            vendor="openrouter",
+            model="model",
+            status="complete",
+            argv=["claude"],
+            returncode=0,
+            stdout=f"provider output {split_secret}\nSTATUS: complete",
+            stderr="",
+        ),
+    )
+
+    assert store.row is not None
+    final_text = store.row["payload"]["final_text"]
+    assert "sk-or-" not in final_text
+    assert "[31m" not in final_text
+    assert "[redacted]" in final_text
 
 
 @pytest.mark.parametrize("config_inside_worktree", [False, True])
@@ -2166,6 +2258,7 @@ def test_sanitize_lane_output_strips_escape_sequences_keeps_text() -> None:
     raw = "before\x1b[31mred\x1b[0m after\x07\ttab\nline2"
     cleaned = _sanitize_lane_output(raw)
     assert "\x1b" not in cleaned
+    assert "[31m" not in cleaned and "[0m" not in cleaned
     assert "\x07" not in cleaned
     assert "red" in cleaned and "after" in cleaned
     assert "\ttab\nline2" in cleaned
@@ -2175,6 +2268,7 @@ def test_sanitize_lane_output_strips_c1_control_bytes() -> None:
     raw = "before\x9b2Jafter"
     cleaned = _sanitize_lane_output(raw)
     assert "\x9b" not in cleaned
+    assert "2J" not in cleaned
     assert "before" in cleaned and "after" in cleaned
 
 
@@ -2183,8 +2277,14 @@ def test_sanitize_lane_output_strips_exact_range_boundaries() -> None:
     cleaned = _sanitize_lane_output(stripped)
     assert cleaned == ""
 
-    kept = "\t\n\r"
+    kept = "\t\n"
     assert _sanitize_lane_output(kept) == kept
+    assert _sanitize_lane_output("\r") == ""
+
+
+def test_sanitize_lane_output_removes_complete_osc_and_string_sequences() -> None:
+    raw = "a\x1b]0;private title\x07b\x1bPprivate payload\x1b\\c"
+    assert _sanitize_lane_output(raw) == "abc"
 
 
 def test_cli_dry_run_implementer_grok(

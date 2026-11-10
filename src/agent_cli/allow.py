@@ -10,10 +10,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .gate_order import latest_ordered_gate_rows
 from .model_slots import (
     canonical_checklist,
     canonical_key,
-    canonical_stage,
     implementer_from_snapshot,
     models_from_snapshot,
 )
@@ -227,14 +227,7 @@ def _tid(task: dict[str, Any]) -> str:
 
 
 def _latest_gates(gates: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-    out: dict[tuple[str, str], dict[str, Any]] = {}
-    for g in gates:
-        stage = g.get("stage")
-        dim = g.get("dimension")
-        if stage is None or dim is None:
-            continue
-        out[(canonical_stage(str(stage)), str(dim))] = g
-    return out
+    return latest_ordered_gate_rows(gates)
 
 
 def _latest_checks_by_name(checks: list[dict[str, Any]]) -> dict[str, str]:
