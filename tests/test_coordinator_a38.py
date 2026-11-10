@@ -22,6 +22,12 @@ HEAD = "a" * 40
 TASK_ID = "11111111-1111-4111-8111-111111111111"
 
 
+def test_dead_pr_open_unmerged_wrapper_is_removed() -> None:
+    from agent_cli import coordinator_a38
+
+    assert not hasattr(coordinator_a38, "pr_open_unmerged")
+
+
 def second_payload(*, defects: int = 0, blocks_merge: bool = False) -> dict:
     return {
         "kind": "a38.second-review/v1",

@@ -1348,6 +1348,7 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
         "agent_cli.coordinator_github._fetch_pr_json",
         lambda *_args: {
             "headRefOid": head,
+            "baseRefOid": base,
             "baseRefName": "main",
             "author": {"login": "worker-bot"},
             "isDraft": True,

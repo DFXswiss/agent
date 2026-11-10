@@ -352,9 +352,14 @@ for worker in workers.values():
    An absent `statusCheckRollup` is normalized to `[]` and inventory is still
    inspected — `action_required` (and actual failures) may be present only in
    inventory; absent rollup prevents green but must not hide those facts.
-   `action_required` is an external authorization blocker (not routed to the
-   implementer; `resume_phase` stays `ci`; `question_activity_id` is pinned so
-   an authorized reply resumes CI observation). Hard protocol faults
+   For an ordinary worker, `action_required` is an external authorization
+   blocker (not routed to the implementer; `resume_phase` stays `ci`;
+   `question_activity_id` is pinned so an authorized reply resumes CI
+   observation). For an A38 worker it is a retryable guard-owned authorization
+   state: the coordinator stays in `ci`, creates no reply gate, and routes
+   nothing to the implementer. A38 still treats `skipped` and `neutral` as not
+   green in this observer; report equivalence does not relax them here. Hard
+   protocol faults
    (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
    pagination truncation — typed `CiObservationProtocolError` /
    `CiInventoryProtocolError`) enter recoverable blocked + `resume_phase=ci` +
@@ -693,10 +698,24 @@ observation. Pending requests are re-pinged once per configured timeout and are
 never skipped. A pull request closed while the task awaits the second review
 stops the wait with a blocker; no further second-review comments or pings are
 sent for it.
+The originally verified first-review comment payload is immutable for its
+head. A same-head no-change implementation pass reuses that exact comment even
+when task summaries changed, and writes only the next deterministic reviewer
+ping occurrence. Reconciliation validates the full saved comment and ping
+payloads before treating either outside effect as complete.
 
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
 `await_ready` → `await_merge` → `done`.
+The tests phase reads the authoritative pull-request base SHA and one
+fail-closed file inventory. Its report publication identity includes the head,
+base, and active policy revision, so a base move requires new evidence and a
+new comment. Independently confirmed markdown-only and guard-docs inventories
+record an exact-head author-report waiver, skip local report execution,
+verification, and publication, and continue to both required review comments.
+Coordinator A38 mode does not implement policy migrations; a changed
+`.github/a38.json` fails loudly instead of publishing evidence against the old
+base policy.
 The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
 the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;

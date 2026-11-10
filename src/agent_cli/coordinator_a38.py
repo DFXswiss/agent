@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5, uuid4
 
-from .a38_guard import status_context_enforce
+from .a38_guard import POLICY_PATH, status_context_enforce
 from .a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
@@ -38,6 +38,7 @@ from .coordinator_common import (
     Runner,
     as_int,
     coord,
+    gh_list,
     gh_json,
     is_sha,
     redact,
@@ -66,6 +67,11 @@ from .coordinator_lanes import (
 )
 from .github_act import ACTIVITY_MARKER
 from .local_ci import LocalCiError, parse_comment
+from .readme_only import (
+    GITHUB_PR_FILES_CAP,
+    github_file_paths,
+    markdown_and_guard_docs_only,
+)
 from .store import Store, utcnow
 
 PROVIDER_DISPLAY = {
@@ -205,7 +211,7 @@ def _record_local_check(
     *,
     name: str,
     command: str,
-    passed: bool,
+    passed: bool | None,
     output: str,
     head: str,
 ) -> None:
@@ -219,7 +225,7 @@ def _record_local_check(
             "task_id": task["id"],
             "name": name,
             "command": command,
-            "result": "pass" if passed else "fail",
+            "result": "skip" if passed is None else ("pass" if passed else "fail"),
             "output": redact(output),
             "ran_at": utcnow(),
             "head_sha": head,
@@ -281,6 +287,70 @@ def _own_report_activity(
     )
 
 
+def _pull_a38_context(
+    api: Runner,
+    *,
+    repo: str,
+    number: int,
+    expected_head: str,
+    expected_base: str,
+) -> tuple[str, list[str]]:
+    """Return the authoritative PR base SHA and one fail-closed file inventory."""
+    view = gh_json(
+        api,
+        [
+            "gh",
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            repo,
+            "--json",
+            "headRefOid,baseRefOid,baseRefName",
+        ],
+    )
+    if not isinstance(view, dict):
+        raise CoordinatorError("A38 pull request metadata is invalid")
+    head = str(view.get("headRefOid") or "").lower()
+    base_sha = str(view.get("baseRefOid") or "").lower()
+    if head != expected_head:
+        raise CoordinatorError("A38 pull request head differs from the clean signed head")
+    if not is_sha(base_sha):
+        raise CoordinatorError("A38 pull request base revision is not a 40-hex SHA")
+    if view.get("baseRefName") != expected_base:
+        raise CoordinatorError("A38 pull request base branch differs from coordinator configuration")
+    entries = gh_list(
+        api,
+        [
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{repo}/pulls/{number}/files?per_page=100",
+        ],
+    )
+    # GitHub caps this endpoint without an explicit truncation marker. Reaching
+    # that cap is therefore not a complete inventory and cannot grant a waiver.
+    if len(entries) >= GITHUB_PR_FILES_CAP:
+        raise CoordinatorError("A38 pull request file inventory is incomplete")
+    paths = github_file_paths(entries)
+    if paths is None:
+        raise CoordinatorError("A38 pull request file inventory is invalid")
+    return base_sha, paths
+
+
+def _report_activity_id(
+    task_id: str, *, head: str, base_sha: str, policy_revision: str
+) -> str:
+    """Bind a report publication intent to every revision the report covers."""
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            f"coordinator-a38-report:{task_id}:{head}:{base_sha}:{policy_revision}",
+        )
+    )
+
+
 def phase_tests(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
@@ -294,7 +364,93 @@ def phase_tests(
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head
     a38 = _a38_state(c)
-    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-report:{task['id']}:{head}"))
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError("A38 measurement requires a pull request number")
+    api = scoped(store, worker.session_id, runner)
+    base_sha, changed_paths = _pull_a38_context(
+        api,
+        repo=cfg.repo,
+        number=number,
+        expected_head=head,
+        expected_base=cfg.base,
+    )
+    # Policy migration is intentionally not implemented by this coordinator.
+    # Never publish evidence against the obsolete base policy when the manifest
+    # itself changed; the caller receives a loud, stable unsupported boundary.
+    if POLICY_PATH in changed_paths:
+        raise CoordinatorError(
+            "A38 policy migrations are not supported by coordinator A38 mode"
+        )
+    policy_revision = base_sha
+    c["base_sha"] = base_sha
+    a38["base_sha"] = base_sha
+    a38["policy_revision"] = policy_revision
+    markdown_only, guard_docs_only = markdown_and_guard_docs_only(changed_paths)
+    waiver_reason = (
+        "markdown-only change set"
+        if markdown_only
+        else "guard-docs change set" if guard_docs_only else ""
+    )
+    if waiver_reason:
+        a38.pop("report", None)
+        a38["report_waiver"] = {
+            "head": head,
+            "base_sha": base_sha,
+            "policy_revision": policy_revision,
+            "reason": waiver_reason,
+            "observed_at": utcnow(),
+        }
+        _record_local_check(
+            store,
+            task,
+            name="a38",
+            command="A38 author report waiver",
+            passed=None,
+            output=waiver_reason,
+            head=head,
+        )
+        evidence = c.setdefault("evidence", {})
+        if isinstance(evidence, dict):
+            evidence.pop("tests_pass", None)
+            evidence["tests_waiver"] = waiver_reason
+            evidence["tests_head"] = head
+        set_checklist(
+            store,
+            task,
+            "local_check_pass",
+            "ja",
+            f"A38 waiver on {head}: {waiver_reason}",
+            source="script",
+        )
+        draft_lines = ensure_draft(store, worker, task, runner)
+        if str(coord(task).get("head_sha") or "") != head:
+            raise CoordinatorError(
+                "published pull request head differs from the A38 waiver head"
+            )
+        if c.get("pr_number"):
+            set_checklist(
+                store,
+                task,
+                "pushed",
+                "ja",
+                f"draft PR {c.get('pr_number')} head {head}",
+                source="script",
+            )
+        c["phase"] = "pr_gates_grok"
+        task["state"] = "pr-review"
+        save_task(store, task)
+        return [f"A38 report waived on {head[:7]} ({waiver_reason})", *draft_lines]
+    a38.pop("report_waiver", None)
+    evidence = c.get("evidence")
+    if isinstance(evidence, dict):
+        evidence.pop("tests_waiver", None)
+    activity_id = _report_activity_id(
+        str(task["id"]),
+        head=head,
+        base_sha=base_sha,
+        policy_revision=policy_revision,
+    )
     activity = store.row("activity", activity_id)
     if isinstance(activity, dict) and not _own_report_activity(store, worker, task, activity, head):
         raise CoordinatorError("A38 report activity id is held by a row this worker did not write")
@@ -329,6 +485,8 @@ def phase_tests(
             raise CoordinatorError("A38 report comment was not verified published")
         a38["report"] = {
             "head": head,
+            "base_sha": base_sha,
+            "policy_revision": policy_revision,
             "activity_id": activity_id,
             "id": result.get("id"),
             "url": result["url"],
@@ -395,12 +553,6 @@ def phase_tests(
         f"+refs/heads/{cfg.base}:refs/remotes/origin/{cfg.base}",
     )
     require_git_ok(fetched, "fetch A38 base")
-    base_result = git(store, worker, runner, worktree, "rev-parse", f"refs/remotes/origin/{cfg.base}")
-    require_git_ok(base_result, "resolve A38 base")
-    base_sha = (base_result.stdout or "").strip().lower()
-    if not is_sha(base_sha):
-        raise CoordinatorError("A38 base revision is not a 40-hex SHA")
-    a38["base_sha"] = base_sha
     policy_result = git(store, worker, runner, worktree, "show", f"{base_sha}:.github/a38.json")
     require_git_ok(policy_result, "load A38 policy from base")
 
@@ -418,7 +570,6 @@ def phase_tests(
     logs_dir = run_dir / "logs"
     policy_path.write_text(policy_result.stdout or "", encoding="utf-8")
 
-    api = scoped(store, worker.session_id, runner)
     visibility = gh_json(api, ["gh", "api", f"repos/{cfg.repo}", "--jq", ".private"])
     if not isinstance(visibility, bool):
         raise CoordinatorError("target repository visibility lookup did not return a boolean")
@@ -539,6 +690,8 @@ def phase_tests(
         raise CoordinatorError("A38 report comment URL was not verified")
     a38["report"] = {
         "head": head,
+        "base_sha": base_sha,
+        "policy_revision": policy_revision,
         "activity_id": activity_id,
         "id": result.get("id"),
         "url": result.get("url"),
@@ -801,19 +954,36 @@ def phase_first_comment(
         return ["head changed before first A38 review comment"]
     a38 = _a38_state(c)
     existing = a38.get("first_comment")
-    try:
-        body, passes = _first_comment_body(
-            store, worker, task, runner, head=head
-        )
-    except CoordinatorError as exc:
-        if str(exc).startswith("first review ") and str(exc).endswith(
-            " prompt evidence missing"
-        ):
-            c["phase"] = "pr_gates_grok"
-            save_task(store, task)
-            return [f"{exc}; re-running gate"]
-        raise
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
+    same_head_intent = (
+        dict(existing)
+        if isinstance(existing, dict) and existing.get("head") == head
+        else {}
+    )
+    stored_body = same_head_intent.get("body")
+    stored_passes = same_head_intent.get("passes")
+    if isinstance(stored_body, str) and stored_body and type(stored_passes) is int and stored_passes >= 1:
+        body, passes = stored_body, stored_passes
+    else:
+        try:
+            body, passes = _first_comment_body(
+                store, worker, task, runner, head=head
+            )
+        except CoordinatorError as exc:
+            if str(exc).startswith("first review ") and str(exc).endswith(
+                " prompt evidence missing"
+            ):
+                c["phase"] = "pr_gates_grok"
+                save_task(store, task)
+                return [f"{exc}; re-running gate"]
+            raise
+    completed_result = (
+        _first_comment_result_verified(
+            store, worker, task, same_head_intent, head
+        )
+        if isinstance(same_head_intent.get("activity_id"), str)
+        else None
+    )
     request_key = _second_review_request_key(c, head, passes)
     _requested, request_plan = _prepare_second_review_request(
         store,
@@ -822,14 +992,12 @@ def phase_first_comment(
         force=head_review_blocks(c, head),
         request_key=request_key,
     )
-    comment_intent = (
-        dict(existing)
-        if isinstance(existing, dict) and existing.get("head") == head
-        else {}
-    )
+    comment_intent = same_head_intent
     comment_intent.update(
         head=head,
         activity_id=activity_id,
+        body=body,
+        passes=passes,
         request_key=request_key,
         request_occurrence=int(request_plan["occurrence"]),
     )
@@ -837,12 +1005,10 @@ def phase_first_comment(
     # Save both outside-effect intents before either the GitHub comment or a ping
     # is sent. Their deterministic ids make the incomplete steps resumable.
     save_task(store, task)
-    existing_row = store.row("activity", activity_id)
-    already_posted = (
-        isinstance(existing_row, dict)
-        and existing_row.get("execution_status") == "done"
+    already_posted = completed_result is not None
+    result = completed_result or _post_comment(
+        store, worker, task, runner, activity_id=activity_id, body=body
     )
-    result = _post_comment(store, worker, task, runner, activity_id=activity_id, body=body)
     comment_intent.update(id=result.get("id"), url=result.get("url"))
     # Checkpoint the external comment result as soon as the executor has verified it.
     save_task(store, task)
@@ -1024,16 +1190,7 @@ def _write_second_review_request_pings(
     occurrence = int(plan["occurrence"])
     for login in plan["recipients"]:
         pid = _ping_id(str(task["id"]), head, login, occurrence)
-        payload = {
-            "id": pid,
-            "from_login": plan["sender"],
-            "to_login": login,
-            "kind": "review-request",
-            "task_id": task["id"],
-            "body": plan["note"],
-            "created_at": plan["created_at"],
-            "acked_at": None,
-        }
+        payload = _second_review_ping_payload(task, plan, login=login, ping_id=pid)
         existing = store.row("ping", pid)
         if existing is not None:
             stable_fields = {
@@ -1050,6 +1207,25 @@ def _write_second_review_request_pings(
             pid,
             payload,
         )
+
+
+def _second_review_ping_payload(
+    task: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    *,
+    login: str,
+    ping_id: str,
+) -> dict[str, Any]:
+    return {
+        "id": ping_id,
+        "from_login": plan["sender"],
+        "to_login": login,
+        "kind": "review-request",
+        "task_id": task["id"],
+        "body": plan["note"],
+        "created_at": plan["created_at"],
+        "acked_at": None,
+    }
 
 
 def _stored_second_review_request_plan(
@@ -1107,21 +1283,51 @@ def _stored_second_review_request_plan(
     return plan
 
 
-def _first_comment_result_verified(store: Store, first: Mapping[str, Any]) -> bool:
-    """A saved comment intent is complete only after the local executor verified it."""
-    activity_id = first.get("activity_id")
-    if not isinstance(activity_id, str) or not activity_id:
-        return False
-    row = store.row("activity", activity_id)
-    result = row.get("result") if isinstance(row, dict) else None
-    return (
-        isinstance(row, dict)
-        and row.get("_origin_device_id") == store.device_id()
-        and row.get("execution_status") == "done"
-        and isinstance(result, dict)
-        and isinstance(result.get("url"), str)
-        and bool(result["url"])
+def _first_comment_result_verified(
+    store: Store,
+    worker: WorkerConfig,
+    task: Mapping[str, Any],
+    first: Mapping[str, Any],
+    head: str,
+) -> dict[str, Any] | None:
+    """Return the exact verified comment result; reject any occupied mismatch."""
+    expected_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}")
     )
+    activity_id = first.get("activity_id")
+    if activity_id != expected_id:
+        raise CoordinatorError("saved A38 first comment activity id is invalid")
+    body = first.get("body")
+    number = as_int(coord(dict(task)).get("pr_number") or task.get("ref"))
+    if not isinstance(body, str) or not body or number is None:
+        raise CoordinatorError("saved A38 first comment payload is invalid")
+    payload = {
+        "repo": target_repo(dict(task)),
+        "number": number,
+        "body": body,
+        "target": "pr",
+    }
+    row = store.row("activity", activity_id)
+    if row is None:
+        return None
+    if row.get("_origin_device_id") != store.device_id():
+        raise CoordinatorError(
+            "saved A38 first comment activity id is held by a row this worker did not write"
+        )
+    if not _own_comment_activity(store, worker, row, payload):
+        raise CoordinatorError(
+            "saved A38 first comment activity is foreign or mismatched"
+        )
+    if row.get("execution_status") != "done":
+        return None
+    result = row.get("result") if isinstance(row, dict) else None
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("url"), str)
+        or not result["url"]
+    ):
+        raise CoordinatorError("saved A38 first comment result is invalid")
+    return result
 
 
 def _saved_second_review_request_needs_reconcile(
@@ -1144,7 +1350,13 @@ def _saved_second_review_request_needs_reconcile(
     # ``_stored_second_review_request_plan`` below.
     if not isinstance(saved_plan, dict):
         return False
-    if saved_plan.get("head") != head or "occurrence" not in saved_plan:
+    if (
+        saved_plan.get("head") != head
+        or "occurrence" not in saved_plan
+        or not isinstance(saved_plan.get("sender"), str)
+        or not isinstance(saved_plan.get("note"), str)
+        or not isinstance(saved_plan.get("created_at"), str)
+    ):
         raise CoordinatorError("saved second review request plan is invalid")
     occurrence = int(saved_plan.get("occurrence") or 0)
     recipients = saved_plan.get("recipients")
@@ -1155,16 +1367,11 @@ def _saved_second_review_request_needs_reconcile(
     for login in recipients:
         ping_id = _ping_id(str(task["id"]), head, login, occurrence)
         row = store.row("ping", ping_id)
-        if not isinstance(row, dict) or not _own_row_matches(
-            store,
-            row,
-            {
-                "id": ping_id,
-                "to_login": login,
-                "kind": "review-request",
-                "task_id": task["id"],
-            },
-        ):
+        payload = _second_review_ping_payload(
+            task, saved_plan, login=login, ping_id=ping_id
+        )
+        stable_fields = {key: value for key, value in payload.items() if key != "acked_at"}
+        if not isinstance(row, dict) or not _own_row_matches(store, row, stable_fields):
             return True
     return False
 
@@ -1195,7 +1402,12 @@ def reconcile_a38_publication_intents(
         and isinstance(first.get("activity_id"), str)
         and bool(first.get("activity_id"))
     )
-    first_pending = first_saved and not _first_comment_result_verified(store, first)
+    first_result = (
+        _first_comment_result_verified(store, worker, task, first, head)
+        if first_saved
+        else None
+    )
+    first_pending = first_saved and first_result is None
     pings_pending = (
         isinstance(second, dict)
         and second.get("head") == head
@@ -1215,14 +1427,10 @@ def reconcile_a38_publication_intents(
 
     lines: list[str] = []
     if first_pending:
-        expected_id = str(
-            uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}")
-        )
-        if first["activity_id"] != expected_id:
-            raise CoordinatorError("saved A38 first comment activity id is invalid")
-        body, _passes = _first_comment_body(
-            store, worker, task, runner, head=head
-        )
+        expected_id = str(first["activity_id"])
+        body = first.get("body")
+        if not isinstance(body, str) or not body:
+            raise CoordinatorError("saved A38 first comment payload is invalid")
         result = _post_comment(
             store,
             worker,
@@ -1353,14 +1561,6 @@ def pr_state(
         return None
     state = str(view.get("state") or "").upper() if isinstance(view, dict) else ""
     return state if state in ("OPEN", "CLOSED", "MERGED") else None
-
-
-def pr_open_unmerged(
-    store: Store, worker: WorkerConfig, task: Mapping[str, Any], runner: Runner
-) -> bool | None:
-    """Return whether the task's pull request is still open, or None when unreadable."""
-    state = pr_state(store, worker, task, runner)
-    return None if state is None else state == "OPEN"
 
 
 def public_prompt(prompt: str, worker: WorkerConfig, task: Mapping[str, Any]) -> str:
@@ -1637,10 +1837,14 @@ def _route_newest_blocking_review(
         return None
     c["findings"] = block.get("findings") or ""
     c.pop("second_review_block", None)
-    # Keep the review history of this head: a merge during the implementer's work must
-    # still be decided by it. A new head drops it with the rest of the evidence.
+    # Keep the already-published first comment and review history of this head.
+    # A no-change implementation pass must reuse the immutable comment payload;
+    # a new head drops both with the rest of the evidence.
+    first_comment = _a38_state(c).get("first_comment")
     second_review = _a38_state(c).get("second_review")
     invalidate_head_evidence(c, "")
+    if isinstance(first_comment, dict):
+        _a38_state(c)["first_comment"] = first_comment
     if isinstance(second_review, dict):
         _a38_state(c)["second_review"] = second_review
     c["phase"] = "implement"
@@ -1713,7 +1917,30 @@ def _checklist_maps(store: Store, task_id: str) -> tuple[dict[str, str], dict[st
 def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> None:
     c = coord(task)
     a38 = _a38_state(c)
-    for key in ("report", "first_comment", "second_review"):
+    base_sha = str(c.get("base_sha") or "")
+    report = a38.get("report")
+    waiver = a38.get("report_waiver")
+    report_bound = (
+        is_sha(base_sha)
+        and isinstance(report, dict)
+        and report.get("head") == head
+        and report.get("base_sha") == base_sha
+        and report.get("policy_revision") == base_sha
+    )
+    waiver_bound = (
+        is_sha(base_sha)
+        and isinstance(waiver, dict)
+        and waiver.get("head") == head
+        and waiver.get("base_sha") == base_sha
+        and waiver.get("policy_revision") == base_sha
+        and waiver.get("reason") in {
+            "markdown-only change set",
+            "guard-docs change set",
+        }
+    )
+    if report_bound == waiver_bound:
+        raise CoordinatorError(f"A38 report or waiver evidence is missing on {head[:7]}")
+    for key in ("first_comment", "second_review"):
         value = a38.get(key)
         if not isinstance(value, dict) or value.get("head") != head:
             raise CoordinatorError(f"A38 {key} evidence is missing on {head[:7]}")
@@ -1727,6 +1954,39 @@ def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> Non
     }
     if not external_second_review_ok(snapshot, statuses, evidence):
         raise CoordinatorError("external second review checklist evidence is missing")
+
+
+def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
+    """Drop report/test evidence whose intent was bound to the previous PR base."""
+    if not is_sha(base_sha):
+        raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
+    evidence = c.get("evidence")
+    if isinstance(evidence, dict):
+        evidence.pop("tests_pass", None)
+        evidence.pop("tests_waiver", None)
+        evidence.pop("tests_head", None)
+    a38 = _a38_state(c)
+    for key in ("report", "report_waiver", "guard_status"):
+        a38.pop(key, None)
+    a38.pop("policy_revision", None)
+    c["base_sha"] = base_sha
+
+
+def local_test_gate_satisfied(task: Mapping[str, Any], head: str) -> bool:
+    """A38 local gate is an executed pass or an exact-head inventory waiver."""
+    c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
+    evidence = c.get("evidence") if isinstance(c.get("evidence"), dict) else {}
+    if evidence.get("tests_pass") is True and evidence.get("tests_head") == head:
+        return True
+    waiver = _a38_state(c).get("report_waiver")
+    return (
+        evidence.get("tests_head") == head
+        and isinstance(waiver, dict)
+        and waiver.get("head") == head
+        and evidence.get("tests_waiver") == waiver.get("reason")
+        and waiver.get("reason")
+        in {"markdown-only change set", "guard-docs change set"}
+    )
 
 
 def phase_await_ready(
@@ -1751,7 +2011,7 @@ def phase_await_ready(
                 "--repo",
                 target_repo(task),
                 "--json",
-                "isDraft,headRefOid,state",
+                "isDraft,headRefOid,baseRefOid,state",
             ],
         )
     except CoordinatorError:
@@ -1765,6 +2025,13 @@ def phase_await_ready(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting guard Ready; invalidating evidence"]
+    observed_base = str(view.get("baseRefOid") or "").lower() if isinstance(view, dict) else ""
+    saved_base = str(c.get("base_sha") or "").lower()
+    if is_sha(saved_base) and observed_base != saved_base:
+        invalidate_base_evidence(c, observed_base)
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]
     pr_state = str(view.get("state") or "").upper()
     if pr_state in ("MERGED", "CLOSED"):
         # A human may merge (or close) before this poll sees Ready; await_merge
