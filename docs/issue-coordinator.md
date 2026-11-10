@@ -14,7 +14,7 @@ and bounded model lanes on the execution device. It never merges.
 | CLI / daemon | `agent coordinate --session ID` advances one worker; `--follow` is the script loop. The daemon starts explicitly configured workers on startup. Changes to existing workers are read each tick; changes to the daemon worker set require restart. Legacy assignment dispatch and `supervise` refuse these sessions. |
 | Operator accounts, roles, `check_argv`, `readiness_argv`, workspace roots | **Never installed automatically.** Operators add them explicitly. |
 | End-to-end deployment on a named host | Not claimed. Deployment hostnames stay out of this public repository. |
-| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude allows only the read tools plus `acceptEdits` (edits inside the worktree only), disallows Bash, Agent, Task and the web, and runs with `--setting-sources user` and `--strict-mcp-config`; Codex is refused as slot `first`. That is process argv hardening only. |
+| Universal sandbox / forced model isolation | **Not claimed.** The implementer argv depends on the first-slot provider: Grok denies Bash/subagents/web-search; Claude and OpenRouter use Claude Code restricted mode with only worktree file tools, disabled slash commands and strict MCP configuration; Codex is refused as slot `first`. That is process argv hardening only. |
 
 Distinguish a requirement (DESIGN §19.7), an implemented module, and a verified
 deployment. This document does not invent evidence that a device is running the
@@ -27,15 +27,98 @@ null/empty `workers` enables no worker. Operator-supplied worker keys are
 existing session IDs, bound explicitly in `github-accounts.json` and
 `ai-accounts.json`; the coordinator does not select accounts or roles for them.
 
-Each configured worker explicitly names `review_session`, `workspace_root`,
-`repositories`, `reply_logins`, `poll_seconds`, `lane_timeout`, and
-`check_timeout`. Each repository entry names its `base`, `publication_repo`,
+Each configured worker explicitly names `workspace_root`, `reply_logins`,
+`poll_seconds`, `lane_timeout`, and `check_timeout`, plus at least one of
+`repositories` or `repository_owners`.
+Non-A38 workers also name `review_session`; A38 workers use the external-review
+configuration below. Each repository entry names its `base`, `publication_repo`,
 `check_argv`, and `readiness_argv`. The two argv arrays belong to trusted
 device configuration, never issue text or model output. They run the target
 repository's required tests and additional readiness validation;
 repository-specific policy stays outside the core. The publication repository
 can equal the target repository; a different repository requires operator
 authorization for that publication route.
+
+For an A38 worker, `check_timeout` must be long enough for the complete A38
+suite. The same existing worker timeout bounds the optional trusted precheck
+and each bounded A38 command; there is no separate A38 timeout setting.
+
+`repository_owners` is a distinct, case-insensitive list of GitHub organization
+or user logins. One paginated GitHub issue search per tick discovers assigned
+open issues under those owners. An explicit `repositories` entry wins for the
+same repository. At acceptance, an owner-scoped task pins the repository's
+current default branch and its publication route: direct push when the worker
+has push permission, otherwise `<worker-login>/<repository-name>`. A missing
+fork is requested once per persisted request (a crash before the request is
+recorded repeats it). If it is not yet visible, acceptance stays in the same
+phase and the worker's `poll_seconds` loop retries; after 300 seconds the
+coordinator publishes a blocker. An existing fork with another parent is
+refused. Outside A38 mode,
+`owner_check_argv` is required and nonempty for owner-scoped repositories; A38
+mode alone permits `[]`. `owner_readiness_argv` is required outside A38 mode.
+Both stay in the local worker config: the task stores only repository, base and
+publication target, and the execution binding pins the commands' hash.
+In A38 mode, an absent owner readiness argv may set `contributing_ok` only when
+the latest recorded first-slot quality gate (`review-1` / `quality`) is approved
+on the exact current head; it then records `conformity-a approved at <head>` and
+closes the deviation keys only from the accepted hub `assignment.created` row.
+That row must contain the exact inner statement
+`deviation: {"declared": false, "stated_by": "<same actor>"}`. Both deviation
+keys use source `human` and evidence `hub mandate <row id>: <actor> stated
+deviation declared=false`. A missing, true, differently attributed, or
+otherwise malformed statement closes neither deviation key and publishes
+`mandate has no explicit deviation statement; issue the assignment through the
+hub with "no deviation authorized"`. No grant is ever inferred; a declared
+deviation still needs an explicit grant through `owner_readiness_argv`.
+
+`require_hub_assignment` defaults to `false`. When true, acceptance also makes
+one device-authenticated `/sync/query` for `assignment.created`. `agent assign`
+sends the repository spelling exactly as supplied and requires
+`--no-deviation`; the request carries `deviation: {"declared": false}`. The hub
+records the actor as `stated_by` in the mandate while canonicalizing the
+repository spelling. The coordinator therefore queries `payload.issue_key`
+with the configured
+`<repository>#<number>` spelling, its case-folded form, and GitHub's canonical
+`<owner>/<name>#<number>` spelling from the issue or assignment-event response
+(deduplicated when equal), then compares the returned repository
+case-insensitively. The compatible hub adds the canonical issue key to every
+`assignment.created` payload. The coordinator accepts only a row for the issue
+and agent with all of these properties: the top-level query-row `github_login`
+equals the GitHub assignment-event actor and is listed in `reply_logins`;
+`origin_device_id` is
+exactly `web:<that envelope github_login>`; and the inner assignment payload's
+`actor` is case-insensitively equal to that envelope login and its `issue_key`
+matches one of the queried issue spellings. Thus a device-origin row is rejected
+even if the rest of its payload matches. This property requires
+the hub to refuse device ids and pushed origins beginning with `web:`; only the
+hub may create that named website origin. The hub's
+`replica_out` query shape exposes `github_login` and `origin_device_id` at the
+row top level; it does not use the `_github_login` copy produced by other hub
+state endpoints.
+
+The owner-scoped A38 default without `owner_readiness_argv` always performs
+that hub-mandate verification even when `require_hub_assignment` is false.
+Without a matching hub row it cannot reach implementation; after the normal
+visibility grace it publishes the explicit-deviation blocker above. A matching
+row without the exact no-deviation statement blocks acceptance at once with the
+same blocker, drops the pinned mandate and resumes at `accept`, so the next
+query picks up a corrected hub assignment; readiness checks the statement again.
+
+A definite mismatch stays a same-phase retry while the GitHub `assignment_at`
+is younger than 120 seconds. After that grace period it publishes `assignment
+was not issued through the hub`, or the explicit-deviation blocker above for
+the owner A38 default, blocks acceptance, and pins the issue reply checkpoint
+without failing the task or starting a model. An unpaired device,
+hub HTTP 400/401/403, or a query response with at least 500 rows is likewise a
+configuration blocker published once with a reply checkpoint. Other hub
+transport/protocol failures keep phase `accept`, retry,
+and publish a blocker at most once per hour according to
+`hub_assignment_retry_published_at`. The cap remains a defensive truncation
+check rather than a definite mismatch. Both blockers post fixed texts, and the
+task records only a fixed `hub_assignment_retry` class; the hub error detail,
+which can name the hub host, appears only in the worker's local output line.
+An A38 worker takes its second review from people, so do not point one at a
+repository whose own rules require model slot `second`, such as this one.
 
 Example device configuration (illustrative values, **not installation defaults**):
 
@@ -53,6 +136,10 @@ Example device configuration (illustrative values, **not installation defaults**
           "readiness_argv": ["/absolute/operator/readiness"]
         }
       },
+      "repository_owners": ["example"],
+      "owner_check_argv": ["/absolute/operator/owner-checks"],
+      "owner_readiness_argv": ["/absolute/operator/owner-readiness"],
+      "require_hub_assignment": true,
       "reply_logins": ["AuthorizedHuman"],
       "poll_seconds": 30,
       "lane_timeout": 1800,
@@ -95,9 +182,11 @@ for worker in workers.values():
   workers cannot open duplicate tasks/PRs for the same issue.
 - Before accepting work, `tick` preflights: worker session locally
   owned/active with skills `spine`, `review-loop`, `pr-review`; formal
-  `review_session` owned/active with `pr-review`; all required AI lane slots
-  present for the worker session; worker and review GitHub accounts configured,
-  authenticated, and bound to **different** logins; worker account has git
+  `review_session` owned/active with `pr-review` for non-A38 workers; all required AI lane slots
+  present for the worker session. Non-A38 workers require configured,
+  authenticated worker and review GitHub accounts bound to **different** logins.
+  A38 workers require the worker account plus `second_reviewers` that exclude
+  its login. The worker account has git
   identity for signed commits. Missing or mismatched profiles start **no**
   provider. A missing `models` block reuses the shared error and is reported as
   `preflight blocked: models is not configured: the device's ai-accounts.json
@@ -107,7 +196,8 @@ for worker in workers.values():
 - Required AI slots, with `<first>` / `<second>` the providers of the device's
   model slots (`ai-accounts.json` → `models`): `<first>:implementer`,
   `<first>:reviewer`, `<first>:pr-reviewer-quality`, `<first>:pr-reviewer-logic`,
-  `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic`. The coordinator
+  plus `<second>:pr-reviewer-quality`, `<second>:pr-reviewer-logic` when the
+  second slot is not external. The coordinator
   pins `models` on each task it accepts and refuses `models.first = codex`,
   because a codex implementer can run commands. It requires `implementer` to
   be absent or equal to `models.first`; a separate implementer is refused at
@@ -123,7 +213,9 @@ for worker in workers.values():
   lane starter starts the coordinator on the external lane host. The Agent
   coordinator does not SSH, mirror, or copy a lane from a work device.
 - Checkpoints live in `task.payload['coordinator']` and activity `result`
-  fields. There is **no** second hub state machine and **no** new store table.
+  fields. An accepted A38 task records `coordinator.a38.enabled=true`; external
+  second-review evidence is refused without that marker. There is **no** second
+  hub state machine and **no** new store table.
 - `runner` executes `gh`/`git` trusted calls and returns
   `Completed(returncode, stdout, stderr)`. GitHub-scoped calls go through
   `Account.runner` (explicit `GH_CONFIG_DIR`), never an ambient login.
@@ -132,9 +224,12 @@ for worker in workers.values():
   timeout), preserving stdin and cwd. External `timeout(1)` is **not** used
   (absent on stock macOS). Tests inject fakes. The implementer argv
   is hardened per first-slot provider: Grok with `--deny Bash`,
-  `--no-subagents`, and `--disable-web-search`; Claude with the read tools and
-  `acceptEdits` (edits inside the worktree only), Bash, Agent, Task and the web disallowed, `--setting-sources user` and
-  `--strict-mcp-config`; Codex is refused as slot `first`. This is process argv
+  `--no-subagents`, and `--disable-web-search`; Claude and OpenRouter through
+  Claude Code `--restricted`, `--strict-mcp-config`, disabled slash commands,
+  and only `Read,Grep,Glob,Edit,Write` for the worktree. Read-only review lanes
+  get only `Read,Grep,Glob` plus the coordinator control directory as an
+  explicit read directory. OpenRouter account configuration must not overlap
+  either readable root. Codex is refused as slot `first`. This is process argv
   hardening, **not** universal sandbox enforcement.
 - Environment context for trusted `check_argv` / `readiness_argv` (set in the
   child environment, with cwd = worktree):
@@ -162,8 +257,10 @@ for worker in workers.values():
 
 ## Workflow (script-owned)
 
-1. **Discover** configured repositories for open issues assigned to the
-   configured GitHub login (`gh api --paginate --slurp`). Initial scan includes
+1. **Discover** explicit repositories and approved owners for open issues assigned to the
+   configured GitHub login (`gh api --paginate --slurp`). Owner discovery uses
+   `search/issues?q=is:issue+is:open+assignee:<login>+archived:false&per_page=100`
+   once per tick and filters `repository_url` by owner. Initial scan includes
    current assignments (no silent first-run ignore). Idempotent source key:
    `repo + issue number` device-wide — first session owns; one task/PR until
    terminal. Failed tasks are **not** auto-reopened merely because the issue is
@@ -172,7 +269,10 @@ for worker in workers.values():
    verified on GitHub; forged model activity payloads are not trusted. Issue
    bodies are redacted/bounded before persistence. `updated_at` is not treated
    as `assigned_at`.
-2. **Accept** with a deterministic issue comment (fixed wording + idempotency
+2. **Accept** only after verifying the GitHub assignment event and, when
+   `require_hub_assignment=true`, the matching hub-created mandate. Resolve and
+   pin an owner-scoped repository's default branch, checks, readiness command,
+   and direct-push/fork route at this point. Then publish a deterministic issue comment (fixed wording + idempotency
    marker) via `comment.post` / `scan_github` **before** any model start. A
    failed comment never starts a model. Effects are discovered on retry.
 3. **Checkout** under `workspace_root/<task-id>` with named remotes `origin` /
@@ -280,7 +380,10 @@ for worker in workers.values():
    actual logs exist. A known mismatched head/author/base is distinct from an
    unavailable fetch. Close `contributing_ok` / deviation checklist keys from
    that JSON via
-   `chain.close_allowed` **before** Ready — never after human merge. Formal
+   `chain.close_allowed` before Ready in the normal route. If A38's guard and a
+   human merge move the task from `await_second_review`, `ci`, `readiness`, or
+   `await_ready` to `await_merge` first, `await_merge` runs the same trusted
+   readiness closing on the merged head before evaluating `task-done`. Formal
    `review.post` **APPROVE** from the separate review account with an
    explicitly validated full-SHA `commit_id` in the activity payload
    (executor discover-before-POST and POST both bind that head; verify
@@ -329,7 +432,17 @@ for worker in workers.values():
     `implement`.
     Reassignment must not open a duplicate PR for a completed source.
     Revoked assignment stops new effects including formal approve / leave-draft;
-    `await_merge` may continue observation only.
+    `await_merge` may continue observation only and, while the pull request is
+    open, posts no further second-review comments once the assignment is revoked. An A38 task in `await_second_review`,
+    `ci`, `readiness` or `await_ready` whose pull request is merged or closed (a
+    merge closes the issue) moves to `await_merge` (an unreadable pull request state
+retries the tick instead of blocking); once its pull request exists, every tick
+of an A38 task, also while blocked or asking, first checks for a merge the same way, which verifies the human merge
+    or blocks a pull request closed without one. Unless readiness already ran on
+    that exact merged head (`readiness_head`), even when its keys were closed on an
+    earlier head, it first runs the owner hub-statement default or the configured
+    trusted readiness command and publishes its blocker with a reply checkpoint
+    when those keys cannot be closed.
 
 ### Trusted readiness JSON contract
 
@@ -425,6 +538,11 @@ subclass `SystemExit` and must not be mistaken for success). Preflight
 account/config failures can only report locally when GitHub is unavailable.
 No silent failure.
 
+Every completed lane process also writes script-owned `lane.run` evidence with
+the configured and provider-reported model, token usage when supplied, a bounded
+redacted file-tool transcript, and bounded final text. Failure to write this
+audit row is an observation and does not rewrite the lane verdict.
+
 ## Module layout
 
 | Module | Role |
@@ -436,4 +554,151 @@ No silent failure.
 | `coordinator_github.py` | Comments, CI, readiness, formal approve, Ready, merge, replies |
 | `coordinator_exec.py` | Bounded subprocess helper |
 | `coordinator_common.py` | Shared helpers / constants |
-| `coordinator_config.py` | Parent-owned configuration loaders |
+| `coordinator_config.py` | Parent-owned explicit-repository and owner-scoped configuration loaders |
+| `hub_assign.py` | Paired-device client for operator assignment creation |
+| `coordinator_a38.py` | A38 suite, author review comments, external review mail, guard Ready observation |
+
+## A38 mode
+
+A worker opts in explicitly with `"a38": true`. This is never an installation
+default. The worker then requires a nonempty, distinct, lowercased
+`second_reviewers` list that excludes its own configured GitHub login. Optional
+`second_review_timeout_seconds` (default `86400`) must be at least 600.
+`review_session` is unused and optional;
+`check_argv` may be empty, while `readiness_argv` remains required for
+configured repositories; owner-scoped repositories may omit
+`owner_readiness_argv` only with the explicit hub deviation statement described
+above. The device's
+models must pin a non-Codex first provider and `"second": null`. A null second
+slot is refused for every non-A38 worker.
+
+Illustrative worker fragment:
+
+```json
+{
+  "a38": true,
+  "second_reviewers": ["reviewer-one", "reviewer-two"],
+  "second_review_timeout_seconds": 86400
+}
+```
+
+On each new clean signed head, the script optionally runs `check_argv`, then
+validates the trusted-base A38 policy, runs the complete A38 suite in
+`workspace_root/.coordinator-control/<task-id>/a38/<head>/`, verifies its
+report, and posts that report unchanged with the worker GitHub account. A
+failure returns bounded findings to the implementer. The first-slot quality and
+logic gates then run as usual. Their approved result is rendered and validated
+as the `conformity-a` / `logic-a` author comment.
+
+The coordinator does not launch model slot `second`. It sends one
+`review-request` person ping to every configured reviewer. A reviewer returns a
+strict result through session mail without calling GitHub:
+
+```json
+{
+  "to_session": "worker-session",
+  "payload": {
+    "kind": "a38.second-review/v1",
+    "task_id": "11111111-1111-4111-8111-111111111111",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "defects": 0,
+    "blocks_merge": false,
+    "findings": "",
+    "lanes": [
+      {
+        "id": "conformity-b",
+        "provider": "OpenAI",
+        "model": "Reviewer Model 2",
+        "model_number": "reviewer-model-2",
+        "prompt": "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.",
+        "status": "complete",
+        "result": "pass"
+      },
+      {
+        "id": "logic-b",
+        "provider": "OpenAI",
+        "model": "Reviewer Model 2",
+        "model_number": "reviewer-model-2",
+        "prompt": "Read CONTRIBUTING.md and REVIEW.md at the base revision. Review this pull request against those files and against the linked issue. Do not change any files.",
+        "status": "complete",
+        "result": "pass"
+      }
+    ]
+  }
+}
+```
+
+Save that shape with the task, head, model, prompts, and result from the actual
+review, then send it through the existing activity interface. The lane
+`provider`, `model`, `model_number` and `prompt` are published verbatim, so text
+that redaction would change (a token, an authorization header, a private home
+path) rejects the mail. Both prompts are published twice (review record and
+machine block) and the findings once; together they may use at most 56,000
+characters, which leaves room for the rest of the comment; the renderer still
+checks the whole comment against GitHub's limit and refuses it loudly. The first
+review comment carries both slot-`first` prompts twice as well, so an A38 worker
+refuses a PR review prompt over 14,000 JSON characters before any lane runs:
+
+```text
+agent activity add --session OWN_SID --type message --payload-file result-mail.json
+```
+
+The relay-authenticated sender login must be allowlisted. The worker trusts that login, not the
+process that wrote the mail: an allowlisted second reviewer vouches for every
+second-review mail sent from a device paired to that login, as the A38 standard
+expects of the person named in the second review comment. The worker validates
+the mail and guard declaration, publishes the `conformity-b` / `logic-b`
+comment as the pull request author, and marks both `review_2_*` checklist keys
+with the evidence of every passing external review, so
+the newest passing review is recorded and a pass after a block on the same head
+(also after the merge) closes them. It continues accepting
+unread reviews for that head through CI, readiness, Ready observation, and merge
+observation, and publishes one idempotent review comment for every valid mail.
+The old stages `grok-pr` and `codex-pr` and old keys `grok_pr_*` and
+`codex_pr_*` are legacy aliases: CLI input accepts and warns about them, and
+stored rows remain readable without a database rewrite.
+Each tick takes in all queued unread mail for the head, ordered by the mail
+row's replica change time (`updated_at`, equal times by row id), and the newest
+review decides. A review older than one already posted for the head is
+acknowledged as superseded and not posted, so the last posted review is also the
+newest, as the guard reads the comments. A blocking result returns the task to the
+implementer only when no newer passing review of the same head follows it in that
+tick; when the implementer leaves the head unchanged, the reviewers are asked again; stale, malformed, or
+unauthorized mail is acknowledged and recorded as an
+observation. Pending requests are re-pinged once per configured timeout and are
+never skipped. A pull request closed while the task awaits the second review
+stops the wait with a blocker; no further second-review comments or pings are
+sent for it.
+
+The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
+`a38_first_comment` → `await_second_review` → `ci` → `readiness` →
+`await_ready` → `await_merge` → `done`.
+The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
+the pull request remains draft it only records the newest exact enforce context
+`A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;
+observe contexts never count. It advances after the guard has made the
+unchanged head Ready, then observes the human merge exactly like an ordinary
+worker. The guard may make the pull request Ready while the worker is still in
+`await_second_review`, `ci`, `readiness` or `await_ready`; a pull request merged
+in any of these phases goes straight to `await_merge`, which verifies the merge;
+a pull request closed there also goes to `await_merge`, which publishes the
+`closed-unmerged` blocker. Before task completion, `await_merge` runs readiness
+on that merged head with the same readiness source as the ordinary phase unless
+it already ran on exactly that head (`readiness_head`); keys closed on an earlier
+head do not count. An unreadable pull request state is retried on the
+next tick without taking in mail.
+Second-review intake runs while the pull request is open and, in `await_merge`,
+also after the merge, so a review of the merged head is still published; it never
+reopens work. After the merge every waiting review is taken in before
+`await_merge` decides by the newest one. A merged pull request completes only with a passing second review:
+`await_merge` waits up to `second_review_timeout_seconds` for it, publishes the
+non-recoverable blocker `merged-without-second-review` after that, and publishes
+`merged-with-blocking-second-review` at once when the newest posted review blocks the merge.
+Both merge blockers are final like `closed-unmerged`: the task stays blocked, and a
+review that arrives after that blocker is published is not taken in. A new head invalidates its report, both comment checkpoints, and
+external-review state. A blocking review that arrives after the guard set Ready
+is fixed on the same pull request: an A38 worker pushes the new head to the open
+pull request whether or not it is still a draft, and the guard decides Ready again.
+
+These A38 settings enter the task execution binding only for A38 workers, so
+the binding hashes of existing non-A38 workers remain stable.

@@ -169,6 +169,7 @@ class FakeGh:
         self.commits_ahead = False
         self.signed = True
         self.workflow_runs: list[dict[str, Any]] = []
+        self.statuses: list[dict[str, Any]] = []
         # Optional inventory overrides for protocol/transport fault tests.
         # ``workflow_inventory_body`` replaces the JSON body when set (any shape).
         # ``workflow_inventory_rc`` non-zero simulates transient transport failure.
@@ -425,6 +426,8 @@ class FakeGh:
 
         if argv[:2] == ["gh", "api"] and argv[-1] == "repos/example/project":
             return Completed(0, json.dumps({"default_branch": "develop"}), "")
+        if argv[:2] == ["gh", "api"] and str(argv[-1]).endswith("/statuses"):
+            return Completed(0, json.dumps(self.statuses), "")
         if argv[:2] == ["gh", "api"] and str(argv[-1]).startswith("repos/example/project/commits/"):
             return Completed(0, json.dumps({"sha": "c" * 40}), "")
         if argv[:2] == ["gh", "api"] and "contents/.github/pr-guard.json" in str(argv[-1]):
@@ -588,7 +591,7 @@ def lane_runner(fake: FakeGh):
             with fake._lane_lock:
                 fake.parallel_launch_seen = {"pr-reviewer-quality", "pr-reviewer-logic"} <= fake._inflight_roles
         fake.launched.append(role)
-        if role == "implementer":
+        if role == "implementer" and "grok" in argv:
             assert "--deny" in argv and "Bash" in argv
             assert "--no-subagents" in argv
             assert "--disable-web-search" in argv
@@ -598,6 +601,17 @@ def lane_runner(fake: FakeGh):
             fake._lane_barrier.wait(timeout=3)
             with fake._lane_lock:
                 fake._inflight_roles.discard(role)
+        if "claude" in argv:
+            stream = json.dumps(
+                {"type": "result", "result": out, "usage": {}}
+            ) + "\n"
+            if f"ANTHROPIC_BASE_URL=https://openrouter.ai/api" in argv:
+                wrapper_index = next(
+                    i for i, value in enumerate(argv) if "openrouter-api-key" in value
+                )
+                Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
+                return Completed(0, "", "")
+            return Completed(0, stream, "")
         return Completed(0, out, "")
 
     return run

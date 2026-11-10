@@ -30,13 +30,33 @@ from .runtime import Completed
 from .store import Store
 
 
-def repo_cfg(worker: WorkerConfig, repo: str) -> RepositoryConfig:
+def repo_cfg(
+    worker: WorkerConfig,
+    repo: str,
+    task: dict[str, Any] | None = None,
+) -> RepositoryConfig:
     cfg = worker.repositories.get(repo)
     if cfg is not None:
         return cfg
     for key, value in worker.repositories.items():
         if key.casefold() == repo.casefold():
             return value
+    if task is not None:
+        source = coord(task).get("source")
+        pinned = source.get("repository_config") if isinstance(source, dict) else None
+        if isinstance(pinned, dict) and pinned.get("repo") == repo:
+            try:
+                # The commands come from the local worker config, not from the task; the
+                # execution binding pins their hash, so a changed command blocks the task.
+                return RepositoryConfig(
+                    repo=repo,
+                    base=str(pinned["base"]),
+                    publication_repo=str(pinned["publication_repo"]),
+                    check_argv=tuple(worker.owner_check_argv),
+                    readiness_argv=tuple(worker.owner_readiness_argv or ()),
+                )
+            except (KeyError, TypeError):
+                raise CoordinatorError(f"repository {repo} has invalid pinned configuration") from None
     raise CoordinatorError(f"repository {repo} is not configured")
 
 
@@ -207,7 +227,7 @@ def verify_checkout_identity(store: Store, worker: WorkerConfig, runner: Runner,
     for key in ('base_sha', 'branch', 'worktree'):
         if checkpoint.get(key) is not None and checkpoint[key] != marker.get(key):
             raise CoordinatorError('checkout task checkpoint changed')
-    cfg = repo_cfg(worker, str(marker.get("target_repo") or ""))
+    cfg = repo_cfg(worker, str(marker.get("target_repo") or ""), task)
     account = account_for(store, worker.session_id)
     if (marker.get("base") != cfg.base or marker.get("publication_repo") != cfg.publication_repo
             or marker.get("worker_login") != account.login.casefold()):
@@ -236,7 +256,7 @@ def verify_checkout_identity(store: Store, worker: WorkerConfig, runner: Runner,
 def phase_checkout(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner) -> list[str]:
     c = coord(task)
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     publication = str(source.get("publication_repo") or cfg.publication_repo)
     if publication != cfg.publication_repo or source.get("base", cfg.base) != cfg.base:
         raise CoordinatorError("checkout route changed after assignment")
@@ -336,6 +356,18 @@ def queue_activity(
         if existing.get("execution_status") == "done":
             return existing
         if existing.get("execution_status") == "error":
+            existing_payload = existing.get("payload")
+            if (
+                isinstance(existing_payload, dict)
+                and existing_payload.get("exact_body") is True
+            ):
+                if (
+                    existing.get("session_id") != session_id
+                    or existing.get("type") != typ
+                    or existing_payload != payload
+                ):
+                    raise CoordinatorError("refusing to replace an existing exact-body activity")
+                row["payload"] = existing_payload
             store.write("activity", "update", activity_id, row)
             return row
         return existing
@@ -444,7 +476,7 @@ def ensure_draft(
     worktree = str(c.get("worktree") or "")
     branch = str(c.get("branch") or "")
     source = c["source"]
-    cfg = repo_cfg(worker, str(source["repo"]))
+    cfg = repo_cfg(worker, str(source["repo"]), task)
     target = target_repo(task)
     publication = publication_repo(task, cfg)
     base_sha = str(c.get("base_sha") or "")
@@ -456,7 +488,7 @@ def ensure_draft(
         return []
     existing_pr = as_int(c.get("pr_number") or task.get("ref"))
     if existing_pr is not None:
-        before = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch)
+        before = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch, allow_ready=worker.a38)
         local_head = verify_signed_clean_head(store, worker, runner, worktree)
         if before['head']['sha'] not in {c.get('published_head'), local_head}:
             raise CoordinatorError('PR head changed outside this task; refusing to overwrite it')
@@ -466,7 +498,7 @@ def ensure_draft(
     save_task(store, task)
 
     if existing_pr is not None:
-        after = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch)
+        after = _verify_draft(store, worker, runner, target, existing_pr, cfg, branch, allow_ready=worker.a38)
         if after['head']['sha'] != sha:
             raise CoordinatorError('updated Draft head is not yet verified')
         c['published_head'] = sha
@@ -517,7 +549,7 @@ def ensure_draft(
     return [f"draft opened {target}#{number} head={sha[:7]}"]
 
 
-def _verify_draft(store, worker, runner, target, number, cfg, branch):
+def _verify_draft(store, worker, runner, target, number, cfg, branch, *, allow_ready=False):
     result = gh_json(scoped(store, worker.session_id, runner),
                      ['gh', 'api', f'repos/{target}/pulls/{number}'])
     if not isinstance(result, dict):
@@ -525,7 +557,10 @@ def _verify_draft(store, worker, runner, target, number, cfg, branch):
     base = result.get('base') or {}
     head = result.get('head') or {}
     user = result.get('user') or {}
-    if (result.get('state') != 'open' or result.get('draft') is not True
+    # An A38 guard may set Ready before a blocking second review arrives; the fix is
+    # pushed to that open pull request and the guard decides Ready again for the new head.
+    draft_ok = result.get('draft') is True or (allow_ready and result.get('draft') is False)
+    if (result.get('state') != 'open' or not draft_ok
             or str(user.get('login', '')).casefold() != account_for(store, worker.session_id).login.casefold()
             or base.get('ref') != cfg.base
             or str((base.get('repo') or {}).get('full_name', '')).casefold() != target.casefold()

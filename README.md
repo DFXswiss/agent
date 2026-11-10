@@ -37,7 +37,8 @@ paths. A38 visibility lookup likewise requires an explicitly configured
 access and session bindings without built-in selections. `agent lane run` needs
 `--session`; `agent run` uses its task session. Interactive Grok starts require
 an interactive role binding. Automatic Grok usage reads are disabled until
-`usage_session` is explicitly configured.
+`usage_session` is explicitly configured. OpenRouter key-usage reads are
+disabled until `usage_accounts` explicitly names one or more OpenRouter accounts.
 
 ## Install
 
@@ -50,18 +51,36 @@ agent init
 
 `agent init` starts a local PostgreSQL cluster (needs `initdb`/`pg_ctl` on `PATH`, or `AGENT_PG_BIN`). `AGENT_PG_DSN` may point at an existing loopback server instead. Data lives in `$AGENT_HOME` or, if that is unset, `~/.local/share/agent`. Identity is `device.json` next to the cluster. It also installs and starts the user-service device daemon (`agent daemon`), which starts knock, the local dashboard, and cli-bridge immediately; daemon `sync --follow` starts only after `agent pair`, once `device.json` has token and hub URL (init-before-pair remains valid). Only `agent init` creates that cluster. Commands that open the store start it again if it is stopped and fail with `run agent init` when it does not exist; they never run `initdb`. `agent pg status` reports the cluster without starting it, `agent pg stop` stops it (refused while a device daemon installed for this `AGENT_HOME` exists, because that daemon would start it again), and `agent daemon --uninstall` stops it together with the user service. `agent daemon --uninstall` refuses to run under a different `AGENT_HOME` than the one the service was installed for. Both commands stop with an error when a service unit exists but cannot be read or records no `AGENT_HOME`. When `AGENT_PG_DSN` is set, `agent init` writes it into the user service so the daemon uses the same server.
 
+On a headless host managed by an operator-provided system supervisor, use
+`agent init --no-service`. It creates the same store and device identity but
+writes and starts no user service. Its output gives the exact `agent daemon`
+argv and required `AGENT_HOME`, plus `AGENT_PG_BIN` or `AGENT_PG_DSN` when
+configured, for a system service such as a launchd LaunchDaemon with `UserName`.
+For `AGENT_PG_DSN`, the output only says that the variable is set and must keep
+its current value; it never prints the DSN itself. `--no-service` is refused while a
+device daemon user service is installed for the same `AGENT_HOME` (run
+`agent daemon --uninstall` first), and it stops with an error when an existing
+unit cannot be read or records no `AGENT_HOME`.
+
 ## Pair and sync
 
 ```bash
 agent pair --hub https://agent.example
 # confirm in the browser after GitHub sign-in
 agent sync
+agent assign --no-deviation --agent LOGIN --repo OWNER/NAME --title TEXT --body TEXT
 agent sync --follow   # foreground WebSocket; reconnects with backoff on a dropped connection (cap 30s, logs to stderr; not a silent poll; process stays up)
 agent restore   # after a wiped laptop; also works if leftover ledger.sqlite is present
 # other commands refuse until you move ledger.sqlite aside
 ```
 
 `AGENT_HUB` may replace `--hub`. There is no default hub URL. After `agent pair`, once `device.json` has token and hub URL, the user-service daemon starts `sync --follow`; a one-shot `agent sync` after pairing is enough for catch-up.
+`agent assign` uses the paired device credential to ask the hub to create and
+verify an agent-assigned GitHub issue. Use `--body-file PATH` instead of
+`--body TEXT` for longer mandates. The required `--no-deviation` flag records
+the owner's explicit statement that no deviation is authorized; deviations
+instead need an explicit grant on the issue. The hub authorizes the human owner
+and records `assignment.created`; the client never prints the device token.
 
 ## Record work
 
@@ -97,6 +116,7 @@ agent work add --session <session-id> --key standing --closable-by human
 agent work set --session <session-id> --key standing --status done --source human --actor-session <session-id>
 agent work list --session <session-id>
 agent models [first|second|implementer] [--task <uuid>] [--json]   # device setting, or the pin of a task
+agent activity add --session OWN_SID --type message --payload-file ./second-review-mail.json
 agent checklist set --task <uuid> --key spec_written --status ja --source human --evidence "spec.md"
 agent allow --action claim-done|pr-ready|pr-create|task-done [--session ID] [--task <uuid>] [--draft true|false] [--json]
 agent next --task <uuid>
@@ -115,6 +135,11 @@ agent pg status
 agent pg stop
 ```
 
+For an external A38 second review, `second-review-mail.json` is session mail:
+its outer object has `to_session`, and its `payload` is the strict
+`a38.second-review/v1` result documented in
+[Issue coordinator — A38 mode](docs/issue-coordinator.md#a38-mode).
+
 `agent run` records a local check when `local_check_pass` is open and the snapshot has no local checks yet (it does not rerun an existing failed check). It closes an agent step when the session store already has the artifact, and with `--spec-file` launches the vendor lane (tmux by default; `--no-tmux` for a subprocess). When `pushed` is open it git-pushes (no force) and closes with the HEAD sha; when `mergeable` is open it measures GitHub mergeability and checks and closes only if both are green. Reviewer lanes are not auto-approved from `STATUS: complete`.
 
 `agent github pending` is one scan: owned pending `pr.open`, `comment.post`, `review.post`, and `issue.write` rows via `gh`. Pull requests are drafts. A retry reuses an existing open draft, issue, or comment instead of creating a second one.
@@ -131,12 +156,13 @@ agent knock             # valid foreground loop; the user-service daemon is the 
 agent watch pr-merged   # one scan; needs GitHub CLI (`gh`); the device daemon covers the loop
 agent watch pending     # one scan; runs subscription.set and query.request against the hub
 agent watch grok-usage  # one scan of SuperGrok weekly credits into usage.snapshot
+agent watch openrouter-usage # one scan of configured OpenRouter key USD usage
 agent coordinate --session ID [--follow] # explicit static issue workflow; coordinator.json
 agent watch assigned [--follow]  # legacy assignments; needs `gh` and `$AGENT_HOME/watch.json`
 agent watch errors      # one scan; $AGENT_HOME/error-fix.json; no log host in this package
 agent watch error-fix   # one scan; find-or-create implement task + isolated worktree
 agent supervise --session ID [--repo OWNER/REPO --number N] [--once|--follow]
-# agent knock (daemon, no --once) polls grok-usage, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
+# agent knock (daemon, no --once) polls configured usage sources, pending, pr.merged, github pending, mail pending, errors, and error-fix every 60s
 ```
 
 `agent supervise` posts a short status line to Telegram when both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set in the environment. The follow CLI does not ask closed questions. Working vs not working for paging is whether the Grok tmux session exists: it posts `not working` only when that session is gone, not when the prompt is idle between turns. The TUI working probe (`Thinking…`, `Waiting for response`, `Preparing …`, `[stop]`, `Esc:cancel`, `command still running`, queued `Enter to send now`) is for the follow loop, not for Telegram. A send failure is printed to stderr and does not stop the loop. Credentials stay out of git.
@@ -146,11 +172,20 @@ configured worker sessions, GitHub and AI accounts, checks, and workspace roots.
 Installation starts with no configured worker. `agent coordinate --session ID`
 advances one worker; `--follow` lets the script observe later events. The daemon
 starts configured workers on startup; changing its worker set requires a restart.
+Workers may select explicit repositories, approved GitHub owners, or both;
+explicit entries win. They may require matching hub-issued assignments before
+acceptance.
 Legacy `watch assigned` dispatch and `supervise` refuse those worker sessions.
 
 The error-fix executor find-or-creates the implement task and isolated worktree; `agent github pending` still opens draft pull requests.
 
 `agent watch grok-usage` uses the existing Grok login token from the Grok auth file, does not start a Grok session, and does not knock the TUI. Each `usage.snapshot` includes the account email, provider, and subscription tier. Under the device daemon, the knock child records those snapshots (and scans pending, `pr.merged`, github pending, mail pending, errors when `$AGENT_HOME/error-fix.json` exists, and pending `error.fix`) on the same interval. `agent daemon --install` / `--uninstall` manage the user service; `agent init` already installs and starts it.
+
+`agent watch openrouter-usage` reads only explicitly selected `usage_accounts`
+and stores changed USD usage and limits from OpenRouter's key endpoint. Lane
+processes record a script-owned `lane.run` activity after completion, including
+reported tokens, a bounded redacted file-tool transcript, and bounded final
+text. Neither activity stores argv, environment, profile paths, or credentials; a tool target outside the worktree is stored as `[redacted]`.
 
 `agent watch assigned` reads `$AGENT_HOME/watch.json`:
 

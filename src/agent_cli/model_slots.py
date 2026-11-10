@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-SUPPORTED_PROVIDERS = frozenset({"grok", "codex", "claude"})
+SUPPORTED_PROVIDERS = frozenset({"grok", "codex", "claude", "openrouter"})
 PROVIDER_CHOICES = "|".join(sorted(SUPPORTED_PROVIDERS))
 IMPLEMENTER_PROVIDERS = SUPPORTED_PROVIDERS | frozenset({"deepseek"})
 IMPLEMENTER_PROVIDER_CHOICES = "|".join(sorted(IMPLEMENTER_PROVIDERS))
@@ -28,6 +28,9 @@ SLOT_STAGES = {"first": "review-1", "second": "review-2"}
 STAGE_SLOTS = {stage: slot for slot, stage in SLOT_STAGES.items()}
 SLOT_KEY_PREFIXES = {"first": "review_1_", "second": "review_2_"}
 STAGE_CHOICES = "|".join(SLOT_STAGES[slot] for slot in MODEL_SLOTS)
+EXTERNAL_SECOND_TASK_CREATION_ERROR = (
+    "models.second = null is allowed only for coordinator A38 task creation"
+)
 
 LEGACY_STAGE_ALIASES = {"grok-pr": "review-1", "codex-pr": "review-2"}
 LEGACY_KEY_ALIASES = {
@@ -66,7 +69,11 @@ def canonical_checklist(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class ModelSlotsError(ValueError):
-    """The model-slot or implementer selection is invalid."""
+    """The model-slot or implementer selection is invalid.
+
+    The ``models`` configuration does not describe valid first/second slots, or
+    the optional ``implementer`` selection is invalid.
+    """
 
 
 class PinnedModelSlotsError(ModelSlotsError):
@@ -76,16 +83,16 @@ class PinnedModelSlotsError(ModelSlotsError):
 @dataclass(frozen=True)
 class ModelSlots:
     first: str
-    second: str
+    second: str | None
 
-    def for_slot(self, slot: str) -> str:
+    def for_slot(self, slot: str) -> str | None:
         if slot == "first":
             return self.first
         if slot == "second":
             return self.second
         raise ModelSlotsError(f"unknown model slot {slot}")
 
-    def for_stage(self, stage: str) -> str:
+    def for_stage(self, stage: str) -> str | None:
         slot = STAGE_SLOTS.get(canonical_stage(stage))
         if slot is None:
             raise ModelSlotsError(f"unknown gate stage {stage}")
@@ -94,11 +101,11 @@ class ModelSlots:
     def slot_of(self, vendor: str) -> str | None:
         if vendor == self.first:
             return "first"
-        if vendor == self.second:
+        if self.second is not None and vendor == self.second:
             return "second"
         return None
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, str | None]:
         return {"first": self.first, "second": self.second}
 
 
@@ -116,20 +123,24 @@ LEGACY_RECORDED_SLOTS = ModelSlots("grok", "codex")
 
 
 def parse_model_slots(raw: Any) -> ModelSlots:
-    """Validate the ``models`` block: exactly ``first`` and ``second``, distinct, supported."""
+    """Validate the slots; ``second: null`` selects an external second review."""
     if raw is None:
         raise ModelSlotsError(MODELS_NOT_CONFIGURED)
     if not isinstance(raw, Mapping) or set(raw) != set(MODEL_SLOTS):
         raise ModelSlotsError("models must be an object with exactly first and second")
-    values: dict[str, str] = {}
-    for slot in MODEL_SLOTS:
-        value = raw.get(slot)
-        if not isinstance(value, str) or value not in SUPPORTED_PROVIDERS:
-            raise ModelSlotsError(f"models.{slot} must be one of {PROVIDER_CHOICES}")
-        values[slot] = value
-    if values["first"] == values["second"]:
+    first = raw.get("first")
+    second = raw.get("second")
+    if not isinstance(first, str) or first not in SUPPORTED_PROVIDERS:
+        raise ModelSlotsError(f"models.first must be one of {PROVIDER_CHOICES}")
+    if second is not None and (
+        not isinstance(second, str) or second not in SUPPORTED_PROVIDERS
+    ):
+        raise ModelSlotsError(
+            f"models.second must be null or one of {PROVIDER_CHOICES}"
+        )
+    if first == second:
         raise ModelSlotsError("models.first and models.second must be different providers")
-    return ModelSlots(values["first"], values["second"])
+    return ModelSlots(first, second)
 
 
 def parse_implementer(raw: Any, models: ModelSlots) -> str:

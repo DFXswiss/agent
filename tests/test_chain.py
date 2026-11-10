@@ -570,6 +570,80 @@ class TestCloseAllowed(unittest.TestCase):
         )
         self.assertFalse(grok_denied.allowed)
 
+    def test_external_second_review_requires_a38_marker_and_first_gate_head(self) -> None:
+        head = "a" * 40
+        cl = _pending("review")
+        for key in (
+            "session_registered",
+            "contributing_read",
+            "review_1_quality",
+            "review_1_logic",
+        ):
+            cl[key] = "ja"
+        evidence = f"external second review by reviewer at {head}: https://example.invalid/review"
+        snapshot = {
+            "models": {"first": "grok", "second": None},
+            "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
+            "gates": [
+                {
+                    "stage": "review-1",
+                    "dimension": dimension,
+                    "vendor": "grok",
+                    "verdict": "approved",
+                    "head_sha": head,
+                }
+                for dimension in ("quality", "logic")
+            ],
+        }
+        allowed = close_allowed(
+            "review",
+            "review_2_quality",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            snapshot=snapshot,
+        )
+        self.assertTrue(allowed.allowed, allowed.reason)
+        stale = close_allowed(
+            "review",
+            "review_2_quality",
+            checklist=cl,
+            source="script",
+            evidence=f"external second review by reviewer at {'b' * 40}: https://example.invalid/review",
+            snapshot=snapshot,
+        )
+        self.assertFalse(stale.allowed)
+        for second_review in (
+            {"head": head, "status": "requested"},
+            {"head": head, "status": "posted", "reviews": []},
+            {"head": head, "status": "posted", "reviews": [{"blocks_merge": True, "at": "x"}]},
+            {"head": "b" * 40, "status": "posted", "reviews": [{"blocks_merge": False, "at": "x"}]},
+        ):
+            unposted = {
+                **snapshot,
+                "payload": {"coordinator": {"a38": {"enabled": True, "second_review": second_review}}},
+            }
+            self.assertFalse(
+                close_allowed(
+                    "review",
+                    "review_2_quality",
+                    checklist=cl,
+                    source="script",
+                    evidence=evidence,
+                    snapshot=unposted,
+                ).allowed
+            )
+        without_marker = {**snapshot, "payload": {}}
+        denied = close_allowed(
+            "review",
+            "review_2_quality",
+            checklist=cl,
+            source="script",
+            evidence=evidence,
+            snapshot=without_marker,
+        )
+        self.assertFalse(denied.allowed)
+
     def test_codex_n_a_satisfies_mergeable_need(self) -> None:
         cl = _pending("resolve-conflicts")
         for key in (

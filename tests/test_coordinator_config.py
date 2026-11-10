@@ -90,3 +90,151 @@ def test_repository_cannot_escape_selected_api_path(tmp_path, repo):
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='repository must be owner/name'):
         load_coordinator_config(tmp_path)
+
+
+def test_a38_worker_requires_and_normalizes_external_reviewers(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['second_reviewers'] = ['Reviewer-One', 'reviewer-two']
+    worker['repositories']['example/project']['check_argv'] = []
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.review_session is None
+    assert loaded.a38 is True
+    assert loaded.second_reviewers == ('reviewer-one', 'reviewer-two')
+    assert loaded.second_review_timeout_seconds == 86400
+    assert loaded.repositories['example/project'].check_argv == ()
+
+
+@pytest.mark.parametrize(
+    'reviewers,error',
+    [
+        (None, 'nonempty second_reviewers'),
+        ([], 'nonempty second_reviewers'),
+        (['Same', 'same'], 'distinct'),
+    ],
+)
+def test_a38_worker_refuses_missing_or_duplicate_reviewers(tmp_path, reviewers, error):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = True
+    worker['second_reviewers'] = reviewers
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    'fields,error',
+    [
+        ({'a38': 'yes'}, 'a38 must be a boolean'),
+        ({'require_hub_assignment': 1}, 'require_hub_assignment must be a boolean'),
+        ({'second_reviewers': 'reviewer'}, 'second_reviewers must be a list'),
+        ({'a38': True, 'second_reviewers': ['-bad']}, 'invalid second reviewer login'),
+        ({'a38': True, 'second_reviewers': ['a--b']}, 'invalid second reviewer login'),
+        ({'a38': True, 'second_reviewers': ['a' * 40]}, 'invalid second reviewer login'),
+    ],
+)
+def test_worker_refuses_malformed_a38_and_hub_fields(tmp_path, fields, error):
+    data = config(tmp_path)
+    data['workers']['selected-session'].update(fields)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+def test_a38_worker_refuses_short_second_review_timeout(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer']
+    worker['second_review_timeout_seconds'] = 599
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='integer >= 600'):
+        load_coordinator_config(tmp_path)
+
+
+def test_a38_worker_refuses_removed_a38_timeout_key(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer']
+    worker['a38_timeout_seconds'] = 7200
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='explicit workspace, replies and timing'):
+        load_coordinator_config(tmp_path)
+
+
+def test_owner_scoped_worker_normalizes_distinct_owners_and_requires_checks(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['repositories'] = {}
+    worker['repository_owners'] = ['Example-Org', 'AnotherUser']
+    worker['owner_check_argv'] = ['/operator/owner-checks']
+    worker['owner_readiness_argv'] = ['/operator/owner-readiness']
+    worker['require_hub_assignment'] = True
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.repository_owners == ('example-org', 'anotheruser')
+    assert loaded.owner_check_argv == ('/operator/owner-checks',)
+    assert loaded.owner_readiness_argv == ('/operator/owner-readiness',)
+    assert loaded.require_hub_assignment is True
+
+
+@pytest.mark.parametrize('owners', [['-bad'], ['bad-'], ['same', 'Same'], ['with_underscore']])
+def test_owner_scoped_worker_rejects_invalid_or_duplicate_owners(tmp_path, owners):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['repositories'] = {}
+    worker['repository_owners'] = owners
+    worker['owner_readiness_argv'] = ['/operator/owner-readiness']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError):
+        load_coordinator_config(tmp_path)
+
+
+def test_worker_requires_repositories_or_repository_owners(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['repositories'] = {}
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='repositories or repository_owners'):
+        load_coordinator_config(tmp_path)
+
+
+def test_non_a38_owner_scope_requires_readiness_argv(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['repository_owners'] = ['example']
+    data['workers']['selected-session']['owner_check_argv'] = ['/operator/checks']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='owner_readiness_argv'):
+        load_coordinator_config(tmp_path)
+
+
+def test_a38_owner_scope_allows_absent_readiness_argv(tmp_path):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker.pop('review_session')
+    worker['a38'] = True
+    worker['second_reviewers'] = ['reviewer']
+    worker['repositories'] = {}
+    worker['repository_owners'] = ['example']
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    loaded = load_coordinator_config(tmp_path)['selected-session']
+    assert loaded.owner_readiness_argv is None
+    assert loaded.owner_check_argv == ()
+
+
+@pytest.mark.parametrize('owner_check_argv', [None, []])
+def test_non_a38_owner_scope_requires_nonempty_owner_check_argv(tmp_path, owner_check_argv):
+    data = config(tmp_path)
+    worker = data['workers']['selected-session']
+    worker['repositories'] = {}
+    worker['repository_owners'] = ['example']
+    worker['owner_readiness_argv'] = ['/operator/owner-readiness']
+    if owner_check_argv is not None:
+        worker['owner_check_argv'] = owner_check_argv
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match='owner_check_argv'):
+        load_coordinator_config(tmp_path)

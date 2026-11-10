@@ -471,6 +471,22 @@ class Store:
         if row["origin_device_id"] == self.device_id() and row.get("table") != "ping":
             return
         payload = row["payload"]
+        # The relay authenticates the GitHub account that published a replica
+        # event. Preserve that envelope fact for recipient-side mail policy;
+        # never trust a sender-provided payload field with the same name.
+        if (
+            row.get("table") == "activity"
+            and isinstance(payload, dict)
+            and payload.get("type") == "message"
+        ):
+            payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in ("_github_login", "github_login")
+            }
+            relay_login = row.get("github_login")
+            if isinstance(relay_login, str) and relay_login:
+                payload["_github_login"] = relay_login.casefold()
         if row.get("table") == "ping" and isinstance(payload, dict):
             current = self.row("ping", row["row_id"])
             if isinstance(current, dict) and current.get("acked_at") and not payload.get("acked_at"):
@@ -544,7 +560,8 @@ class Store:
     def rows(self, table: str) -> list[dict[str, Any]]:
         with self._lock:
             found = self.conn.execute(
-            "SELECT row_id, origin_device_id, payload FROM row_data WHERE table_name = %s ORDER BY updated_at DESC",
+            "SELECT row_id, origin_device_id, payload, updated_at FROM row_data WHERE table_name = %s "
+            "ORDER BY updated_at DESC, row_id DESC",
             (table,),
         ).fetchall()
         out: list[dict[str, Any]] = []
@@ -553,6 +570,7 @@ class Store:
             if not isinstance(payload, dict):
                 raise StoreError(f"{table} {row['row_id']} payload is not an object")
             payload["_origin_device_id"] = row["origin_device_id"]
+            payload["_updated_at"] = str(row["updated_at"] or "")
             out.append(payload)
         return out
 
@@ -571,8 +589,12 @@ class Store:
         payload["_origin_device_id"] = found["origin_device_id"]
         return payload
 
-    def last_own_activity_insert(self, activity_type: str) -> dict[str, Any] | None:
-        """Newest own ledger insert of this activity type (origin_seq DESC). Full activity row dict or None."""
+    def last_own_activity_insert(
+        self,
+        activity_type: str,
+        predicate: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> dict[str, Any] | None:
+        """Newest own ledger insert matching this activity type and optional predicate."""
         with self._lock:
             found = self.conn.execute(
                 "SELECT payload FROM ledger_event WHERE origin_device_id = %s AND table_name = %s AND op = %s "
@@ -583,7 +605,9 @@ class Store:
             event = loads(row["payload"])
             if not isinstance(event, dict):
                 continue
-            if event.get("type") == activity_type:
+            if event.get("type") == activity_type and (
+                predicate is None or predicate(event)
+            ):
                 return event
         return None
 

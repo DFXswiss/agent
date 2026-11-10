@@ -4,8 +4,8 @@ Static scripts that load this manifest select AI provider accounts and
 user-defined roles from `$AGENT_HOME/ai-accounts.json`. Installation creates no
 accounts, roles, or session selections. A missing file or an otherwise valid
 manifest without `models` fails with `models is not configured`. When `models`
-is set, null or empty `accounts`, `roles`, `sessions`, and `lanes` leave those
-collections empty. An absent `implementer` uses
+is set, null or empty `accounts`, `roles`, `sessions`, `lanes`, and
+`usage_accounts` leave those collections empty. An absent `implementer` uses
 `models.first`; neither selection authorizes a launch without lane bindings.
 Every model-lane launch also requires an explicit top-level `lane_execution`
 declaration written by the local harness. Missing or invalid declarations fail
@@ -16,13 +16,14 @@ implicit provider profile, model, or role from the host environment, hub
 pairing, or built-in defaults.
 
 This device-local manifest is used by `agent lane run`, the lane steps of
-`agent run`, interactive Grok session starts, optional Grok usage polling,
+`agent run`, interactive Grok session starts, optional Grok and OpenRouter usage reads,
 and, for its `models` and `implementer` keys only, by every task creation (`agent task create`,
 the issue coordinator, error-fix tasks) and `agent models`; an unreadable file, an
 unknown top-level key or a malformed model selection therefore stops task
 creation. `agent task create` and error-fix tasks ignore errors inside
-`accounts`, `roles`, `sessions` or `lanes`; the issue coordinator validates the
-whole manifest, including `lane_execution`, before it accepts a task.
+`accounts`, `roles`, `sessions`, `lanes` or `usage_accounts`; the issue
+coordinator validates the whole manifest, including `lane_execution`, before it
+accepts a task.
 It does not implement the complete issue-to-PR coordinator or a sandbox.
 
 The following is an **operator-supplied example**, never an installed default.
@@ -113,7 +114,7 @@ Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
 the operator; they are distinct from the fixed workflow kinds (`implementer`,
 `reviewer`, `pr-reviewer-quality`, `pr-reviewer-logic`) and from the supported
-provider adapters (`grok`, `codex`, `claude`). Those workflow kinds and adapters
+provider adapters (`grok`, `codex`, `claude`, `openrouter`). Those workflow kinds and adapters
 are protocol capabilities used when resolving a lane slot, not preinstalled user
 roles.
 
@@ -124,11 +125,13 @@ inner loop and runs the first PR review pair; model slot `second` runs the
 second PR review pair. The required top-level `models` block names the provider
 of each review slot:
 
-- `first`: `grok`, `codex` or `claude`
-- `second`: `grok`, `codex` or `claude`, different from `first`
+- `first`: `grok`, `codex`, `claude` or `openrouter`
+- `second`: `grok`, `codex`, `claude` or `openrouter`, different from `first`,
+  or JSON `null` when an A38 coordinator worker obtains the second review
+  externally
 
 The optional top-level `implementer` names the implementation provider. It may
-be `grok`, `codex`, `claude`, or `deepseek`. It must differ from
+be `grok`, `codex`, `claude`, `openrouter`, or `deepseek`. It must differ from
 `models.second`; matching `models.first` is allowed and means there is no
 separate implementation provider. When the key is absent, the implementer is
 `models.first`. `deepseek` is an implementer value only and remains invalid in
@@ -150,6 +153,14 @@ and stored rows remain readable without a database rewrite. Coordinator phases `
 `pr_gates_codex` retain their internal persisted names. A device without a
 `models` block has no slot assignment; task creation, device model display, and
 launch configuration fail loudly.
+
+Tasks recorded before model slots existed may use the historical `grok`, then
+`codex` mapping only to read or display their existing agent and gate rows; they
+cannot start a new lane or write a new agent or gate row.
+`agent models` prints `second=external` (or `external` for the selected slot)
+for a pinned null second slot; JSON output preserves `null`. A null second slot
+does not authorize an ordinary workflow to omit a review. The issue coordinator
+accepts it only for a worker with explicit A38 mode and external reviewers.
 
 A task pins the device's `models` when it is created (`task create`, the issue
 coordinator, error-fix tasks). When the configured implementer differs from
@@ -188,11 +199,22 @@ cannot be kept from running commands. It also refuses a configured implementer
 that differs from `models.first`; separate implementers are not supported by
 the coordinator yet. `agent lane run` and `agent run` accept `models.first = codex`.
 
-The `claude` adapter runs with `--setting-sources user` and `--strict-mcp-config`,
-so a worktree's `.claude/settings.json` hooks and `.mcp.json` never reach a lane.
-Hooks in the operator's own user settings still run in the lane process. That is
-accepted: the operator configured them on this device, and the lane model has no
-`Bash`.
+The `claude` and `openrouter` adapters run Claude Code with `--restricted`,
+`--strict-mcp-config`, `--disable-slash-commands`, and an explicit file-tool
+list. Restricted mode ignores user, project and local settings. A write lane
+gets only `Read,Grep,Glob,Edit,Write` in its worktree and cannot receive an
+extra directory. A read-only lane gets only `Read,Grep,Glob`; a static script
+may add an explicit read directory for control artifacts.
+
+The `openrouter` adapter points Claude Code at OpenRouter's Anthropic-compatible
+endpoint. Its model is the operator-supplied OpenRouter model id; there is no
+default. Put the key in `<config_dir>/openrouter-api-key`. A shell wrapper reads
+it only after launch and exports it as `ANTHROPIC_AUTH_TOKEN`; the key never
+appears in argv. Keep every OpenRouter `config_dir` outside every worktree and
+every added read directory. Launch is refused when those paths overlap. Claude
+Code's reported token counts and tool calls are stored in `lane.run`; its
+Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
+not OpenRouter prices.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;
@@ -204,18 +226,26 @@ which carries no pin, also accepts a finished row of the second provider); `agen
 `agent models implementer [--task <uuid>]` prints the device selection or task
 pin by the same rules as `agent models first|second`.
 
+For a task pinned with `second: null`, `gate record --stage review-2` is refused;
+the external result is recorded in the two `review_2_*` checklist keys with
+`external second review by ...` evidence. That evidence counts only on a
+coordinator A38 task whose stored second review for the evidence head is
+posted and whose newest review does not block the merge.
+
 ## Required fields
 
 Each account requires:
 
-- `provider`: `grok`, `codex` or `claude`
+- `provider`: `grok`, `codex`, `claude` or `openrouter`
 - `config_dir`: absolute path to that profile's provider CLI configuration
   directory (no NUL, newline, CR, or parent traversal); for `claude` this is
   the directory the `CLAUDE_CONFIG_DIR` variable points to. The default
   profile is `~/.claude`: Claude Code keeps its login outside that directory,
   so for exactly this path the lane leaves `CLAUDE_CONFIG_DIR` unset instead of
   pointing it there. Any other directory is a named profile the operator logged
-  in with `CLAUDE_CONFIG_DIR=<dir> claude auth login`.
+  in with `CLAUDE_CONFIG_DIR=<dir> claude auth login`. An `openrouter` account
+  always sets `CLAUDE_CONFIG_DIR`, including when the directory is named
+  `~/.claude`.
 
 Each role requires:
 
@@ -227,6 +257,13 @@ The optional top-level `usage_session` selects an explicitly configured
 interactive Grok session for automatic billing reads. Missing/null disables
 those reads; it never chooses the host profile or the first available account.
 The selected session must exist locally, be owned and active.
+
+The optional top-level `usage_accounts` is a list of explicitly named
+`openrouter` accounts. Missing/null/`[]` disables OpenRouter polling. Each
+configured account is read from `<config_dir>/openrouter-api-key`; unknown names,
+accounts of another provider and duplicate names are rejected. `agent watch openrouter-usage`
+records changed USD key-usage values from OpenRouter's key endpoint as
+`usage.snapshot`, without storing the key, label, or provider ids.
 
 Each session may include:
 
@@ -253,6 +290,7 @@ from the loader does not echo credential contents.
 
 `AIRole.env_prefix()` returns an `env` argv prefix for child processes. It
 removes ambient `XAI_API_KEY`, `GROK_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`,
+`OPENROUTER_API_KEY`,
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
 `AWS_BEARER_TOKEN_BEDROCK`, `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_FOUNDRY_API_KEY`,
@@ -267,11 +305,12 @@ authenticated for that profile.
 
 `AIAccounts.for_session(session_id)` resolves `sessions[session_id].interactive`
 and fails when that binding is absent or null. The loader may represent Codex
-and Claude roles in the manifest. Interactive runtime support remains Grok-only;
+and Claude/OpenRouter roles in the manifest. Interactive runtime support remains Grok-only;
 unsupported interactive providers are refused. The `claude` adapter is a
-headless lane (`claude --print`, spec on stdin, read tools only, plus
-`acceptEdits` (edits inside the worktree only) for a write lane; never Bash,
-subagents or the web). The configured model is required,
+headless lane (`claude --print`, spec on stdin, `Read,Grep,Glob` for a
+read-only lane, plus `Edit,Write` in permission mode `acceptEdits` for a write
+lane, edits inside the worktree only; never Bash, subagents or the web). The OpenRouter adapter uses the same restricted file-tool
+surface. The configured model is required,
 and a supplied `--model` must agree with it. A resumed conversation is pinned to
 the configured role, account, model, access and configuration-directory identity;
 a changed or missing binding requires a new session. Existing unbound Grok conversation IDs are not silently adopted under a newly

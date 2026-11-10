@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_cli.lane import LaneResult
+from agent_cli.lane import LaneResult, LaneUsage
 from agent_cli.runtime import Completed
-from agent_cli.store import Store
+from agent_cli.store import Store, StoreError
 from test_cli import _last_agent_id, _last_task_id, run
 from github_support import configure_accounts
 
@@ -347,14 +347,17 @@ def test_run_prints_vendor_stdout(
     spec = tmp_path / "spec.md"
     spec.write_text("implement this\n", encoding="utf-8")
     seen: dict = {}
+    argv_model = "model-passed-in-run-argv"
+    lane_argv = ["grok", "-m", argv_model]
 
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         seen.update(kwargs)
         return LaneResult(
             role="implementer",
             vendor="grok",
+            model=argv_model,
             status="complete",
-            argv=["grok"],
+            argv=lane_argv,
             returncode=0,
             stdout="implemented the thing, distinctive-marker-run456\nSTATUS: complete\n",
             stderr="",
@@ -383,6 +386,134 @@ def test_run_prints_vendor_stdout(
     assert seen.get("role") == "implementer"
     assert seen.get("vendor") == "grok"
     assert seen.get("tmux") is False
+    store = _store(tmp_path)
+    try:
+        rows = [r for r in store.rows("activity") if r.get("type") == "lane.run"]
+    finally:
+        store.close()
+    assert len(rows) == 1
+    assert rows[0]["payload"]["task_id"] == tid
+    assert rows[0]["payload"]["model"] == lane_argv[lane_argv.index("-m") + 1]
+
+
+def test_cli_lane_run_records_usage_and_tools(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", DEFAULT_SESSION, "--kind", "human"])
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    argv_model = "model-passed-in-lane-argv"
+    lane_argv = ["grok", "-m", argv_model]
+
+    def fake_launch(**_kwargs):  # type: ignore[no-untyped-def]
+        return LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=argv_model,
+            status="complete",
+            argv=lane_argv,
+            returncode=0,
+            stdout="secret=hidden\nSTATUS: complete\n",
+            stderr="",
+            usage=LaneUsage("reported/model", 10, 4, 2, 1, 3, 42),
+            tools=({"tool": "Read", "target": "/work/a.py", "error": False},),
+        )
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    run(
+        tmp_path,
+        [
+            "lane", "run", "--role", "implementer", "--vendor", "grok",
+            "--session", DEFAULT_SESSION, "--spec-file", str(spec),
+            "--cwd", str(tmp_path), "--no-tmux",
+        ],
+    )
+    capsys.readouterr()
+    store = _store(tmp_path)
+    try:
+        rows = [r for r in store.rows("activity") if r.get("type") == "lane.run"]
+    finally:
+        store.close()
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert payload["model"] == lane_argv[lane_argv.index("-m") + 1]
+    assert payload["reported_model"] == "reported/model"
+    assert payload["usage"]["input_tokens"] == 10
+    assert payload["tools"] == [
+        {"tool": "Read", "target": "/work/a.py", "error": False}
+    ]
+    assert payload["final_text"] != "secret=hidden\nSTATUS: complete\n"
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, StoreError])
+def test_cli_lane_run_reports_activity_write_failure_without_changing_verdict(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[BaseException],
+) -> None:
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", DEFAULT_SESSION, "--kind", "human"])
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            "implementer", "grok", OPERATOR_GROK_MODEL, "complete", ["grok"], 0,
+            "STATUS: complete\n", "",
+        ),
+    )
+    monkeypatch.setattr(
+        "agent_cli.main.record_lane_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error_type("store unavailable")),
+    )
+    run(
+        tmp_path,
+        [
+            "lane", "run", "--role", "implementer", "--vendor", "grok",
+            "--session", DEFAULT_SESSION, "--spec-file", str(spec),
+            "--cwd", str(tmp_path), "--no-tmux",
+        ],
+    )
+    captured = capsys.readouterr()
+    assert "STATUS=complete" in captured.out
+    assert "lane.run write failed: store unavailable" in captured.err
+
+
+def test_run_store_error_on_lane_audit_keeps_the_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\n",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        "agent_cli.main.record_lane_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("store unavailable")),
+    )
+    run(
+        tmp_path,
+        ["run", "--task", tid, "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path)],
+    )
+    captured = capsys.readouterr()
+    assert "lane.run write failed: store unavailable" in captured.err
+    assert _checklist(tmp_path, tid)["implementer_done"] == "ja"
 
 
 def test_run_spec_file_implementer_complete(
@@ -399,6 +530,7 @@ def test_run_spec_file_implementer_complete(
         return LaneResult(
             role="implementer",
             vendor="grok",
+            model=OPERATOR_GROK_MODEL,
             status="complete",
             argv=["grok"],
             returncode=0,
@@ -429,6 +561,196 @@ def test_run_spec_file_implementer_complete(
     assert seen.get("session_id") == "sess-1"
     assert seen.get("config_home") == tmp_path
     assert seen.get("spec_file") == str(spec)
+
+
+def test_run_only_parsed_implementer_blocked_result_fails_the_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: blocked\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run", "--task", tid, "--spec-file", str(spec),
+                "--no-tmux", "--cwd", str(tmp_path),
+            ],
+        )
+
+    assert exc.value.code == 2
+    assert _task_state(tmp_path, tid) == "failed"
+    implementers = [
+        agent for agent in _agents(tmp_path, tid)
+        if agent.get("role") == "implementer"
+    ]
+    assert len(implementers) == 1
+    assert implementers[0]["status"] == "done"
+    assert implementers[0]["note"] == "lane STATUS=complete RESULT=blocked"
+
+
+def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    router_config = tmp_path / "router-config"
+    router_config.mkdir()
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps(
+            {
+                "lane_execution": {"mode": "this-device-is-lane-host"},
+                "models": {"first": "openrouter", "second": "codex"},
+                "accounts": {
+                    "router": {
+                        "provider": "openrouter",
+                        "config_dir": str(router_config),
+                    }
+                },
+                "roles": {
+                    "router-builder": {
+                        "account": "router",
+                        "model": "vendor/model",
+                        "access": "workspace-write",
+                    }
+                },
+                "sessions": {
+                    DEFAULT_SESSION: {
+                        "interactive": "router-builder",
+                        "lanes": {"openrouter:implementer": "router-builder"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tid = _bootstrap_implement(tmp_path, capsys)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    output_paths: list[Path] = []
+
+    def invalid_output(
+        argv: list[str], stdin_text: str | None, cwd: str | None = None
+    ) -> object:
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        output_file = Path(argv[wrapper_index + 2])
+        output_paths.append(output_file)
+        output_file.write_bytes(b"\xff")
+        assert stdin_text == "implement this\n"
+        return Completed(0, "", "")
+
+    monkeypatch.setattr("agent_cli.lane._default_runner", invalid_output)
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(worktree),
+            ],
+        )
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "lane output file is not valid UTF-8" in captured.err
+    assert output_paths and not output_paths[0].exists()
+    agents = _agents(tmp_path, tid)
+    assert agents
+    assert all(agent.get("status") != "working" for agent in agents)
+    implementers = [agent for agent in agents if agent.get("role") == "implementer"]
+    assert implementers and implementers[0].get("status") == "done"
+    assert "lane output file is not valid UTF-8" in str(implementers[0].get("note"))
+    assert _task_state(tmp_path, tid) == "implementing"
+
+    with pytest.raises(SystemExit) as retry:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(worktree),
+            ],
+        )
+    assert retry.value.code == 2
+    retried = [
+        agent for agent in _agents(tmp_path, tid)
+        if agent.get("role") == "implementer"
+    ]
+    assert len(retried) == 2
+    assert all(agent.get("status") == "done" for agent in retried)
+    assert _task_state(tmp_path, tid) == "implementing"
+
+
+@pytest.mark.parametrize("status", ["partial", "timeout", "unavailable"])
+def test_run_incomplete_implementer_is_aborted_without_blocking_the_round(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status=status,
+            argv=["grok"],
+            returncode={"partial": 0, "timeout": 124, "unavailable": 2}[status],
+            stdout=f"STATUS: {status}\n",
+            stderr="provider did not complete",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--spec-file", str(spec),
+                    "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        implementers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "implementer"
+        ]
+        assert len(implementers) == expected_count
+        assert all(agent.get("status") == "done" for agent in implementers)
+        assert all("aborted incomplete lane" in str(agent.get("note")) for agent in implementers)
+        assert _task_state(tmp_path, tid) == "implementing"
 
 
 def test_run_missing_spec_file_does_not_leave_working_agent(
@@ -605,6 +927,7 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
         return LaneResult(
             role="reviewer",
             vendor="grok",
+            model=OPERATOR_GROK_MODEL,
             status="complete",
             argv=["grok"],
             returncode=0,
@@ -637,6 +960,49 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
     assert seen.get("config_home") == tmp_path
     assert seen.get("role") == "reviewer"
     assert seen.get("vendor") == "grok"
+
+
+def test_run_unavailable_inner_reviewer_is_retryable_in_the_same_round(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="reviewer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="unavailable",
+            argv=["grok"],
+            returncode=2,
+            stdout="STATUS: unavailable\n",
+            stderr="provider unavailable",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--spec-file", str(spec),
+                    "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        reviewers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "reviewer"
+        ]
+        assert len(reviewers) == expected_count
+        assert all(agent.get("status") == "done" for agent in reviewers)
+        assert _task_state(tmp_path, tid) == "reviewing"
 
 
 def _advance_to_pushed(
@@ -829,6 +1195,79 @@ def test_run_mergeable_after_gates(
     assert _checklist(tmp_path, tid)["mergeable"] == "ja"
 
 
+def test_run_unavailable_pr_reviewer_records_gate_and_can_retry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        sessions={
+            DEFAULT_SESSION: {
+                "interactive": "run-builder",
+                "lanes": {
+                    "grok:implementer": "run-builder",
+                    "grok:reviewer": "run-reader",
+                    "grok:pr-reviewer-quality": "run-reader",
+                },
+            }
+        },
+    )
+    tid = _bootstrap_resolve(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    configure_accounts(tmp_path, [DEFAULT_SESSION], login="ok")
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner: "abc1234",
+    )
+    run(tmp_path, ["run", "--task", tid, "--head", "abc1234"])
+    capsys.readouterr()
+    spec = tmp_path / "pr-quality.md"
+    spec.write_text("review quality\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="pr-reviewer-quality",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="unavailable",
+            argv=["grok"],
+            returncode=2,
+            stdout="STATUS: unavailable\n",
+            stderr="provider unavailable",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--head", "abc1234",
+                    "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        reviewers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "pr-reviewer-quality"
+        ]
+        assert len(reviewers) == expected_count
+        assert all(agent.get("status") == "done" for agent in reviewers)
+        assert _checklist(tmp_path, tid)["review_1_quality"] == "unavailable"
+        store = _store(tmp_path)
+        try:
+            gates = [
+                gate for gate in store.rows("review_gate")
+                if gate.get("task_id") == tid
+                and gate.get("stage") == "review-1"
+                and gate.get("dimension") == "quality"
+            ]
+        finally:
+            store.close()
+        assert len(gates) == expected_count
+        assert all(gate.get("verdict") == "unavailable" for gate in gates)
+        assert all("provider unavailable" in str(gate.get("evidence")) for gate in gates)
+
+
 
 def test_run_launches_the_provider_pinned_on_the_task(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
@@ -851,7 +1290,8 @@ def test_run_launches_the_provider_pinned_on_the_task(
     def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
         seen.update(kwargs)
         return LaneResult(
-            role="implementer", vendor=kwargs["vendor"], status="complete", argv=["claude"],
+            role="implementer", vendor=kwargs["vendor"], model="claude-model",
+            status="complete", argv=["claude"],
             returncode=0, stdout="done\nSTATUS: complete\n", stderr="",
         )
 
@@ -875,3 +1315,70 @@ def test_invalid_pinned_models_end_in_a_clean_error(
         store.close()
     with pytest.raises(SystemExit, match="invalid models pinned on the task"):
         run(tmp_path, ["next", "--task", tid])
+
+
+def test_run_refuses_external_second_slot_without_launching_lane(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid = _bootstrap_resolve(tmp_path, capsys)
+    store = _store(tmp_path)
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        updated = {key: value for key, value in task.items() if not key.startswith("_")}
+        updated["models"] = {"first": "grok", "second": None}
+        store.write("task", "update", tid, updated)
+    finally:
+        store.close()
+
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    configure_accounts(tmp_path, ["sess-1"], login="ok")
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner: "abc1234",
+    )
+    run(tmp_path, ["run", "--task", tid, "--head", "abc1234"])
+    capsys.readouterr()
+    for dimension in ("quality", "logic"):
+        _record_pr_gate(
+            tmp_path,
+            tid,
+            capsys,
+            stage="review-1",
+            dimension=dimension,
+            vendor="grok",
+        )
+        run(tmp_path, ["run", "--task", tid])
+        capsys.readouterr()
+
+    spec = tmp_path / "second-review.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    launches = {"count": 0}
+
+    def fake_launch(**kwargs):  # type: ignore[no-untyped-def]
+        launches["count"] += 1
+        raise AssertionError(f"unexpected lane launch: {kwargs}")
+
+    monkeypatch.setattr("agent_cli.main.launch", fake_launch)
+    agents_before = len(_agents(tmp_path, tid))
+    with pytest.raises(
+        SystemExit,
+        match="model slot second is external; no agent lane can be started",
+    ):
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+    assert launches["count"] == 0
+    assert len(_agents(tmp_path, tid)) == agents_before

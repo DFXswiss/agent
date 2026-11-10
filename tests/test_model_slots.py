@@ -91,8 +91,10 @@ def write_claude_first(
 
 @pytest.mark.no_pg
 def test_supported_providers_and_legacy_recorded_order() -> None:
-    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude"})
-    assert IMPLEMENTER_PROVIDERS == frozenset({"grok", "codex", "claude", "deepseek"})
+    assert SUPPORTED_PROVIDERS == frozenset({"grok", "codex", "claude", "openrouter"})
+    assert IMPLEMENTER_PROVIDERS == frozenset(
+        {"grok", "codex", "claude", "openrouter", "deepseek"}
+    )
     assert LEGACY_RECORDED_SLOTS == ModelSlots("grok", "codex")
     with pytest.raises(ModelSlotsError) as excinfo:
         parse_model_slots(None)
@@ -122,6 +124,15 @@ def test_implementer_parsing_and_snapshot_fallback() -> None:
         parse_implementer("codex", models)
     with pytest.raises(ModelSlotsError, match="models.first must be one of"):
         parse_model_slots({"first": "deepseek", "second": "codex"})
+    assert parse_model_slots(
+        {"first": "openrouter", "second": "claude"}
+    ) == ModelSlots("openrouter", "claude")
+    assert parse_model_slots(
+        {"first": "grok", "second": "openrouter"}
+    ) == ModelSlots("grok", "openrouter")
+    assert parse_model_slots({"first": "grok", "second": None}) == ModelSlots(
+        "grok", None
+    )
 
 
 @pytest.mark.no_pg
@@ -141,6 +152,11 @@ def test_slots_resolve_stage_and_vendor() -> None:
         models.for_slot("third")
     with pytest.raises(ModelSlotsError):
         models.for_stage("other-pr")
+
+    external = ModelSlots("grok", None)
+    assert external.for_stage("codex-pr") is None
+    assert external.slot_of("codex") is None
+    assert external.as_dict() == {"first": "grok", "second": None}
 
 
 @pytest.mark.no_pg
@@ -270,39 +286,56 @@ def test_both_manifest_loaders_reject_invalid_implementer(
 
 @pytest.mark.no_pg
 def test_claude_argv_read_only_and_write_shapes() -> None:
-    ro = claude_argv(cwd="/work", write=False, model=CLAUDE_MODEL)
+    ro = claude_argv(
+        cwd="/work", write=False, model=CLAUDE_MODEL, read_dirs=("/control",)
+    )
     assert ro[0] == "env"
     assert "claude" in ro and "--print" in ro
     assert ro[ro.index("--model") + 1] == CLAUDE_MODEL
-    assert ro[ro.index("--add-dir") + 1] == "/work"
-    assert ro[ro.index("--setting-sources") + 1] == "user"
+    assert ro[ro.index("--add-dir") + 1] == "/control"
+    assert "--setting-sources" not in ro
+    assert "--allowedTools" not in ro
+    assert "--disallowedTools" not in ro
+    assert "--restricted" in ro
+    assert "--disable-slash-commands" in ro
+    assert ro[ro.index("--output-format") + 1] == "stream-json"
     assert "--strict-mcp-config" in ro
     assert ro[ro.index("--permission-mode") + 1] == "default"
-    disallowed = ro[ro.index("--disallowedTools") + 1 :]
-    for tool in ("Edit", "Write", "Bash", "Agent", "WebSearch", "WebFetch"):
-        assert tool in disallowed
-    allowed = ro[ro.index("--allowedTools") + 1 : ro.index("--disallowedTools")]
-    assert set(allowed) == {"Read", "Grep", "Glob"}
+    assert ro[ro.index("--tools") + 1] == "Read,Grep,Glob"
 
     rw = claude_argv(cwd="/work", write=True, model=CLAUDE_MODEL)
     assert rw[rw.index("--permission-mode") + 1] == "acceptEdits"
-    # No bare edit rule: it would allow edits outside the working directory.
-    allowed = rw[rw.index("--allowedTools") + 1 : rw.index("--disallowedTools")]
-    assert set(allowed) == {"Read", "Grep", "Glob"}
-    disallowed = rw[rw.index("--disallowedTools") + 1 :]
-    assert "Bash" in disallowed and "Agent" in disallowed
-    assert "Edit" not in disallowed
+    assert rw[rw.index("--tools") + 1] == "Read,Grep,Glob,Edit,Write"
+    assert "--add-dir" not in rw
+    with pytest.raises(SystemExit, match="write lane takes no extra directories"):
+        claude_argv(cwd="/work", write=True, model=CLAUDE_MODEL, read_dirs=("/x",))
 
 
 @pytest.mark.no_pg
 def test_provider_argv_dispatch() -> None:
     assert "claude" in provider_argv("claude", spec_file="/s.md", cwd="/w", write=False, model="m")
-    assert "--prompt-file" in provider_argv("grok", spec_file="/s.md", cwd="/w", write=False, model="m")
+    grok = provider_argv("grok", spec_file="/s.md", cwd="/w", write=False, model="m")
+    assert "--prompt-file" in grok
+    assert provider_argv(
+        "grok", spec_file="/s.md", cwd="/w", write=False, model="m",
+        read_dirs=("/ignored",),
+    ) == grok
     codex = provider_argv("codex", spec_file="/s.md", cwd="/w", write=False, model="m", output_file="/o.txt")
     assert "exec" in codex and "/o.txt" in codex
+    assert provider_argv(
+        "codex", spec_file="/s.md", cwd="/w", write=False, model="m",
+        output_file="/o.txt", read_dirs=("/ignored",),
+    ) == codex
+    openrouter = provider_argv(
+        "openrouter", spec_file="/s.md", cwd="/w", write=False, model="vendor/model",
+        output_file="/o.jsonl", read_dirs=("/control",),
+    )
+    assert "ANTHROPIC_BASE_URL=https://openrouter.ai/api" in openrouter
+    assert "ANTHROPIC_API_KEY=" in openrouter
+    assert "/o.jsonl" in openrouter and "vendor/model" in openrouter
     with pytest.raises(SystemExit, match="output file"):
         provider_argv("codex", spec_file="/s.md", cwd="/w", write=False, model="m")
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok\\|openrouter"):
         provider_argv("gemini", spec_file="/s.md", cwd="/w", write=False, model="m")
 
 
@@ -316,7 +349,8 @@ def test_launch_claude_lane_feeds_spec_on_stdin(tmp_path: Path) -> None:
     def runner(argv: list[str], stdin_text: str | None):
         seen["argv"] = argv
         seen["stdin"] = stdin_text
-        return type("Done", (), {"returncode": 0, "stdout": "ok\nSTATUS: complete\n", "stderr": ""})()
+        event = {"type": "result", "result": "ok\nSTATUS: complete\n", "usage": {}}
+        return type("Done", (), {"returncode": 0, "stdout": json.dumps(event) + "\n", "stderr": ""})()
 
     result = launch(
         role="implementer",
@@ -341,7 +375,7 @@ def test_launch_rejects_unknown_vendor(tmp_path: Path) -> None:
     write_claude_first(tmp_path)
     spec = tmp_path / "spec.md"
     spec.write_text("x\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok\\|openrouter"):
         launch(
             role="implementer",
             vendor="gemini",
@@ -432,6 +466,162 @@ def test_coordinator_slot_helpers() -> None:
     )
     assert checklist_key_for_stage("review-1", "quality") == "review_1_quality"
     assert checklist_key_for_stage("review-2", "logic") == "review_2_logic"
+    assert checklist_key_for_stage("grok-pr", "quality") == "review_1_quality"
+    assert checklist_key_for_stage("codex-pr", "logic") == "review_2_logic"
+    assert required_lane_slots(ModelSlots("grok", None)) == (
+        "grok:implementer",
+        "grok:reviewer",
+        "grok:pr-reviewer-quality",
+        "grok:pr-reviewer-logic",
+    )
+
+
+@pytest.mark.no_pg
+def test_external_second_review_satisfies_done_gate_without_second_gate_rows() -> None:
+    head = "a" * 40
+    checklist = {
+        "session_registered": "ja",
+        "contributing_read": "ja",
+        "contributing_ok": "ja",
+        "coverage_ok": "ja",
+        "handbook_ok": "ja",
+        "review_1_quality": "ja",
+        "review_1_logic": "ja",
+        "review_2_quality": "ja",
+        "review_2_logic": "ja",
+        "deviation_declared": "n_a",
+        "deviation_granted": "n_a",
+    }
+    prefix = f"external second review by reviewer at {head}: "
+    task = {
+        "id": "task",
+        "workflow": "review",
+        "models": {"first": "grok", "second": None},
+        "payload": {"coordinator": {"a38": {"enabled": True, "second_review": {"head": head, "status": "posted", "reviews": [{"blocks_merge": False, "at": "2026-01-01T00:00:00Z"}]}}}},
+        "checklist": checklist,
+        "checklist_evidence": {
+            "review_2_quality": prefix + "https://example.invalid/comment",
+            "review_2_logic": prefix + "https://example.invalid/comment",
+        },
+        "gates": [
+            {"stage": "review-1", "dimension": "quality", "vendor": "grok", "verdict": "approved", "head_sha": head},
+            {"stage": "review-1", "dimension": "logic", "vendor": "grok", "verdict": "approved", "head_sha": head},
+        ],
+        "local_checks": [],
+        "summaries": {"en": "Done.", "de": "Erledigt."},
+    }
+    assert ready_for_done_blocking(task) == []
+    task["checklist_evidence"]["review_2_logic"] = (
+        f"external second review by reviewer at {'b' * 40}: https://example.invalid/comment"
+    )
+    assert any(
+        "review-2/logic=external_review_missing" in item
+        for item in ready_for_done_blocking(task)
+    )
+    task["checklist_evidence"]["review_2_logic"] = prefix + "https://example.invalid/comment"
+    task.pop("payload")
+    assert any(
+        "review-2/quality=external_review_missing" in item
+        for item in ready_for_done_blocking(task)
+    )
+    task["payload"] = {"coordinator": {"a38": {"enabled": True}}}
+    task["checklist_evidence"]["review_2_logic"] = "ordinary evidence"
+    assert any("review-2/logic=external_review_missing" in item for item in ready_for_done_blocking(task))
+
+
+@pytest.mark.no_pg
+def test_models_cli_prints_external_for_null_second(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": None}}),
+        encoding="utf-8",
+    )
+    _run(tmp_path, ["models"])
+    assert capsys.readouterr().out.splitlines() == ["first=grok", "second=external"]
+    _run(tmp_path, ["models", "second", "--json"])
+    assert json.loads(capsys.readouterr().out) == {"second": None}
+
+
+def test_task_create_refuses_external_second_slot_outside_coordinator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "ai-accounts.json").write_text(
+        json.dumps({"models": {"first": "grok", "second": None}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        SystemExit,
+        match="models.second = null is allowed only for coordinator A38 task creation",
+    ):
+        _task(tmp_path, capsys)
+
+
+def test_gate_record_refuses_external_second_slot_on_direct_task_row(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from agent_cli.main import open_store
+
+    _run(tmp_path, ["init"])
+    _run(
+        tmp_path,
+        [
+            "session",
+            "register",
+            "--id",
+            "s",
+            "--kind",
+            "human",
+            "--skill",
+            "spine",
+            "--skill",
+            "pr-review",
+        ],
+    )
+    capsys.readouterr()
+    tid = "11111111-1111-4111-8111-111111111111"
+    os.environ["AGENT_HOME"] = str(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "task",
+            "insert",
+            tid,
+            {
+                "id": tid,
+                "session_id": "s",
+                "workflow": "implement",
+                "state": "pr-review",
+                "title": "External second review",
+                "models": {"first": "grok", "second": None},
+                "payload": {"coordinator": {"a38": {"enabled": True}}},
+            },
+        )
+    finally:
+        store.close()
+
+    with pytest.raises(SystemExit, match="the second review is external"):
+        _run(
+            tmp_path,
+            [
+                "gate",
+                "record",
+                "--task",
+                tid,
+                "--stage",
+                "review-2",
+                "--dimension",
+                "quality",
+                "--vendor",
+                "codex",
+                "--verdict",
+                "approved",
+                "--head",
+                "abcdef0",
+                "--agent",
+                "missing-agent",
+            ],
+        )
 
 
 # --- CLI with configured slots ----------------------------------------------
@@ -470,7 +660,7 @@ def test_cli_agent_start_follows_configured_first_slot(
     assert out.startswith("agent ")
     pr_agent = out.split()[1]
     _run(tmp_path, ["agent", "finish", "--id", pr_agent, "--verdict", "approved"])
-    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok"):
+    with pytest.raises(SystemExit, match="vendor must be claude\\|codex\\|grok\\|openrouter"):
         _run(tmp_path, ["agent", "start", "--session", "s", "--task", tid, "--role", "pr-reviewer-logic", "--vendor", "gemini"])
     _run(tmp_path, ["task", "state", tid, "implementing"])
     _run(tmp_path, ["round", "start", "--task", tid])
@@ -965,6 +1155,70 @@ def test_task_pins_models_at_create(tmp_path: Path, capsys: pytest.CaptureFixtur
         store.close()
 
 
+def test_task_create_checks_and_pins_one_model_configuration_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The null check and the pin must come from the same manifest snapshot."""
+    _run(tmp_path, ["init"])
+    _run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"])
+
+    class DriftingLoader:
+        def __init__(self) -> None:
+            self.calls: list[Path] = []
+
+        def __call__(self, home: Path) -> tuple[ModelSlots, str]:
+            self.calls.append(home)
+            # The device changes after the first read: a second read would find no second slot.
+            return ModelSlots("grok", "codex" if len(self.calls) == 1 else None), "grok"
+
+    loader = DriftingLoader()
+    monkeypatch.setattr("agent_cli.main.load_model_configuration", loader)
+    monkeypatch.setattr("agent_cli.ai_accounts.load_model_configuration", loader)
+    _run(
+        tmp_path,
+        ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"],
+    )
+    out = capsys.readouterr().out
+    tid = [ln for ln in out.splitlines() if ln.startswith("task ")][-1].split()[1]
+    assert len(loader.calls) == 1
+    from agent_cli.main import open_store
+
+    store = open_store()
+    try:
+        task = store.row("task", tid)
+        assert task is not None
+        assert task["models"] == {"first": "grok", "second": "codex"}
+    finally:
+        store.close()
+
+
+def test_task_create_refuses_null_second_without_inserting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run(tmp_path, ["init"])
+    _run(tmp_path, ["session", "register", "--id", "s", "--kind", "human", "--skill", "spine"])
+    calls: list[Path] = []
+
+    def fake_load(home: Path) -> tuple[ModelSlots, str]:
+        calls.append(home)
+        return ModelSlots("grok", None), "grok"
+
+    monkeypatch.setattr("agent_cli.main.load_model_configuration", fake_load)
+    with pytest.raises(SystemExit, match="models.second = null"):
+        _run(
+            tmp_path,
+            ["task", "create", "--session", "s", "--workflow", "implement", "--title", "Ship"],
+        )
+    assert len(calls) == 1
+    from agent_cli.main import open_store
+
+    store = open_store()
+    try:
+        assert store.rows("task") == []
+    finally:
+        store.close()
+
+
 def test_task_pins_only_a_separate_implementer(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1034,7 +1288,19 @@ def test_claude_lane_in_tmux_redirects_the_spec_file(tmp_path: Path) -> None:
 
     def runner(argv: list[str], stdin_text: str | None):
         seen["argv"], seen["stdin"] = argv, stdin_text
-        return type("Done", (), {"returncode": 0, "stdout": "STATUS: complete\n", "stderr": ""})()
+        inner = argv[argv.index("--") + 1 :]
+        Path(inner[5]).write_text(
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": "output file\nSTATUS: complete",
+                    "usage": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return type("Done", (), {"returncode": 0, "stdout": "runner stdout", "stderr": ""})()
 
     for dry in (True, False):
         result = launch(
@@ -1044,8 +1310,18 @@ def test_claude_lane_in_tmux_redirects_the_spec_file(tmp_path: Path) -> None:
         )
         argv = result.argv
         inner = argv[argv.index("--") + 1 :]
-        assert inner[:5] == ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", str(spec.resolve())]
+        assert inner[:5] == [
+            "sh",
+            "-c",
+            'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
+            "sh",
+            str(spec.resolve()),
+        ]
+        assert inner[5]
         assert "claude" in inner and "--print" in inner
+        if not dry:
+            assert seen["stdin"] is None
+            assert result.stdout == "output file\nSTATUS: complete"
     # Without an injected runner the tmux holder must not type the spec into the pane.
     import agent_cli.lane as lane_mod
 

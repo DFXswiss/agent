@@ -6,6 +6,7 @@ with a snapshot of the current session.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -78,6 +79,8 @@ N_A_ALLOWED = frozenset(
 
 SECOND_REVIEW_KEYS = frozenset({"review_2_quality", "review_2_logic"})
 SECOND_REVIEW_NOT_POSTED = "second review not posted"
+EXTERNAL_SECOND_REVIEW_PREFIX = "external second review by "
+_EXTERNAL_SECOND_REVIEW_HEAD = re.compile(r"\bat ([0-9a-f]{40})\b")
 
 # (stage, dimension, model slot). The provider comes from the device's
 # ``models`` configuration (see model_slots).
@@ -152,6 +155,73 @@ def both_second_reviews_na(statuses: Mapping[str, Any], evidence: Mapping[str, A
     )
 
 
+def external_second_review_ok(
+    task: Mapping[str, Any],
+    statuses: Mapping[str, Any],
+    evidence: Mapping[str, Any] | None,
+) -> bool:
+    """External slot-second evidence replaces gate rows only for coordinator A38."""
+    try:
+        external = models_from_snapshot(task).second is None
+    except (TypeError, ValueError):
+        return False
+    canonical_statuses = canonical_checklist(statuses)
+    recorded = canonical_checklist(evidence) if isinstance(evidence, Mapping) else {}
+    return external and all(
+        canonical_statuses.get(key) == "ja"
+        and external_second_review_evidence_ok(task, recorded.get(key))
+        for key in SECOND_REVIEW_KEYS
+    )
+
+
+def external_second_review_evidence_ok(
+    task: Mapping[str, Any], evidence: Any
+) -> bool:
+    """Require coordinator A38 provenance and the approved first-gate head."""
+    payload = task.get("payload")
+    coordinator = payload.get("coordinator") if isinstance(payload, Mapping) else None
+    a38 = coordinator.get("a38") if isinstance(coordinator, Mapping) else None
+    if not (a38 is True or isinstance(a38, Mapping) and a38.get("enabled") is True):
+        return False
+    if not isinstance(evidence, str) or not evidence.startswith(EXTERNAL_SECOND_REVIEW_PREFIX):
+        return False
+    match = _EXTERNAL_SECOND_REVIEW_HEAD.search(evidence)
+    if match is None:
+        return False
+    evidence_head = match.group(1)
+    try:
+        first_vendor = models_from_snapshot(task).first
+    except (TypeError, ValueError):
+        return False
+    latest = _latest_gates(list(task.get("gates") or []))
+    for dimension in ("quality", "logic"):
+        gate = latest.get(("review-1", dimension))
+        if (
+            gate is None
+            or gate.get("vendor") != first_vendor
+            or gate.get("verdict") != "approved"
+            or gate.get("head_sha") != evidence_head
+        ):
+            return False
+    second = a38.get("second_review") if isinstance(a38, Mapping) else None
+    reviews = second.get("reviews") if isinstance(second, Mapping) else None
+    return (
+        isinstance(second, Mapping)
+        and second.get("head") == evidence_head
+        and second.get("status") == "posted"
+        and isinstance(reviews, list)
+        and bool(reviews)
+        and not newest_reviews_block(reviews)
+    )
+
+
+def newest_reviews_block(reviews: list[Any]) -> bool:
+    """True when the last posted review blocks. Intake never posts a review older
+    than one already posted, so the last one is also the newest, as the guard reads it."""
+    entries = [review for review in reviews if isinstance(review, dict)]
+    return bool(entries) and entries[-1].get("blocks_merge") is True
+
+
 def _tid(task: dict[str, Any]) -> str:
     return str(task.get("id", "?"))
 
@@ -195,6 +265,11 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     trusted = task.get("trusted_pr_guard")
     opener = task.get("pull_opener")
     recorded = task.get("checklist_evidence")
+    external_second = external_second_review_ok(
+        task,
+        checklist,
+        recorded if isinstance(recorded, Mapping) else None,
+    )
     skip_second_gates = both_second_reviews_na(
         checklist,
         recorded if isinstance(recorded, Mapping) else None,
@@ -245,7 +320,13 @@ def ready_for_done_blocking(task: dict[str, Any]) -> list[str]:
     all_gates_ok = True
     for stage, dim, slot in GATE_PAIRS:
         vendor = models.for_slot(slot)
+        if slot == "second" and external_second:
+            continue
         if skip_second_gates and stage == "review-2":
+            continue
+        if vendor is None:
+            blocking.append(f"{tid}:gate:{stage}/{dim}=external_review_missing")
+            all_gates_ok = False
             continue
         got = latest.get((stage, dim))
         if got is None:
