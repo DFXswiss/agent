@@ -407,17 +407,70 @@ def test_reconcile_approves_and_exposes_writes_then_is_idempotent() -> None:
     assert fake.posts == [101]
 
 
-def test_local_report_approves_waiting_ci_without_review() -> None:
+def test_local_report_without_review_does_not_approve_waiting_ci() -> None:
     fake = FakeApproval()
     fake.satisfy_review = False
     result = reconcile_pull(fake.api(), REPO, 1)
     assert result.report_gate_ok is True
     assert result.review_ok is False
     assert result.ok is False
+    assert result.workflow_approvals == []
+    assert fake.posts == []
+
+
+def test_first_review_only_does_not_approve_when_opener_needs_two() -> None:
+    fake = FakeApproval()
+    fake.include_second_review = False
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.report_gate_ok is True
+    assert result.review_ok is False
+    assert result.workflow_approvals == []
+    assert fake.posts == []
+
+
+def test_both_review_comments_approve_waiting_ci() -> None:
+    fake = FakeApproval()
+    fake.include_second_review = True
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.report_gate_ok is True
+    assert result.review_ok is True
     assert result.workflow_approvals == [
         {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
     ]
     assert fake.posts == [101]
+
+
+def test_one_review_author_approves_with_first_review_only() -> None:
+    fake = FakeApproval()
+    fake.include_second_review = False
+    config = _cfg({"enabled": True, "workflows": [PATH]})
+    config["one_review_authors"] = ["author"]
+    fake.set_pr_guard_config(config)
+    result = reconcile_pull(fake.api(), REPO, 1)
+    assert result.report_gate_ok is True
+    assert result.review_ok is True
+    assert result.workflow_approvals == [
+        {"run_id": 101, "workflow": PATH, "head": HEAD, "status": "approved"}
+    ]
+    assert fake.posts == [101]
+
+
+def test_live_review_recheck_blocks_approval_without_post() -> None:
+    fake = FakeApproval()
+
+    def drop_reviews(inner: FakeApproval) -> None:
+        inner.satisfy_review = False
+
+    fake.before_run_read = drop_reviews
+    api = fake.api()
+    assessment = assess_pull(api, REPO, 1)
+    assert assessment.report_gate_ok is True
+    assert assessment.review_ok is True
+    with pytest.raises(
+        GuardError, match="review completion changed before workflow approval"
+    ):
+        wa.approve_workflow_runs(api, assessment)
+    assert fake.posts == []
 
 
 def test_review_without_local_report_does_not_approve_ci() -> None:
