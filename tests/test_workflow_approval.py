@@ -83,6 +83,12 @@ class FakeApproval(FakeAPI):
         self.inventory = None
         self.on_inventory = None
         self.before_run_read = None
+        # Fires once, on the pull re-read that follows the head-SHA run listing
+        # after the candidate run itself was read. That is the last pull read
+        # before POST /approve.
+        self.before_approval_pull_reread = None
+        self._candidate_run_read = False
+        self._head_listed_after_run_read = False
         self.extra_pulls: list[dict] = []
         self.list_head_sha: str | None = None
         self.events: list[dict] = []
@@ -148,6 +154,12 @@ class FakeApproval(FakeAPI):
             self.actions_pages.append(page)
             status = (self.current_query.get("status") or [None])[0]
             self.query_pages.append((status, page))
+            if (
+                self._candidate_run_read
+                and "head_sha" in self.current_query
+                and "event" not in self.current_query
+            ):
+                self._head_listed_after_run_read = True
             if self.on_inventory is not None:
                 self.on_inventory(self, page)
             if callable(self.inventory):
@@ -192,6 +204,8 @@ class FakeApproval(FakeAPI):
                 if self.post_status == 201:
                     run.update(status="queued", conclusion=None)
                 return self.post_status, {}, {}
+            if method == "GET" and "/" not in remainder:
+                self._candidate_run_read = True
             if self.before_run_read is not None:
                 callback, self.before_run_read = self.before_run_read, None
                 callback(self)
@@ -217,6 +231,14 @@ class FakeApproval(FakeAPI):
             return 200, copy.deepcopy(self.events), {}
         if method == "GET" and path == f"{root}/pulls/1/commits" and self.pull_commits is not None:
             return 200, copy.deepcopy(self.pull_commits), {}
+        if (
+            method == "GET"
+            and path == f"{root}/pulls/1"
+            and self._head_listed_after_run_read
+            and self.before_approval_pull_reread is not None
+        ):
+            callback, self.before_approval_pull_reread = self.before_approval_pull_reread, None
+            callback(self)
         status, data, headers = super().request_fn(method, url, body)
         data = copy.deepcopy(data)
         if (
@@ -461,11 +483,14 @@ def test_live_review_recheck_blocks_approval_without_post() -> None:
     def drop_reviews(inner: FakeApproval) -> None:
         inner.satisfy_review = False
 
-    fake.before_run_read = drop_reviews
     api = fake.api()
     assessment = assess_pull(api, REPO, 1)
     assert assessment.report_gate_ok is True
     assert assessment.review_ok is True
+    # Reviews disappear on the pull re-read after the candidate run was read
+    # and the head-SHA sibling listing returned. That is the last fake hook
+    # before POST /approve.
+    fake.before_approval_pull_reread = drop_reviews
     with pytest.raises(
         GuardError, match="review completion changed before workflow approval"
     ):
