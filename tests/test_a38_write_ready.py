@@ -126,7 +126,15 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
         self.assertIn(
+            "The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch).",
+            body,
+        )
+        self.assertIn(
             "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
+            body,
+        )
+        self.assertIn(
+            "Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht).",
             body,
         )
         self.assertIn(
@@ -390,7 +398,15 @@ class WriteReadyWaiverTests(unittest.TestCase):
         self.assertIn("sofern er nicht entfällt", body)
         self.assertIn("leave the pull request in draft", body)
         self.assertIn(
+            "The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch).",
+            body,
+        )
+        self.assertIn(
             "Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green.",
+            body,
+        )
+        self.assertIn(
+            "Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht).",
             body,
         )
         self.assertIn(
