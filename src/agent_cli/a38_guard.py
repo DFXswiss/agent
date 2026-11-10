@@ -225,8 +225,8 @@ class Assessment:
     hard_fail: bool = False
     title: str = ""
     body: str = ""
-    # True when the author-report gate passed before the review gate. Missing
-    # review must not block workflow approval. Not a deploy approval.
+    # True when the author-report gate passed before the review gate.
+    # Workflow approval still requires review_ok. Not a deploy approval.
     report_gate_ok: bool = False
 
     def to_json(self) -> dict[str, Any]:
@@ -2048,11 +2048,11 @@ def build_comment_body(assessment: Assessment) -> str:
             "EN:\n"
             "Draft instructions\n"
             f"Thanks for your contribution! This repository follows the [A38 quality rules]({url}).\n"
-            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The local CI report starts the CI runs. Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.\n\n"
+            "Post the review record for this head from your own GitHub account and post the local CI report unless it is waived, as two separate comments in either order, and leave the pull request in draft. The CI runs start once the local CI report is accepted or waived, and the required review comments for this head are present (two, or one for an opener listed in one_review_authors in the trusted .github/pr-guard.json on the default branch). Two review runs are required before the guard marks the pull request ready, once that CI and the required checks are green. One review is enough only when the pull request opener is listed in one_review_authors in the trusted .github/pr-guard.json on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count.\n\n"
             "DE:\n"
             "Entwurf-Hinweise\n"
             f"Danke für deinen Beitrag! In diesem Repository gelten die [A38-Qualitätsregeln]({url}).\n"
-            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Der lokale CI-Bericht startet die CI-Läufe. Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind. Ein Review reicht nur, wenn der PR-Eröffner in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht. Fehlt die Datei, der Schlüssel, oder ist die Liste leer, bleiben zwei Reviews Pflicht. Ein Eintrag nur im PR-Head zählt nicht.\n"
+            "Poste den Review-Nachweis für diesen Head von deinem eigenen GitHub-Konto und den lokalen CI-Bericht, sofern er nicht entfällt, als zwei getrennte Kommentare in beliebiger Reihenfolge, und lass den Pull Request im Draft. Die CI-Läufe starten, sobald der lokale CI-Bericht akzeptiert ist oder entfällt und die erforderlichen Review-Kommentare für diesen Head vorliegen (zwei, oder einer für einen PR-Eröffner, der in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht). Vor Ready sind zwei Review-Läufe erforderlich, sobald diese CI und die erforderlichen Checks grün sind. Ein Review reicht nur, wenn der PR-Eröffner in one_review_authors der vertrauenswürdigen .github/pr-guard.json auf dem Default-Branch steht. Fehlt die Datei, der Schlüssel, oder ist die Liste leer, bleiben zwei Reviews Pflicht. Ein Eintrag nur im PR-Head zählt nicht.\n"
         )
     names = ", ".join(assessment.required_names) if assessment.required_names else "(none)"
     problems = "; ".join(assessment.reasons) if assessment.reasons else "none"

@@ -58,7 +58,7 @@ Set aside: none.
 
 ## Second review, no defects
 
-A later comment. Ready requires it together with the first review. One review is enough only when the pull request opener is listed in `one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. It does not replace the first-run comment, and it does not start CI. The only sentence under the title is `No defects.` / `Keine Mängel.`. `blocks_merge` is false and `defects` is 0. Do not add a sentence about the merge. The sentence about what the pull request changes stays in the details.
+A later comment. Ready requires it together with the first review. One review is enough only when the pull request opener is listed in `one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. It does not replace the first-run comment. It is not used when choosing the review comment, but it can complete the review rule that held fork CI approval and Ready require. The only sentence under the title is `No defects.` / `Keine Mängel.`. `blocks_merge` is false and `defects` is 0. Do not add a sentence about the merge. The sentence about what the pull request changes stays in the details.
 
 ````
 EN:

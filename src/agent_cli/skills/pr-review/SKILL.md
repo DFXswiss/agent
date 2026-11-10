@@ -178,8 +178,9 @@ not mark ready if it denies. Then one comment whose lanes are exactly
 `conformity-b` with `logic-b`. Two reviews are required before Ready. One
 review is enough only when the pull request opener is listed in
 `one_review_authors` in the trusted `.github/pr-guard.json` on the default branch. A missing file, a missing key, or an empty list keeps two reviews required. An entry that exists only on the pull request head does not count. The second
-comment does not replace the first-run comment, does not start CI, and is ignored
-when the guard chooses the review comment. Ready still requires it under the standard. A newer one does not hide an older valid first-run
+comment does not replace the first-run comment and is not used when the guard
+chooses the review comment, but it can complete the review rule that held fork
+CI approval and Ready require. Ready still requires it under the standard. A newer one does not hide an older valid first-run
 comment. Choosing that comment ignores the second run. The newest
 well-formed second-run comment that covers this head still returns a ready
 pull request to draft when its JSON boolean `blocks_merge` is true and

@@ -1,6 +1,6 @@
-"""Opt-in approval of initial fork CI runs after the local report gate.
+"""Opt-in approval of initial fork CI runs after the local report gate and the Ready review rule.
 
-A missing review record does not block this approval. This module authorizes execution, never retries a test or approves a review. Only an initial held run whose head SHA is the current head or the merge commit is approved; a run on an older commit of the pull request is left alone for the held-run drain. The trusted default ref still requires workflow_approval.workflows, but that list does not filter which held pull_request runs are approved.
+Approval needs the accepted local report or an existing waiver and the review rule that Ready uses. That rule is two review comments for this head, or one review only for an opener listed in one_review_authors of the trusted default-branch .github/pr-guard.json; a missing file, a missing key, or an empty list keeps two reviews required, and an entry only on the pull request head does not count. This module authorizes execution, never retries a test or approves a review. Only an initial held run whose head SHA is the current head or the merge commit is approved; a run on an older commit of the pull request is left alone for the held-run drain. The trusted default ref still requires workflow_approval.workflows, but that list does not filter which held pull_request runs are approved.
 """
 from __future__ import annotations
 
@@ -467,6 +467,41 @@ def _assert_pull_unchanged(
         raise GuardError("pull request changed before workflow approval")
 
 
+def _recheck_review_completion(
+    api: Any,
+    assessment: Any,
+    pull: Any,
+    trusted: Any,
+) -> None:
+    """Re-read review comments immediately before workflow approval.
+
+    The Ready review rule is checked again after the run read, the sibling
+    listing, and ``_assert_pull_unchanged``. Dry-run uses the same check
+    after its pull re-read. Comments are collected here; the pull snapshot
+    and trusted config are the ones just verified.
+    """
+    from .a38_guard import GuardError, collect_comments
+    from .a38_review import evaluate_review_gate
+    from .pr_guard_config import one_review_for
+    from .readme_only import pull_markdown_and_guard_docs
+
+    comments = collect_comments(api, assessment.repo, assessment.pr)
+    markdown_only = pull_markdown_and_guard_docs(api, pull.repo, pull.number)[0]
+    review_ok, _review_reasons = evaluate_review_gate(
+        api,
+        repo=pull.repo,
+        number=pull.number,
+        head=pull.head_sha,
+        base_sha=pull.base_sha,
+        author_id=pull.author_id,
+        comments=comments,
+        markdown_only=markdown_only,
+        one_review_author=one_review_for(trusted.config, pull.author_login),
+    )
+    if not review_ok:
+        raise GuardError("review completion changed before workflow approval")
+
+
 def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -> list[dict[str, Any]]:
     from .a38_guard import (
         GuardError, assess_pull, fetch_pull, resolve_trusted_guard_config,
@@ -478,6 +513,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         or assessment.closed
         or assessment.mode != "enforce"
         or not assessment.report_gate_ok
+        or not assessment.review_ok
     ):
         return []
     snap = fetch_pull(api, assessment.repo, assessment.pr)
@@ -496,7 +532,8 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
         )
         fields = ("head_sha", "base_sha", "base_ref", "head_repo", "config_revision", "config_fingerprint",
                   "report_fingerprint", "approval_fingerprint", "policy_sha")
-        if (not fresh.report_gate_ok or fresh.closed or fresh.mode != "enforce"
+        if (not fresh.report_gate_ok or not fresh.review_ok or fresh.closed
+                or fresh.mode != "enforce"
                 or any(getattr(fresh, f) != getattr(assessment, f) for f in fields)):
             raise GuardError("A38 evidence or trusted configuration changed before workflow approval")
         pull = api.get_json(f"/repos/{assessment.repo}/pulls/{assessment.pr}")
@@ -565,6 +602,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
             raise GuardError("write-ready waiver changed before workflow approval")
         if dry_run:
             _assert_pull_unchanged(api, assessment, pull, run)
+            _recheck_review_completion(api, assessment, final, config_now)
         if not dry_run:
             allowed_shas = {assessment.head_sha}
             groups = [_runs(api, assessment.repo, assessment.head_sha, event=None)]
@@ -610,6 +648,7 @@ def approve_workflow_runs(api: Any, assessment: Any, *, dry_run: bool = False) -
                 run, siblings, assessment.pr, allowed_shas=allowed_shas
             )
             _assert_pull_unchanged(api, assessment, pull, run)
+            _recheck_review_completion(api, assessment, final, config_now)
             status, _, _ = api.request("POST", f"/repos/{assessment.repo}/actions/runs/{run['id']}/approve", retry=False)
             if status != 201:
                 if status != 403:
