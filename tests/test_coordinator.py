@@ -1090,12 +1090,15 @@ def test_a38_ci_action_required_stays_retryable_without_reply_gate(
 
 
 @pytest.mark.parametrize("conclusion", ["skipped", "neutral"])
-def test_a38_ci_skipped_and_neutral_remain_not_green(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, conclusion: str
+def test_a38_ci_accepts_report_covered_skipped_and_neutral(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    conclusion: str,
 ) -> None:
     from dataclasses import replace
 
     from agent_cli.coordinator_github import phase_ci
+    from agent_cli.local_ci import LocalCiReport, LocalCiRun, SCHEMA_ID, render_block
 
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -1104,6 +1107,53 @@ def test_a38_ci_skipped_and_neutral_remain_not_green(
     fake = FakeGh()
     patch_account_runners(monkeypatch, fake)
     tid = "55555555-5555-4555-8555-55555555555d"
+    base = "b" * 40
+    activity_id = "55555555-5555-4555-8555-55555555555e"
+    report = LocalCiReport(
+        schema=SCHEMA_ID,
+        repo="example/project",
+        head=fake.head,
+        private=True,
+        recorded_at="2026-01-01T00:00:00Z",
+        required=("tests",),
+        runs=(
+            LocalCiRun(
+                id="tests",
+                name="tests",
+                command="pytest",
+                result="pass",
+                exit_code=0,
+                duration_s=1.0,
+                timeout_s=60.0,
+            ),
+        ),
+    )
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": {
+                "repo": "example/project",
+                "number": 42,
+                "body": render_block(report),
+                "target": "pr",
+                "exact_body": True,
+            },
+            "execution_status": "done",
+        },
+    )
+    a38_evidence: dict[str, object] = {
+        "report": {
+            "head": fake.head,
+            "base_sha": base,
+            "policy_revision": base,
+            "activity_id": activity_id,
+        }
+    }
     task = {
         "id": tid,
         "session_id": worker.session_id,
@@ -1115,19 +1165,27 @@ def test_a38_ci_skipped_and_neutral_remain_not_green(
             "coordinator": {
                 "phase": "ci",
                 "head_sha": fake.head,
+                "base_sha": base,
                 "pr_number": 42,
                 "source": {"repo": "example/project", "number": 7, "base": "develop"},
+                "a38": a38_evidence,
             }
         },
     }
     store.write("task", "insert", tid, task)
     fake.pr["statusCheckRollup"] = [
-        {"name": "tests", "conclusion": conclusion, "status": "completed"}
+        {
+            "name": "tests",
+            "workflowName": "CI",
+            "conclusion": conclusion,
+            "status": "completed",
+        }
     ]
     fake.workflow_runs = [
         {
             "id": 13,
             "path": ".github/workflows/ci.yml",
+            "name": "CI",
             "event": "pull_request",
             "head_sha": fake.head,
             "status": "completed",
@@ -1139,8 +1197,126 @@ def test_a38_ci_skipped_and_neutral_remain_not_green(
     lines = phase_ci(store, worker, store.row("task", tid), fake)
 
     saved = store.row("task", tid)
-    assert saved["payload"]["coordinator"]["phase"] == "implement"
-    assert any("CI failed" in line for line in lines)
+    assert saved["payload"]["coordinator"]["phase"] == "readiness"
+    assert lines == [f"CI green on {fake.head[:7]}"]
+
+
+def test_a38_report_waiver_does_not_cover_missing_rollup_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.coordinator_github import phase_ci
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(make_worker(tmp_path), review_session=None, a38=True)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    base = "b" * 40
+    tid = "55555555-5555-4555-8555-55555555555f"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "pr-review",
+        "repo": "example/project",
+        "ref": 42,
+        "payload": {
+            "coordinator": {
+                "phase": "ci",
+                "head_sha": fake.head,
+                "base_sha": base,
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7, "base": "develop"},
+                "a38": {
+                    "report_waiver": {
+                        "head": fake.head,
+                        "base_sha": base,
+                        "policy_revision": base,
+                        "reason": "guard-docs change set",
+                    }
+                },
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    fake.pr["statusCheckRollup"] = []
+    fake.workflow_runs = [
+        {
+            "id": 14,
+            "path": ".github/workflows/ci.yml",
+            "event": "pull_request",
+            "head_sha": fake.head,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+
+    lines = phase_ci(store, worker, store.row("task", tid), fake)
+
+    assert lines == [
+        f"CI pending on {fake.head[:7]} (incomplete rollup/inventory success evidence)"
+    ]
+    assert store.row("task", tid)["payload"]["coordinator"]["phase"] == "ci"
+
+
+@pytest.mark.parametrize(
+    ("status", "conclusion", "expected"),
+    [
+        ("completed", "failure", "failed"),
+        ("completed", "cancelled", "failed"),
+        ("in_progress", "", "pending"),
+    ],
+)
+def test_a38_report_keeps_failed_cancelled_and_pending_strict(
+    status: str, conclusion: str, expected: str
+) -> None:
+    from agent_cli.coordinator_github import _classify_rollup_and_inventory
+
+    rollup = [{"name": "tests", "status": status, "conclusion": conclusion}]
+    latest = {
+        ".github/workflows/ci.yml|pull_request": {
+            "path": ".github/workflows/ci.yml",
+            "status": status,
+            "conclusion": conclusion,
+        }
+    }
+
+    observation = _classify_rollup_and_inventory(
+        rollup, latest, passed_a38=frozenset({"tests"})
+    )
+
+    assert observation.kind == expected
+
+
+def test_a38_report_covered_rollup_does_not_cover_cancelled_workflow() -> None:
+    from agent_cli.coordinator_github import _classify_rollup_and_inventory
+
+    rollup = [
+        {
+            "name": "tests",
+            "workflowName": "CI",
+            "status": "completed",
+            "conclusion": "skipped",
+        }
+    ]
+    latest = {
+        ".github/workflows/ci.yml|pull_request": {
+            "path": ".github/workflows/ci.yml",
+            "name": "CI",
+            "status": "completed",
+            "conclusion": "cancelled",
+        }
+    }
+
+    observation = _classify_rollup_and_inventory(
+        rollup, latest, passed_a38=frozenset({"tests"})
+    )
+
+    assert observation.kind == "failed"
 
 
 def test_ci_action_required_authorized_reply_resumes_ci_not_implementer(
@@ -3314,6 +3490,68 @@ def test_approved_codex_stage_reconciles_pending_checklist_on_a_later_tick(
     saved = store.row("task", tid)
     assert saved["payload"]["coordinator"]["phase"] == "ci"
     assert saved["payload"]["coordinator"].get("phase") != "blocked"
+
+
+def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Crash recovery treats a current-head rejection as the durable verdict."""
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f9"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+    )
+    head = task["payload"]["coordinator"]["head_sha"]
+    store.write(
+        "review_gate",
+        "insert",
+        "aa000001-0000-4000-8000-0000000000f2",
+        {
+            "id": "aa000001-0000-4000-8000-0000000000f2",
+            "task_id": tid,
+            "stage": "review-2",
+            "dimension": "logic",
+            "vendor": "codex",
+            "verdict": "rejected",
+            "evidence": "Logic found a durable defect.",
+            "head_sha": head,
+            "agent_id": "aa000001-0000-4000-8000-0000000000f3",
+            "recorded_at": "2026-01-01T00:00:00.000000Z",
+        },
+    )
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    launched: list[str] = []
+
+    def run(argv, stdin=None):  # noqa: ANN001
+        launched.append("lane")
+        return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        run,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    assert launched == []
+    assert any("rejection recovered" in line for line in lines)
+    saved = store.row("task", tid)
+    assert saved["state"] == "implementing"
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert saved["payload"]["coordinator"]["findings"] == "Logic found a durable defect."
 
 
 def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(

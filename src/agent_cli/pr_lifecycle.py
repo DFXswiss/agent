@@ -50,6 +50,24 @@ def _await_mergeable(
     return pull
 
 
+def a38_passed_job_names_from_comment(body: str, head: str) -> frozenset[str]:
+    """Names and ids of passing jobs in an exact-head A38 report comment."""
+    from .local_ci import LocalCiError, parse_comment
+
+    try:
+        report = parse_comment(body)
+    except LocalCiError:
+        return frozenset()
+    if report.head != head:
+        return frozenset()
+    names: set[str] = set()
+    for run in report.runs:
+        if run.result == "pass":
+            names.add(run.name)
+            names.add(run.id)
+    return frozenset(names)
+
+
 def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> frozenset[str]:
     """Names and ids of jobs that passed in the verified author A38 report.
 
@@ -60,25 +78,15 @@ def a38_passed_job_names(api: Any, assessment: Any, pull: Mapping | None) -> fro
     if not assessment.ok or assessment.status != "pass" or assessment.report_status != "pass":
         return frozenset()
     from .a38_guard import collect_comments, fetch_pull, reload_gate_report
-    from .local_ci import LocalCiError, parse_comment
     snap = fetch_pull(api, assessment.repo, assessment.pr)
     comment = reload_gate_report(
         api, snap, collect_comments(api, assessment.repo, assessment.pr)
     )
     if comment is None:
         return frozenset()
-    try:
-        report = parse_comment(str(comment.get("body") or ""))
-    except LocalCiError:
-        return frozenset()
-    if report.head != assessment.head_sha:
-        return frozenset()
-    names: set[str] = set()
-    for run in report.runs:
-        if run.result == "pass":
-            names.add(run.name)
-            names.add(run.id)
-    return frozenset(names)
+    return a38_passed_job_names_from_comment(
+        str(comment.get("body") or ""), assessment.head_sha
+    )
 
 
 def a38_covers_required_check(passed_names: frozenset[str], required: str) -> bool:
@@ -89,6 +97,20 @@ def a38_covers_required_check(passed_names: frozenset[str], required: str) -> bo
         if name == required or required_check_matches(name, required):
             return True
     return False
+
+
+def a38_accepts_skipped_or_neutral(
+    required: object,
+    conclusion: object,
+    *,
+    passed_names: frozenset[str],
+) -> bool:
+    """True only when an A38 pass covers this skipped or neutral check."""
+    return (
+        isinstance(required, str)
+        and conclusion in {"skipped", "neutral"}
+        and a38_covers_required_check(passed_names, required)
+    )
 
 
 def required_check_matches(check_name: object, required: str) -> bool:
@@ -1003,7 +1025,9 @@ def ci_state(
                     latest_by_name[check_name] = candidate
             accepted = (
                 {"success", "skipped", "neutral"}
-                if a38_covers_required_check(passed_a38, name)
+                if a38_accepts_skipped_or_neutral(
+                    name, "skipped", passed_names=passed_a38
+                )
                 else accepted_required
             )
             if not latest_by_name:

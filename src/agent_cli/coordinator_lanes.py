@@ -1193,6 +1193,23 @@ def _reconcile_approved_gate_checklist(
     return (key, reason) if reason is not None else None
 
 
+def _apply_rejected_gate_transition(
+    task: dict[str, Any], *, head: str, evidence: list[str]
+) -> None:
+    """Route a durable current-head rejection without starting another lane."""
+    c = coord(task)
+    c["findings"] = "\n\n".join(evidence)
+    evidence_map = c.setdefault("evidence", {})
+    if isinstance(evidence_map, dict):
+        evidence_map.pop("gates", None)
+        evidence_map.pop("gates_head", None)
+    invalidate_head_evidence(c, head)
+    c["phase"] = "implement"
+    c.pop("resume_phase", None)
+    c.pop("question_activity_id", None)
+    task["state"] = "implementing"
+
+
 def phase_pr_gates(
     store: Store,
     worker: WorkerConfig,
@@ -1262,6 +1279,45 @@ def phase_pr_gates(
                 vendor=want_vendor,
             ) is not None
         return True
+
+    # A gate row is the durable verdict. A crash may happen after recording a
+    # rejection (and its comment) but before the task transition is saved. Read
+    # every current-head gate before preparing agents so that such a rejection
+    # can never be superseded by a newly launched dimension.
+    rejected_by_dimension: dict[str, dict[str, Any]] = {}
+    for gate in store.rows("review_gate"):
+        dimension = str(gate.get("dimension") or "")
+        if (
+            gate.get("task_id") == task["id"]
+            and gate.get("stage") == stage
+            and dimension in {"quality", "logic"}
+            and gate.get("head_sha") == head
+            and gate.get("vendor") == vendor
+            and gate.get("verdict") == "rejected"
+        ):
+            # rows() is newest first. Keep the first rejection for each
+            # dimension even if a buggy older retry later wrote another verdict.
+            rejected_by_dimension.setdefault(dimension, gate)
+    persisted_rejections = [
+        rejected_by_dimension[dimension]
+        for dimension in ("quality", "logic")
+        if dimension in rejected_by_dimension
+    ]
+    if persisted_rejections:
+        recovered_evidence = [
+            redact(str(gate.get("evidence") or f"{stage}/{gate.get('dimension')} rejected"))
+            for gate in persisted_rejections
+        ]
+        with store.conn.transaction():
+            _apply_rejected_gate_transition(
+                task, head=head, evidence=recovered_evidence
+            )
+            save_task(store, task)
+        return [
+            f"{stage}/{gate.get('dimension')} rejection recovered on {head[:7]}; "
+            "routing to implementer"
+            for gate in persisted_rejections
+        ]
 
     if second_stage:
         for dim in ("quality", "logic"):
@@ -1490,17 +1546,24 @@ def phase_pr_gates(
         if not review_is_approved(status, model_result):
             evidence = redact(outcome.stdout or f"{status}/{model_result}")
             rejection_evidence.append(evidence)
-            record_gate(
-                store,
-                task,
-                stage=stage,
-                dimension=dimension,
-                vendor=vendor,
-                verdict="rejected",
-                head=head,
-                agent_id=str(prep["agent_id"]),
-                evidence=evidence,
-            )
+            # Persist the rejection and its corresponding route atomically.
+            # Publication is intentionally outside this local transaction.
+            with store.conn.transaction():
+                record_gate(
+                    store,
+                    task,
+                    stage=stage,
+                    dimension=dimension,
+                    vendor=vendor,
+                    verdict="rejected",
+                    head=head,
+                    agent_id=str(prep["agent_id"]),
+                    evidence=evidence,
+                )
+                _apply_rejected_gate_transition(
+                    task, head=head, evidence=rejection_evidence
+                )
+                save_task(store, task)
             queue_comment_review(
                 store,
                 worker,
@@ -1555,16 +1618,9 @@ def phase_pr_gates(
             lines.append(f"{stage} checklist unchanged for {key}: {denial}")
 
     if rejection_evidence:
-        c["findings"] = "\n\n".join(rejection_evidence)
-        evidence_map = c.setdefault("evidence", {})
-        if isinstance(evidence_map, dict):
-            evidence_map.pop("gates", None)
-            evidence_map.pop("gates_head", None)
-        invalidate_head_evidence(c, head)
-        c["phase"] = "implement"
-        c.pop("resume_phase", None)
-        c.pop("question_activity_id", None)
-        task["state"] = "implementing"
+        _apply_rejected_gate_transition(
+            task, head=head, evidence=rejection_evidence
+        )
         save_task(store, task)
         return lines
 

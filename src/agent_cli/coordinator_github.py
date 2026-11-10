@@ -65,6 +65,10 @@ from .github_act import (
 from .github_accounts import AccountError
 from .hub import Hub, HubError
 from .pr_guard_config import PrGuardLookupError, fetch_trusted_pr_guard, one_review_for
+from .pr_lifecycle import (
+    a38_accepts_skipped_or_neutral,
+    a38_passed_job_names_from_comment,
+)
 from .store import Store, StoreError, utcnow
 
 # Executor error strings that prove an observed same-marker APPROVE rejection.
@@ -884,15 +888,50 @@ class _CiObservation:
     latest: dict[str, dict[str, Any]] | None = None
 
 
+def _a38_ci_evidence(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], head: str
+) -> frozenset[str]:
+    """Return passing jobs from the verified exact-head author A38 report."""
+    c = coord(task)
+    base = str(c.get("base_sha") or "")
+    a38 = c.get("a38") if isinstance(c.get("a38"), dict) else {}
+    report = a38.get("report") if isinstance(a38, dict) else None
+    if not (
+        is_sha(base)
+        and isinstance(report, dict)
+        and report.get("head") == head
+        and report.get("base_sha") == base
+        and report.get("policy_revision") == base
+    ):
+        return frozenset()
+    activity_id = report.get("activity_id")
+    activity = store.row("activity", activity_id) if isinstance(activity_id, str) else None
+    from .coordinator_a38 import _own_report_activity
+
+    payload = activity.get("payload") if isinstance(activity, dict) else None
+    body = payload.get("body") if isinstance(payload, dict) else None
+    if (
+        not isinstance(activity, dict)
+        or not _own_report_activity(store, worker, task, activity, head)
+        or activity.get("execution_status") != "done"
+        or not isinstance(body, str)
+    ):
+        return frozenset()
+    return a38_passed_job_names_from_comment(body, head)
+
+
 def _classify_rollup_and_inventory(
     rollup: list[Any],
     latest: dict[str, dict[str, Any]],
+    *,
+    passed_a38: frozenset[str] = frozenset(),
 ) -> _CiObservation:
     """Classify fetched rollup+inventory facts. Never guesses from log text."""
     pending = False
     failures: list[str] = []
     action_required: list[str] = []
     successes = 0
+    report_covered_workflows: set[str] = set()
 
     for check in rollup:
         if not isinstance(check, dict):
@@ -905,8 +944,17 @@ def _classify_rollup_and_inventory(
             action_required.append(name)
         elif state in CI_SUCCESS:
             successes += 1
+        elif a38_accepts_skipped_or_neutral(
+            name,
+            state,
+            passed_names=passed_a38,
+        ):
+            successes += 1
+            workflow_name = check.get("workflowName")
+            if isinstance(workflow_name, str) and workflow_name:
+                report_covered_workflows.add(workflow_name)
         else:
-            # cancelled/skipped/failure/neutral/pass/passing — not success here.
+            # Cancelled, failed, pending, and uncovered skipped/neutral stay strict.
             failures.append(f"{name}:{state or 'unknown'}")
 
     for key, run in latest.items():
@@ -919,6 +967,20 @@ def _classify_rollup_and_inventory(
         if conclusion in CI_ACTION_REQUIRED:
             action_required.append(path)
         elif conclusion in CI_SUCCESS:
+            successes += 1
+        elif conclusion in {"skipped", "neutral"} and (
+            str(run.get("name") or "") in report_covered_workflows
+            or any(
+                a38_accepts_skipped_or_neutral(
+                    candidate, conclusion, passed_names=passed_a38
+                )
+                for candidate in (
+                    path,
+                    str(run.get("name") or ""),
+                    str(run.get("display_title") or ""),
+                )
+            )
+        ):
             successes += 1
         else:
             failures.append(f"{path}:{conclusion or 'unknown'}")
@@ -944,13 +1006,47 @@ def _classify_rollup_and_inventory(
             latest=latest,
         )
     rollup_ok = any(
-        isinstance(check, dict) and _rollup_state(check) in CI_SUCCESS for check in rollup
+        isinstance(check, dict)
+        and (
+            _rollup_state(check) in CI_SUCCESS
+            or a38_accepts_skipped_or_neutral(
+                str(check.get("name") or check.get("context") or "check"),
+                _rollup_state(check),
+                passed_names=passed_a38,
+            )
+        )
+        for check in rollup
     )
     inventory_ok = any(
-        str(run.get("status") or "") == "completed" and str(run.get("conclusion") or "") in CI_SUCCESS
+        str(run.get("status") or "") == "completed"
+        and (
+            str(run.get("conclusion") or "") in CI_SUCCESS
+            or (
+                str(run.get("conclusion") or "") in {"skipped", "neutral"}
+                and str(run.get("name") or "") in report_covered_workflows
+            )
+            or any(
+                a38_accepts_skipped_or_neutral(
+                    candidate,
+                    str(run.get("conclusion") or ""),
+                    passed_names=passed_a38,
+                )
+                for candidate in (
+                    str(run.get("path") or ""),
+                    str(run.get("name") or ""),
+                    str(run.get("display_title") or ""),
+                )
+            )
+        )
         for run in latest.values()
     )
-    if not rollup or not latest or not rollup_ok or not inventory_ok or successes <= 0:
+    if (
+        not rollup
+        or not latest
+        or not rollup_ok
+        or not inventory_ok
+        or successes <= 0
+    ):
         return _CiObservation(
             "pending",
             "incomplete rollup/inventory success evidence",
@@ -967,6 +1063,7 @@ def _observe_exact_head_ci(
     head: str,
     *,
     fields: str,
+    passed_a38: frozenset[str] = frozenset(),
 ) -> _CiObservation:
     """Shared exact-head CI observation for ``phase_ci`` and Ready-side rechecks."""
     try:
@@ -984,8 +1081,8 @@ def _observe_exact_head_ci(
         )
     rollup = pr.get("statusCheckRollup")
     # Absent rollup must not skip head workflow inventory: action_required (and
-    # actual failures) may exist only in inventory. Empty rollup still cannot
-    # be green, but inventory facts remain visible to classification.
+    # actual failures) may exist only in inventory. Empty rollup cannot be
+    # green, but inventory facts remain visible to classification.
     if rollup is None:
         rollup = []
     elif not isinstance(rollup, list):
@@ -1000,7 +1097,11 @@ def _observe_exact_head_ci(
         # Defensive: any other typed command failure stays transport, not reply-gated.
         return _CiObservation("transport", "inventory temporarily unavailable")
     latest = _latest_run_attempts(runs, head)
-    return _classify_rollup_and_inventory(rollup, latest)
+    return _classify_rollup_and_inventory(
+        rollup,
+        latest,
+        passed_a38=passed_a38,
+    )
 
 
 def _latest_run_attempts(runs: list[dict[str, Any]], head: str) -> dict[str, dict[str, Any]]:
@@ -1104,8 +1205,9 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
     """Exact-head PR check rollup AND head workflow inventory. Fail closed.
 
     This core observes cumulative GitHub CI targets only. Target-repository
-    policy / A38 live join belongs to configured readiness_argv. No generic
-    cancelled/skipped bypass. Empty or malformed evidence is not green.
+    policy / A38 live join belongs to configured readiness_argv. A verified
+    exact-head A38 report may cover matching skipped/neutral required checks;
+    there is no generic cancelled/failed/pending bypass. Empty or malformed evidence is not green.
     Absent ``statusCheckRollup`` is treated as ``[]`` and inventory is still
     inspected so inventory-only ``action_required`` / failures stay visible.
     action_required is an authorization blocker, not a source-code failure.
@@ -1120,12 +1222,17 @@ def phase_ci(store: Store, worker: WorkerConfig, task: dict[str, Any], runner: R
     if number is None or not head:
         raise CoordinatorError("CI observation requires PR number and head")
     scoped_runner = scoped(store, worker.session_id, runner)
+    passed_a38 = (
+        _a38_ci_evidence(store, worker, task, head)
+        if worker.a38 else frozenset()
+    )
     obs = _observe_exact_head_ci(
         scoped_runner,
         target,
         number,
         head,
         fields="statusCheckRollup,headRefOid,state,isDraft,author,baseRefName,mergeable",
+        passed_a38=passed_a38,
     )
     if obs.kind == "transport":
         # Transient PR-view / inventory transport: same static ci phase.
@@ -1242,12 +1349,17 @@ def _fresh_ci_still_green(
     if number is None:
         raise CoordinatorError("CI recheck requires PR number")
     scoped_runner = scoped(store, worker.session_id, runner)
+    passed_a38 = (
+        _a38_ci_evidence(store, worker, task, head)
+        if worker.a38 else frozenset()
+    )
     obs = _observe_exact_head_ci(
         scoped_runner,
         target,
         number,
         head,
         fields="statusCheckRollup,headRefOid",
+        passed_a38=passed_a38,
     )
     if obs.kind == "green":
         return None

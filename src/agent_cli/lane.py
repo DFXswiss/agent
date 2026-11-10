@@ -355,6 +355,16 @@ def _int_or_none(value: object) -> int | None:
 _WILDCARD_CHARS = frozenset("*?[{")
 # Windows drive and UNC paths are never inside a POSIX worktree root.
 _WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])")
+_EMBEDDED_PATH_START = re.compile(
+    r"(?:"
+    r"(?<![A-Za-z0-9_.~\\*?\[\]{}-])\\/"
+    r"|(?<![A-Za-z0-9_.~\\*?\[\]{}-])/"
+    r"|(?<![A-Za-z0-9_.-])~[\\/]"
+    r"|[A-Za-z]:[\\/]"
+    r"|\\\\[^\\/\s]+[\\/]"
+    r")"
+)
+_EMBEDDED_PATH_END = frozenset("\"'`,;|)]}$")
 
 
 def _glob_static_prefix(value: str) -> str:
@@ -407,6 +417,31 @@ def _looks_like_path(token: str) -> bool:
         or token.startswith("~")
         or _WINDOWS_PATH.match(token) is not None
     )
+
+
+def _embedded_path_fragments(value: str) -> tuple[str, ...]:
+    """Extract absolute/home/UNC/drive fragments from a regex or glob token.
+
+    A path may start after assignment text, punctuation, a quote, or a regex
+    anchor. Each fragment must be checked on its own: resolving the entire
+    token would turn ``source=/outside`` into a misleading relative path.
+    """
+    fragments: list[str] = []
+    cursor = 0
+    while True:
+        match = _EMBEDDED_PATH_START.search(value, cursor)
+        if match is None:
+            break
+        start = match.start()
+        stop = match.end()
+        while stop < len(value):
+            char = value[stop]
+            if char.isspace() or char in _EMBEDDED_PATH_END:
+                break
+            stop += 1
+        fragments.append(value[start:stop])
+        cursor = max(stop, match.end())
+    return tuple(fragments)
 
 
 def _grep_literal_path(fragment: str) -> str | None:
@@ -462,6 +497,11 @@ def _relative_glob(pattern: str, root: Path) -> str:
 
 def _pattern_target(pattern: str, root: Path, *, whole_is_path: bool) -> str:
     """Redact absolute or escaping path fragments in a pattern value."""
+    fragments = _embedded_path_fragments(pattern)
+    if any(not _path_stays_in_worktree(fragment, root) for fragment in fragments):
+        # Fail closed on the whole target so no prefix, quote, or regex syntax
+        # can retain the outside fragment in replicated lane.run evidence.
+        return "[redacted]"
     if whole_is_path:
         # Glob's ``pattern`` is its path argument.
         if _glob_has_traversal(pattern) or not _path_stays_in_worktree(
@@ -470,15 +510,13 @@ def _pattern_target(pattern: str, root: Path, *, whole_is_path: bool) -> str:
             return "[redacted]"
         return _relative_glob(pattern, root)
     # A Grep pattern is a regex; only path-shaped tokens may name host paths.
-    parts: list[str] = []
     for token in re.split(r"(\s+)", pattern):
         if token and not token.isspace() and _looks_like_path(token):
             literal = _grep_literal_path(token)
             safe = literal is not None and _path_stays_in_worktree(literal, root)
-            parts.append(token if safe else "[redacted]")
-        else:
-            parts.append(token)
-    return "".join(parts)
+            if not safe:
+                return "[redacted]"
+    return pattern
 
 
 def _tool_target(

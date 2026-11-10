@@ -583,6 +583,7 @@ def test_parsed_lane_result_accepts_exactly_one_role_result() -> None:
     [
         "STATUS: complete\n",
         "STATUS: complete\nRESULT: done\nRESULT: done\n",
+        "STATUS: partial\nSTATUS: complete\nRESULT: done\n",
         "STATUS: complete\nRESULT: ask\nWhich error text?\n",
         "STATUS: complete\nRESULT: approved\n",
         "STATUS: complete\nRESULT: rejected\n",
@@ -631,7 +632,7 @@ def test_run_implementer_complete_without_one_role_valid_result_is_retryable(
         assert len(implementers) == expected_count
         assert all(agent["status"] == "done" for agent in implementers)
         assert all("aborted incomplete lane" in str(agent["note"]) for agent in implementers)
-        assert all("invalid implementer RESULT" in str(agent["note"]) for agent in implementers)
+        assert all("invalid implementer STATUS/RESULT" in str(agent["note"]) for agent in implementers)
 
 
 def test_run_implementer_no_change_counts_as_implemented(

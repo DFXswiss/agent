@@ -343,14 +343,20 @@ for worker in workers.values():
    `close_allowed` permits that key; a denial keeps the coordinator in the gate
    phase and returns a recoverable blocker naming the still-open key. After `ja`,
    both second-slot gates are required again.
-   `n_a` alone does not grant Ready or done. One review is enough only when
+   On restart, the coordinator inspects durable current-head gate verdicts
+   before preparing either dimension. Cached approvals reconcile their
+   checklist keys, while any cached rejection routes its recorded evidence to
+   implementation and is never superseded by a new lane. Rejection recording
+   and that task transition share one local transaction; publication remains a
+   separately idempotent script action. `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
    key, or an empty list keeps two reviews required. An entry that exists
    only on the pull request head does not count.
 8. **CI**: exact-head PR check rollup **and** paginated head workflow inventory
    (path+event+attempt), classified by one shared observer used by both
-   ordinary `phase_ci` and Ready-side fresh rechecks. Only `success` counts.
+   ordinary `phase_ci` and Ready-side fresh rechecks. `success` counts without
+   an exception.
    An absent `statusCheckRollup` is normalized to `[]` and inventory is still
    inspected — `action_required` (and actual failures) may be present only in
    inventory; absent rollup prevents green but must not hide those facts.
@@ -359,8 +365,10 @@ for worker in workers.values():
    `question_activity_id` is pinned so an authorized reply resumes CI
    observation). For an A38 worker it is a retryable guard-owned authorization
    state: the coordinator stays in `ci`, creates no reply gate, and routes
-   nothing to the implementer. A38 still treats `skipped` and `neutral` as not
-   green in this observer; report equivalence does not relax them here. Hard
+   nothing to the implementer. For A38 workers, a verified author A38 report
+   on this head may treat a matching required check that concluded `skipped`
+   or `neutral` as green; it does not waive a missing check. Failed,
+   `cancelled`, and pending checks still block. Hard
    protocol faults
    (malformed rollup, unexpected inventory shape, missing `workflow_runs`,
    pagination truncation — typed `CiObservationProtocolError` /
@@ -369,8 +377,8 @@ for worker in workers.values():
    Transient observation transport (PR view **or** inventory `gh_json` /
    typed `CiObservationTransportError`) and pending / absent-yet evidence stay
    on static `phase=ci` and retry without an idle model, blind implement, or
-   reply gate. Missing / pending / failure / cancelled / skipped / neutral are
-   not green. This core observes **cumulative GitHub CI** only; target-
+   reply gate. Missing workflow inventory, pending, failure, cancelled, and
+   uncovered skipped/neutral are not green. This core observes **cumulative GitHub CI** only; target-
    repository policy / A38 live join belongs to configured `readiness_argv`.
    Failures fetch plain-text logs via
    `gh run view <id> --repo <target> --log-failed --attempt <n>` (never ZIP
@@ -511,10 +519,12 @@ publish unrelated pending intents from other sessions.
 
 Implementer `RESULT` must be `done|ask|blocked|no-change` (empty / approved /
 rejected fail closed). In `agent run` an implementer lane counts only when its
-lane status is `complete` and its output has exactly one role-valid `RESULT`:
+output has exactly one `STATUS`, exactly one role-valid `RESULT`, and that
+single status is `complete`:
 `done` and `no-change` close the round, `blocked` fails the task, and a
-missing, duplicate, `ask`, `approved` or `rejected` value aborts the row and
-leaves the same round retryable. Reviewer `RESULT` must be `approved|rejected`; `ask` /
+missing or duplicate record, or an `ask`, `approved` or `rejected` result,
+aborts the row and leaves the same round retryable. Reviewer `RESULT` must be
+`approved|rejected`; `ask` /
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
 starting another model. Authorized replies (`reply_logins` only), listed with
@@ -572,10 +582,12 @@ result with a bounded, redacted diagnostic, its `lane.run` row is still written,
 and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
 Failure to write the audit row itself is an observation and does not rewrite the
-lane verdict. File-tool targets fail closed: path-shaped Grep regex fragments
-are retained only when their normalized literal path is inside the worktree,
-and Glob patterns containing parent traversal in any component (including
-after a wildcard) are redacted.
+lane verdict. File-tool targets fail closed: every absolute, home, UNC, or
+drive-letter path fragment in a Grep regex or Glob token is validated on its
+own, including fragments after assignment text, punctuation, quotes, and regex
+anchors. A target is redacted unless every such fragment is provably inside the
+worktree. Glob patterns containing parent traversal in any component (including
+after a wildcard) are also redacted.
 
 ## Module layout
 
