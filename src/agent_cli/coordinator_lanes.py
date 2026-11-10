@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
-
 import os
 import tempfile
 import threading
@@ -166,6 +166,7 @@ def launch_lane(
         c["phase"] = "blocked"
         c["blocker"] = "uncertain prior lane outcome; refusing second model start"
         c["uncertain_lane"] = True
+        c.pop("resume_phase", None)
         save_task(store, task)
         _post_issue_status(
             store,
@@ -312,6 +313,7 @@ def launch_lane(
             c["phase"] = "blocked"
             c["blocker"] = "lane interrupted; outcome uncertain"
             c["uncertain_lane"] = True
+            c.pop("resume_phase", None)
             save_task(store, task)
             _post_issue_status(
                 store,
@@ -474,7 +476,9 @@ def record_gate(
             "evidence": evidence,
             "head_sha": head,
             "agent_id": agent_id,
-            "recorded_at": utcnow(),
+            "recorded_at": datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
         },
     )
     if verdict == "rejected" and task.get("workflow") == "implement":
@@ -547,7 +551,13 @@ def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
         {"name": name, "result": item.get("result")} for name, item in latest_checks.items()
     ]
     gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    gates_raw.sort(key=lambda g: str(g.get("recorded_at") or ""))
+    # rows() is newest first. Keep that ordering authoritative when multiple
+    # gate writes share utcnow()'s one-second timestamp.
+    indexed_gates = list(enumerate(gates_raw))
+    indexed_gates.sort(
+        key=lambda item: (str(item[1].get("recorded_at") or ""), -item[0])
+    )
+    gates_raw = [gate for _index, gate in indexed_gates]
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -600,8 +610,10 @@ def set_checklist(
 ) -> None:
     """Close an existing checklist key via chain.close_allowed; never bypass."""
     key = canonical_key(key)
-    if status not in ("ja", "n_a"):
-        raise CoordinatorError(f"checklist status must be ja|n_a, got {status}")
+    if status not in ("ja", "n_a", "unavailable"):
+        raise CoordinatorError(
+            f"checklist status must be ja|n_a|unavailable, got {status}"
+        )
     snap = checklist_snapshot(store, task)
     current = (snap.get("checklist") or {}).get(key)
     if current == status:
@@ -632,6 +644,7 @@ def set_checklist(
         source=source,
         evidence=evidence,
         snapshot=snap,
+        status=status,
     )
     if not verdict.allowed:
         raise CoordinatorError(f"close_allowed denied for {key}: {verdict.reason}")
@@ -652,8 +665,13 @@ def set_checklist(
 def latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict[str, Any]]:
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     rows = [r for r in store.rows("review_gate") if r.get("task_id") == task_id]
-    rows.sort(key=lambda r: str(r.get("recorded_at") or ""))
-    for row in rows:
+    # rows() is newest first. Keep the newer row last on timestamp ties so the
+    # assignment below agrees with the CLI's latest-gate selection.
+    indexed = list(enumerate(rows))
+    indexed.sort(
+        key=lambda item: (str(item[1].get("recorded_at") or ""), -item[0])
+    )
+    for _index, row in indexed:
         key = (canonical_stage(str(row.get("stage"))), str(row.get("dimension")))
         latest[key] = row
     return latest
@@ -1108,33 +1126,64 @@ def _pr_review_scope(dimension: str) -> str:
     )
 
 
-def _promote_posted_second_review_checklist(
+def _try_set_checklist(
+    store: Store,
+    task: dict[str, Any],
+    *,
+    key: str,
+    status: str,
+    evidence: str,
+) -> str | None:
+    """Set one checklist value when the chain allows it, returning a denial."""
+    snap = checklist_snapshot(store, task)
+    current = (snap.get("checklist") or {}).get(key)
+    if current == status:
+        return None
+    verdict = close_allowed(
+        str(task.get("workflow") or ""),
+        key,
+        checklist=dict(snap.get("checklist") or {}),
+        source="script",
+        evidence=evidence,
+        snapshot=snap,
+        status=status,
+    )
+    if not verdict.allowed:
+        return verdict.reason
+    try:
+        set_checklist(
+            store,
+            task,
+            key,
+            status,
+            evidence,
+            source="script",
+        )
+    except CoordinatorError as exc:
+        # A reconciliation denial is recoverable. Keep the gate phase instead
+        # of turning a partially closed stage into a coordinator exception.
+        return str(exc)
+    return None
+
+
+def _reconcile_approved_gate_checklist(
     store: Store,
     task: dict[str, Any],
     *,
     stage: str,
     head: str,
     dimension: str,
-) -> None:
-    """Replace second-review checklist n_a with ja after approval.
-
-    Pending keys stay untouched, so a retry whose gate is already approved
-    does not turn an unfinished step into a blocker. The lane start is not
-    skipped: this runs only for a gate that is already approved.
-    """
+) -> tuple[str, str] | None:
+    """Reconcile a cached approval when its checklist key may close now."""
     key = checklist_key_for_stage(stage, dimension)
-    snap = checklist_snapshot(store, task)
-    current = (snap.get("checklist") or {}).get(key)
-    if current != "n_a":
-        return
-    set_checklist(
+    reason = _try_set_checklist(
         store,
         task,
-        key,
-        "ja",
-        f"{stage}/{dimension} on {head}",
-        source="script",
+        key=key,
+        status="ja",
+        evidence=f"{stage}/{dimension} on {head}",
     )
+    return (key, reason) if reason is not None else None
 
 
 def phase_pr_gates(
@@ -1153,8 +1202,9 @@ def phase_pr_gates(
 
     Agent rows are prepared and persisted on the main thread. Subprocess work
     runs in threads (no Store calls). Results are persisted on the main thread.
-    Incomplete/unavailable vendor output stops with a GitHub-visible blocker;
-    it is not recorded as a rejected complete gate.
+    Incomplete/unavailable vendor output records unavailable gate/checklist
+    evidence and stops with a GitHub-visible retry blocker; it is not a rejected
+    complete gate.
     """
     c = coord(task)
     worktree = str(c["worktree"])
@@ -1167,6 +1217,7 @@ def phase_pr_gates(
         c["phase"] = "blocked"
         c["blocker"] = "uncertain prior lane outcome; refusing second model start"
         c["uncertain_lane"] = True
+        c.pop("resume_phase", None)
         save_task(store, task)
         _post_issue_status(
             store,
@@ -1211,12 +1262,20 @@ def phase_pr_gates(
                 raise CoordinatorError(
                     f"review-2 requires approved review-1/{dim} on {head[:7]}"
                 )
+    reconciliation_blockers: dict[str, str] = {}
     if all(_approved(latest.get((stage, dim)), vendor) for dim in ("quality", "logic")):
-        if second_stage:
-            for dim in ("quality", "logic"):
-                _promote_posted_second_review_checklist(
-                    store, task, stage=stage, head=head, dimension=dim
-                )
+        for dim in ("quality", "logic"):
+            blocker = _reconcile_approved_gate_checklist(
+                store, task, stage=stage, head=head, dimension=dim
+            )
+            if blocker is not None:
+                reconciliation_blockers[blocker[0]] = blocker[1]
+        if reconciliation_blockers:
+            save_task(store, task)
+            return [
+                f"{stage} recoverable checklist blocker for {key}: {reason}"
+                for key, reason in reconciliation_blockers.items()
+            ]
         c["phase"] = next_phase
         save_task(store, task)
         return [f"{stage} already complete on {head[:7]}"]
@@ -1226,10 +1285,11 @@ def phase_pr_gates(
     for dimension, role in (("quality", "pr-reviewer-quality"), ("logic", "pr-reviewer-logic")):
         existing = latest.get((stage, dimension))
         if _approved(existing, vendor):
-            if second_stage:
-                _promote_posted_second_review_checklist(
-                    store, task, stage=stage, head=head, dimension=dimension
-                )
+            blocker = _reconcile_approved_gate_checklist(
+                store, task, stage=stage, head=head, dimension=dimension
+            )
+            if blocker is not None:
+                reconciliation_blockers[blocker[0]] = blocker[1]
             lines.append(f"{stage}/{dimension}=approved (cached)")
             continue
         needed.append((dimension, role))
@@ -1359,6 +1419,7 @@ def phase_pr_gates(
         c["phase"] = "blocked"
         c["blocker"] = f"{stage} lane outcome uncertain"
         c["uncertain_lane"] = True
+        c.pop("resume_phase", None)
         save_task(store, task)
         _post_issue_status(
             store,
@@ -1371,6 +1432,7 @@ def phase_pr_gates(
         return [f"{stage} uncertain; blocked"]
 
     parsed_outcomes: list[tuple[dict[str, Any], LaneResult, str, str | None]] = []
+    incomplete_outcomes: list[tuple[str, str, str | None]] = []
     for prep, outcome in outcomes:
         status, model_result = parse_model_result(outcome.stdout, outcome.returncode)
         dimension = str(prep["dimension"])
@@ -1379,32 +1441,69 @@ def phase_pr_gates(
             or not model_result
             or model_result not in _REVIEWER_RESULTS
         ):
-            # Incomplete/invalid reviewer RESULT (including ask/blocked): stop.
-            # Not a code rejection and not an implementer fix loop.
-            resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
-            c["phase"] = "blocked"
-            c["resume_phase"] = resume
-            c["blocker"] = (
-                f"{stage}/{dimension} provider incomplete "
-                f"(status={status or 'empty'} result={model_result or 'empty'})"
+            # Incomplete/invalid reviewer RESULT (including ask/blocked) is an
+            # unavailable gate, not a code rejection or implementer fix loop.
+            evidence = redact(
+                outcome.stdout
+                or outcome.stderr
+                or f"status={status or 'empty'} result={model_result or 'empty'}"
             )
-            qid = _post_issue_status(
+            record_gate(
                 store,
-                worker,
-                runner,
                 task,
-                f"Blocked: {vendor} {dimension} review unavailable/incomplete "
-                f"(status={status}, result={model_result or 'empty'}). Not a code rejection.",
-                "provider-incomplete",
+                stage=stage,
+                dimension=dimension,
+                vendor=vendor,
+                verdict="unavailable",
+                head=head,
+                agent_id=str(prep["agent_id"]),
+                evidence=evidence,
             )
-            prior = c.get("question_activity_id")
-            c["question_activity_id"] = qid
-            if prior != qid:
-                c["replies_consumed_through"] = None
-            save_task(store, task)
-            lines.append(f"{stage}/{dimension} unavailable; blocked")
-            return lines
+            key = checklist_key_for_stage(stage, dimension)
+            denial = _try_set_checklist(
+                store,
+                task,
+                key=key,
+                status="unavailable",
+                evidence=evidence,
+            )
+            if denial is not None:
+                lines.append(
+                    f"{stage} checklist unchanged for {key}: {denial}"
+                )
+            incomplete_outcomes.append((dimension, status, model_result))
+            continue
         parsed_outcomes.append((prep, outcome, status, model_result))
+
+    if incomplete_outcomes:
+        resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
+        affected = ", ".join(dimension for dimension, _status, _result in incomplete_outcomes)
+        details = "; ".join(
+            f"{dimension}: status={status or 'empty'}, result={model_result or 'empty'}"
+            for dimension, status, model_result in incomplete_outcomes
+        )
+        c["phase"] = "blocked"
+        c["resume_phase"] = resume
+        c["blocker"] = f"{stage} provider incomplete ({details})"
+        qid = _post_issue_status(
+            store,
+            worker,
+            runner,
+            task,
+            f"Blocked: {vendor} {affected} review unavailable/incomplete "
+            f"({details}). Not a code rejection.",
+            "provider-incomplete",
+        )
+        prior = c.get("question_activity_id")
+        c["question_activity_id"] = qid
+        if prior != qid:
+            c["replies_consumed_through"] = None
+        save_task(store, task)
+        lines.extend(
+            f"{stage}/{dimension} unavailable; blocked"
+            for dimension, _status, _result in incomplete_outcomes
+        )
+        return lines
 
     if worker.a38 and not second_stage:
         a38 = c.setdefault("a38", {})
@@ -1461,15 +1560,20 @@ def phase_pr_gates(
             agent_id=str(prep["agent_id"]),
             evidence=None,
         )
-        set_checklist(
-            store,
-            task,
-            checklist_key_for_stage(stage, dimension),
-            "ja",
-            f"{stage}/{dimension} on {head}",
-            source="script",
+        blocker = _reconcile_approved_gate_checklist(
+            store, task, stage=stage, head=head, dimension=dimension
         )
+        if blocker is not None:
+            reconciliation_blockers[blocker[0]] = blocker[1]
         lines.append(f"{stage}/{dimension}=approved")
+
+    if reconciliation_blockers:
+        save_task(store, task)
+        lines.extend(
+            f"{stage} recoverable checklist blocker for {key}: {reason}"
+            for key, reason in reconciliation_blockers.items()
+        )
+        return lines
 
     evidence_map = c.setdefault("evidence", {})
     if not isinstance(evidence_map, dict):

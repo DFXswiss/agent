@@ -37,33 +37,50 @@ from test_coordinator_support import (
 class OwnerDiscoveryGh(FakeGh):
     search_incomplete = False
     search_as_dict = False
+    search_total_count: int | None = None
+    owner_type = "User"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_queries: list[str] = []
 
     def __call__(self, argv: list[str]) -> Completed:
         joined = " ".join(argv)
+        if argv[-1] == "users/example":
+            return Completed(
+                0,
+                json.dumps({"login": "example", "type": self.owner_type}),
+                "",
+            )
         if "search/issues?q=is:issue+is:open" in joined:
+            self.search_queries.append(joined)
+            qualifier = "org" if self.owner_type == "Organization" else "user"
+            assert f"+{qualifier}:example&per_page=100" in joined
+            items = [
+                {**self.issues[0], "repository_url": "https://api.github.com/repos/example/project"},
+                {
+                    "number": 8, "state": "open", "title": "Owned issue", "body": "Do it",
+                    "html_url": "https://github.com/Example/owned/issues/8",
+                    "repository_url": "https://api.github.com/repos/Example/owned",
+                    "assignees": [{"login": "worker-bot"}],
+                },
+                {
+                    "number": 9, "state": "closed",
+                    "repository_url": "https://api.github.com/repos/Example/closed",
+                },
+                {
+                    "number": 10, "state": "open",
+                    "repository_url": "https://api.github.com/repos/Outside/project",
+                },
+                {
+                    "number": 11, "state": "open", "repository": {"archived": True},
+                    "repository_url": "https://api.github.com/repos/Example/archived",
+                },
+            ]
             page = {
                 "incomplete_results": self.search_incomplete,
-                "items": [
-                    {**self.issues[0], "repository_url": "https://api.github.com/repos/example/project"},
-                    {
-                        "number": 8, "state": "open", "title": "Owned issue", "body": "Do it",
-                        "html_url": "https://github.com/Example/owned/issues/8",
-                        "repository_url": "https://api.github.com/repos/Example/owned",
-                        "assignees": [{"login": "worker-bot"}],
-                    },
-                    {
-                        "number": 9, "state": "closed",
-                        "repository_url": "https://api.github.com/repos/Example/closed",
-                    },
-                    {
-                        "number": 10, "state": "open",
-                        "repository_url": "https://api.github.com/repos/Outside/project",
-                    },
-                    {
-                        "number": 11, "state": "open", "repository": {"archived": True},
-                        "repository_url": "https://api.github.com/repos/Example/archived",
-                    },
-                ],
+                "total_count": self.search_total_count or len(items),
+                "items": items,
             }
             return Completed(0, json.dumps(page if self.search_as_dict else [page]), "")
         if argv[:2] == ["gh", "api"] and argv[-1] == "repos/Example/owned/issues/8":
@@ -75,7 +92,10 @@ class OwnerDiscoveryGh(FakeGh):
         return super().__call__(argv)
 
 
-def test_owner_discovery_filters_results_and_explicit_repository_wins(tmp_path, monkeypatch):
+@pytest.mark.parametrize("owner_type", ["User", "Organization"])
+def test_owner_discovery_filters_results_and_explicit_repository_wins(
+    tmp_path, monkeypatch, owner_type
+):
     store = Store(tmp_path)
     write_accounts(store.home)
     make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
@@ -85,8 +105,10 @@ def test_owner_discovery_filters_results_and_explicit_repository_wins(tmp_path, 
         owner_readiness_argv=("/operator/owner-readiness",),
     )
     fake = OwnerDiscoveryGh()
+    fake.owner_type = owner_type
     patch_account_runners(monkeypatch, fake)
     lines = discover_assignments(store, worker, fake)
+    assert len(fake.search_queries) == 1
     assert sum("example/project#7" in line for line in lines) == 1
     assert sum("Example/owned#8" in line for line in lines) == 1
     sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
@@ -115,7 +137,29 @@ def test_owner_discovery_rejects_incomplete_search_results(tmp_path, monkeypatch
 
     lines = discover_assignments(store, worker, fake)
 
-    assert "discover owners: owner issue search returned incomplete results" in lines
+    assert "discover owner example: owner issue search returned incomplete results" in lines
+    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source["repo"] == "Example/owned" for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_total_count_truncation(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_total_count = 1001
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert "discover owner example: owner issue search was truncated (5 of 1001 results)" in lines
     sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
     assert any(source["repo"].casefold() == "example/project" for source in sources)
     assert not any(source["repo"] == "Example/owned" for source in sources)
