@@ -563,6 +563,47 @@ def test_run_spec_file_implementer_complete(
     assert seen.get("spec_file") == str(spec)
 
 
+def test_run_only_parsed_implementer_blocked_result_fails_the_task(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="complete",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: blocked\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run", "--task", tid, "--spec-file", str(spec),
+                "--no-tmux", "--cwd", str(tmp_path),
+            ],
+        )
+
+    assert exc.value.code == 2
+    assert _task_state(tmp_path, tid) == "failed"
+    implementers = [
+        agent for agent in _agents(tmp_path, tid)
+        if agent.get("role") == "implementer"
+    ]
+    assert len(implementers) == 1
+    assert implementers[0]["status"] == "done"
+    assert implementers[0]["note"] == "lane STATUS=complete RESULT=blocked"
+
+
 def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -641,7 +682,75 @@ def test_run_spec_file_invalid_openrouter_output_ends_working_agent(
     implementers = [agent for agent in agents if agent.get("role") == "implementer"]
     assert implementers and implementers[0].get("status") == "done"
     assert "lane output file is not valid UTF-8" in str(implementers[0].get("note"))
-    assert _task_state(tmp_path, tid) == "failed"
+    assert _task_state(tmp_path, tid) == "implementing"
+
+    with pytest.raises(SystemExit) as retry:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(worktree),
+            ],
+        )
+    assert retry.value.code == 2
+    retried = [
+        agent for agent in _agents(tmp_path, tid)
+        if agent.get("role") == "implementer"
+    ]
+    assert len(retried) == 2
+    assert all(agent.get("status") == "done" for agent in retried)
+    assert _task_state(tmp_path, tid) == "implementing"
+
+
+@pytest.mark.parametrize("status", ["partial", "timeout", "unavailable"])
+def test_run_incomplete_implementer_is_aborted_without_blocking_the_round(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status=status,
+            argv=["grok"],
+            returncode={"partial": 0, "timeout": 124, "unavailable": 2}[status],
+            stdout=f"STATUS: {status}\n",
+            stderr="provider did not complete",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--spec-file", str(spec),
+                    "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        implementers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "implementer"
+        ]
+        assert len(implementers) == expected_count
+        assert all(agent.get("status") == "done" for agent in implementers)
+        assert all("aborted incomplete lane" in str(agent.get("note")) for agent in implementers)
+        assert _task_state(tmp_path, tid) == "implementing"
 
 
 def test_run_missing_spec_file_does_not_leave_working_agent(
@@ -853,6 +962,49 @@ def test_run_spec_file_reviewer_complete_no_auto_approve(
     assert seen.get("vendor") == "grok"
 
 
+def test_run_unavailable_inner_reviewer_is_retryable_in_the_same_round(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    _finish_implementer(tmp_path, tid, capsys)
+    run(tmp_path, ["run", "--task", tid])
+    capsys.readouterr()
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "review-spec.md"
+    spec.write_text("review this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="reviewer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="unavailable",
+            argv=["grok"],
+            returncode=2,
+            stdout="STATUS: unavailable\n",
+            stderr="provider unavailable",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--spec-file", str(spec),
+                    "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        reviewers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "reviewer"
+        ]
+        assert len(reviewers) == expected_count
+        assert all(agent.get("status") == "done" for agent in reviewers)
+        assert _task_state(tmp_path, tid) == "reviewing"
+
+
 def _advance_to_pushed(
     home: Path, tid: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1041,6 +1193,79 @@ def test_run_mergeable_after_gates(
     run(tmp_path, ["run", "--task", tid])
     capsys.readouterr()
     assert _checklist(tmp_path, tid)["mergeable"] == "ja"
+
+
+def test_run_unavailable_pr_reviewer_records_gate_and_can_retry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_operator_ai_accounts(
+        tmp_path,
+        sessions={
+            DEFAULT_SESSION: {
+                "interactive": "run-builder",
+                "lanes": {
+                    "grok:implementer": "run-builder",
+                    "grok:reviewer": "run-reader",
+                    "grok:pr-reviewer-quality": "run-reader",
+                },
+            }
+        },
+    )
+    tid = _bootstrap_resolve(tmp_path, capsys)
+    _advance_to_pushed(tmp_path, tid, capsys, monkeypatch)
+    configure_accounts(tmp_path, [DEFAULT_SESSION], login="ok")
+    monkeypatch.setattr(
+        "agent_cli.git_act.push_branch",
+        lambda *, cwd, runner: "abc1234",
+    )
+    run(tmp_path, ["run", "--task", tid, "--head", "abc1234"])
+    capsys.readouterr()
+    spec = tmp_path / "pr-quality.md"
+    spec.write_text("review quality\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="pr-reviewer-quality",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            status="unavailable",
+            argv=["grok"],
+            returncode=2,
+            stdout="STATUS: unavailable\n",
+            stderr="provider unavailable",
+        ),
+    )
+
+    for expected_count in (1, 2):
+        with pytest.raises(SystemExit) as exc:
+            run(
+                tmp_path,
+                [
+                    "run", "--task", tid, "--head", "abc1234",
+                    "--spec-file", str(spec), "--no-tmux", "--cwd", str(tmp_path),
+                ],
+            )
+        assert exc.value.code == 2
+        reviewers = [
+            agent for agent in _agents(tmp_path, tid)
+            if agent.get("role") == "pr-reviewer-quality"
+        ]
+        assert len(reviewers) == expected_count
+        assert all(agent.get("status") == "done" for agent in reviewers)
+        assert _checklist(tmp_path, tid)["review_1_quality"] == "unavailable"
+        store = _store(tmp_path)
+        try:
+            gates = [
+                gate for gate in store.rows("review_gate")
+                if gate.get("task_id") == tid
+                and gate.get("stage") == "review-1"
+                and gate.get("dimension") == "quality"
+            ]
+        finally:
+            store.close()
+        assert len(gates) == expected_count
+        assert all(gate.get("verdict") == "unavailable" for gate in gates)
+        assert all("provider unavailable" in str(gate.get("evidence")) for gate in gates)
 
 
 

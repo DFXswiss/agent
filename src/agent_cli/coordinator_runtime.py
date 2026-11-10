@@ -59,6 +59,7 @@ from .coordinator_a38 import (
     fresh_pr_head,
     intake_second_reviews,
     pr_state,
+    reconcile_a38_publication_intents,
     phase_await_ready as phase_a38_await_ready,
     phase_await_second_review,
     phase_first_comment as phase_a38_first_comment,
@@ -1597,6 +1598,10 @@ def advance_one(
         # first. A non-recoverable blocker (no resume phase, e.g. after a merge) stays.
         live_state = pr_state(store, worker, task, runner)
         if live_state in ("MERGED", "CLOSED"):
+            if live_state == "MERGED":
+                reconcile_a38_publication_intents(
+                    store, worker, task, runner
+                )
             c["phase"] = "await_merge"
             save_task(store, task)
             verb = "merged" if live_state == "MERGED" else "closed"
@@ -1703,6 +1708,11 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
+        if worker.a38 and phase == "await_merge":
+            # A prior tick may already have persisted the phase transition.
+            # Finish saved publication intents before mail intake or the merge
+            # handler can decide completion.
+            reconcile_a38_publication_intents(store, worker, task, runner)
         intake_lines: list[str] | None = None
         if worker.a38 and phase in {
             "ci",

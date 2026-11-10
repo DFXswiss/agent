@@ -724,19 +724,16 @@ def _own_row_matches(
     )
 
 
-def phase_first_comment(
-    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
-) -> list[str]:
-    if not worker.a38:
-        raise CoordinatorError("A38 first-comment phase called for a non-A38 worker")
+def _first_comment_body(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    *,
+    head: str,
+) -> tuple[str, int]:
+    """Rebuild the deterministic first-review comment for a saved head."""
     c = coord(task)
-    head = verify_signed_clean_head(store, worker, runner, str(c.get("worktree") or ""))
-    if head != str(c.get("head_sha") or ""):
-        invalidate_head_evidence(c, head)
-        c["head_sha"] = head
-        c["phase"] = "tests"
-        save_task(store, task)
-        return ["head changed before first A38 review comment"]
     gates = latest_gates(store, str(task["id"]))
     models = task.get("models") if isinstance(task.get("models"), dict) else {}
     vendor = models.get("first")
@@ -747,7 +744,6 @@ def phase_first_comment(
         if gate is None or gate.get("verdict") != "approved" or gate.get("head_sha") != head or gate.get("vendor") != vendor:
             raise CoordinatorError(f"missing first review gate review-1/{dimension} on {head[:7]}")
     a38 = _a38_state(c)
-    existing = a38.get("first_comment")
     lanes = []
     for dimension, lane_id in (("quality", "conformity-a"), ("logic", "logic-a")):
         item = gate_prompt_evidence(
@@ -758,9 +754,9 @@ def phase_first_comment(
             vendor=vendor,
         )
         if item is None:
-            c["phase"] = "pr_gates_grok"
-            save_task(store, task)
-            return [f"first review {dimension} prompt evidence missing; re-running gate"]
+            raise CoordinatorError(
+                f"first review {dimension} prompt evidence missing"
+            )
         provider = item["provider"]
         model = item["model"]
         prompt = public_prompt(item["prompt"], worker, task)
@@ -787,8 +783,38 @@ def phase_first_comment(
     }
     rules_bound = review_rules_bound(store, worker, runner, task)
     body = _render_review_comment(task, payload, rules_bound=rules_bound)
+    return body, int(payload["passes"])
+
+
+def phase_first_comment(
+    store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
+) -> list[str]:
+    if not worker.a38:
+        raise CoordinatorError("A38 first-comment phase called for a non-A38 worker")
+    c = coord(task)
+    head = verify_signed_clean_head(store, worker, runner, str(c.get("worktree") or ""))
+    if head != str(c.get("head_sha") or ""):
+        invalidate_head_evidence(c, head)
+        c["head_sha"] = head
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["head changed before first A38 review comment"]
+    a38 = _a38_state(c)
+    existing = a38.get("first_comment")
+    try:
+        body, passes = _first_comment_body(
+            store, worker, task, runner, head=head
+        )
+    except CoordinatorError as exc:
+        if str(exc).startswith("first review ") and str(exc).endswith(
+            " prompt evidence missing"
+        ):
+            c["phase"] = "pr_gates_grok"
+            save_task(store, task)
+            return [f"{exc}; re-running gate"]
+        raise
     activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
-    request_key = _second_review_request_key(c, head, int(payload["passes"]))
+    request_key = _second_review_request_key(c, head, passes)
     _requested, request_plan = _prepare_second_review_request(
         store,
         worker,
@@ -801,7 +827,12 @@ def phase_first_comment(
         if isinstance(existing, dict) and existing.get("head") == head
         else {}
     )
-    comment_intent.update(head=head, activity_id=activity_id)
+    comment_intent.update(
+        head=head,
+        activity_id=activity_id,
+        request_key=request_key,
+        request_occurrence=int(request_plan["occurrence"]),
+    )
     a38["first_comment"] = comment_intent
     # Save both outside-effect intents before either the GitHub comment or a ping
     # is sent. Their deterministic ids make the incomplete steps resumable.
@@ -921,14 +952,6 @@ def _prepare_second_review_request(
     )
     if force and requested:
         occurrence += 1
-    number = as_int(c.get("pr_number") or task.get("ref"))
-    if number is None:
-        raise CoordinatorError("second review request requires pull request number")
-    url = str(c.get("pr_url") or f"https://github.com/{target_repo(task)}/pull/{number}")
-    note = _second_review_request_note(url=url, session_id=worker.session_id)
-    sender = store.meta("github_login")
-    if not isinstance(sender, str) or not sender:
-        raise CoordinatorError("device must be paired before sending second-review pings")
     now = utcnow()
     requested_at = (prior.get("requested_at") or now) if same_head else now
     # A re-ping of the same head keeps every review already posted for it.
@@ -956,15 +979,40 @@ def _prepare_second_review_request(
         if request_key is not None:
             state.setdefault("request_key", request_key)
     state.setdefault("status", "requested")
-    a38["second_review"] = state
-    return requested, {
+    saved_plan = state.get("request_plan")
+    if (
+        not requested
+        and isinstance(saved_plan, dict)
+        and saved_plan.get("head") == head
+        and int(saved_plan.get("occurrence") or 0) == occurrence
+    ):
+        a38["second_review"] = state
+        return requested, dict(saved_plan)
+
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    if number is None:
+        raise CoordinatorError("second review request requires pull request number")
+    url = str(c.get("pr_url") or f"https://github.com/{target_repo(task)}/pull/{number}")
+    note = _second_review_request_note(url=url, session_id=worker.session_id)
+    sender = store.meta("github_login")
+    if not isinstance(sender, str) or not sender:
+        raise CoordinatorError("device must be paired before sending second-review pings")
+    recipients = (
+        list(worker.second_reviewers)
+        if requested
+        else list(state.get("pinged") or worker.second_reviewers)
+    )
+    plan = {
         "head": head,
         "occurrence": occurrence,
         "note": note,
         "sender": sender.casefold(),
         "created_at": str(state.get("last_requested_at") or now),
-        "recipients": list(worker.second_reviewers),
+        "recipients": recipients,
     }
+    state["request_plan"] = dict(plan)
+    a38["second_review"] = state
+    return requested, plan
 
 
 def _write_second_review_request_pings(
@@ -1002,6 +1050,132 @@ def _write_second_review_request_pings(
             pid,
             payload,
         )
+
+
+def _stored_second_review_request_plan(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the already-saved ping occurrence without advancing it."""
+    c = coord(task)
+    head = str(c.get("head_sha") or "")
+    plan = state.get("request_plan")
+    if isinstance(plan, dict):
+        plan = dict(plan)
+    elif isinstance(state.get("pinged"), list) and state.get("last_requested_at"):
+        number = as_int(c.get("pr_number") or task.get("ref"))
+        if number is None:
+            raise CoordinatorError("saved second review request has no pull request number")
+        sender = store.meta("github_login")
+        if not isinstance(sender, str) or not sender:
+            raise CoordinatorError(
+                "device must be paired before reconciling second-review pings"
+            )
+        url = str(
+            c.get("pr_url")
+            or f"https://github.com/{target_repo(task)}/pull/{number}"
+        )
+        plan = {
+            "head": head,
+            "occurrence": int(state.get("request_count") or 0),
+            "note": _second_review_request_note(
+                url=url, session_id=worker.session_id
+            ),
+            "sender": sender.casefold(),
+            "created_at": str(state["last_requested_at"]),
+            "recipients": list(state["pinged"]),
+        }
+        state["request_plan"] = dict(plan)
+    else:
+        return None
+
+    recipients = plan.get("recipients")
+    if (
+        plan.get("head") != head
+        or "occurrence" not in plan
+        or int(plan.get("occurrence") or 0)
+        != int(state.get("request_count") or 0)
+        or not isinstance(plan.get("sender"), str)
+        or not isinstance(plan.get("note"), str)
+        or not isinstance(plan.get("created_at"), str)
+        or not isinstance(recipients, list)
+        or any(not isinstance(login, str) or not login for login in recipients)
+    ):
+        raise CoordinatorError("saved second review request plan is invalid")
+    return plan
+
+
+def reconcile_a38_publication_intents(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Finish a saved first-comment/ping occurrence without creating another.
+
+    This is intentionally narrower than :func:`phase_first_comment` and
+    :func:`send_second_review_requests`: it never prepares an occurrence.  It
+    only verifies/publishes the deterministic saved comment and fills missing
+    ping ids from the saved plan, including after the pull request was merged.
+    """
+    if not worker.a38:
+        return []
+    c = coord(task)
+    head = str(c.get("head_sha") or "")
+    a38 = _a38_state(c)
+    first = a38.get("first_comment")
+    second = a38.get("second_review")
+    first_saved = (
+        isinstance(first, dict)
+        and first.get("head") == head
+        and isinstance(first.get("activity_id"), str)
+        and bool(first.get("activity_id"))
+    )
+    plan = (
+        _stored_second_review_request_plan(store, worker, task, second)
+        if isinstance(second, dict) and second.get("head") == head
+        else None
+    )
+    if not first_saved and plan is None:
+        return []
+    if first_saved and plan is None:
+        raise CoordinatorError(
+            "saved A38 first comment has no saved second-review request occurrence"
+        )
+
+    lines: list[str] = []
+    if first_saved:
+        expected_id = str(
+            uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}")
+        )
+        if first["activity_id"] != expected_id:
+            raise CoordinatorError("saved A38 first comment activity id is invalid")
+        body, _passes = _first_comment_body(
+            store, worker, task, runner, head=head
+        )
+        result = _post_comment(
+            store,
+            worker,
+            task,
+            runner,
+            activity_id=expected_id,
+            body=body,
+        )
+        first.update(id=result.get("id"), url=result.get("url"))
+        save_task(store, task)
+        lines.append(f"first A38 review comment reconciled on {head[:7]}")
+    elif plan is not None:
+        # Persist a legacy plan upgrade before filling its deterministic ids.
+        save_task(store, task)
+
+    if plan is not None:
+        _write_second_review_request_pings(store, task, plan)
+        lines.append(
+            f"second-review request occurrence {int(plan['occurrence'])} reconciled"
+        )
+    return lines
 
 
 def _mark_message_read(store: Store, worker: WorkerConfig, message_id: str) -> None:
@@ -1423,6 +1597,10 @@ def phase_await_second_review(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting second review; invalidating evidence"]
+    # A merge must not strand a saved first-comment or partial ping occurrence.
+    # This only completes the current deterministic ids; it never starts the
+    # timeout-driven next occurrence.
+    reconcile_a38_publication_intents(store, worker, task, runner)
     state = pr_state(store, worker, task, runner)
     if state is None:
         return ["PR state temporarily unavailable; retrying"]
@@ -1434,10 +1612,7 @@ def phase_await_second_review(
     if state == "CLOSED":
         # A closed pull request gets no further review comments.
         raise CoordinatorError("pull request is not open while awaiting second review")
-    # Complete the durable current occurrence before considering mail or a new
-    # timeout occurrence. A crash after one ping must resume the missing ids,
-    # not advance the timeout and strand part of the saved request.
-    send_second_review_requests(store, worker, task)
+    # The saved occurrence was reconciled above before the merge decision.
     lines = intake_second_reviews(store, worker, task, runner, current)
     if lines is not None:
         return lines

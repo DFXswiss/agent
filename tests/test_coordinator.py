@@ -6007,6 +6007,106 @@ def test_a38_first_comment_partial_ping_crash_adds_only_the_missing_ping(
     assert len({row["id"] for row in pings}) == len(worker.second_reviewers)
 
 
+def test_a38_merge_after_saved_first_comment_intent_reconciles_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
+    )
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_post_comment",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("crash before comment")
+            ),
+        )
+        with pytest.raises(RuntimeError, match="crash before comment"):
+            phase_first_comment(store, worker, store.row("task", tid), fake)
+
+    fake.pr["state"] = "MERGED"
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert lines == ["PR merged during a38_first_comment; verifying the merge"]
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    first = saved["payload"]["coordinator"]["a38"]["first_comment"]
+    assert first["url"] == "https://x"
+    comments = [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    assert len(store.rows("ping")) == len(worker.second_reviewers)
+    assert saved["state"] != "done"
+
+
+def test_a38_merge_after_first_initial_ping_fills_only_missing_ping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, tid = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
+    )
+    real_write_pings = coordinator_a38._write_second_review_request_pings
+
+    def write_first_ping_then_crash(store_arg, task_arg, plan):  # noqa: ANN001
+        partial = dict(plan)
+        partial["recipients"] = list(plan["recipients"][:1])
+        real_write_pings(store_arg, task_arg, partial)
+        raise RuntimeError("crash after initial ping")
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_write_second_review_request_pings",
+            write_first_ping_then_crash,
+        )
+        with pytest.raises(RuntimeError, match="crash after initial ping"):
+            phase_first_comment(store, worker, store.row("task", tid), fake)
+
+    # Simulate a crash after the merge observer persisted await_merge but before
+    # that phase could reconcile its saved publication occurrence.
+    awaiting = store.row("task", tid)
+    awaiting["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in awaiting.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "MERGED"
+    advance_one(store, worker, runner=fake, lane_runner=None)
+
+    comments = [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    pings = store.rows("ping")
+    assert len(pings) == len(worker.second_reviewers)
+    assert sorted(row["to_login"] for row in pings) == sorted(
+        worker.second_reviewers
+    )
+    assert len({row["id"] for row in pings}) == len(worker.second_reviewers)
+    saved = store.row("task", tid)
+    assert saved["state"] != "done"
+
+
 def test_a38_second_review_ping_refuses_a_foreign_deterministic_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6199,6 +6299,74 @@ def test_a38_timeout_reping_crash_resumes_only_the_missing_ping(
         assert sum(row["to_login"] == login for row in pings) == 2
         assert store.row("ping", _ping_id(task_id, fake.head, login, 1)) is not None
         assert store.row("ping", _ping_id(task_id, fake.head, login, 2)) is None
+
+
+def test_a38_merge_after_first_timeout_reping_fills_saved_occurrence_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import (
+        _ping_id,
+        phase_await_second_review,
+        phase_first_comment,
+    )
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = replace(
+        worker, second_reviewers=("outside-reviewer", "reviewer-two")
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "utcnow", lambda: "2026-01-01T00:00:00Z"
+    )
+    phase_first_comment(store, worker, store.row("task", task_id), fake)
+    real_write_pings = coordinator_a38._write_second_review_request_pings
+
+    def crash_after_first_reping(store_arg, task_arg, plan):  # noqa: ANN001
+        if int(plan["occurrence"]) == 0:
+            real_write_pings(store_arg, task_arg, plan)
+            return
+        partial = dict(plan)
+        partial["recipients"] = list(plan["recipients"][:1])
+        real_write_pings(store_arg, task_arg, partial)
+        raise RuntimeError("crash after first re-ping")
+
+    monkeypatch.setattr(
+        coordinator_a38, "utcnow", lambda: "2026-01-02T00:00:00Z"
+    )
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_write_second_review_request_pings",
+            crash_after_first_reping,
+        )
+        with pytest.raises(RuntimeError, match="crash after first re-ping"):
+            phase_await_second_review(
+                store, worker, store.row("task", task_id), fake
+            )
+
+    fake.pr["state"] = "MERGED"
+    advance_one(store, worker, runner=fake, lane_runner=None)
+
+    comments = [
+        row for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+    ]
+    assert len(comments) == 1
+    pings = store.rows("ping")
+    assert len(pings) == 2 * len(worker.second_reviewers)
+    for login in worker.second_reviewers:
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 0)) is not None
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 1)) is not None
+        assert store.row("ping", _ping_id(task_id, fake.head, login, 2)) is None
+    saved = store.row("task", task_id)
+    assert saved["payload"]["coordinator"]["a38"]["second_review"][
+        "request_count"
+    ] == 1
+    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    assert saved["state"] != "done"
 
 
 def test_a38_first_comment_ping_and_external_mail_happy_path(

@@ -3383,6 +3383,28 @@ def _find_working_agent(
     return None
 
 
+def _abort_incomplete_agent(store: Store, agent: dict, note: str) -> None:
+    """End a lane row without inventing a semantic task/round verdict.
+
+    Agent rows have only ``working``/``done`` lifecycle state; implementer and
+    inner-reviewer verdicts live on the round.  Infrastructure and protocol
+    failures therefore finish the row with an abort note while deliberately
+    leaving the round verdict empty, so the same round can be retried.
+    """
+    agent["status"] = "done"
+    agent["finished_at"] = utcnow()
+    agent["note"] = f"aborted incomplete lane: {note}"
+    store.write("agent", "update", str(agent["id"]), _strip(agent))
+
+
+def _parsed_lane_result(output: str) -> str | None:
+    matches = re.findall(
+        r"(?mi)^RESULT:[ \t]*(done|blocked|ask|approved|rejected|no-change)[ \t]*\r?$",
+        output or "",
+    )
+    return matches[0].lower() if len(matches) == 1 else None
+
+
 def _agent_handoff_exit(
     step,
     tid: str,
@@ -3644,19 +3666,33 @@ def cmd_run(args: list[str]) -> None:
                     )
                     if working is None:
                         die("implementer working agent not found after lane")
+                    semantic_result = _parsed_lane_result(result.stdout)
+                    verdict = "blocked" if semantic_result == "blocked" else "done"
                     cmd_agent(
                         [
                             "finish",
                             "--id",
                             str(working["id"]),
                             "--verdict",
-                            "done",
+                            verdict,
                             "--note",
-                            "lane STATUS=complete",
+                            (
+                                "lane STATUS=complete RESULT=blocked"
+                                if verdict == "blocked"
+                                else "lane STATUS=complete"
+                            ),
                         ]
                     )
                     snap = _chain_snapshot(store, tid, extra_head=head)
                     task = _need(store, "task", tid)
+                    if verdict == "blocked":
+                        _agent_handoff_exit(
+                            step,
+                            tid,
+                            str(snap.get("session_id")),
+                            models_for_new_record(snap),
+                            snap,
+                        )
                 elif role == "implementer":
                     working = _find_working_agent(
                         store, tid, role=role, vendor=vendor, round_num=round_num
@@ -3666,17 +3702,82 @@ def cmd_run(args: list[str]) -> None:
                     note = result.stderr.strip() or result.stdout.strip()
                     if not note:
                         note = f"lane STATUS={result.status}"
-                    cmd_agent(
-                        [
-                            "finish",
-                            "--id",
-                            str(working["id"]),
-                            "--verdict",
-                            "blocked",
-                            "--note",
-                            note,
-                        ]
+                    _abort_incomplete_agent(store, working, note)
+                    _agent_handoff_exit(
+                        step,
+                        tid,
+                        str(snap.get("session_id")),
+                        models_for_new_record(snap),
+                        snap,
                     )
+                elif result.status != "complete":
+                    working = _find_working_agent(
+                        store, tid, role=role, vendor=vendor, round_num=round_num
+                    )
+                    if working is None:
+                        die(f"{role} working agent not found after lane")
+                    note = result.stderr.strip() or result.stdout.strip()
+                    if not note:
+                        note = f"lane STATUS={result.status}"
+                    if role == "reviewer":
+                        _abort_incomplete_agent(store, working, note)
+                    elif role in ("pr-reviewer-quality", "pr-reviewer-logic"):
+                        if not head:
+                            die(f"{role} unavailable result requires --head")
+                        stage = SLOT_STAGES.get(str(step.slot))
+                        if stage is None:
+                            die(f"{step.key} has no review stage")
+                        dimension = role.removeprefix("pr-reviewer-")
+                        cmd_agent(
+                            [
+                                "finish",
+                                "--id",
+                                str(working["id"]),
+                                "--verdict",
+                                "unavailable",
+                                "--note",
+                                note,
+                            ]
+                        )
+                        cmd_gate(
+                            [
+                                "record",
+                                "--task",
+                                tid,
+                                "--stage",
+                                stage,
+                                "--dimension",
+                                dimension,
+                                "--vendor",
+                                vendor,
+                                "--verdict",
+                                "unavailable",
+                                "--head",
+                                head,
+                                "--agent",
+                                str(working["id"]),
+                                "--evidence",
+                                note,
+                            ]
+                        )
+                        cmd_close_step(
+                            [
+                                "--task",
+                                tid,
+                                "--key",
+                                str(step.key),
+                                "--source",
+                                "script",
+                                "--evidence",
+                                note,
+                                "--status",
+                                "unavailable",
+                                "--head",
+                                head,
+                            ]
+                        )
+                    else:
+                        die(f"unknown incomplete lane role: {role}")
                     _agent_handoff_exit(
                         step,
                         tid,
