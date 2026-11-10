@@ -6181,11 +6181,23 @@ def test_a38_merge_after_first_initial_ping_fills_only_missing_ping(
     fake.pr["state"] = "MERGED"
     advance_one(store, worker, runner=fake, lane_runner=None)
 
-    comments = [
-        row for row in store.rows("activity")
-        if row.get("type") == "comment.post"
-    ]
-    assert len(comments) == 1
+    checkpoint = awaiting["payload"]["coordinator"]
+    expected_comment_id = checkpoint["a38"]["first_comment"]["activity_id"]
+    # Advancing may also publish a legitimate source-issue status. Count only
+    # the first-review publication on this pull request.
+    first_review_comments = []
+    for row in store.rows("activity"):
+        payload = row.get("payload")
+        if (
+            row.get("type") == "comment.post"
+            and isinstance(payload, dict)
+            and payload.get("target") == "pr"
+            and payload.get("number") == checkpoint["pr_number"]
+            and str(payload.get("body") or "").startswith("EN:\nFirst review with ")
+        ):
+            first_review_comments.append(row)
+    assert len(first_review_comments) == 1
+    assert first_review_comments[0]["id"] == expected_comment_id
     pings = store.rows("ping")
     assert len(pings) == len(worker.second_reviewers)
     assert sorted(row["to_login"] for row in pings) == sorted(
