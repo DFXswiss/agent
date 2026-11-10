@@ -1598,7 +1598,9 @@ def advance_one(
         # first. A non-recoverable blocker (no resume phase, e.g. after a merge) stays.
         live_state = pr_state(store, worker, task, runner)
         if live_state in ("MERGED", "CLOSED"):
-            if live_state == "MERGED":
+            if live_state == "MERGED" and _source_still_assigned(
+                store, worker, c, runner
+            ):
                 reconcile_a38_publication_intents(
                     store, worker, task, runner
                 )
@@ -1708,11 +1710,6 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
-        if worker.a38 and phase == "await_merge":
-            # A prior tick may already have persisted the phase transition.
-            # Finish saved publication intents before mail intake or the merge
-            # handler can decide completion.
-            reconcile_a38_publication_intents(store, worker, task, runner)
         intake_lines: list[str] | None = None
         if worker.a38 and phase in {
             "ci",
@@ -1745,6 +1742,10 @@ def advance_one(
             if allowed is None:
                 return unreadable
             if allowed:
+                # A prior tick may have persisted the phase transition before
+                # completing a saved comment/ping occurrence.  CLOSED and a
+                # revoked OPEN task reach no publication side effect here.
+                reconcile_a38_publication_intents(store, worker, task, runner)
                 intake_lines = intake_second_reviews(store, worker, task, runner, current)
                 if coord(task).get("phase") != phase:
                     return intake_lines or [

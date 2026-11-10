@@ -5910,6 +5910,95 @@ def _a38_first_comment_env(
     return store, worker, fake, tid
 
 
+def test_a38_publication_reconcile_ignores_request_state_without_saved_occurrence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import reconcile_a38_publication_intents
+
+    task_id = "11111111-1111-4111-8111-111111111119"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+
+    assert reconcile_a38_publication_intents(store, worker, task, fake) == []
+    assert store.rows("ping") == []
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ] == []
+
+
+def test_a38_closed_pr_does_not_reconcile_saved_publication_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_await_second_review, phase_first_comment
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_post_comment",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("crash before comment")
+            ),
+        )
+        with pytest.raises(RuntimeError, match="crash before comment"):
+            phase_first_comment(store, worker, store.row("task", task_id), fake)
+
+    fake.pr["state"] = "CLOSED"
+    with pytest.raises(CoordinatorError, match="not open while awaiting second review"):
+        phase_await_second_review(store, worker, store.row("task", task_id), fake)
+
+    assert store.rows("ping") == []
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ] == []
+
+
+def test_a38_revoked_await_merge_does_not_reconcile_saved_publication_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38, coordinator_runtime
+    from agent_cli.coordinator_a38 import phase_first_comment
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+
+    with monkeypatch.context() as failure_patch:
+        failure_patch.setattr(
+            coordinator_a38,
+            "_post_comment",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("crash before comment")
+            ),
+        )
+        with pytest.raises(RuntimeError, match="crash before comment"):
+            phase_first_comment(store, worker, store.row("task", task_id), fake)
+
+    task = store.row("task", task_id)
+    task["payload"]["coordinator"]["phase"] = "await_merge"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    fake.pr["state"] = "OPEN"
+    fake.issues[0]["assignees"] = []
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_await_merge",
+        lambda *args, **kwargs: ["merge observed"],
+    )
+
+    assert advance_one(store, worker, runner=fake, lane_runner=None) == ["merge observed"]
+    assert store.rows("ping") == []
+    assert [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ] == []
+
+
 def test_a38_first_comment_crash_before_post_resumes_comment_and_all_pings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

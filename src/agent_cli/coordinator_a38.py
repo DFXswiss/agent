@@ -1107,6 +1107,68 @@ def _stored_second_review_request_plan(
     return plan
 
 
+def _first_comment_result_verified(store: Store, first: Mapping[str, Any]) -> bool:
+    """A saved comment intent is complete only after the local executor verified it."""
+    activity_id = first.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id:
+        return False
+    row = store.row("activity", activity_id)
+    result = row.get("result") if isinstance(row, dict) else None
+    return (
+        isinstance(row, dict)
+        and row.get("_origin_device_id") == store.device_id()
+        and row.get("execution_status") == "done"
+        and isinstance(result, dict)
+        and isinstance(result.get("url"), str)
+        and bool(result["url"])
+    )
+
+
+def _saved_second_review_request_needs_reconcile(
+    store: Store,
+    task: Mapping[str, Any],
+    head: str,
+    state: Mapping[str, Any],
+) -> bool:
+    """Check deterministic ping ids without reconstructing a legacy plan.
+
+    In particular, this check must not require device pairing.  Pairing and
+    legacy plan reconstruction are needed only after a missing or invalid row
+    proves that the saved occurrence actually needs recovery.
+    """
+    saved_plan = state.get("request_plan")
+    # ``pinged`` and ``last_requested_at`` predate durable occurrences and say
+    # only that a request was made.  The saved plan is the recovery intent that
+    # binds recipients to deterministic ids.  A pending first-comment intent
+    # may still upgrade the legacy shape through
+    # ``_stored_second_review_request_plan`` below.
+    if not isinstance(saved_plan, dict):
+        return False
+    if saved_plan.get("head") != head or "occurrence" not in saved_plan:
+        raise CoordinatorError("saved second review request plan is invalid")
+    occurrence = int(saved_plan.get("occurrence") or 0)
+    recipients = saved_plan.get("recipients")
+    if not isinstance(recipients, list) or any(
+        not isinstance(login, str) or not login for login in recipients
+    ):
+        raise CoordinatorError("saved second review request plan is invalid")
+    for login in recipients:
+        ping_id = _ping_id(str(task["id"]), head, login, occurrence)
+        row = store.row("ping", ping_id)
+        if not isinstance(row, dict) or not _own_row_matches(
+            store,
+            row,
+            {
+                "id": ping_id,
+                "to_login": login,
+                "kind": "review-request",
+                "task_id": task["id"],
+            },
+        ):
+            return True
+    return False
+
+
 def reconcile_a38_publication_intents(
     store: Store,
     worker: WorkerConfig,
@@ -1133,20 +1195,26 @@ def reconcile_a38_publication_intents(
         and isinstance(first.get("activity_id"), str)
         and bool(first.get("activity_id"))
     )
+    first_pending = first_saved and not _first_comment_result_verified(store, first)
+    pings_pending = (
+        isinstance(second, dict)
+        and second.get("head") == head
+        and _saved_second_review_request_needs_reconcile(store, task, head, second)
+    )
+    if not first_pending and not pings_pending:
+        return []
     plan = (
         _stored_second_review_request_plan(store, worker, task, second)
         if isinstance(second, dict) and second.get("head") == head
         else None
     )
-    if not first_saved and plan is None:
-        return []
-    if first_saved and plan is None:
+    if first_pending and plan is None:
         raise CoordinatorError(
             "saved A38 first comment has no saved second-review request occurrence"
         )
 
     lines: list[str] = []
-    if first_saved:
+    if first_pending:
         expected_id = str(
             uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}")
         )
@@ -1166,11 +1234,11 @@ def reconcile_a38_publication_intents(
         first.update(id=result.get("id"), url=result.get("url"))
         save_task(store, task)
         lines.append(f"first A38 review comment reconciled on {head[:7]}")
-    elif plan is not None:
+    elif pings_pending and plan is not None:
         # Persist a legacy plan upgrade before filling its deterministic ids.
         save_task(store, task)
 
-    if plan is not None:
+    if pings_pending and plan is not None:
         _write_second_review_request_pings(store, task, plan)
         lines.append(
             f"second-review request occurrence {int(plan['occurrence'])} reconciled"
@@ -1597,14 +1665,13 @@ def phase_await_second_review(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting second review; invalidating evidence"]
-    # A merge must not strand a saved first-comment or partial ping occurrence.
-    # This only completes the current deterministic ids; it never starts the
-    # timeout-driven next occurrence.
-    reconcile_a38_publication_intents(store, worker, task, runner)
     state = pr_state(store, worker, task, runner)
     if state is None:
         return ["PR state temporarily unavailable; retrying"]
     if state == "MERGED":
+        # A merge must not strand a saved first-comment or partial ping
+        # occurrence. This only completes current deterministic ids.
+        reconcile_a38_publication_intents(store, worker, task, runner)
         # The guard may make the PR Ready before the second review; verify the merge.
         c["phase"] = "await_merge"
         save_task(store, task)
@@ -1612,7 +1679,7 @@ def phase_await_second_review(
     if state == "CLOSED":
         # A closed pull request gets no further review comments.
         raise CoordinatorError("pull request is not open while awaiting second review")
-    # The saved occurrence was reconciled above before the merge decision.
+    reconcile_a38_publication_intents(store, worker, task, runner)
     lines = intake_second_reviews(store, worker, task, runner, current)
     if lines is not None:
         return lines
