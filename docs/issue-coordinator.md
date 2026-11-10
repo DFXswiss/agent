@@ -332,7 +332,9 @@ for worker in workers.values():
    `close_allowed` permits it, then publishes a GitHub-visible blocker with
    `resume_phase` of `pr_gates_grok` / `pr_gates_codex` and a pinned
    `question_activity_id` — not a rejected complete gate and not an implementer
-   fix loop. Rejections publish
+   fix loop. Every complete dimension is persisted before incomplete dimensions
+   are handled; a complete rejection always routes back to implementation even
+   when its parallel peer is unavailable. Rejections publish
    `review.post` **COMMENT** (not `REQUEST_CHANGES`) and invalidate
    head-specific evidence. A successful second-slot lane still starts when the
    checklist keys are `n_a`. Every cached approved gate attempts to reconcile
@@ -570,7 +572,10 @@ result with a bounded, redacted diagnostic, its `lane.run` row is still written,
 and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
 Failure to write the audit row itself is an observation and does not rewrite the
-lane verdict.
+lane verdict. File-tool targets fail closed: path-shaped Grep regex fragments
+are retained only when their normalized literal path is inside the worktree,
+and Glob patterns containing parent traversal in any component (including
+after a wildcard) are redacted.
 
 ## Module layout
 
@@ -702,7 +707,10 @@ The originally verified first-review comment payload is immutable for its
 head. A same-head no-change implementation pass reuses that exact comment even
 when task summaries changed, and writes only the next deterministic reviewer
 ping occurrence. Reconciliation validates the full saved comment and ping
-payloads before treating either outside effect as complete.
+payloads before treating either outside effect as complete. Legacy saved
+first-comment intents that contain only `head` and `activity_id` are upgraded
+from the exact owned activity payload; when that activity does not exist yet,
+the coordinator renders and checkpoints `body` and `passes` before publication.
 
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
@@ -715,7 +723,10 @@ record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
 Coordinator A38 mode does not implement policy migrations; a changed
 `.github/a38.json` fails loudly instead of publishing evidence against the old
-base policy.
+base policy. This blocker is non-recoverable and has no reply checkpoint. A
+legacy same-head report without `base_sha` or `policy_revision` is invalidated
+at readiness and routes the task back to `tests` for current base-bound
+measurement and publication.
 The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
 the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;

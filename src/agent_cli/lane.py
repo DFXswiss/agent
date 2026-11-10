@@ -395,6 +395,11 @@ def _path_stays_in_worktree(fragment: str, root: Path) -> bool:
         return False
 
 
+def _glob_has_traversal(pattern: str) -> bool:
+    """Reject parent traversal in every glob component, also after wildcards."""
+    return any(part == ".." for part in pattern.replace("\\", "/").split("/"))
+
+
 def _looks_like_path(token: str) -> bool:
     return (
         "/" in token
@@ -402,6 +407,44 @@ def _looks_like_path(token: str) -> bool:
         or token.startswith("~")
         or _WINDOWS_PATH.match(token) is not None
     )
+
+
+def _grep_literal_path(fragment: str) -> str | None:
+    """Normalize a path-shaped regex token only when its path is unambiguous."""
+    text = fragment.strip().rstrip(",:;)\"'")
+    while text.startswith("^"):
+        text = text[1:]
+    for prefix in ("(?:", "(?=", "(?!", "(?<=", "(?<!", "("):
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+            text = text.rstrip(")")
+            break
+    if text.endswith("$"):
+        text = text[:-1]
+    if not _looks_like_path(text):
+        return None
+
+    literal: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 1
+            if index >= len(text):
+                return None
+            escaped = text[index]
+            # Alphabetic escapes (\d, \s, ...) and other regex constructs do
+            # not identify one literal filesystem path.
+            if escaped.isalpha():
+                return None
+            literal.append(escaped)
+        elif char in "|[]()+*?{}^$":
+            return None
+        else:
+            literal.append(char)
+        index += 1
+    normalized = "".join(literal)
+    return normalized if _looks_like_path(normalized) else None
 
 
 def _relative_glob(pattern: str, root: Path) -> str:
@@ -421,14 +464,17 @@ def _pattern_target(pattern: str, root: Path, *, whole_is_path: bool) -> str:
     """Redact absolute or escaping path fragments in a pattern value."""
     if whole_is_path:
         # Glob's ``pattern`` is its path argument.
-        if not _path_stays_in_worktree(pattern, root):
+        if _glob_has_traversal(pattern) or not _path_stays_in_worktree(
+            pattern, root
+        ):
             return "[redacted]"
         return _relative_glob(pattern, root)
     # A Grep pattern is a regex; only path-shaped tokens may name host paths.
     parts: list[str] = []
     for token in re.split(r"(\s+)", pattern):
         if token and not token.isspace() and _looks_like_path(token):
-            safe = _path_stays_in_worktree(token.rstrip(",:;)" "'"), root)
+            literal = _grep_literal_path(token)
+            safe = literal is not None and _path_stays_in_worktree(literal, root)
             parts.append(token if safe else "[redacted]")
         else:
             parts.append(token)

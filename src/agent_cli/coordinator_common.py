@@ -81,6 +81,10 @@ class CoordinatorError(StoreError):
     """Visible coordinator failure; never a silent skip."""
 
 
+class NonRecoverableCoordinatorError(CoordinatorError):
+    """Visible coordinator failure that no authorized reply may resume."""
+
+
 class CiObservationTransportError(CoordinatorError):
     """Transient CI observation transport; same-phase retry, no reply gate."""
 

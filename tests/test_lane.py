@@ -668,6 +668,37 @@ def test_tool_target_redacts_escaping_path_fragments_in_grep_pattern(
     )
 
 
+def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    (worktree / "src").mkdir(parents=True)
+
+    assert (
+        _tool_target(
+            "^/opt/profiles/router/openrouter-api-key$",
+            str(worktree),
+            "pattern",
+            tool="Grep",
+        )
+        == "[redacted]"
+    )
+    assert (
+        _tool_target(
+            "^src/module.py$", str(worktree), "pattern", tool="Grep"
+        )
+        == "^src/module.py$"
+    )
+    assert (
+        _tool_target(
+            "**/../../outside.txt", str(worktree), "pattern", tool="Glob"
+        )
+        == "[redacted]"
+    )
+
+
 def test_record_lane_run_bounds_and_redacts_both_models() -> None:
     class CaptureStore:
         row: dict | None = None
