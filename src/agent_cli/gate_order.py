@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any, Protocol
 
 from .model_slots import canonical_stage
+from .timestamps import parse_utc_timestamp
 
 
 class GateStore(Protocol):
@@ -15,6 +17,15 @@ class GateStore(Protocol):
 
 
 GateKey = tuple[str, str]
+
+
+def _unavailable_gate(gate: dict[str, Any], key: GateKey) -> dict[str, Any]:
+    unavailable = dict(gate)
+    unavailable["stage"] = key[0]
+    unavailable["dimension"] = key[1]
+    unavailable["verdict"] = "unavailable"
+    unavailable["head_sha"] = ""
+    return unavailable
 
 
 def ordered_gate_rows(
@@ -57,9 +68,14 @@ def ordered_gate_rows(
             )
             continue
 
-        by_time: dict[str, list[dict[str, Any]]] = {}
+        by_time: dict[datetime, list[dict[str, Any]]] = {}
+        unordered: list[dict[str, Any]] = []
         for gate in gates:
-            by_time.setdefault(str(gate.get("recorded_at") or ""), []).append(gate)
+            recorded_at = parse_utc_timestamp(gate.get("recorded_at"))
+            if recorded_at is None:
+                unordered.append(gate)
+                continue
+            by_time.setdefault(recorded_at, []).append(gate)
         for recorded_at in sorted(by_time):
             tied = sorted(
                 by_time[recorded_at], key=lambda gate: str(gate.get("id") or "")
@@ -74,12 +90,12 @@ def ordered_gate_rows(
                 for gate in tied
             }
             if len(outcomes) > 1:
-                unavailable = dict(tied[-1])
-                unavailable["stage"] = key[0]
-                unavailable["dimension"] = key[1]
-                unavailable["verdict"] = "unavailable"
-                unavailable["head_sha"] = ""
-                ordered.append(unavailable)
+                ordered.append(_unavailable_gate(tied[-1], key))
+        if unordered:
+            unordered.sort(key=lambda gate: str(gate.get("id") or ""))
+            ordered.extend(unordered)
+            if len(gates) > 1:
+                ordered.append(_unavailable_gate(unordered[-1], key))
     return ordered
 
 

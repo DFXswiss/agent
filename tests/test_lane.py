@@ -714,7 +714,13 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
         ("Grep", "(?:/opt/profiles/router/openrouter-api-key)"),
         ("Grep", r"path=\/opt/profiles/router/openrouter-api-key"),
         ("Grep", "path=~/private/config.json"),
+        ("Grep", r"path=C:Users\someone\config.json"),
+        ("Grep", r"C:Users\someone\config.json"),
+        ("Grep", r"path=C:\Users\someone\config.json"),
+        ("Grep", "path=C:/Users/someone/config.json"),
         ("Grep", r"path=C:\\Users\\someone\\config.json"),
+        ("Grep", r"path=C\:Users\someone\config\.json"),
+        ("Grep", r"path=C\:\\Users\\someone\\config\.json"),
         ("Grep", r"path=\\\\server\\share\\config.json"),
         ("Grep", "path=../../private.txt"),
         ("Grep", "source=../outside/*.json"),
@@ -735,6 +741,18 @@ def test_tool_target_redacts_embedded_outside_path_fragments(
     worktree.mkdir()
 
     assert _tool_target(pattern, str(worktree), "pattern", tool=tool) == "[redacted]"
+
+
+@pytest.mark.parametrize("target", ["key:value", "http:", "scheme:http:value"])
+def test_tool_target_does_not_treat_ordinary_colon_text_as_drive_fragment(
+    tmp_path: Path, target: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert _tool_target(target, str(worktree), "pattern", tool="Grep") == target
 
 
 @pytest.mark.parametrize(

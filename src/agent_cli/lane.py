@@ -355,7 +355,7 @@ def _int_or_none(value: object) -> int | None:
 
 _REGEX_ESCAPE_RE = re.compile(r"\\([^A-Za-z0-9])")
 _PLAIN_PATH_REGEX_META_RE = re.compile(r"[\^$+{}|()]")
-_DRIVE_PREFIX_RE = re.compile(r"[A-Za-z]:/")
+_DRIVE_PREFIX_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))[A-Za-z]:")
 _ABSOLUTE_FRAGMENT_RE = re.compile(r"(?:^|(?<=[^A-Za-z0-9._-]))/")
 
 

@@ -6,7 +6,6 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -77,6 +76,7 @@ from .pr_lifecycle import (
     a38_passed_job_names_from_comment,
 )
 from .store import Store, StoreError, utcnow
+from .timestamps import parse_utc_timestamp
 
 # Executor error strings that prove an observed same-marker APPROVE rejection.
 _FORMAL_OBSERVED_REJECTION_ERRORS = frozenset(
@@ -524,16 +524,7 @@ def _canonical_issue_repo(expected_repo: str, *responses: object) -> str | None:
     return None
 
 
-def _parse_coordinator_time(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
+_parse_coordinator_time = parse_utc_timestamp
 
 
 def _seconds_since(value: object) -> float | None:
