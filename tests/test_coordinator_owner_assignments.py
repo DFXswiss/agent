@@ -1654,7 +1654,7 @@ def _patch_early_merge_readiness(monkeypatch, head):
             "merge_commit_sha": "d" * 40,
             "merged_at": "2026-10-01T12:00:00Z",
             "merged_by": {"login": "human-owner", "type": "User"},
-            "base": {"ref": "main"},
+            "base": {"ref": "main", "sha": "b" * 40},
             "head": {"sha": head},
             "html_url": "https://github.com/Example/owned/pull/42",
         },
@@ -1709,6 +1709,67 @@ def test_a38_merge_during_ci_closes_owner_readiness_before_task_done(
         assert checklist[key]["evidence"] == (
             "hub mandate assignment-row: human-owner stated deviation declared=false"
         )
+
+
+def test_a38_merged_pr_base_move_invalidates_evidence_before_task_done(
+    monkeypatch, tmp_path
+):
+    from agent_cli.coordinator_github import phase_await_merge
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        a38=True,
+        review_session=None,
+        second_reviewers=("outside-reviewer",),
+    )
+    task_id, head = _owner_a38_early_merge_task(
+        store, worker, explicit_statement=True
+    )
+    _patch_early_merge_readiness(monkeypatch, head)
+    moved_base = "c" * 40
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["evidence"] = {"tests_pass": True, "tests_head": head}
+    checkpoint["a38"]["report"] = {
+        "head": head,
+        "base_sha": "b" * 40,
+        "policy_revision": "b" * 40,
+    }
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    def merged_on_moved_base(*_args):
+        return {
+            "state": "closed",
+            "merged": True,
+            "merge_commit_sha": "d" * 40,
+            "merged_at": "2026-10-01T12:00:00Z",
+            "merged_by": {"login": "human-owner", "type": "User"},
+            "base": {"ref": "main", "sha": moved_base},
+            "head": {"sha": head},
+            "html_url": "https://github.com/Example/owned/pull/42",
+        }
+
+    monkeypatch.setattr("agent_cli.coordinator_github.gh_json", merged_on_moved_base)
+
+    assert phase_await_merge(
+        store, worker, store.row("task", task_id), object()
+    ) == [
+        "merged PR base changed; invalidating A38 report evidence before task completion"
+    ]
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert saved["state"] != "done"
+    assert checkpoint["phase"] == "tests"
+    assert checkpoint["base_sha"] == moved_base
+    assert "report" not in checkpoint["a38"]
+    assert "tests_pass" not in checkpoint["evidence"]
 
 
 def test_a38_early_merge_reruns_readiness_when_it_ran_on_an_older_head(

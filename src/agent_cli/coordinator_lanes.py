@@ -858,26 +858,36 @@ def queue_comment_review(
     store: Store,
     worker: WorkerConfig,
     task: dict[str, Any],
-    runner: Runner,
     *,
     body: str,
-) -> None:
+) -> str:
     from .coordinator_common import as_int, target_repo
 
     c = coord(task)
     target = target_repo(task)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
-        return
-    activity_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"coordinator-gate-comment:{task['id']}:{body[:120]}"))
+        raise CoordinatorError("rejection comment requires PR number")
+    redacted_body = redact(body)
+    activity_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"coordinator-gate-comment:{task['id']}:{target}:{number}:{redacted_body}",
+        )
+    )
     queue_activity(
         store,
         activity_id=activity_id,
         session_id=worker.session_id,
         typ="review.post",
-        payload={"repo": target, "number": number, "body": redact(body), "event": "COMMENT"},
+        payload={
+            "repo": target,
+            "number": number,
+            "body": redacted_body,
+            "event": "COMMENT",
+        },
     )
-    execute_github(store, runner, activity_ids=(activity_id,))
+    return activity_id
 
 
 def _prepare_pr_review_agent(
@@ -1308,11 +1318,27 @@ def phase_pr_gates(
             redact(str(gate.get("evidence") or f"{stage}/{gate.get('dimension')} rejected"))
             for gate in persisted_rejections
         ]
+        activity_ids: list[str] = []
         with store.conn.transaction():
+            for gate, evidence in zip(
+                persisted_rejections, recovered_evidence, strict=True
+            ):
+                activity_id = queue_comment_review(
+                    store,
+                    worker,
+                    task,
+                    body=(
+                        f"**{vendor} {gate.get('dimension')} — rejected** "
+                        f"at `{head[:7]}`\n\n{evidence}"
+                    ),
+                )
+                activity_ids.append(activity_id)
             _apply_rejected_gate_transition(
                 task, head=head, evidence=recovered_evidence
             )
             save_task(store, task)
+        if activity_ids:
+            execute_github(store, runner, activity_ids=tuple(activity_ids))
         return [
             f"{stage}/{gate.get('dimension')} rejection recovered on {head[:7]}; "
             "routing to implementer"
@@ -1546,8 +1572,8 @@ def phase_pr_gates(
         if not review_is_approved(status, model_result):
             evidence = redact(outcome.stdout or f"{status}/{model_result}")
             rejection_evidence.append(evidence)
-            # Persist the rejection and its corresponding route atomically.
-            # Publication is intentionally outside this local transaction.
+            # Persist the rejection, route, and deterministic publication intent
+            # atomically. The GitHub executor runs only after that commit.
             with store.conn.transaction():
                 record_gate(
                     store,
@@ -1563,14 +1589,17 @@ def phase_pr_gates(
                 _apply_rejected_gate_transition(
                     task, head=head, evidence=rejection_evidence
                 )
+                activity_id = queue_comment_review(
+                    store,
+                    worker,
+                    task,
+                    body=(
+                        f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
+                        f"{evidence}"
+                    ),
+                )
                 save_task(store, task)
-            queue_comment_review(
-                store,
-                worker,
-                task,
-                runner,
-                body=f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n{evidence}",
-            )
+            execute_github(store, runner, activity_ids=(activity_id,))
             lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
             continue
         record_gate(

@@ -357,6 +357,8 @@ _WILDCARD_CHARS = frozenset("*?[{")
 _WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])")
 _EMBEDDED_PATH_START = re.compile(
     r"(?:"
+    r"(?<![A-Za-z0-9_./~\\*?\[\]{}-])(?:\.\.[\\/])+"
+    r"|"
     r"(?<![A-Za-z0-9_.~\\*?\[\]{}-])\\/"
     r"|(?<![A-Za-z0-9_.~\\*?\[\]{}-])/"
     r"|(?<![A-Za-z0-9_.-])~[\\/]"
@@ -420,7 +422,7 @@ def _looks_like_path(token: str) -> bool:
 
 
 def _embedded_path_fragments(value: str) -> tuple[str, ...]:
-    """Extract absolute/home/UNC/drive fragments from a regex or glob token.
+    """Extract relative-traversal, absolute, home, UNC, and drive fragments.
 
     A path may start after assignment text, punctuation, a quote, or a regex
     anchor. Each fragment must be checked on its own: resolving the entire
@@ -535,6 +537,11 @@ def _tool_target(
     except (OSError, RuntimeError, ValueError):
         return "[redacted]"
     if kind in ("file_path", "path"):
+        fragments = _embedded_path_fragments(raw)
+        if any(
+            not _path_stays_in_worktree(fragment, root) for fragment in fragments
+        ):
+            return "[redacted]"
         try:
             path = Path(raw).expanduser()
             resolved = path.resolve() if path.is_absolute() else (root / path).resolve()

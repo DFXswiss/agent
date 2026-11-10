@@ -715,6 +715,9 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
         ("Grep", "path=~/private/config.json"),
         ("Grep", r"path=C:\\Users\\someone\\config.json"),
         ("Grep", r"path=\\\\server\\share\\config.json"),
+        ("Grep", "path=../../private.txt"),
+        ("Grep", "source=../outside/*.json"),
+        ("Grep", "source:(../../outside.json)"),
         ("Glob", "source=/opt/company/private-repo/*.json"),
     ],
 )
@@ -727,6 +730,25 @@ def test_tool_target_redacts_embedded_outside_path_fragments(
     worktree.mkdir()
 
     assert _tool_target(pattern, str(worktree), "pattern", tool=tool) == "[redacted]"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "path=../../private.txt",
+        "source=../outside/*.json",
+        "source:(../../outside.json)",
+    ],
+)
+def test_tool_target_redacts_assigned_relative_traversal_paths(
+    tmp_path: Path, target: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert _tool_target(target, str(worktree), "path") == "[redacted]"
 
 
 def test_tool_target_keeps_embedded_absolute_path_only_inside_worktree(

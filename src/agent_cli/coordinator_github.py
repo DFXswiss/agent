@@ -920,6 +920,18 @@ def _a38_ci_evidence(
     return a38_passed_job_names_from_comment(body, head)
 
 
+def _rollup_workflow_run_id(check: dict[str, Any]) -> int | None:
+    """Read the Actions run identity from a rollup link, never its display name."""
+    for key in ("detailsUrl", "details_url", "link", "url"):
+        value = check.get(key)
+        if not isinstance(value, str):
+            continue
+        match = re.search(r"/actions/runs/([1-9][0-9]*)(?:[/#?]|$)", value)
+        if match is not None:
+            return int(match.group(1))
+    return None
+
+
 def _classify_rollup_and_inventory(
     rollup: list[Any],
     latest: dict[str, dict[str, Any]],
@@ -931,7 +943,12 @@ def _classify_rollup_and_inventory(
     failures: list[str] = []
     action_required: list[str] = []
     successes = 0
-    report_covered_workflows: set[str] = set()
+    inventory_keys_by_run: dict[int, list[str]] = {}
+    for key, run in latest.items():
+        run_id = as_int(run.get("id"))
+        if run_id is not None and run_id > 0:
+            inventory_keys_by_run.setdefault(run_id, []).append(key)
+    report_covered_inventory_keys: set[str] = set()
 
     for check in rollup:
         if not isinstance(check, dict):
@@ -950,9 +967,10 @@ def _classify_rollup_and_inventory(
             passed_names=passed_a38,
         ):
             successes += 1
-            workflow_name = check.get("workflowName")
-            if isinstance(workflow_name, str) and workflow_name:
-                report_covered_workflows.add(workflow_name)
+            run_id = _rollup_workflow_run_id(check)
+            matching_keys = inventory_keys_by_run.get(run_id or 0, [])
+            if len(matching_keys) == 1:
+                report_covered_inventory_keys.add(matching_keys[0])
         else:
             # Cancelled, failed, pending, and uncovered skipped/neutral stay strict.
             failures.append(f"{name}:{state or 'unknown'}")
@@ -969,16 +987,9 @@ def _classify_rollup_and_inventory(
         elif conclusion in CI_SUCCESS:
             successes += 1
         elif conclusion in {"skipped", "neutral"} and (
-            str(run.get("name") or "") in report_covered_workflows
-            or any(
-                a38_accepts_skipped_or_neutral(
-                    candidate, conclusion, passed_names=passed_a38
-                )
-                for candidate in (
-                    path,
-                    str(run.get("name") or ""),
-                    str(run.get("display_title") or ""),
-                )
+            key in report_covered_inventory_keys
+            or a38_accepts_skipped_or_neutral(
+                path, conclusion, passed_names=passed_a38
             )
         ):
             successes += 1
@@ -1023,22 +1034,15 @@ def _classify_rollup_and_inventory(
             str(run.get("conclusion") or "") in CI_SUCCESS
             or (
                 str(run.get("conclusion") or "") in {"skipped", "neutral"}
-                and str(run.get("name") or "") in report_covered_workflows
+                and key in report_covered_inventory_keys
             )
-            or any(
-                a38_accepts_skipped_or_neutral(
-                    candidate,
-                    str(run.get("conclusion") or ""),
-                    passed_names=passed_a38,
-                )
-                for candidate in (
-                    str(run.get("path") or ""),
-                    str(run.get("name") or ""),
-                    str(run.get("display_title") or ""),
-                )
+            or a38_accepts_skipped_or_neutral(
+                str(run.get("path") or ""),
+                str(run.get("conclusion") or ""),
+                passed_names=passed_a38,
             )
         )
-        for run in latest.values()
+        for key, run in latest.items()
     )
     if (
         not rollup
@@ -1960,8 +1964,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
             continue
         latest_by_name[str(name)] = item
     local_checks = [{"name": name, "result": item.get("result")} for name, item in latest_by_name.items()]
-    gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    gates_raw.sort(key=lambda g: g.get("recorded_at") or "")
+    gates_raw = _ordered_snapshot_gates(store, tid)
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -1989,6 +1992,67 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
         "models": _task_models(task).as_dict(),
         "implementer": implementer_from_snapshot(task),
     }
+
+
+def _ordered_snapshot_gates(store: Store, tid: str) -> list[dict[str, Any]]:
+    """Order gate histories durably and fail closed when legacy order is unknowable."""
+    raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
+    insert_sequences = store.row_insert_sequences("review_gate")
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for gate in raw:
+        key = (
+            canonical_stage(str(gate.get("stage"))),
+            str(gate.get("dimension") or ""),
+        )
+        grouped.setdefault(key, []).append(gate)
+
+    ordered: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        rows = grouped[key]
+        durable: list[tuple[int, dict[str, Any]]] = []
+        origins: set[str] = set()
+        for row in rows:
+            row_id = str(row.get("id") or "")
+            sequence = insert_sequences.get(row_id)
+            if sequence is None or sequence[0] != str(
+                row.get("_origin_device_id") or ""
+            ):
+                durable = []
+                break
+            origins.add(sequence[0])
+            durable.append((sequence[1], row))
+        if (
+            len(durable) == len(rows)
+            and len(origins) == 1
+            and len({seq for seq, _ in durable}) == len(rows)
+        ):
+            ordered.extend(
+                row for _seq, row in sorted(durable, key=lambda item: item[0])
+            )
+            continue
+
+        by_time: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_time.setdefault(str(row.get("recorded_at") or ""), []).append(row)
+        for recorded_at in sorted(by_time):
+            tied = sorted(
+                by_time[recorded_at], key=lambda row: str(row.get("id") or "")
+            )
+            ordered.extend(tied)
+            outcomes = {
+                (
+                    str(row.get("vendor") or ""),
+                    str(row.get("verdict") or ""),
+                    str(row.get("head_sha") or ""),
+                )
+                for row in tied
+            }
+            if len(outcomes) > 1:
+                fail_closed = dict(tied[-1])
+                fail_closed["verdict"] = "unavailable"
+                fail_closed["head_sha"] = ""
+                ordered.append(fail_closed)
+    return ordered
 
 
 def _both_second_reviews_na(store: Store, task_id: str) -> bool:
@@ -2619,6 +2683,21 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         cfg = repo_cfg(worker, str(c["source"]["repo"]), task)
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
+        if worker.a38:
+            observed_base = str((info.get("base") or {}).get("sha") or "").lower()
+            saved_base = str(c.get("base_sha") or "").lower()
+            if not is_sha(observed_base):
+                return ["merge observed but base SHA missing or invalid"]
+            if not is_sha(saved_base) or observed_base != saved_base:
+                from .coordinator_a38 import invalidate_base_evidence
+
+                invalidate_base_evidence(c, observed_base)
+                c["phase"] = "tests"
+                save_task(store, task)
+                return [
+                    "merged PR base changed; invalidating A38 report evidence "
+                    "before task completion"
+                ]
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
             raise CoordinatorError("merged PR head differs from reviewed head")
         # Do not manufacture checklist values or boilerplate summaries here.

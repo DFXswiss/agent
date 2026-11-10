@@ -566,16 +566,15 @@ def test_run_spec_file_implementer_complete(
     assert seen.get("spec_file") == str(spec)
 
 
-def test_parsed_lane_result_accepts_exactly_one_role_result() -> None:
-    from agent_cli.main import _parsed_lane_result
+def test_run_exposes_only_the_shared_model_result_parser() -> None:
+    from agent_cli import main
+    from agent_cli.coordinator_common import parse_model_result
 
-    assert _parsed_lane_result("STATUS: complete\nRESULT: done\n") == "done"
-    assert _parsed_lane_result("STATUS: complete\nRESULT: blocked\n") == "blocked"
-    assert _parsed_lane_result("STATUS: complete\nRESULT: no-change\n") == "no-change"
-    assert _parsed_lane_result("STATUS: complete\n") is None
-    assert _parsed_lane_result("RESULT: done\nRESULT: done\n") is None
-    assert _parsed_lane_result("RESULT: done\nRESULT: blocked\n") is None
-    assert _parsed_lane_result("RESULT: done (not a result line)\n") is None
+    assert main.parse_model_result is parse_model_result
+    assert "_parsed_lane_result" not in vars(main)
+    assert main.parse_model_result(
+        "STATUS: complete\nRESULT: no-change\n", 0
+    ) == ("complete", "no-change")
 
 
 @pytest.mark.parametrize(
