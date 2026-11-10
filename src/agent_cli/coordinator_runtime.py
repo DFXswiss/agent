@@ -97,6 +97,7 @@ from .coordinator_lanes import (
     launch_lane,
     phase_pr_gates_codex,
     phase_pr_gates_grok,
+    reconcile_rejection_review_intents,
     review_rules_bound,
     set_checklist,
     write_review_context,
@@ -1705,8 +1706,6 @@ def advance_one(
             return publish_blocker(
                 store, worker, task, runner, str(exc), kind="stopped", reply_checkpoint=True
             )
-
-
     handlers = {
         "accept": lambda: phase_accept(store, worker, task, runner),
         "checkout": lambda: phase_checkout(store, worker, task, runner),
@@ -1732,6 +1731,11 @@ def advance_one(
     if handler is None:
         raise CoordinatorError(f"unknown coordinator phase {phase}")
     try:
+        rejection_publication_lines = (
+            reconcile_rejection_review_intents(store, worker, task, runner)
+            if phase == "implement"
+            else []
+        )
         intake_lines: list[str] | None = None
         if worker.a38 and phase in {
             "ci",
@@ -1773,7 +1777,11 @@ def advance_one(
                     return intake_lines or [
                         "blocking external second review; routing to implementer"
                     ]
-        lines = [*(intake_lines or []), *handler()]
+        lines = [
+            *rejection_publication_lines,
+            *(intake_lines or []),
+            *handler(),
+        ]
         lane_observations = c.pop("lane_observations", [])
         if isinstance(lane_observations, list) and lane_observations:
             save_task(store, task)

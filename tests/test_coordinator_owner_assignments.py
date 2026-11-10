@@ -20,7 +20,7 @@ from agent_cli.coordinator_github import (
     phase_readiness,
 )
 from agent_cli.coordinator_config import RepositoryConfig
-from agent_cli.coordinator_common import CoordinatorError
+from agent_cli.coordinator_common import CoordinatorError, NonRecoverableCoordinatorError
 from agent_cli.coordinator_runtime import advance_one, discover_assignments
 from agent_cli.hub import HubError
 from agent_cli.runtime import Completed
@@ -1431,6 +1431,8 @@ def test_owner_a38_default_readiness_without_verified_actor_requires_configurati
         def rows(self, table):
             assert table == "review_gate"
             return [{
+                "id": "gate-1",
+                "_origin_device_id": "test-device",
                 "task_id": "task-1",
                 "stage": "review-1",
                 "dimension": "quality",
@@ -1438,6 +1440,12 @@ def test_owner_a38_default_readiness_without_verified_actor_requires_configurati
                 "head_sha": "a" * 40,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
+
+        def row_insert_sequences(self, table):
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
 
     with pytest.raises(CoordinatorError, match="configure owner_readiness_argv"):
         _apply_readiness_checklist(
@@ -1491,6 +1499,8 @@ def test_owner_a38_default_refuses_non_explicit_deviation_statements(
         def rows(self, table):
             assert table == "review_gate"
             return [{
+                "id": "gate-1",
+                "_origin_device_id": "test-device",
                 "task_id": "task-1",
                 "stage": "review-1",
                 "dimension": "quality",
@@ -1498,6 +1508,12 @@ def test_owner_a38_default_refuses_non_explicit_deviation_statements(
                 "head_sha": "a" * 40,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
+
+        def row_insert_sequences(self, table):
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
 
     task = _accept_task()
     source = task["payload"]["coordinator"]["source"]
@@ -1534,10 +1550,17 @@ def test_owner_a38_default_readiness_requires_current_approved_quality_gate(
         def rows(self, table):
             assert table == "review_gate"
             return [{
+                "id": "gate-1", "_origin_device_id": "test-device",
                 "task_id": "task-1", "stage": "review-1", "dimension": "quality",
                 "verdict": verdict, "head_sha": head,
                 "recorded_at": "2026-01-01T00:00:00Z",
             }]
+
+        def row_insert_sequences(self, table):
+            return {
+                row["id"]: (row["_origin_device_id"], sequence)
+                for sequence, row in enumerate(self.rows(table), start=1)
+            }
 
     with pytest.raises(CoordinatorError, match="approved review-1/quality"):
         _apply_readiness_checklist(
@@ -1758,18 +1781,40 @@ def test_a38_merged_pr_base_move_invalidates_evidence_before_task_done(
 
     monkeypatch.setattr("agent_cli.coordinator_github.gh_json", merged_on_moved_base)
 
-    assert phase_await_merge(
-        store, worker, store.row("task", task_id), object()
-    ) == [
-        "merged PR base changed; invalidating A38 report evidence before task completion"
-    ]
+    with pytest.raises(
+        NonRecoverableCoordinatorError,
+        match=(
+            "task-done refused: merged PR base moved after evidence from "
+            f"{'b' * 40} to {moved_base}; a merged PR cannot be remeasured"
+        ),
+    ):
+        phase_await_merge(store, worker, store.row("task", task_id), object())
+
     saved = store.row("task", task_id)
     checkpoint = saved["payload"]["coordinator"]
     assert saved["state"] != "done"
-    assert checkpoint["phase"] == "tests"
-    assert checkpoint["base_sha"] == moved_base
+    assert checkpoint["phase"] == "await_merge"
+    assert checkpoint["base_sha"] == "b" * 40
+    assert checkpoint["base_moved_after_evidence"] == {
+        "old_base": "b" * 40,
+        "new_base": moved_base,
+    }
     assert "report" not in checkpoint["a38"]
     assert "tests_pass" not in checkpoint["evidence"]
+    checklist = {
+        row["key"]: row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+    for key in (
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    ):
+        assert checklist[key]["status"] == "pending"
+        assert checklist[key]["evidence"] is None
+        assert checklist[key]["source"] == "script"
 
 
 def test_a38_early_merge_reruns_readiness_when_it_ran_on_an_older_head(

@@ -355,18 +355,7 @@ def _int_or_none(value: object) -> int | None:
 _WILDCARD_CHARS = frozenset("*?[{")
 # Windows drive and UNC paths are never inside a POSIX worktree root.
 _WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])")
-_EMBEDDED_PATH_START = re.compile(
-    r"(?:"
-    r"(?<![A-Za-z0-9_./~\\*?\[\]{}-])(?:\.\.[\\/])+"
-    r"|"
-    r"(?<![A-Za-z0-9_.~\\*?\[\]{}-])\\/"
-    r"|(?<![A-Za-z0-9_.~\\*?\[\]{}-])/"
-    r"|(?<![A-Za-z0-9_.-])~[\\/]"
-    r"|[A-Za-z]:[\\/]"
-    r"|\\\\[^\\/\s]+[\\/]"
-    r")"
-)
-_EMBEDDED_PATH_END = frozenset("\"'`,;|)]}$")
+_PATH_FRAGMENT_BOUNDARY = r"[\s=:'\"`(\[\{,^]"
 
 
 def _glob_static_prefix(value: str) -> str:
@@ -407,81 +396,34 @@ def _path_stays_in_worktree(fragment: str, root: Path) -> bool:
         return False
 
 
-def _glob_has_traversal(pattern: str) -> bool:
-    """Reject parent traversal in every glob component, also after wildcards."""
-    return any(part == ".." for part in pattern.replace("\\", "/").split("/"))
+def _normalized_path_views(value: str) -> tuple[str, ...]:
+    """Return separator-normalized and regex-unescaped views of one target."""
+    separator_view = value.replace("\\", "/")
+    regex_unescaped = re.sub(r"\\([^A-Za-z0-9])", r"\1", value).replace("\\", "/")
+    return tuple(dict.fromkeys((separator_view, regex_unescaped)))
 
 
-def _looks_like_path(token: str) -> bool:
-    return (
-        "/" in token
-        or "\\" in token
-        or token.startswith("~")
-        or _WINDOWS_PATH.match(token) is not None
+def _contains_disallowed_path_fragment(value: str) -> bool:
+    """Fail closed on traversal or host-path fragments anywhere in a target."""
+    for normalized in _normalized_path_views(value):
+        if _contains_parent_component(normalized):
+            return True
+        if re.search(r"(?<![A-Za-z0-9_.~*?\[\]{}-])/", normalized):
+            return True
+        if re.search(r"(?<![A-Za-z0-9_.-])~(?:/|$)", normalized):
+            return True
+        if re.search(r"[A-Za-z]:(?:/|$)", normalized):
+            return True
+    return False
+
+
+def _contains_parent_component(value: str) -> bool:
+    pattern = (
+        r"(?:^|[/]|"
+        + _PATH_FRAGMENT_BOUNDARY
+        + r")\.\.(?=/|$|[\s\"'`),;\]\}])"
     )
-
-
-def _embedded_path_fragments(value: str) -> tuple[str, ...]:
-    """Extract relative-traversal, absolute, home, UNC, and drive fragments.
-
-    A path may start after assignment text, punctuation, a quote, or a regex
-    anchor. Each fragment must be checked on its own: resolving the entire
-    token would turn ``source=/outside`` into a misleading relative path.
-    """
-    fragments: list[str] = []
-    cursor = 0
-    while True:
-        match = _EMBEDDED_PATH_START.search(value, cursor)
-        if match is None:
-            break
-        start = match.start()
-        stop = match.end()
-        while stop < len(value):
-            char = value[stop]
-            if char.isspace() or char in _EMBEDDED_PATH_END:
-                break
-            stop += 1
-        fragments.append(value[start:stop])
-        cursor = max(stop, match.end())
-    return tuple(fragments)
-
-
-def _grep_literal_path(fragment: str) -> str | None:
-    """Normalize a path-shaped regex token only when its path is unambiguous."""
-    text = fragment.strip().rstrip(",:;)\"'")
-    while text.startswith("^"):
-        text = text[1:]
-    for prefix in ("(?:", "(?=", "(?!", "(?<=", "(?<!", "("):
-        if text.startswith(prefix):
-            text = text[len(prefix) :]
-            text = text.rstrip(")")
-            break
-    if text.endswith("$"):
-        text = text[:-1]
-    if not _looks_like_path(text):
-        return None
-
-    literal: list[str] = []
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if char == "\\":
-            index += 1
-            if index >= len(text):
-                return None
-            escaped = text[index]
-            # Alphabetic escapes (\d, \s, ...) and other regex constructs do
-            # not identify one literal filesystem path.
-            if escaped.isalpha():
-                return None
-            literal.append(escaped)
-        elif char in "|[]()+*?{}^$":
-            return None
-        else:
-            literal.append(char)
-        index += 1
-    normalized = "".join(literal)
-    return normalized if _looks_like_path(normalized) else None
+    return any(re.search(pattern, item) is not None for item in _normalized_path_views(value))
 
 
 def _relative_glob(pattern: str, root: Path) -> str:
@@ -497,28 +439,17 @@ def _relative_glob(pattern: str, root: Path) -> str:
     return f"{relative}{separator}{pattern[len(prefix):]}"
 
 
-def _pattern_target(pattern: str, root: Path, *, whole_is_path: bool) -> str:
-    """Redact absolute or escaping path fragments in a pattern value."""
-    fragments = _embedded_path_fragments(pattern)
-    if any(not _path_stays_in_worktree(fragment, root) for fragment in fragments):
-        # Fail closed on the whole target so no prefix, quote, or regex syntax
-        # can retain the outside fragment in replicated lane.run evidence.
-        return "[redacted]"
-    if whole_is_path:
-        # Glob's ``pattern`` is its path argument.
-        if _glob_has_traversal(pattern) or not _path_stays_in_worktree(
-            pattern, root
-        ):
-            return "[redacted]"
-        return _relative_glob(pattern, root)
-    # A Grep pattern is a regex; only path-shaped tokens may name host paths.
-    for token in re.split(r"(\s+)", pattern):
-        if token and not token.isspace() and _looks_like_path(token):
-            literal = _grep_literal_path(token)
-            safe = literal is not None and _path_stays_in_worktree(literal, root)
-            if not safe:
-                return "[redacted]"
-    return pattern
+def _plain_inside_worktree_target(value: str, root: Path) -> str | None:
+    """Relativize only a whole, plain absolute target inside the worktree."""
+    normalized = value.replace("\\", "/")
+    root_text = root.as_posix().rstrip("/")
+    if normalized != root_text and not normalized.startswith(root_text + "/"):
+        return None
+    if _contains_parent_component(normalized[len(root_text) :]):
+        return None
+    if not _path_stays_in_worktree(normalized, root):
+        return None
+    return _relative_glob(normalized, root)
 
 
 def _tool_target(
@@ -536,12 +467,12 @@ def _tool_target(
         root = Path(cwd).expanduser().resolve()
     except (OSError, RuntimeError, ValueError):
         return "[redacted]"
+    inside = _plain_inside_worktree_target(raw, root)
+    if inside is not None:
+        return redact(inside[:300], limit=300)
+    if _contains_disallowed_path_fragment(raw):
+        return "[redacted]"
     if kind in ("file_path", "path"):
-        fragments = _embedded_path_fragments(raw)
-        if any(
-            not _path_stays_in_worktree(fragment, root) for fragment in fragments
-        ):
-            return "[redacted]"
         try:
             path = Path(raw).expanduser()
             resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
@@ -552,9 +483,6 @@ def _tool_target(
         except ValueError:
             # Any path outside the worktree is a host detail, whatever its prefix.
             return "[redacted]"
-    elif kind == "pattern":
-        # Glob's pattern is its path argument; a Grep pattern can carry paths too.
-        raw = _pattern_target(raw, root, whole_is_path=tool == "Glob")
     return redact(raw[:300], limit=300)
 
 

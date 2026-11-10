@@ -557,14 +557,7 @@ def checklist_snapshot(store: Store, task: dict[str, Any]) -> dict[str, Any]:
     local_checks = [
         {"name": name, "result": item.get("result")} for name, item in latest_checks.items()
     ]
-    gates_raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    # rows() is newest first. Keep that ordering authoritative when multiple
-    # gate writes share utcnow()'s one-second timestamp.
-    indexed_gates = list(enumerate(gates_raw))
-    indexed_gates.sort(
-        key=lambda item: (str(item[1].get("recorded_at") or ""), -item[0])
-    )
-    gates_raw = [gate for _index, gate in indexed_gates]
+    gates_raw = ordered_snapshot_gates(store, tid)
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -671,17 +664,71 @@ def set_checklist(
 
 def latest_gates(store: Store, task_id: str) -> dict[tuple[str, str], dict[str, Any]]:
     latest: dict[tuple[str, str], dict[str, Any]] = {}
-    rows = [r for r in store.rows("review_gate") if r.get("task_id") == task_id]
-    # rows() is newest first. Keep the newer row last on timestamp ties so the
-    # assignment below agrees with the CLI's latest-gate selection.
-    indexed = list(enumerate(rows))
-    indexed.sort(
-        key=lambda item: (str(item[1].get("recorded_at") or ""), -item[0])
-    )
-    for _index, row in indexed:
+    for row in ordered_snapshot_gates(store, task_id):
         key = (canonical_stage(str(row.get("stage"))), str(row.get("dimension")))
         latest[key] = row
     return latest
+
+
+def ordered_snapshot_gates(store: Store, task_id: str) -> list[dict[str, Any]]:
+    """Order gate histories durably and fail closed when legacy order is unknowable."""
+    raw = [g for g in store.rows("review_gate") if g.get("task_id") == task_id]
+    insert_sequences = store.row_insert_sequences("review_gate")
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for gate in raw:
+        key = (
+            canonical_stage(str(gate.get("stage"))),
+            str(gate.get("dimension") or ""),
+        )
+        grouped.setdefault(key, []).append(gate)
+
+    ordered: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        rows = grouped[key]
+        durable: list[tuple[int, dict[str, Any]]] = []
+        origins: set[str] = set()
+        for row in rows:
+            row_id = str(row.get("id") or "")
+            sequence = insert_sequences.get(row_id)
+            if sequence is None or sequence[0] != str(
+                row.get("_origin_device_id") or ""
+            ):
+                durable = []
+                break
+            origins.add(sequence[0])
+            durable.append((sequence[1], row))
+        if (
+            len(durable) == len(rows)
+            and len(origins) == 1
+            and len({seq for seq, _ in durable}) == len(rows)
+        ):
+            ordered.extend(
+                row for _seq, row in sorted(durable, key=lambda item: item[0])
+            )
+            continue
+
+        by_time: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_time.setdefault(str(row.get("recorded_at") or ""), []).append(row)
+        for recorded_at in sorted(by_time):
+            tied = sorted(
+                by_time[recorded_at], key=lambda row: str(row.get("id") or "")
+            )
+            ordered.extend(tied)
+            outcomes = {
+                (
+                    str(row.get("vendor") or ""),
+                    str(row.get("verdict") or ""),
+                    str(row.get("head_sha") or ""),
+                )
+                for row in tied
+            }
+            if len(outcomes) > 1:
+                fail_closed = dict(tied[-1])
+                fail_closed["verdict"] = "unavailable"
+                fail_closed["head_sha"] = ""
+                ordered.append(fail_closed)
+    return ordered
 
 
 def _show_base_path(
@@ -888,6 +935,87 @@ def queue_comment_review(
         },
     )
     return activity_id
+
+
+def _remember_rejection_review(task: dict[str, Any], activity_id: str) -> None:
+    c = coord(task)
+    saved = c.get("rejection_review_activity_ids")
+    if saved is not None and not isinstance(saved, list):
+        raise CoordinatorError("rejection review checkpoint is invalid")
+    activity_ids = [item for item in saved or [] if isinstance(item, str)]
+    if activity_id not in activity_ids:
+        activity_ids.append(activity_id)
+    c["rejection_review_activity_ids"] = activity_ids
+
+
+def _checkpoint_rejection_reviews(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+) -> list[str]:
+    """Retain every unverified rejection publication as a pending intent."""
+    c = coord(task)
+    saved = c.get("rejection_review_activity_ids")
+    if saved is not None and not isinstance(saved, list):
+        raise CoordinatorError("rejection review checkpoint is invalid")
+    activity_ids = [item for item in saved or [] if isinstance(item, str)]
+    remaining: list[str] = []
+    lines: list[str] = []
+    for activity_id in activity_ids:
+        row = store.row("activity", activity_id)
+        if (
+            row is None
+            or row.get("_origin_device_id") != store.device_id()
+            or row.get("session_id") != worker.session_id
+            or row.get("type") != "review.post"
+            or not isinstance(row.get("payload"), dict)
+        ):
+            raise CoordinatorError("rejection review intent is missing or foreign")
+        if row.get("execution_status") == "done":
+            lines.append(f"rejection comment {activity_id[:8]} published")
+            continue
+        queue_activity(
+            store,
+            activity_id=activity_id,
+            session_id=worker.session_id,
+            typ="review.post",
+            payload=dict(row["payload"]),
+        )
+        remaining.append(activity_id)
+        lines.append(f"rejection comment {activity_id[:8]} pending retry")
+    if remaining:
+        c["rejection_review_activity_ids"] = remaining
+    else:
+        c.pop("rejection_review_activity_ids", None)
+    save_task(store, task)
+    return lines
+
+
+def reconcile_rejection_review_intents(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+) -> list[str]:
+    """Retry saved rejection comments without relaunching a reviewer."""
+    saved = coord(task).get("rejection_review_activity_ids")
+    if saved is not None and not isinstance(saved, list):
+        raise CoordinatorError("rejection review checkpoint is invalid")
+    activity_ids = tuple(item for item in saved or [] if isinstance(item, str))
+    if not activity_ids:
+        return []
+    for activity_id in activity_ids:
+        row = store.row("activity", activity_id)
+        if row is not None and row.get("execution_status") == "error":
+            queue_activity(
+                store,
+                activity_id=activity_id,
+                session_id=worker.session_id,
+                typ="review.post",
+                payload=dict(row.get("payload") or {}),
+            )
+    execute_github(store, runner, activity_ids=activity_ids)
+    return _checkpoint_rejection_reviews(store, worker, task)
 
 
 def _prepare_pr_review_agent(
@@ -1333,12 +1461,14 @@ def phase_pr_gates(
                     ),
                 )
                 activity_ids.append(activity_id)
+                _remember_rejection_review(task, activity_id)
             _apply_rejected_gate_transition(
                 task, head=head, evidence=recovered_evidence
             )
             save_task(store, task)
         if activity_ids:
             execute_github(store, runner, activity_ids=tuple(activity_ids))
+            _checkpoint_rejection_reviews(store, worker, task)
         return [
             f"{stage}/{gate.get('dimension')} rejection recovered on {head[:7]}; "
             "routing to implementer"
@@ -1598,8 +1728,10 @@ def phase_pr_gates(
                         f"{evidence}"
                     ),
                 )
+                _remember_rejection_review(task, activity_id)
                 save_task(store, task)
             execute_github(store, runner, activity_ids=(activity_id,))
+            lines.extend(_checkpoint_rejection_reviews(store, worker, task))
             lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
             continue
         record_gate(

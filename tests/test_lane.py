@@ -427,10 +427,11 @@ def test_finalize_lane_output_parses_usage_and_tool_errors() -> None:
     assert out.usage.model == "vendor/model"
     assert out.usage.input_tokens == 10
     assert out.usage.num_turns == 3
+    # The entire target starts with cwd=/work, so T4 stores it worktree-relative.
     assert out.tools == (
         {"tool": "Read", "target": "a.py", "error": False},
         {"tool": "Grep", "target": "[redacted]", "error": True},
-        {"tool": "Grep", "target": "/work/a.py", "error": False},
+        {"tool": "Grep", "target": "a.py", "error": False},
         {"tool": "Read", "target": "", "error": False},
     )
     assert out.tools_truncated is False
@@ -718,6 +719,10 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
         ("Grep", "path=../../private.txt"),
         ("Grep", "source=../outside/*.json"),
         ("Grep", "source:(../../outside.json)"),
+        ("Grep", r"..\..\x"),
+        ("Grep", r"\.\.\/outside.json"),
+        ("Grep", r"path=\.\.\/outside.json"),
+        ("Grep", r"source:..\..\outside.json"),
         ("Glob", "source=/opt/company/private-repo/*.json"),
     ],
 )
@@ -751,7 +756,7 @@ def test_tool_target_redacts_assigned_relative_traversal_paths(
     assert _tool_target(target, str(worktree), "path") == "[redacted]"
 
 
-def test_tool_target_keeps_embedded_absolute_path_only_inside_worktree(
+def test_tool_target_redacts_embedded_absolute_path_even_inside_worktree(
     tmp_path: Path,
 ) -> None:
     from agent_cli.lane import _tool_target
@@ -760,7 +765,9 @@ def test_tool_target_keeps_embedded_absolute_path_only_inside_worktree(
     (worktree / "src").mkdir(parents=True)
     pattern = f'source="{worktree / "src" / "module.py"}"'
 
-    assert _tool_target(pattern, str(worktree), "pattern", tool="Grep") == pattern
+    # The former partial behavior retained embedded worktree paths. The
+    # fail-closed exception now applies only when the whole target is that path.
+    assert _tool_target(pattern, str(worktree), "pattern", tool="Grep") == "[redacted]"
 
 
 def test_record_lane_run_bounds_and_redacts_both_models() -> None:

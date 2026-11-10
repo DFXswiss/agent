@@ -2077,6 +2077,19 @@ def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
     c["base_sha"] = base_sha
 
 
+def mark_base_moved_after_evidence(
+    c: dict[str, Any], *, old_base: str, new_base: str
+) -> None:
+    """Invalidate evidence after merge without trusting an unmeasured new base."""
+    if not is_sha(old_base) or not is_sha(new_base) or old_base == new_base:
+        raise CoordinatorError("merged pull request base movement is invalid")
+    _drop_base_evidence(c)
+    c["base_moved_after_evidence"] = {
+        "old_base": old_base,
+        "new_base": new_base,
+    }
+
+
 def local_test_gate_satisfied(task: Mapping[str, Any], head: str) -> bool:
     """A38 local gate is an executed pass or an exact-head inventory waiver."""
     c = coord(dict(task)) if not isinstance(task, dict) else coord(task)
