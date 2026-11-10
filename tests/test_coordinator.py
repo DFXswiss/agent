@@ -3009,20 +3009,24 @@ def test_preparation_failure_after_mkstemp_removes_owned_output(
     assert [row for row in store.rows("agent") if row.get("task_id") == tid] == []
 
 
-def test_run_prepared_returns_decode_failure_and_removes_owned_output(
-    tmp_path: Path,
+@pytest.mark.parametrize("failure", ["decode", "oserror"])
+def test_run_prepared_returns_unavailable_and_removes_owned_output(
+    tmp_path: Path, failure: str
 ) -> None:
     from agent_cli import coordinator_lanes
+    from agent_cli.lane import LaneResult
 
     output = tmp_path / "provider-output.txt"
-    output.write_bytes(b"\xff")
+    if failure == "decode":
+        output.write_bytes(b"\xff")
+
     prepared = {
         "agent_id": "agent-1",
         "role": "pr-reviewer-quality",
         "vendor": "codex",
         "argv": ["codex"],
         "stdin_text": None,
-        "output_file": str(output),
+        "output_file": str(output) if failure == "decode" else str(tmp_path / "gone.txt"),
         "model": "codex-model",
         "worktree": str(tmp_path),
     }
@@ -3034,8 +3038,15 @@ def test_run_prepared_returns_decode_failure_and_removes_owned_output(
     )
 
     assert agent_id == "agent-1"
-    assert isinstance(outcome, UnicodeDecodeError)
-    assert not output.exists()
+    assert isinstance(outcome, LaneResult)
+    assert outcome.status == "unavailable"
+    assert outcome.stdout == ""
+    if failure == "decode":
+        assert "not valid UTF-8" in outcome.stderr
+        assert not output.exists()
+    else:
+        assert "lane output file is unavailable" in outcome.stderr
+    assert len(outcome.stderr) <= 4000
 
 
 def test_thread_start_failure_closes_all_prepared_agents_before_one_blocker(
@@ -7710,8 +7721,9 @@ def test_sequential_openrouter_lane_hides_its_config_dir(
     assert runs and "/opt/profiles/router" not in runs[0]["payload"]["final_text"]
 
 
-def test_sequential_openrouter_decode_failure_ends_agent_and_lane(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure", ["decode", "oserror"])
+def test_sequential_openrouter_output_failure_ends_agent_and_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     from agent_cli.coordinator_lanes import launch_lane
 
@@ -7758,31 +7770,54 @@ def test_sequential_openrouter_decode_failure_ends_agent_and_lane(
         )
         output = Path(argv[wrapper_index + 2])
         output_paths.append(output)
-        output.write_bytes(b"\xff")
+        if failure == "decode":
+            output.write_bytes(b"\xff")
+        else:
+            output.unlink()
         return Completed(0, "", "")
 
-    with pytest.raises(CoordinatorError, match="lane interrupted"):
-        launch_lane(
-            store,
-            worker,
-            task,
-            role="implementer",
-            vendor="openrouter",
-            round_num=1,
-            spec_body="Implement.",
-            runner=lambda argv: Completed(0, "", ""),
-            lane_runner=decode_failure,
-        )
+    _agent, result = launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="openrouter",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=decode_failure,
+    )
 
+    expected = (
+        "not valid UTF-8" if failure == "decode" else "lane output file is unavailable"
+    )
     assert launches["count"] == 1
+    assert result.status == "unavailable"
+    assert expected in result.stderr
     assert output_paths and not output_paths[0].exists()
     agents = [row for row in store.rows("agent") if row.get("task_id") == task["id"]]
     assert agents and all(row.get("status") != "working" for row in agents)
+    assert expected in str(agents[0]["note"])
     saved = store.row("task", task["id"])
     assert saved is not None
-    assert saved["payload"]["coordinator"]["lane"]["state"] != "running"
-    assert saved["payload"]["coordinator"].get("uncertain_lane") is True
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["lane"]["state"] == "finished"
+    assert checkpoint["lane"]["status"] == "unavailable"
+    assert checkpoint["lane"]["result"] == ""
+    assert checkpoint["lane_outcome"]["status"] == "unavailable"
+    assert checkpoint["lane_outcome"]["result"] == ""
+    # Recoverable incomplete output: never an uncertain interruption.
+    assert checkpoint.get("uncertain_lane") is not True
+    assert saved["state"] != "failed"
+    runs = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row["payload"].get("task_id") == task["id"]
+    ]
+    assert len(runs) == 1
+    assert runs[0]["payload"]["status"] == "unavailable"
 
+    # The finished agent does not block a retry of the same safe step.
     def valid_output(argv: list[str], _stdin: str | None) -> Completed:
         launches["count"] += 1
         wrapper_index = next(
@@ -7794,10 +7829,10 @@ def test_sequential_openrouter_decode_failure_ends_agent_and_lane(
         Path(argv[wrapper_index + 2]).write_text(stream, encoding="utf-8")
         return Completed(0, "", "")
 
-    _agent, result = launch_lane(
+    _agent, retried = launch_lane(
         store,
         worker,
-        saved,
+        store.row("task", task["id"]),
         role="implementer",
         vendor="openrouter",
         round_num=1,
@@ -7805,9 +7840,173 @@ def test_sequential_openrouter_decode_failure_ends_agent_and_lane(
         runner=lambda argv: Completed(0, "", ""),
         lane_runner=valid_output,
     )
-
     assert launches["count"] == 2
-    assert result.status == "complete"
+    assert retried.status == "complete"
+
+
+def test_sequential_inner_reviewer_output_failure_is_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane
+    from agent_cli.coordinator_runtime import phase_inner_review
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    patch_execute_github(monkeypatch)
+    worktree = worker.workspace_root / "inner"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000e9"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "pr_number": 5,
+                "head_sha": "a" * 40,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        "round-1",
+        {
+            "id": "round-1",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": "done",
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    data = json.loads((store.home / "ai-accounts.json").read_text())
+    data["accounts"]["router"] = {
+        "provider": "openrouter", "config_dir": "/test/openrouter"
+    }
+    data["roles"]["router-reader"] = {
+        "account": "router", "model": "vendor/model", "access": "read-only"
+    }
+    data["sessions"]["worker-session"]["lanes"]["openrouter:reviewer"] = "router-reader"
+    (store.home / "ai-accounts.json").write_text(json.dumps(data))
+    task["models"] = {"first": "openrouter", "second": "codex"}
+    store.write("task", "update", tid, {k: v for k, v in task.items() if not k.startswith("_")})
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+
+    def broken(argv, stdin=None):  # noqa: ANN001
+        wrapper_index = next(i for i, value in enumerate(argv) if "openrouter-api-key" in value)
+        Path(argv[wrapper_index + 2]).write_bytes(b"\xff")
+        return Completed(0, "", "")
+
+    saved = store.row("task", tid)
+    assert saved is not None
+    lines = phase_inner_review(store, worker, saved, lambda argv: Completed(0, "", ""), broken)
+
+    assert any("incomplete" in line for line in lines)
+    checkpoint = store.row("task", tid)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "inner_review"
+    assert checkpoint.get("uncertain_lane") is not True
+    reviewer = [
+        row for row in store.rows("agent")
+        if row.get("task_id") == tid and row.get("role") == "reviewer"
+    ]
+    assert len(reviewer) == 1
+    assert reviewer[0]["status"] == "done"
+    assert "not valid UTF-8" in str(reviewer[0]["note"])
+    runs = [
+        row for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row["payload"].get("task_id") == tid
+    ]
+    assert len(runs) == 1
+    assert runs[0]["payload"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("failure", ["decode", "oserror"])
+def test_parallel_pr_review_output_failure_is_retryable_provider_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f1"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "n_a", "review_2_logic": "n_a"},
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    patch_execute_github(monkeypatch)
+
+    def run(argv, stdin=None):  # noqa: ANN001
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        if failure == "decode":
+            output.write_bytes(b"\xff")
+        else:
+            output.unlink()
+        return Completed(0, "", "")
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        run,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    assert any("unavailable; blocked" in line for line in lines)
+    saved = store.row("task", tid)
+    assert saved is not None
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint.get("uncertain_lane") is not True
+    assert checkpoint["resume_phase"] == "pr_gates_codex"
+    agents = [
+        row for row in store.rows("agent")
+        if row.get("task_id") == tid and row.get("vendor") == "codex"
+    ]
+    expected = (
+        "not valid UTF-8" if failure == "decode" else "lane output file is unavailable"
+    )
+    assert len(agents) == 2
+    assert all(row["status"] == "done" for row in agents)
+    assert all(expected in str(row["note"]) for row in agents)
+    runs = [
+        row for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row["payload"].get("task_id") == tid
+    ]
+    assert len(runs) == 2
+    assert all(row["payload"]["status"] == "unavailable" for row in runs)
+    gates = [row for row in store.rows("review_gate") if row.get("task_id") == tid]
+    assert not [gate for gate in gates if gate.get("stage") == "review-2"]
+    assert _checklist_status(store, tid)["review_2_quality"] != "ja"
+
+    # The safe read-only review is retryable: no working agent blocks a new stage.
+    from agent_cli.coordinator_lanes import vendor_stage_has_working_agents
+
+    assert vendor_stage_has_working_agents(store, tid, vendor="codex") is None
 
 
 def test_pr_review_agent_for_claude_feeds_spec_on_stdin(tmp_path: Path) -> None:

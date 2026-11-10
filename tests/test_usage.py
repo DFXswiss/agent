@@ -424,6 +424,38 @@ def test_fetch_openrouter_key_success_via_mock_client() -> None:
     assert requests[0].headers["Accept"] == "application/json"
 
 
+def test_owned_openrouter_client_ignores_proxy_and_ca_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+    expected = _openrouter_body()
+
+    class RecordingClient(httpx.Client):
+        def __init__(self, **kwargs: Any) -> None:
+            seen["trust_env"] = kwargs.get("trust_env")
+            seen["follow_redirects"] = kwargs.get("follow_redirects")
+            super().__init__(transport=httpx.MockTransport(handler), **kwargs)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["authorization"] = request.headers.get("Authorization")
+        return httpx.Response(200, json=expected)
+
+    # An intercepting proxy and a custom CA would otherwise receive the bearer.
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8123")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:8123")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:8123")
+    monkeypatch.setenv("SSL_CERT_FILE", "/ambient/intercept-ca.pem")
+    monkeypatch.setenv("NODE_EXTRA_CA_CERTS", "/ambient/intercept-ca.pem")
+    monkeypatch.setattr(httpx, "Client", RecordingClient)
+
+    body = _fetch_openrouter_key("router-secret")
+
+    assert body == expected
+    assert seen["trust_env"] is False
+    assert seen["follow_redirects"] is False
+    assert seen["authorization"] == "Bearer router-secret"
+
+
 def test_fetch_openrouter_key_network_error_hides_token() -> None:
     token = "router-secret-network"
 

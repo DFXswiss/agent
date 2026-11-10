@@ -28,9 +28,11 @@ SPEC_VIA_STDIN = frozenset({"codex", "claude", "openrouter"})
 OUTPUT_FILE_VENDORS = frozenset({"codex", "openrouter"})
 OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 NPROC_CAP = 800
+LANE_MODEL_LIMIT = 200
 # Stripped from every lane and every lane pane: a lane runs on its own provider
 # login, never on the orchestrator's ambient Claude credentials, its API route
-# (gateway, Bedrock, Vertex, Foundry) or Claude Code session markers.
+# (gateway, Bedrock, Vertex, Foundry), Claude Code session markers, or ambient
+# proxy/CA overrides (an intercepting proxy must never see a lane's credentials).
 LANE_STRIP_ENV = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -47,6 +49,19 @@ LANE_STRIP_ENV = (
     "ANTHROPIC_FOUNDRY_RESOURCE",
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
 )
 _CLAUDE_READ_TOOLS = ("Read", "Grep", "Glob")
 _CLAUDE_WRITE_TOOLS = ("Edit", "Write")
@@ -337,16 +352,106 @@ def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
+_WILDCARD_CHARS = frozenset("*?[{")
+# Windows drive and UNC paths are never inside a POSIX worktree root.
+_WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])")
+
+
+def _glob_static_prefix(value: str) -> str:
+    """Return the literal path prefix of a glob-style pattern."""
+    out: list[str] = []
+    escaped = False
+    for char in value:
+        if escaped:
+            out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char in _WILDCARD_CHARS:
+            break
+        out.append(char)
+    return "".join(out)
+
+
+def _path_stays_in_worktree(fragment: str, root: Path) -> bool:
+    """True when a (possibly wildcard-bearing) path fragment is inside ``root``."""
+    text = fragment.strip()
+    if text == "":
+        return True
+    if _WINDOWS_PATH.match(text):
+        return False
+    prefix = _glob_static_prefix(text)
+    if prefix == "":
+        # A pattern that starts with a wildcard is resolved under the worktree.
+        return True
+    try:
+        path = Path(prefix).expanduser()
+        resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
+        resolved.relative_to(root)
+        return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _looks_like_path(token: str) -> bool:
+    return (
+        "/" in token
+        or "\\" in token
+        or token.startswith("~")
+        or _WINDOWS_PATH.match(token) is not None
+    )
+
+
+def _relative_glob(pattern: str, root: Path) -> str:
+    """Relativize a pattern's literal prefix against the worktree root."""
+    prefix = _glob_static_prefix(pattern)
+    if prefix == "" or not Path(prefix).expanduser().is_absolute():
+        return pattern
+    try:
+        relative = Path(prefix).expanduser().resolve().relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return pattern
+    separator = prefix[-1] if prefix.endswith(("/", "\\")) else ""
+    return f"{relative}{separator}{pattern[len(prefix):]}"
+
+
+def _pattern_target(pattern: str, root: Path, *, whole_is_path: bool) -> str:
+    """Redact absolute or escaping path fragments in a pattern value."""
+    if whole_is_path:
+        # Glob's ``pattern`` is its path argument.
+        if not _path_stays_in_worktree(pattern, root):
+            return "[redacted]"
+        return _relative_glob(pattern, root)
+    # A Grep pattern is a regex; only path-shaped tokens may name host paths.
+    parts: list[str] = []
+    for token in re.split(r"(\s+)", pattern):
+        if token and not token.isspace() and _looks_like_path(token):
+            safe = _path_stays_in_worktree(token.rstrip(",:;)" "'"), root)
+            parts.append(token if safe else "[redacted]")
+        else:
+            parts.append(token)
+    return "".join(parts)
+
+
+def _tool_target(
+    target: object, cwd: str, kind: str = "path", *, tool: str = ""
+) -> str:
     """Keep worktree paths useful while retaining redaction outside it."""
     from .coordinator_common import redact
 
     raw = str(target)
     if raw == "":
         return ""
+    if kind not in ("file_path", "path", "pattern"):
+        return redact(raw[:300], limit=300)
+    try:
+        root = Path(cwd).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return "[redacted]"
     if kind in ("file_path", "path"):
         try:
-            root = Path(cwd).expanduser().resolve()
             path = Path(raw).expanduser()
             resolved = path.resolve() if path.is_absolute() else (root / path).resolve()
         except (OSError, RuntimeError, ValueError):
@@ -356,7 +461,62 @@ def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
         except ValueError:
             # Any path outside the worktree is a host detail, whatever its prefix.
             return "[redacted]"
+    elif kind == "pattern":
+        # Glob's pattern is its path argument; a Grep pattern can carry paths too.
+        raw = _pattern_target(raw, root, whole_is_path=tool == "Glob")
     return redact(raw[:300], limit=300)
+
+
+DIAGNOSTIC_LIMIT = 4000
+
+
+def redact_diagnostic(text: str, *, config_dir: str | None = None) -> str:
+    """Bounded, shared-redacted, config-dir-hidden lane diagnostic text."""
+    from .coordinator_common import redact
+
+    return hide_config_dir(redact(text or "", limit=DIAGNOSTIC_LIMIT), config_dir)
+
+
+def output_read_failure(exc: BaseException) -> str:
+    """Bounded, redacted diagnostic for an unreadable lane output file."""
+    from .coordinator_common import redact
+
+    if isinstance(exc, UnicodeDecodeError):
+        message = "lane output file is not valid UTF-8"
+    else:
+        message = f"lane output file is unavailable: {type(exc).__name__}: {exc}"
+    return redact(message, limit=1000)
+
+
+def unreadable_output_result(
+    *,
+    role: str,
+    vendor: str,
+    model: str,
+    argv: list[str],
+    returncode: int,
+    stderr: str,
+    exc: BaseException,
+    config_dir: str | None,
+    tmux_session: str | None = None,
+) -> LaneResult:
+    """Unavailable result for a lane whose output file cannot be read or decoded."""
+    message = output_read_failure(exc)
+    diagnostic = f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
+    # Provider stderr can carry credentials; the failure diagnostic is stored
+    # and printed, so it is bounded and redacted here, not only at the last print.
+    diagnostic = redact_diagnostic(diagnostic, config_dir=config_dir)
+    return LaneResult(
+        role=role,
+        vendor=vendor,
+        model=model,
+        status="unavailable",
+        argv=argv,
+        returncode=returncode,
+        stdout="",
+        stderr=diagnostic,
+        tmux_session=tmux_session,
+    )
 
 
 def finalize_lane_output(
@@ -436,9 +596,10 @@ def _finalize_lane_output(
                             target = inputs[key]
                             target_kind = key
                             break
+                tool_name = str(name) if name is not None else ""
                 row = {
-                    "tool": str(name) if name is not None else "",
-                    "target": _tool_target(target, cwd, target_kind),
+                    "tool": tool_name,
+                    "target": _tool_target(target, cwd, target_kind, tool=tool_name),
                     "error": False,
                 }
                 use_id = block.get("id")
@@ -531,8 +692,12 @@ def record_lane_run(
     payload = {
         "role": result.role,
         "vendor": result.vendor,
-        "model": result.model,
-        "reported_model": usage.model if usage is not None else None,
+        "model": redact(result.model, limit=LANE_MODEL_LIMIT),
+        "reported_model": (
+            redact(usage.model, limit=LANE_MODEL_LIMIT)
+            if usage is not None and usage.model is not None
+            else None
+        ),
         "task_id": task_id,
         "agent_id": agent_id,
         "round": round_num,
@@ -776,24 +941,20 @@ def launch(
         if lane_output_file is not None:
             try:
                 output_file_text = Path(lane_output_file).read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                message = "lane output file is not valid UTF-8"
-                diagnostic = (
-                    f"{stderr.rstrip()}\n{message}" if stderr.strip() else message
-                )
-                return LaneResult(
+            except (OSError, UnicodeDecodeError) as exc:
+                # A completed child whose output cannot be read or decoded has no
+                # usable verdict; that is an unavailable infrastructure result.
+                return unreadable_output_result(
                     role=role,
                     vendor=vendor,
                     model=selected.model,
-                    status="unavailable",
                     argv=argv,
                     returncode=returncode,
-                    stdout="",
-                    stderr=hide_config_dir(diagnostic, selected.account.config_dir),
+                    stderr=stderr,
+                    exc=exc,
+                    config_dir=selected.account.config_dir,
                     tmux_session=tmux_session,
                 )
-            except OSError:
-                output_file_text = ""
 
         stream_from_output_file = vendor in OUTPUT_FILE_VENDORS or (
             vendor == "claude" and tmux

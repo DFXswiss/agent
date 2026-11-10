@@ -396,7 +396,11 @@ def _fetch_openrouter_key(
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     try:
         if client is None:
-            with httpx.Client(timeout=8.0, follow_redirects=False) as owned:
+            # The bearer must never follow an ambient proxy or trust an ambient
+            # CA override; the owned client ignores the process environment.
+            with httpx.Client(
+                timeout=8.0, follow_redirects=False, trust_env=False
+            ) as owned:
                 response = owned.get(OPENROUTER_KEY_URL, headers=headers)
         else:
             response = client.get(OPENROUTER_KEY_URL, headers=headers)

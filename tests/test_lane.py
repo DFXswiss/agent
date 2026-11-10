@@ -17,6 +17,7 @@ from agent_cli.lane import (
     LANE_VENDORS,
     OPENROUTER_BASE_URL,
     LaneResult,
+    LaneUsage,
     _OPENROUTER_WRAPPER,
     _run_in_tmux,
     claude_argv,
@@ -561,6 +562,149 @@ def test_finalize_lane_output_keeps_worktree_targets_and_redacts_outside(
     )
 
 
+def test_finalize_lane_output_redacts_paths_in_glob_and_grep_patterns(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    (worktree / "src").mkdir(parents=True)
+    events = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "glob-outside",
+                        "name": "Glob",
+                        "input": {"pattern": "/opt/openrouter-profile/openrouter-api-key"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "glob-escape",
+                        "name": "Glob",
+                        "input": {"pattern": "../outside/**/*.py"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "glob-wildcard-outside",
+                        "name": "Glob",
+                        "input": {"pattern": "/opt/**/*.json"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "glob-inside",
+                        "name": "Glob",
+                        "input": {"pattern": "src/**/*.py"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "glob-inside-absolute",
+                        "name": "Glob",
+                        "input": {"pattern": str(worktree / "src" / "*.py")},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "grep-plain",
+                        "name": "Grep",
+                        "input": {"pattern": "secret=abc"},
+                    },
+                ]
+            },
+        },
+        {"type": "result", "result": "STATUS: complete", "usage": {}},
+    ]
+    out = finalize_lane_output(
+        "claude",
+        "\n".join(json.dumps(event) for event in events),
+        "",
+        cwd=str(worktree),
+    )
+    assert out.tools == (
+        {"tool": "Glob", "target": "[redacted]", "error": False},
+        {"tool": "Glob", "target": "[redacted]", "error": False},
+        {"tool": "Glob", "target": "[redacted]", "error": False},
+        {"tool": "Glob", "target": "src/**/*.py", "error": False},
+        {"tool": "Glob", "target": "src/*.py", "error": False},
+        {"tool": "Grep", "target": "[redacted]", "error": False},
+    )
+
+
+def test_tool_target_redacts_escaping_path_fragments_in_grep_pattern(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    (worktree / "src").mkdir(parents=True)
+    assert (
+        _tool_target(
+            "needle in /opt/openrouter-profile/key", str(worktree), "pattern", tool="Grep"
+        )
+        == "needle in [redacted]"
+    )
+    assert (
+        _tool_target(
+            "needle in C:\\Users\\someone\\key", str(worktree), "pattern", tool="Grep"
+        )
+        == "needle in [redacted]"
+    )
+    assert (
+        _tool_target(
+            "needle in ../../outside.txt", str(worktree), "pattern", tool="Grep"
+        )
+        == "needle in [redacted]"
+    )
+    assert (
+        _tool_target(
+            "needle in src/module.py", str(worktree), "pattern", tool="Grep"
+        )
+        == "needle in src/module.py"
+    )
+    assert (
+        _tool_target(
+            "secret=abc", str(worktree), "pattern", tool="Grep"
+        )
+        == "[redacted]"
+    )
+
+
+def test_record_lane_run_bounds_and_redacts_both_models() -> None:
+    class CaptureStore:
+        row: dict | None = None
+
+        def write(self, table: str, operation: str, row_id: str, row: dict) -> None:
+            assert (table, operation, row_id) == ("activity", "insert", row["id"])
+            self.row = row
+
+    long_model = "vendor/" + "m" * 500
+    result = LaneResult(
+        role="implementer",
+        vendor="openrouter",
+        model=long_model,
+        status="complete",
+        argv=["claude"],
+        returncode=0,
+        stdout="STATUS: complete\n",
+        stderr="",
+        usage=LaneUsage(
+            model="vendor/sk-or-v1-abcdefghijklmnopqrstuvwxyz012345",
+            input_tokens=1,
+            output_tokens=2,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+            num_turns=1,
+            duration_ms=1,
+        ),
+    )
+    store = CaptureStore()
+    record_lane_run(store, session_id=DEFAULT_SESSION, result=result)
+    assert store.row is not None
+    payload = store.row["payload"]
+    assert len(payload["model"]) <= 200
+    assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345" not in payload["reported_model"]
+    assert len(payload["reported_model"]) <= 200
+
+
 @pytest.mark.parametrize("config_inside_worktree", [False, True])
 def test_launch_refuses_openrouter_config_and_worktree_overlap(
     tmp_path: Path, config_inside_worktree: bool
@@ -701,6 +845,50 @@ def test_launch_openrouter_invalid_utf8_returns_unavailable_and_removes_output(
     assert result.stdout == ""
     assert "lane output file is not valid UTF-8" in result.stderr
     assert output_paths and not output_paths[0].exists()
+
+
+def test_launch_openrouter_unreadable_output_returns_unavailable(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    config_dir = tmp_path / "router-config"
+    config_dir.mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    raw = json.loads((tmp_path / "ai-accounts.json").read_text(encoding="utf-8"))
+    raw["accounts"]["openrouter-a"]["config_dir"] = str(config_dir)
+    (tmp_path / "ai-accounts.json").write_text(json.dumps(raw), encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+
+    def deleted_output(argv: list[str], stdin_text: str | None) -> object:
+        wrapper_index = next(
+            i for i, value in enumerate(argv) if "openrouter-api-key" in value
+        )
+        Path(argv[wrapper_index + 2]).unlink()
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="Authorization: Bearer sk-or-v1-abcdefghijklmnopqrstuvwxyz012345\n",
+        )
+
+    result = launch(
+        role="implementer",
+        vendor="openrouter",
+        spec_file=str(spec),
+        cwd=str(worktree),
+        runner=deleted_output,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.status == "unavailable"
+    assert result.stdout == ""
+    assert "lane output file is unavailable" in result.stderr
+    assert "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345" not in result.stderr
+    assert "Bearer sk-or" not in result.stderr
+    assert len(result.stderr) <= 4000
 
 
 def test_launch_openrouter_in_tmux_keeps_pane_diagnostic_as_stderr(
@@ -1200,6 +1388,65 @@ def test_every_provider_unsets_ambient_openrouter_api_key(
     assert os.environ["OPENROUTER_API_KEY"] == "ambient-openrouter-token"
 
 
+_PROXY_AND_CA_VARS = (
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+)
+
+
+def test_lane_strip_env_contains_proxy_and_ca_overrides() -> None:
+    for key in _PROXY_AND_CA_VARS:
+        assert key in LANE_STRIP_ENV
+
+
+@pytest.mark.parametrize("vendor", LANE_VENDORS)
+def test_every_provider_unsets_proxy_and_ca_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vendor: str
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement\n", encoding="utf-8")
+    proxy = "http://127.0.0.1:8123"
+    ca = "/ambient/intercept-ca.pem"
+    for key in _PROXY_AND_CA_VARS:
+        monkeypatch.setenv(key, ca if "CERT" in key or "BUNDLE" in key else proxy)
+
+    result = launch(
+        role="implementer",
+        vendor=vendor,
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        dry_run=True,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    inner = result.argv[result.argv.index("--") + 1 :] if "--" in result.argv else result.argv
+    # Find the first "env -u ..." run in the argv; the role prefix comes first.
+    first_env = inner.index("env")
+    unset = {
+        inner[i + 1]
+        for i in range(first_env, len(inner))
+        if inner[i] == "-u"
+    }
+    for key in _PROXY_AND_CA_VARS:
+        assert key in unset, key
+    assert proxy not in result.argv
+    assert ca not in result.argv
+
+
 def test_launch_codex_dry_run_skips_mkstemp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1290,6 +1537,34 @@ def test_launch_no_tmux_claude_keeps_stream_json_on_stdout(tmp_path: Path) -> No
     assert seen_stdin == [contents]
     assert result.status == "complete"
     assert result.stdout == "reviewed\nSTATUS: complete"
+
+
+def test_launch_codex_unreadable_output_returns_unavailable_not_empty(
+    tmp_path: Path,
+) -> None:
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("codex please implement\n", encoding="utf-8")
+
+    def deletes_output(argv: list[str], stdin_text: str | None) -> object:
+        Path(argv[argv.index("--output-last-message") + 1]).unlink()
+        return SimpleNamespace(returncode=0, stdout="", stderr="codex wrote nothing\n")
+
+    result = launch(
+        role="implementer",
+        vendor="codex",
+        spec_file=str(spec),
+        cwd=str(tmp_path),
+        runner=deletes_output,
+        tmux=False,
+        config_home=tmp_path,
+        session_id=DEFAULT_SESSION,
+    )
+
+    assert result.status == "unavailable"
+    assert result.stdout == ""
+    assert "codex wrote nothing" in result.stderr
+    assert "lane output file is unavailable" in result.stderr
 
 
 def test_launch_codex_unlinks_output_file_on_runner_exception(tmp_path: Path) -> None:

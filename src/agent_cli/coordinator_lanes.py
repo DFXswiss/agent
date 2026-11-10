@@ -43,6 +43,7 @@ from .lane import (
     openrouter_path_error,
     provider_argv,
     record_lane_run,
+    unreadable_output_result,
 )
 from .allow import EXTERNAL_SECOND_REVIEW_PREFIX, SECOND_REVIEW_KEYS
 from .model_slots import (
@@ -268,20 +269,38 @@ def launch_lane(
             stderr = hide_config_dir(
                 str(getattr(completed, "stderr") or ""), selected.account.config_dir
             )
+            lane_output_read_error: BaseException | None = None
             output_file_text = ""
             if lane_output is not None:
                 try:
                     output_file_text = Path(lane_output).read_text(encoding="utf-8")
-                except OSError:
-                    output_file_text = ""
-            finalized = finalize_lane_output(
-                vendor,
-                stdout,
-                output_file_text,
-                cwd=worktree,
-                stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
-                config_dir=selected.account.config_dir,
-            )
+                except (OSError, UnicodeDecodeError) as exc:
+                    lane_output_read_error = exc
+            if lane_output_read_error is not None:
+                # An unreadable output file has no usable verdict: an unavailable
+                # result with a bounded redacted diagnostic, never an uncertain
+                # interruption. The normal tail below records lane.run and the
+                # recoverable checkpoint.
+                result = unreadable_output_result(
+                    role=role,
+                    vendor=vendor,
+                    model=selected.model,
+                    argv=argv,
+                    returncode=returncode,
+                    stderr=stderr,
+                    exc=lane_output_read_error,
+                    config_dir=selected.account.config_dir,
+                )
+                finalized = None
+            else:
+                finalized = finalize_lane_output(
+                    vendor,
+                    stdout,
+                    output_file_text,
+                    cwd=worktree,
+                    stream_from_output_file=vendor in OUTPUT_FILE_VENDORS,
+                    config_dir=selected.account.config_dir,
+                )
         except Exception as exc:
             agent = store.row("agent", aid)
             if agent is not None and agent.get("status") == "working":
@@ -303,19 +322,20 @@ def launch_lane(
                 "uncertain-lane",
             )
             raise CoordinatorError(f"lane interrupted: {redact(str(exc))}") from exc
-        result = LaneResult(
-            role=role,
-            vendor=vendor,
-            model=selected.model,
-            status=parse_model_result(finalized.text, returncode)[0],
-            argv=argv,
-            returncode=returncode,
-            stdout=finalized.text,
-            stderr=stderr,
-            usage=finalized.usage,
-            tools=finalized.tools,
-            tools_truncated=finalized.tools_truncated,
-        )
+        if finalized is not None:
+            result = LaneResult(
+                role=role,
+                vendor=vendor,
+                model=selected.model,
+                status=parse_model_result(finalized.text, returncode)[0],
+                argv=argv,
+                returncode=returncode,
+                stdout=finalized.text,
+                stderr=stderr,
+                usage=finalized.usage,
+                tools=finalized.tools,
+                tools_truncated=finalized.tools_truncated,
+            )
         _record_lane_audit(
             store, worker, c, result, task_id=str(task["id"]), agent_id=aid, round_num=round_num
         )
@@ -326,7 +346,11 @@ def launch_lane(
             except OSError:
                 pass
 
-    status, model_result = parse_model_result(result.stdout, result.returncode)
+    # The lane verdict is the script-owned result status. For a normal run it
+    # already equals the parsed output status; an unreadable output file keeps
+    # its unavailable status even though there is no status line to parse.
+    _, model_result = parse_model_result(result.stdout, result.returncode)
+    status = result.status
     note = redact(result.stdout or result.stderr or "")
     agent = store.row("agent", aid)
     assert agent is not None
@@ -989,14 +1013,21 @@ def _run_prepared(
     if output_file:
         try:
             output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             try:
                 os.unlink(str(output_file))
             except OSError:
                 pass
-            return prepared["agent_id"], exc
-        except OSError:
-            output_file_text = ""
+            return prepared["agent_id"], unreadable_output_result(
+                role=str(prepared["role"]),
+                vendor=str(prepared["vendor"]),
+                model=str(prepared["model"]),
+                argv=argv,
+                returncode=returncode,
+                stderr=stderr,
+                exc=exc,
+                config_dir=prepared.get("config_dir"),
+            )
         try:
             os.unlink(str(output_file))
         except OSError:

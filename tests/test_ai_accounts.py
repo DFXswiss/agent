@@ -266,6 +266,37 @@ def test_env_prefix_clears_tokens_without_mutating_process(
     assert os.environ["UNRELATED_KEEP"] == "keep-me"
 
 
+PROXY_AND_CA_ENV = (
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+)
+
+
+def test_env_prefix_clears_proxy_and_ca_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_config(tmp_path, sample_config())
+    loaded = load_ai_accounts(tmp_path)
+    for key in PROXY_AND_CA_ENV:
+        monkeypatch.setenv(key, "/ambient/intercept")
+    for role in ("builder", "codex-builder"):
+        prefix = loaded.roles[role].env_prefix()
+        for key in PROXY_AND_CA_ENV:
+            assert prefix[prefix.index(key) - 1] == "-u", (role, key)
+        assert "/ambient/intercept" not in prefix
+
+
 @pytest.mark.parametrize(
     "change",
     [
