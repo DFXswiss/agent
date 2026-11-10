@@ -636,23 +636,25 @@ def test_tool_target_redacts_escaping_path_fragments_in_grep_pattern(
 
     worktree = tmp_path / "worktree"
     (worktree / "src").mkdir(parents=True)
+    # Fail closed: one escaping path fragment redacts the complete Grep target
+    # so surrounding regex or prose cannot leak host details.
     assert (
         _tool_target(
             "needle in /opt/openrouter-profile/key", str(worktree), "pattern", tool="Grep"
         )
-        == "needle in [redacted]"
+        == "[redacted]"
     )
     assert (
         _tool_target(
             "needle in C:\\Users\\someone\\key", str(worktree), "pattern", tool="Grep"
         )
-        == "needle in [redacted]"
+        == "[redacted]"
     )
     assert (
         _tool_target(
             "needle in ../../outside.txt", str(worktree), "pattern", tool="Grep"
         )
-        == "needle in [redacted]"
+        == "[redacted]"
     )
     assert (
         _tool_target(
@@ -697,6 +699,46 @@ def test_tool_target_redacts_regex_paths_and_post_wildcard_glob_traversal(
         )
         == "[redacted]"
     )
+
+
+@pytest.mark.parametrize(
+    ("tool", "pattern"),
+    [
+        ("Grep", "path=/opt/profiles/router/openrouter-api-key"),
+        ("Grep", "source=/opt/company/private-repo/config.json"),
+        ("Grep", "source='/opt/company/private-repo/config.json'"),
+        ("Grep", 'source="/opt/company/private-repo/config.json"'),
+        ("Grep", "source:/opt/company/private-repo/config.json"),
+        ("Grep", "^path=/opt/profiles/router/openrouter-api-key$"),
+        ("Grep", "(?:/opt/profiles/router/openrouter-api-key)"),
+        ("Grep", r"path=\/opt/profiles/router/openrouter-api-key"),
+        ("Grep", "path=~/private/config.json"),
+        ("Grep", r"path=C:\\Users\\someone\\config.json"),
+        ("Grep", r"path=\\\\server\\share\\config.json"),
+        ("Glob", "source=/opt/company/private-repo/*.json"),
+    ],
+)
+def test_tool_target_redacts_embedded_outside_path_fragments(
+    tmp_path: Path, tool: str, pattern: str
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    assert _tool_target(pattern, str(worktree), "pattern", tool=tool) == "[redacted]"
+
+
+def test_tool_target_keeps_embedded_absolute_path_only_inside_worktree(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.lane import _tool_target
+
+    worktree = tmp_path / "worktree"
+    (worktree / "src").mkdir(parents=True)
+    pattern = f'source="{worktree / "src" / "module.py"}"'
+
+    assert _tool_target(pattern, str(worktree), "pattern", tool="Grep") == pattern
 
 
 def test_record_lane_run_bounds_and_redacts_both_models() -> None:

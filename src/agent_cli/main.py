@@ -47,7 +47,7 @@ from .chain import (
     step_vendor_label,
     to_json as step_to_json,
 )
-from .coordinator_common import redact as redact_secrets
+from .coordinator_common import parse_model_result, redact as redact_secrets
 from .github_act import _repo_ok
 from .hub import Hub, HubError
 from .knock import drain as knock_drain
@@ -3681,11 +3681,13 @@ def cmd_run(args: list[str]) -> None:
                 # round and checklist, and a pure read of stale state could hand
                 # off with an outdated snapshot.
                 snap = _chain_snapshot(store, tid, extra_head=head)
-                semantic_result = _parsed_lane_result(result.stdout)
+                protocol_status, semantic_result = parse_model_result(
+                    result.stdout, result.returncode
+                )
                 implementer_verdict: str | None = None
                 if (
                     role == "implementer"
-                    and result.status == "complete"
+                    and protocol_status == "complete"
                     and semantic_result in _IMPLEMENTER_VERDICTS
                 ):
                     implementer_verdict = _IMPLEMENTER_VERDICTS[semantic_result]
@@ -3724,11 +3726,12 @@ def cmd_run(args: list[str]) -> None:
                         die("implementer working agent not found after lane")
                     note = _lane_diagnostic_note(result)
                     if result.status == "complete":
-                        # STATUS=complete without exactly one implementer RESULT
-                        # is a protocol failure, not an implemented round.
+                        # A provider may report complete after selecting the last
+                        # of several STATUS records. The joint parser above still
+                        # requires exactly one STATUS and one role-valid RESULT.
                         note = (
-                            "invalid implementer RESULT: "
-                            f"{semantic_result or 'missing or duplicate'}; {note}"
+                            "invalid implementer STATUS/RESULT: "
+                            f"{semantic_result or 'missing, duplicate, or ambiguous'}; {note}"
                         )
                     _abort_incomplete_agent(store, working, note)
                     snap = _chain_snapshot(store, tid, extra_head=head)
