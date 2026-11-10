@@ -347,11 +347,16 @@ for worker in workers.values():
    before preparing either dimension. Cached approvals reconcile their
    checklist keys, while any cached rejection routes its recorded evidence to
    implementation and is never superseded by a new lane. Durable ledger insert
-   order resolves gate rows that share a timestamp; legacy conflicting rows
-   without an establishable order fail closed. Rejection recording, its task
+   order resolves gate rows that share a timestamp in every latest-gate,
+   checklist, readiness, and publication snapshot; legacy conflicting rows
+   without an establishable order yield an unavailable verdict before a
+   checklist close or review publication. Rejection recording, its task
    transition, and the deterministic `review.post` intent share one local
    transaction. GitHub publication runs after that commit and a restart reuses
-   the same pending intent. `n_a` alone does not grant Ready or done. One review is enough only when
+   the same pending intent. A transient publication error reopens that same
+   deterministic intent and retries it on later coordinator ticks while
+   implementation may continue; it does not wait for a human reply or relaunch
+   a reviewer. `n_a` alone does not grant Ready or done. One review is enough only when
    the pull request opener is listed in one_review_authors in the trusted
    .github/pr-guard.json on the default branch. A missing file, a missing
    key, or an empty list keeps two reviews required. An entry that exists
@@ -456,9 +461,12 @@ for worker in workers.values():
 10. **Complete** only after a verified **human** merge: GitHub merge actor type
     must be exactly `User` (missing type is not human; Bot is refused). Also
     require merge SHA, timestamp, and base/target. An A38 merge must also expose
-    a valid base SHA equal to the persisted evidence base; a changed base
-    invalidates base-bound evidence and returns to measurement before
-    `task-done`. Then existing `task-done`
+    a valid base SHA equal to the persisted evidence base. If the base moved
+    after evidence and the pull request is already merged, the coordinator
+    keeps the old base as the last trusted base, records both old and observed
+    bases, reopens `local_check_pass` and the readiness checklist keys, and
+    stops with a non-recoverable `task-done` blocker. It cannot remeasure a
+    merged pull request; a human decides the outcome. Then existing `task-done`
     checklist / summary guard (summaries must already describe the actual
     result — no boilerplate invented at merge), then `issue.assigned.ack`. A
     Ready PR closed unmerged, or a non-human merge, is an intentionally
@@ -748,6 +756,10 @@ base policy. This blocker is non-recoverable and has no reply checkpoint. A
 legacy same-head report without `base_sha` or `policy_revision` is invalidated
 at readiness and routes the task back to `tests` for current base-bound
 measurement and publication.
+An open pull request can therefore be remeasured after a base move. A base move
+first observed after merge is different: the new base is never recorded as
+verified, the old/new pair is retained in `base_moved_after_evidence`, and the
+task stops at the non-recoverable completion boundary described above.
 The worker never posts a formal approval and never calls `gh pr ready`. Lane prompts quoted in the review comments have this host's control directory, worktree, workspace root and home directory replaced by `<control-dir>`, `<worktree>`, `<workspace>` and `~`. While
 the pull request remains draft it only records the newest exact enforce context
 `A38 / report (<pinned base>)` selected by `a38_guard.status_context_enforce`;

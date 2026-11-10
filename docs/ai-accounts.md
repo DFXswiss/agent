@@ -215,6 +215,12 @@ every added read directory. Launch is refused when those paths overlap. Claude
 Code's reported token counts and tool calls are stored in `lane.run`; its
 Anthropic-derived `total_cost_usd`/`costUSD` fields are ignored because they are
 not OpenRouter prices.
+Stored file-tool targets are fail-closed host evidence. After separator and
+regex-escape normalization, a target containing any parent component or any
+absolute, home, UNC, or drive-letter path fragment is stored as `[redacted]`,
+including fragments after assignments, prefixes, quotes, or regex anchors. The
+only absolute-path exception is a plain whole target that starts with and stays
+inside the lane worktree; that target is stored worktree-relative.
 
 `agent agent start --role reviewer --vendor X` requires `X` to be `models.first`
 pinned on the task;

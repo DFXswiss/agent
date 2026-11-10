@@ -16,6 +16,7 @@ from .model_slots import (
     ModelSlots,
     ModelSlotsError,
     canonical_checklist,
+    canonical_key,
     canonical_stage,
     implementer_from_snapshot,
     models_from_snapshot,
@@ -31,6 +32,7 @@ from .coordinator_common import (
     CiObservationTransportError,
     CiObservedFailureError,
     CoordinatorError,
+    NonRecoverableCoordinatorError,
     QUESTION_MARKER_PREFIX,
     STATUS_MARKER_PREFIX,
     Runner,
@@ -56,7 +58,12 @@ from .coordinator_git import (
     repo_cfg,
     verify_signed_clean_head,
 )
-from .coordinator_lanes import invalidate_head_evidence, latest_gates, set_checklist
+from .coordinator_lanes import (
+    invalidate_head_evidence,
+    latest_gates,
+    ordered_snapshot_gates,
+    set_checklist,
+)
 from .github_act import (
     ACTIVITY_MARKER,
     REVIEW_APPROVE_COMMIT_MISMATCH,
@@ -1964,7 +1971,7 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
             continue
         latest_by_name[str(name)] = item
     local_checks = [{"name": name, "result": item.get("result")} for name, item in latest_by_name.items()]
-    gates_raw = _ordered_snapshot_gates(store, tid)
+    gates_raw = ordered_snapshot_gates(store, tid)
     gates = [
         {
             "stage": canonical_stage(str(g.get("stage"))),
@@ -1992,67 +1999,6 @@ def _task_snapshot(store: Store, tid: str) -> dict[str, Any]:
         "models": _task_models(task).as_dict(),
         "implementer": implementer_from_snapshot(task),
     }
-
-
-def _ordered_snapshot_gates(store: Store, tid: str) -> list[dict[str, Any]]:
-    """Order gate histories durably and fail closed when legacy order is unknowable."""
-    raw = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
-    insert_sequences = store.row_insert_sequences("review_gate")
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for gate in raw:
-        key = (
-            canonical_stage(str(gate.get("stage"))),
-            str(gate.get("dimension") or ""),
-        )
-        grouped.setdefault(key, []).append(gate)
-
-    ordered: list[dict[str, Any]] = []
-    for key in sorted(grouped):
-        rows = grouped[key]
-        durable: list[tuple[int, dict[str, Any]]] = []
-        origins: set[str] = set()
-        for row in rows:
-            row_id = str(row.get("id") or "")
-            sequence = insert_sequences.get(row_id)
-            if sequence is None or sequence[0] != str(
-                row.get("_origin_device_id") or ""
-            ):
-                durable = []
-                break
-            origins.add(sequence[0])
-            durable.append((sequence[1], row))
-        if (
-            len(durable) == len(rows)
-            and len(origins) == 1
-            and len({seq for seq, _ in durable}) == len(rows)
-        ):
-            ordered.extend(
-                row for _seq, row in sorted(durable, key=lambda item: item[0])
-            )
-            continue
-
-        by_time: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            by_time.setdefault(str(row.get("recorded_at") or ""), []).append(row)
-        for recorded_at in sorted(by_time):
-            tied = sorted(
-                by_time[recorded_at], key=lambda row: str(row.get("id") or "")
-            )
-            ordered.extend(tied)
-            outcomes = {
-                (
-                    str(row.get("vendor") or ""),
-                    str(row.get("verdict") or ""),
-                    str(row.get("head_sha") or ""),
-                )
-                for row in tied
-            }
-            if len(outcomes) > 1:
-                fail_closed = dict(tied[-1])
-                fail_closed["verdict"] = "unavailable"
-                fail_closed["head_sha"] = ""
-                ordered.append(fail_closed)
-    return ordered
 
 
 def _both_second_reviews_na(store: Store, task_id: str) -> bool:
@@ -2577,6 +2523,26 @@ def _readiness_keys_closed(store: Store, task: dict[str, Any], head: str) -> boo
     )
 
 
+def _reopen_base_bound_checklist(store: Store, task: dict[str, Any]) -> None:
+    """Make test/readiness closes visibly stale after an unmeasurable base move."""
+    keys = {
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    }
+    for item in store.rows("checklist_item"):
+        if item.get("task_id") != task["id"] or canonical_key(
+            str(item.get("key") or "")
+        ) not in keys:
+            continue
+        item["status"] = "pending"
+        item["evidence"] = None
+        item["source"] = "script"
+        item["updated_at"] = utcnow()
+        store.write("checklist_item", "update", item["id"], strip_row(item))
+
+
 def _close_readiness_after_merge(
     store: Store,
     worker: WorkerConfig,
@@ -2684,20 +2650,36 @@ def phase_await_merge(store: Store, worker: WorkerConfig, task: dict[str, Any], 
         if str((info.get("base") or {}).get("ref") or "") != cfg.base:
             raise CoordinatorError("merged PR base mismatch")
         if worker.a38:
+            moved_base = c.get("base_moved_after_evidence")
+            if isinstance(moved_base, dict):
+                old_base = str(moved_base.get("old_base") or "")
+                new_base = str(moved_base.get("new_base") or "")
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR base moved after evidence from "
+                    f"{old_base or 'unknown'} to {new_base or 'unknown'}; "
+                    "a merged PR cannot be remeasured"
+                )
             observed_base = str((info.get("base") or {}).get("sha") or "").lower()
             saved_base = str(c.get("base_sha") or "").lower()
             if not is_sha(observed_base):
                 return ["merge observed but base SHA missing or invalid"]
             if not is_sha(saved_base) or observed_base != saved_base:
-                from .coordinator_a38 import invalidate_base_evidence
+                from .coordinator_a38 import mark_base_moved_after_evidence
 
-                invalidate_base_evidence(c, observed_base)
-                c["phase"] = "tests"
+                if not is_sha(saved_base):
+                    raise NonRecoverableCoordinatorError(
+                        "task-done refused: merged PR has no trusted evidence base; "
+                        f"observed base {observed_base}"
+                    )
+                mark_base_moved_after_evidence(
+                    c, old_base=saved_base, new_base=observed_base
+                )
+                _reopen_base_bound_checklist(store, task)
                 save_task(store, task)
-                return [
-                    "merged PR base changed; invalidating A38 report evidence "
-                    "before task completion"
-                ]
+                raise NonRecoverableCoordinatorError(
+                    "task-done refused: merged PR base moved after evidence from "
+                    f"{saved_base} to {observed_base}; a merged PR cannot be remeasured"
+                )
         if str((info.get("head") or {}).get("sha") or "") != expected_head:
             raise CoordinatorError("merged PR head differs from reviewed head")
         # Do not manufacture checklist values or boilerplate summaries here.

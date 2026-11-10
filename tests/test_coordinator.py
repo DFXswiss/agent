@@ -161,7 +161,12 @@ def test_invalid_review_never_approved() -> None:
 def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
     tmp_path: Path,
 ) -> None:
-    from agent_cli.coordinator_github import _ordered_snapshot_gates, _task_snapshot
+    from agent_cli.coordinator_github import _task_snapshot
+    from agent_cli.coordinator_lanes import (
+        checklist_snapshot,
+        latest_gates,
+        ordered_snapshot_gates,
+    )
 
     store = Store(tmp_path)
     task_id = "11111111-1111-4111-8111-111111111111"
@@ -211,6 +216,19 @@ def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
         "approved",
         "rejected",
     ]
+    snapshot_task = store.row("task", task_id)
+    assert snapshot_task is not None
+    assert [
+        gate["verdict"]
+        for gate in checklist_snapshot(store, snapshot_task)["gates"]
+    ] == [
+        "approved",
+        "rejected",
+    ]
+    assert (
+        latest_gates(store, task_id)[("review-1", "quality")]["verdict"]
+        == "rejected"
+    )
 
     class UnorderedLegacyStore:
         def rows(self, table: str) -> list[dict[str, Any]]:
@@ -224,11 +242,15 @@ def test_task_snapshot_uses_durable_gate_order_and_fails_closed_without_it(
             assert table == "review_gate"
             return {}
 
-    ambiguous = _ordered_snapshot_gates(
-        UnorderedLegacyStore(), task_id  # type: ignore[arg-type]
+    legacy_store = UnorderedLegacyStore()
+    ambiguous = ordered_snapshot_gates(
+        legacy_store, task_id  # type: ignore[arg-type]
     )
     assert ambiguous[-1]["verdict"] == "unavailable"
     assert ambiguous[-1]["head_sha"] == ""
+    assert latest_gates(  # type: ignore[arg-type]
+        legacy_store, task_id
+    )[("review-1", "quality")]["verdict"] == "unavailable"
 
 
 def test_signature_verification_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2786,6 +2808,48 @@ def test_readiness_skips_review_2_when_opener_is_listed(
     assert not any("missing approved gate review-2/" in line for line in lines)
 
 
+def test_readiness_uses_insert_order_when_later_gate_uuid_sorts_smaller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, worker, fake = _ready_side_env(tmp_path, monkeypatch)
+    tid = "aa000001-0000-4000-8000-0000000000a1"
+    task = _seed_ready_side_task(
+        store,
+        worker,
+        fake,
+        tid=tid,
+        phase="readiness",
+        checklist_codex={"review_2_quality": "ja", "review_2_logic": "ja"},
+        codex_gates=("quality", "logic"),
+    )
+    store.write(
+        "review_gate",
+        "insert",
+        "00000000-0000-4000-8000-000000000001",
+        {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "task_id": tid,
+            "stage": "review-1",
+            "dimension": "quality",
+            "vendor": "grok",
+            "verdict": "rejected",
+            "evidence": "later durable rejection",
+            "head_sha": fake.head,
+            "agent_id": "later-agent",
+            "recorded_at": "2026-01-01T00:00:00Z",
+        },
+    )
+
+    with pytest.raises(CoordinatorError, match="missing approved gate review-1/quality"):
+        phase_readiness(store, worker, task, fake)
+
+    assert not [
+        row
+        for row in store.rows("activity")
+        if row.get("type") in {"comment.post", "review.post"}
+    ]
+
+
 def test_readiness_requires_review_2_when_file_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3695,6 +3759,114 @@ def test_persisted_rejected_gate_routes_to_implementer_without_relaunch(
     assert len(reviews) == 1
     assert published == [reviews[0]["id"]]
     assert "codex logic — rejected" in reviews[0]["payload"]["body"]
+
+
+def test_rejection_comment_transient_failure_retries_on_implementation_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.coordinator_lanes import phase_pr_gates
+    from agent_cli.coordinator_runtime import advance_one
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    tid = "aa000001-0000-4000-8000-0000000000e8"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+    )
+    task["payload"]["coordinator"]["pr_number"] = 42
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    head = task["payload"]["coordinator"]["head_sha"]
+    store.write(
+        "review_gate",
+        "insert",
+        "aa000001-0000-4000-8000-0000000000e7",
+        {
+            "id": "aa000001-0000-4000-8000-0000000000e7",
+            "task_id": tid,
+            "stage": "review-2",
+            "dimension": "logic",
+            "vendor": "codex",
+            "verdict": "rejected",
+            "evidence": "Retry this rejection publication.",
+            "head_sha": head,
+            "agent_id": "aa000001-0000-4000-8000-0000000000e6",
+            "recorded_at": "2026-01-01T00:00:00.000000Z",
+        },
+    )
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    executions: list[str] = []
+
+    def transient_then_done(store_, _runner, *, activity_ids):  # noqa: ANN001
+        for activity_id in activity_ids:
+            row = store_.row("activity", activity_id)
+            assert row is not None and row["execution_status"] == "pending"
+            executions.append(activity_id)
+            updated = {
+                key: value for key, value in row.items() if not key.startswith("_")
+            }
+            if len(executions) == 1:
+                updated["execution_status"] = "error"
+                updated["execution_error"] = "temporary GitHub failure"
+            else:
+                updated["execution_status"] = "done"
+                updated.pop("execution_error", None)
+                updated["result"] = {"id": 99, "url": "https://x"}
+            store_.write("activity", "update", activity_id, updated)
+        return []
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.execute_github", transient_then_done
+    )
+    launched: list[str] = []
+    phase_pr_gates(
+        store,
+        worker,
+        store.row("task", tid),
+        fake,
+        lambda argv, stdin=None: launched.append("reviewer")
+        or Completed(0, "STATUS: complete\nRESULT: approved\n", ""),
+        vendor="codex",
+        stage="review-2",
+    )
+
+    reviews = [
+        row for row in store.rows("activity") if row.get("type") == "review.post"
+    ]
+    assert len(reviews) == 1
+    assert reviews[0]["execution_status"] == "pending"
+    assert store.row("task", tid)["payload"]["coordinator"][
+        "rejection_review_activity_ids"
+    ] == [reviews[0]["id"]]
+    assert launched == []
+
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "phase_implement",
+        lambda *args, **kwargs: ["implementation continued"],
+    )
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    assert executions == [reviews[0]["id"], reviews[0]["id"]]
+    assert store.row("activity", reviews[0]["id"])["execution_status"] == "done"
+    saved = store.row("task", tid)
+    assert "rejection_review_activity_ids" not in saved["payload"]["coordinator"]
+    assert "implementation continued" in lines
+    assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
 
 
 def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
@@ -5572,6 +5744,76 @@ def test_a38_merge_is_checked_first_in_any_phase_with_a_pull_request(
     assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
 
 
+def test_a38_merged_base_move_blocks_completion_over_two_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_runtime import advance_one
+
+    task_id = "abababab-0000-4000-8000-00000000001a"
+    store, worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    checkpoint = task["payload"]["coordinator"]
+    old_base = checkpoint["base_sha"]
+    checkpoint["phase"] = "tests"
+    checkpoint["evidence"].update(
+        readiness_head=fake.head,
+        readiness_base=old_base,
+        readiness_at="2026-01-01T00:00:00Z",
+    )
+    checkpoint["a38"].update(
+        policy_revision=old_base,
+        report={
+            "head": fake.head,
+            "base_sha": old_base,
+            "policy_revision": old_base,
+            "activity_id": "old-report",
+        },
+    )
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    new_base = "c" * 40
+    fake.base = new_base
+    fake.pr["baseRefOid"] = new_base
+    fake.pr["state"] = "MERGED"
+    fake.pr["mergedAt"] = "2026-09-01T12:00:00Z"
+    fake.pr["mergeCommit"] = {"oid": "d" * 40}
+    fake.pr["mergedBy"] = {"login": "human-owner", "type": "User"}
+
+    first = advance_one(store, worker, runner=fake, lane_runner=None)
+    assert first == ["PR merged during tests; verifying the merge"]
+    assert store.row("task", task_id)["payload"]["coordinator"]["phase"] == "await_merge"
+
+    second = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint.get("resume_phase") is None
+    assert checkpoint["base_sha"] == old_base
+    assert checkpoint["base_moved_after_evidence"] == {
+        "old_base": old_base,
+        "new_base": new_base,
+    }
+    assert old_base in checkpoint["blocker"] and new_base in checkpoint["blocker"]
+    assert any(old_base in line and new_base in line for line in second)
+    assert "report" not in checkpoint["a38"]
+    statuses = _checklist_status(store, task_id)
+    for key in (
+        "local_check_pass",
+        "contributing_ok",
+        "deviation_declared",
+        "deviation_granted",
+    ):
+        assert statuses[key] == "pending"
+    assert saved["state"] != "done"
+    assert not [row for row in store.rows("activity") if row.get("type") == "pr.merged"]
+
+
 def test_a38_uncertain_lane_with_stale_resume_is_final_after_merge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6618,6 +6860,38 @@ def _a38_first_comment_env(
         },
     )
     return store, worker, fake, tid
+
+
+def test_a38_first_comment_uses_insert_order_when_later_gate_uuid_sorts_smaller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_first_comment
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    store.write(
+        "review_gate",
+        "insert",
+        "00000000-0000-4000-8000-000000000002",
+        {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "task_id": task_id,
+            "stage": "review-1",
+            "dimension": "quality",
+            "vendor": "grok",
+            "verdict": "rejected",
+            "evidence": "later durable rejection",
+            "head_sha": fake.head,
+            "agent_id": "grok-quality-agent",
+            "recorded_at": "2026-01-01T00:00:00Z",
+        },
+    )
+
+    with pytest.raises(CoordinatorError, match="missing first review gate review-1/quality"):
+        phase_first_comment(store, worker, store.row("task", task_id), fake)
+
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "comment.post"
+    ]
 
 
 def test_a38_publication_reconcile_ignores_request_state_without_saved_occurrence(
