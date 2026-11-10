@@ -803,6 +803,7 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
             "title": "t",
             "repo": "example/project",
             "ref": "42",
+            "models": {"first": "grok", "second": "codex"},
             "payload": {
                 "coordinator": {
                     "phase": "pr_gates_grok",
@@ -855,6 +856,114 @@ def test_incomplete_pr_review_blocks_not_rejected_gate(
     assert task["payload"]["coordinator"]["phase"] == "pr_gates_grok", lines
     assert fake.launched == launched_before
     assert "implementer" not in fake.launched[len(launched_before) :]
+
+
+def test_parallel_pr_review_rejection_wins_over_other_incomplete_dimension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    fake.model_outputs["pr-reviewer-quality"] = "STATUS: unavailable\n"
+    fake.model_outputs["pr-reviewer-logic"] = (
+        "STATUS: complete\nRESULT: rejected\nlogic defect"
+    )
+    patch_account_runners(monkeypatch, fake)
+    patch_command_runner(monkeypatch, fake)
+    from agent_cli import github_act
+
+    monkeypatch.setattr(github_act, "scan_github", scan_done)
+    tid = "99999999-9999-4999-8999-999999999998"
+    wt = worker.workspace_root / tid
+    wt.mkdir(parents=True)
+    (wt / ".git").mkdir()
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": "worker-session",
+            "workflow": "implement",
+            "title": "t",
+            "repo": "example/project",
+            "ref": "42",
+            "models": {"first": "grok", "second": "codex"},
+            "payload": {
+                "coordinator": {
+                    "phase": "pr_gates_grok",
+                    "source": {
+                        "repo": "example/project",
+                        "number": 7,
+                        "assigned_id": "a",
+                        "publication_repo": "example/project",
+                        "base": "develop",
+                        "title": "Fix",
+                    },
+                    "worktree": str(wt),
+                    "branch": "task-99999999",
+                    "base_sha": fake.base,
+                    "head_sha": fake.head,
+                    "pr_number": 42,
+                    "evidence": {"tests_pass": True, "tests_head": fake.head},
+                }
+            },
+            "state": "pr-review",
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "change_summary_en": None,
+            "change_summary_de": None,
+        },
+    )
+    from agent_cli.coordinator_git import _write_marker
+
+    branch = "task-99999999"
+    fake.remotes = {
+        "origin": "https://github.com/example/project.git",
+        "publication": "https://github.com/example/project.git",
+    }
+    fake.branch = branch
+    fake.branches.add(branch)
+    _write_marker(
+        worker,
+        tid,
+        {
+            "phase": "ready",
+            "task_id": tid,
+            "session_id": worker.session_id,
+            "target_repo": "example/project",
+            "publication_repo": "example/project",
+            "branch": branch,
+            "base": "develop",
+            "base_sha": fake.base,
+            "worktree": str(wt),
+            "worker_login": "worker-bot",
+        },
+    )
+
+    lines = tick(store, worker, runner=fake, lane_runner=lane_runner(fake))
+
+    task = store.row("task", tid)
+    coord = task["payload"]["coordinator"]
+    assert coord["phase"] == "implement", lines
+    assert task["state"] == "implementing"
+    assert coord.get("resume_phase") in (None, "")
+    assert coord.get("question_activity_id") in (None, "")
+    gates = [g for g in store.rows("review_gate") if g.get("task_id") == tid]
+    assert any(
+        g.get("dimension") == "quality" and g.get("verdict") == "unavailable"
+        for g in gates
+    )
+    assert any(
+        g.get("dimension") == "logic" and g.get("verdict") == "rejected"
+        for g in gates
+    )
+    assert any("review-1/logic rejected" in line for line in lines)
+    assert "implementer" not in fake.launched
 
 
 def test_parallel_review_failure_closes_every_prepared_agent_before_blocking(

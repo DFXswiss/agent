@@ -1571,7 +1571,10 @@ def phase_readiness(store: Store, worker: WorkerConfig, task: dict[str, Any], ru
     if worker.a38:
         from .coordinator_a38 import require_ready_evidence
 
-        require_ready_evidence(store, task, head)
+        if not require_ready_evidence(store, task, head):
+            return [
+                f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"
+            ]
         gate_pairs = tuple(pair for pair in GATE_PAIRS if pair[0] == "review-1")
     else:
         skip_second = _second_review_skip(

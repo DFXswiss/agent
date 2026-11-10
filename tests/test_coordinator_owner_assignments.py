@@ -1302,7 +1302,28 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
                     "readiness_argv": [],
                 },
             },
-            "a38": {"enabled": True},
+            "a38": {
+                "enabled": True,
+                "base_sha": base,
+                "policy_revision": base,
+                "report": {
+                    "head": head,
+                    "base_sha": base,
+                    "policy_revision": base,
+                },
+                "first_comment": {"head": head},
+                "second_review": {
+                    "head": head,
+                    "status": "posted",
+                    "reviews": [
+                        {
+                            "reviewer": "outside-reviewer",
+                            "blocks_merge": False,
+                            "at": "2026-01-01T00:00:00Z",
+                        }
+                    ],
+                },
+            },
         }},
     }
     store.write("task", "insert", task_id, task)
@@ -1323,6 +1344,22 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
                 "source": "human" if key == "spec_written" else "script",
             },
         )
+    external_review_evidence = (
+        f"external second review by outside-reviewer at {head}: "
+        "https://github.com/example/owned/pull/42#issuecomment-1"
+    )
+    for row in store.rows("checklist_item"):
+        if row.get("task_id") != task_id or row.get("key") not in {
+            "review_2_quality",
+            "review_2_logic",
+        }:
+            continue
+        updated = {
+            key: value for key, value in row.items() if not key.startswith("_")
+        }
+        updated["evidence"] = external_review_evidence
+        updated["source"] = "script"
+        store.write("checklist_item", "update", row["id"], updated)
     for dimension in ("quality", "logic"):
         store.write(
             "review_gate",
@@ -1364,11 +1401,6 @@ def test_owner_a38_default_readiness_closes_human_steps_and_reaches_await_ready(
         "agent_cli.coordinator_github._fresh_ci_still_green",
         lambda *_args: None,
     )
-    monkeypatch.setattr(
-        "agent_cli.coordinator_a38.require_ready_evidence",
-        lambda *_args: None,
-    )
-
     lines = phase_readiness(store, worker, store.row("task", task_id), runner)
     assert "readiness ok" in lines[0]
     saved = store.row("task", task_id)

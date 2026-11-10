@@ -1439,7 +1439,9 @@ def phase_pr_gates(
         return [f"{stage} uncertain; blocked"]
 
     parsed_outcomes: list[tuple[dict[str, Any], LaneResult, str, str | None]] = []
-    incomplete_outcomes: list[tuple[str, str, str | None]] = []
+    incomplete_outcomes: list[
+        tuple[dict[str, Any], LaneResult, str, str | None, str]
+    ] = []
     for prep, outcome in outcomes:
         status, model_result = parse_model_result(outcome.stdout, outcome.returncode)
         dimension = str(prep["dimension"])
@@ -1455,39 +1457,127 @@ def phase_pr_gates(
                 or outcome.stderr
                 or f"status={status or 'empty'} result={model_result or 'empty'}"
             )
+            incomplete_outcomes.append(
+                (prep, outcome, status, model_result, evidence)
+            )
+            continue
+        parsed_outcomes.append((prep, outcome, status, model_result))
+
+    rejected_outcomes = [
+        item
+        for item in parsed_outcomes
+        if not review_is_approved(item[2], item[3])
+    ]
+    if (
+        not incomplete_outcomes
+        and not rejected_outcomes
+        and worker.a38
+        and not second_stage
+    ):
+        a38 = c.setdefault("a38", {})
+        if not isinstance(a38, dict):
+            a38 = {}
+            c["a38"] = a38
+        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
+        # The approved gates below are durable writes of their own. Persist the
+        # completed-pass count first so a crash after either gate cannot leave
+        # the subsequently posted review comment with a stale pass count.
+        save_task(store, task)
+
+    rejection_evidence: list[str] = []
+    for prep, outcome, status, model_result in parsed_outcomes:
+        dimension = str(prep["dimension"])
+        if not review_is_approved(status, model_result):
+            evidence = redact(outcome.stdout or f"{status}/{model_result}")
+            rejection_evidence.append(evidence)
             record_gate(
                 store,
                 task,
                 stage=stage,
                 dimension=dimension,
                 vendor=vendor,
-                verdict="unavailable",
+                verdict="rejected",
                 head=head,
                 agent_id=str(prep["agent_id"]),
                 evidence=evidence,
             )
-            key = checklist_key_for_stage(stage, dimension)
-            denial = _try_set_checklist(
+            queue_comment_review(
                 store,
+                worker,
                 task,
-                key=key,
-                status="unavailable",
-                evidence=evidence,
+                runner,
+                body=f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n{evidence}",
             )
-            if denial is not None:
-                lines.append(
-                    f"{stage} checklist unchanged for {key}: {denial}"
-                )
-            incomplete_outcomes.append((dimension, status, model_result))
+            lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
             continue
-        parsed_outcomes.append((prep, outcome, status, model_result))
+        record_gate(
+            store,
+            task,
+            stage=stage,
+            dimension=dimension,
+            vendor=vendor,
+            verdict="approved",
+            head=head,
+            agent_id=str(prep["agent_id"]),
+            evidence=None,
+        )
+        blocker = _reconcile_approved_gate_checklist(
+            store, task, stage=stage, head=head, dimension=dimension
+        )
+        if blocker is not None:
+            reconciliation_blockers[blocker[0]] = blocker[1]
+        lines.append(f"{stage}/{dimension}=approved")
+
+    # Persist incomplete dimensions only after every complete result.  This
+    # prevents an unavailable peer from hiding a completed rejection.
+    for prep, _outcome, _status, _model_result, evidence in incomplete_outcomes:
+        dimension = str(prep["dimension"])
+        record_gate(
+            store,
+            task,
+            stage=stage,
+            dimension=dimension,
+            vendor=vendor,
+            verdict="unavailable",
+            head=head,
+            agent_id=str(prep["agent_id"]),
+            evidence=evidence,
+        )
+        key = checklist_key_for_stage(stage, dimension)
+        denial = _try_set_checklist(
+            store,
+            task,
+            key=key,
+            status="unavailable",
+            evidence=evidence,
+        )
+        if denial is not None:
+            lines.append(f"{stage} checklist unchanged for {key}: {denial}")
+
+    if rejection_evidence:
+        c["findings"] = "\n\n".join(rejection_evidence)
+        evidence_map = c.setdefault("evidence", {})
+        if isinstance(evidence_map, dict):
+            evidence_map.pop("gates", None)
+            evidence_map.pop("gates_head", None)
+        invalidate_head_evidence(c, head)
+        c["phase"] = "implement"
+        c.pop("resume_phase", None)
+        c.pop("question_activity_id", None)
+        task["state"] = "implementing"
+        save_task(store, task)
+        return lines
 
     if incomplete_outcomes:
         resume = "pr_gates_codex" if second_stage else "pr_gates_grok"
-        affected = ", ".join(dimension for dimension, _status, _result in incomplete_outcomes)
+        affected = ", ".join(
+            str(prep["dimension"])
+            for prep, _outcome, _status, _result, _evidence in incomplete_outcomes
+        )
         details = "; ".join(
-            f"{dimension}: status={status or 'empty'}, result={model_result or 'empty'}"
-            for dimension, status, model_result in incomplete_outcomes
+            f"{prep['dimension']}: status={status or 'empty'}, "
+            f"result={model_result or 'empty'}"
+            for prep, _outcome, status, model_result, _evidence in incomplete_outcomes
         )
         c["phase"] = "blocked"
         c["resume_phase"] = resume
@@ -1507,72 +1597,10 @@ def phase_pr_gates(
             c["replies_consumed_through"] = None
         save_task(store, task)
         lines.extend(
-            f"{stage}/{dimension} unavailable; blocked"
-            for dimension, _status, _result in incomplete_outcomes
+            f"{stage}/{prep['dimension']} unavailable; blocked"
+            for prep, _outcome, _status, _result, _evidence in incomplete_outcomes
         )
         return lines
-
-    if worker.a38 and not second_stage:
-        a38 = c.setdefault("a38", {})
-        if not isinstance(a38, dict):
-            a38 = {}
-            c["a38"] = a38
-        a38["first_review_passes"] = int(a38.get("first_review_passes") or 0) + 1
-        # The approved gates below are durable writes of their own. Persist the
-        # completed-pass count first so a crash after either gate cannot leave
-        # the subsequently posted review comment with a stale pass count.
-        save_task(store, task)
-
-    for prep, outcome, status, model_result in parsed_outcomes:
-        dimension = str(prep["dimension"])
-        if not review_is_approved(status, model_result):
-            evidence = redact(outcome.stdout or f"{status}/{model_result}")
-            record_gate(
-                store,
-                task,
-                stage=stage,
-                dimension=dimension,
-                vendor=vendor,
-                verdict="rejected",
-                head=head,
-                agent_id=str(prep["agent_id"]),
-                evidence=evidence,
-            )
-            queue_comment_review(
-                store,
-                worker,
-                task,
-                runner,
-                body=f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n{evidence}",
-            )
-            c["findings"] = evidence
-            evidence_map = c.setdefault("evidence", {})
-            if isinstance(evidence_map, dict):
-                evidence_map.pop("gates", None)
-                evidence_map.pop("gates_head", None)
-            invalidate_head_evidence(c, head)
-            c["phase"] = "implement"
-            task["state"] = "implementing"
-            save_task(store, task)
-            lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
-            return lines
-        record_gate(
-            store,
-            task,
-            stage=stage,
-            dimension=dimension,
-            vendor=vendor,
-            verdict="approved",
-            head=head,
-            agent_id=str(prep["agent_id"]),
-            evidence=None,
-        )
-        blocker = _reconcile_approved_gate_checklist(
-            store, task, stage=stage, head=head, dimension=dimension
-        )
-        if blocker is not None:
-            reconciliation_blockers[blocker[0]] = blocker[1]
-        lines.append(f"{stage}/{dimension}=approved")
 
     if reconciliation_blockers:
         save_task(store, task)

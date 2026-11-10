@@ -21,6 +21,7 @@ from .a38_review import (
     REVIEW_BEGIN,
     REVIEW_END,
     ReviewError,
+    parse_review_block,
     render_review_record,
     validate_declaration,
     validate_review_record,
@@ -35,6 +36,7 @@ from .allow import (
 from .coordinator_common import (
     check_label,
     CoordinatorError,
+    NonRecoverableCoordinatorError,
     Runner,
     as_int,
     coord,
@@ -379,7 +381,7 @@ def phase_tests(
     # Never publish evidence against the obsolete base policy when the manifest
     # itself changed; the caller receives a loud, stable unsupported boundary.
     if POLICY_PATH in changed_paths:
-        raise CoordinatorError(
+        raise NonRecoverableCoordinatorError(
             "A38 policy migrations are not supported by coordinator A38 mode"
         )
     policy_revision = base_sha
@@ -939,6 +941,80 @@ def _first_comment_body(
     return body, int(payload["passes"])
 
 
+def _first_comment_passes(body: str, head: str) -> int:
+    """Read the pass count from an already-rendered owned comment body."""
+    try:
+        payload = parse_review_block(body)
+    except ReviewError as exc:
+        raise CoordinatorError("saved A38 first comment payload is invalid") from exc
+    passes = payload.get("passes")
+    if payload.get("head") != head or type(passes) is not int or passes < 1:
+        raise CoordinatorError("saved A38 first comment payload is invalid")
+    return passes
+
+
+def _upgrade_first_comment_intent(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    first: Mapping[str, Any],
+    head: str,
+) -> dict[str, Any]:
+    """Checkpoint body/passes on first-comment intents from older clients."""
+    expected_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}")
+    )
+    saved_id = first.get("activity_id")
+    if saved_id not in (None, expected_id):
+        raise CoordinatorError("saved A38 first comment activity id is invalid")
+    upgraded = dict(first)
+    body = upgraded.get("body")
+    passes = upgraded.get("passes")
+    if isinstance(body, str) and body and type(passes) is int and passes >= 1:
+        upgraded.update(head=head, activity_id=expected_id)
+        _a38_state(coord(task))["first_comment"] = upgraded
+        return upgraded
+
+    row = store.row("activity", expected_id)
+    if isinstance(row, dict):
+        payload = row.get("payload")
+        number = as_int(coord(task).get("pr_number") or task.get("ref"))
+        row_body = payload.get("body") if isinstance(payload, dict) else None
+        expected_payload = {
+            "repo": target_repo(task),
+            "number": number,
+            "body": row_body,
+            "target": "pr",
+        }
+        if (
+            number is None
+            or not isinstance(row_body, str)
+            or not row_body
+            or not _own_comment_activity(store, worker, row, expected_payload)
+        ):
+            raise CoordinatorError(
+                "saved A38 first comment activity is foreign or mismatched"
+            )
+        body = row_body
+        passes = _first_comment_passes(body, head)
+    elif isinstance(body, str) and body:
+        passes = _first_comment_passes(body, head)
+    else:
+        body, passes = _first_comment_body(
+            store, worker, task, runner, head=head
+        )
+
+    upgraded.update(
+        head=head,
+        activity_id=expected_id,
+        body=body,
+        passes=passes,
+    )
+    _a38_state(coord(task))["first_comment"] = upgraded
+    return upgraded
+
+
 def phase_first_comment(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
@@ -954,36 +1030,26 @@ def phase_first_comment(
         return ["head changed before first A38 review comment"]
     a38 = _a38_state(c)
     existing = a38.get("first_comment")
-    activity_id = str(uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task['id']}:{head}"))
     same_head_intent = (
         dict(existing)
         if isinstance(existing, dict) and existing.get("head") == head
         else {}
     )
-    stored_body = same_head_intent.get("body")
-    stored_passes = same_head_intent.get("passes")
-    if isinstance(stored_body, str) and stored_body and type(stored_passes) is int and stored_passes >= 1:
-        body, passes = stored_body, stored_passes
-    else:
-        try:
-            body, passes = _first_comment_body(
-                store, worker, task, runner, head=head
-            )
-        except CoordinatorError as exc:
-            if str(exc).startswith("first review ") and str(exc).endswith(
-                " prompt evidence missing"
-            ):
-                c["phase"] = "pr_gates_grok"
-                save_task(store, task)
-                return [f"{exc}; re-running gate"]
-            raise
-    completed_result = (
-        _first_comment_result_verified(
-            store, worker, task, same_head_intent, head
+    try:
+        same_head_intent = _upgrade_first_comment_intent(
+            store, worker, task, runner, same_head_intent, head
         )
-        if isinstance(same_head_intent.get("activity_id"), str)
-        else None
-    )
+    except CoordinatorError as exc:
+        if str(exc).startswith("first review ") and str(exc).endswith(
+            " prompt evidence missing"
+        ):
+            c["phase"] = "pr_gates_grok"
+            save_task(store, task)
+            return [f"{exc}; re-running gate"]
+        raise
+    activity_id = str(same_head_intent["activity_id"])
+    body = str(same_head_intent["body"])
+    passes = int(same_head_intent["passes"])
     request_key = _second_review_request_key(c, head, passes)
     _requested, request_plan = _prepare_second_review_request(
         store,
@@ -1005,6 +1071,9 @@ def phase_first_comment(
     # Save both outside-effect intents before either the GitHub comment or a ping
     # is sent. Their deterministic ids make the incomplete steps resumable.
     save_task(store, task)
+    completed_result = _first_comment_result_verified(
+        store, worker, task, comment_intent, head
+    )
     already_posted = completed_result is not None
     result = completed_result or _post_comment(
         store, worker, task, runner, activity_id=activity_id, body=body
@@ -1396,6 +1465,20 @@ def reconcile_a38_publication_intents(
     a38 = _a38_state(c)
     first = a38.get("first_comment")
     second = a38.get("second_review")
+    if isinstance(first, dict) and first.get("head") == head:
+        legacy_first = not (
+            isinstance(first.get("body"), str)
+            and bool(first.get("body"))
+            and type(first.get("passes")) is int
+            and first.get("passes") >= 1
+        )
+        first = _upgrade_first_comment_intent(
+            store, worker, task, runner, first, head
+        )
+        if legacy_first:
+            # Reconciliation may be the first upgraded-client path to observe
+            # this legacy intent.  Checkpoint its exact payload before effects.
+            save_task(store, task)
     first_saved = (
         isinstance(first, dict)
         and first.get("head") == head
@@ -1914,12 +1997,28 @@ def _checklist_maps(store: Store, task_id: str) -> tuple[dict[str, str], dict[st
     return statuses, evidence
 
 
-def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> None:
+def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> bool:
     c = coord(task)
     a38 = _a38_state(c)
     base_sha = str(c.get("base_sha") or "")
     report = a38.get("report")
     waiver = a38.get("report_waiver")
+    legacy_report = (
+        isinstance(report, dict)
+        and report.get("head") == head
+        and (
+            not is_sha(str(report.get("base_sha") or ""))
+            or not is_sha(str(report.get("policy_revision") or ""))
+        )
+    )
+    if legacy_report:
+        _drop_base_evidence(c)
+        c["phase"] = "tests"
+        c.pop("resume_phase", None)
+        c.pop("question_activity_id", None)
+        c.pop("blocker", None)
+        save_task(store, task)
+        return False
     report_bound = (
         is_sha(base_sha)
         and isinstance(report, dict)
@@ -1954,12 +2053,11 @@ def require_ready_evidence(store: Store, task: dict[str, Any], head: str) -> Non
     }
     if not external_second_review_ok(snapshot, statuses, evidence):
         raise CoordinatorError("external second review checklist evidence is missing")
+    return True
 
 
-def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
-    """Drop report/test evidence whose intent was bound to the previous PR base."""
-    if not is_sha(base_sha):
-        raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
+def _drop_base_evidence(c: dict[str, Any]) -> None:
+    """Drop report/test evidence without claiming a replacement base revision."""
     evidence = c.get("evidence")
     if isinstance(evidence, dict):
         evidence.pop("tests_pass", None)
@@ -1969,6 +2067,13 @@ def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
     for key in ("report", "report_waiver", "guard_status"):
         a38.pop(key, None)
     a38.pop("policy_revision", None)
+
+
+def invalidate_base_evidence(c: dict[str, Any], base_sha: str) -> None:
+    """Drop report/test evidence whose intent was bound to the previous PR base."""
+    if not is_sha(base_sha):
+        raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
+    _drop_base_evidence(c)
     c["base_sha"] = base_sha
 
 
@@ -2095,7 +2200,10 @@ def phase_await_ready(
             _observation(c, observation)
             save_task(store, task)
             return [observation]
-        require_ready_evidence(store, task, head)
+        if not require_ready_evidence(store, task, head):
+            return [
+                f"legacy A38 report on {head[:7]} is not base-bound; re-running tests"
+            ]
         allowed = evaluate_allow(
             "pr-ready",
             session_id=worker.session_id,

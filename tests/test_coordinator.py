@@ -4012,9 +4012,11 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
 
     from agent_cli.allow import CHECKLIST_KEYS
     from agent_cli.coordinator_a38 import phase_first_comment
-    from agent_cli.coordinator_common import save_task as real_save_task
     from agent_cli.coordinator_github import phase_blocked
-    from agent_cli.coordinator_lanes import phase_pr_gates
+    from agent_cli.coordinator_lanes import (
+        _reconcile_approved_gate_checklist as real_reconcile_approved_gate_checklist,
+        phase_pr_gates,
+    )
 
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -4114,26 +4116,38 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
 
     fake.model_outputs["pr-reviewer-quality"] = "STATUS: complete\nRESULT: approved\n"
 
-    def crash_before_final_save(store_arg: Store, task_arg: dict[str, Any]) -> None:
-        phase = task_arg["payload"]["coordinator"].get("phase")
-        if phase == "a38_first_comment":
-            raise RuntimeError("simulated crash before final gate save")
-        real_save_task(store_arg, task_arg)
+    def crash_after_gate_rows(*args: Any, **kwargs: Any) -> tuple[str, str] | None:
+        approved_dimensions = {
+            str(gate.get("dimension"))
+            for gate in store.rows("review_gate")
+            if gate.get("task_id") == tid
+            and gate.get("stage") == "review-1"
+            and gate.get("verdict") == "approved"
+        }
+        if approved_dimensions == {"quality", "logic"}:
+            raise RuntimeError("simulated crash after gate rows")
+        return real_reconcile_approved_gate_checklist(*args, **kwargs)
 
     monkeypatch.setattr(
-        "agent_cli.coordinator_lanes.save_task", crash_before_final_save
+        "agent_cli.coordinator_lanes._reconcile_approved_gate_checklist",
+        crash_after_gate_rows,
     )
-    with pytest.raises(RuntimeError, match="simulated crash before final gate save"):
+    with pytest.raises(RuntimeError, match="simulated crash after gate rows"):
         phase_pr_gates(
             store,
             worker,
             resumed,
             fake,
-            lane_runner(fake),
+            lambda argv, stdin=None: Completed(
+                0, "STATUS: complete\nRESULT: approved\n", ""
+            ),
             vendor="grok",
             stage="review-1",
         )
-    monkeypatch.setattr("agent_cli.coordinator_lanes.save_task", real_save_task)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes._reconcile_approved_gate_checklist",
+        real_reconcile_approved_gate_checklist,
+    )
 
     approved = store.row("task", tid)
     assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
@@ -4144,6 +4158,15 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         if gate.get("task_id") == tid and gate.get("verdict") == "approved"
     ]
     assert {gate.get("dimension") for gate in approved_gates} == {"quality", "logic"}
+    checklist_before_recovery = {
+        key: store.row("checklist_item", f"{tid}-{key}")["status"]
+        for key in ("review_1_quality", "review_1_logic")
+    }
+    # The pre-outage lane already closed logic; only quality remains unreconciled.
+    assert checklist_before_recovery == {
+        "review_1_quality": "unavailable",
+        "review_1_logic": "ja",
+    }
 
     recovery_lines = phase_pr_gates(
         store,
@@ -4154,9 +4177,17 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         vendor="grok",
         stage="review-1",
     )
-    assert recovery_lines == ["review-1 already complete on ccccccc"]
+    assert any("review-1 already complete" in line for line in recovery_lines)
     approved = store.row("task", tid)
     assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
+    checklist_after_recovery = {
+        key: store.row("checklist_item", f"{tid}-{key}")["status"]
+        for key in ("review_1_quality", "review_1_logic")
+    }
+    assert checklist_after_recovery == {
+        "review_1_quality": "ja",
+        "review_1_logic": "ja",
+    }
 
     phase_first_comment(store, worker, approved, fake)
     comments = [
@@ -4543,6 +4574,44 @@ def test_a38_new_head_second_review_updates_legacy_checklist_evidence(
     )
 
     require_ready_evidence(store, store.row("task", task_id), fake.head)
+
+
+def test_a38_legacy_unbound_report_routes_readiness_back_to_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import require_ready_evidence
+
+    task_id = "abababab-0000-4000-8000-000000000021"
+    store, _worker, fake, task = _a38_external_review_env(
+        tmp_path, monkeypatch, task_id=task_id
+    )
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "readiness"
+    checkpoint["resume_phase"] = "readiness"
+    checkpoint["question_activity_id"] = "stale-readiness-question"
+    checkpoint["base_sha"] = fake.base
+    checkpoint["evidence"] = {
+        "tests_pass": True,
+        "tests_head": fake.head,
+    }
+    checkpoint["a38"]["report"] = {"head": fake.head}
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    assert require_ready_evidence(
+        store, store.row("task", task_id), fake.head
+    ) is False
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "tests"
+    assert saved.get("resume_phase") in (None, "")
+    assert saved.get("question_activity_id") in (None, "")
+    assert "report" not in saved["a38"]
+    assert "tests_pass" not in saved["evidence"]
+    assert "tests_head" not in saved["evidence"]
 
 
 def test_a38_later_phase_intake_routes_a_later_blocking_review(
@@ -6305,6 +6374,73 @@ def test_a38_first_comment_crash_before_post_resumes_comment_and_all_pings(
     assert len({row["id"] for row in pings}) == len(worker.second_reviewers)
 
 
+def test_a38_legacy_first_comment_without_activity_is_upgraded_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli.coordinator_a38 import phase_first_comment
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    activity_id = str(
+        uuid5(NAMESPACE_URL, f"coordinator-a38-first:{task_id}:{fake.head}")
+    )
+    task["payload"]["coordinator"]["a38"]["first_comment"] = {
+        "head": fake.head,
+        "activity_id": activity_id,
+    }
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    lines = phase_first_comment(store, worker, store.row("task", task_id), fake)
+
+    assert lines == [f"first A38 review comment posted on {fake.head[:7]}"]
+    saved = store.row("task", task_id)["payload"]["coordinator"]["a38"][
+        "first_comment"
+    ]
+    assert saved["activity_id"] == activity_id
+    assert isinstance(saved["body"], str) and saved["body"]
+    assert saved["passes"] == 1
+    assert store.row("activity", activity_id)["payload"]["body"] == saved["body"]
+
+
+def test_a38_reconciliation_upgrades_legacy_first_comment_from_owned_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import (
+        phase_first_comment,
+        reconcile_a38_publication_intents,
+    )
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    phase_first_comment(store, worker, store.row("task", task_id), fake)
+    task = store.row("task", task_id)
+    first = task["payload"]["coordinator"]["a38"]["first_comment"]
+    exact_body = store.row("activity", first["activity_id"])["payload"]["body"]
+    first.pop("body")
+    first.pop("passes")
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    assert reconcile_a38_publication_intents(
+        store, worker, store.row("task", task_id), fake
+    ) == []
+    upgraded = store.row("task", task_id)["payload"]["coordinator"]["a38"][
+        "first_comment"
+    ]
+    assert upgraded["body"] == exact_body
+    assert upgraded["passes"] == 1
+
+
 def test_a38_first_comment_partial_ping_crash_adds_only_the_missing_ping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7913,6 +8049,47 @@ def test_a38_policy_change_fails_before_old_base_evidence_is_run(
 
     assert store.rows("local_check") == []
     assert store.rows("activity") == []
+
+
+def test_a38_policy_change_is_a_final_blocker_without_reply_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_runtime import advance_one
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "tests"
+    checkpoint["resume_phase"] = "readiness"
+    checkpoint["question_activity_id"] = "stale-question"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *a, **k: (fake.base, [".github/a38.json", "src/app.py"]),
+    )
+
+    lines = advance_one(store, worker, runner=fake, lane_runner=None)
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked", lines
+    assert "policy migrations are not supported" in checkpoint["blocker"]
+    assert checkpoint.get("resume_phase") in (None, "")
+    assert checkpoint.get("question_activity_id") in (None, "")
+    assert any("blocker published" in line for line in lines)
+
+    fake.comments.append(
+        {"id": 999, "body": "please continue", "user": {"login": "human-owner"}}
+    )
+    advance_one(store, worker, runner=fake, lane_runner=None)
+    checkpoint = store.row("task", task_id)["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint.get("resume_phase") in (None, "")
 
 
 def test_a38_report_intent_identity_includes_base_and_policy_revision() -> None:

@@ -35,6 +35,7 @@ from .coordinator_common import (
     REQUIRED_WORKER_SKILLS,
     CiObservedFailureError,
     CoordinatorError,
+    NonRecoverableCoordinatorError,
     LaneRunner,
     Runner,
     account_for,
@@ -76,6 +77,7 @@ from .coordinator_git import (
     verify_signed_clean_head,
 )
 from .coordinator_github import (
+    clear_reply_recovery,
     phase_accept,
     phase_await_merge,
     phase_blocked,
@@ -1798,6 +1800,32 @@ def advance_one(
         return [
             *(str(item) for item in lane_observations),
             str(exc) or "CI failed on recheck; returning to CI observation",
+        ]
+    except NonRecoverableCoordinatorError as exc:
+        # Unsupported or final coordinator boundaries cannot be made safe by
+        # an authorized issue reply.  Persist a final blocker without a reply
+        # checkpoint so later ticks remain stopped.
+        c = coord(task)
+        c["phase"] = "blocked"
+        c["blocker"] = str(exc)
+        clear_reply_recovery(c)
+        save_task(store, task)
+        blocker_lines = publish_blocker(
+            store,
+            worker,
+            task,
+            runner,
+            str(exc),
+            kind="non-recoverable",
+        )
+        lane_observations = c.pop("lane_observations", [])
+        if not isinstance(lane_observations, list):
+            lane_observations = []
+        elif lane_observations:
+            save_task(store, task)
+        return [
+            *(str(item) for item in lane_observations),
+            *blocker_lines,
         ]
     except (CoordinatorError, StoreError) as exc:
         # Task-specific failures must become GitHub-visible blockers when possible.
