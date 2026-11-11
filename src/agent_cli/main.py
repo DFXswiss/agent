@@ -62,6 +62,7 @@ from .lane import (
     launch,
     record_lane_run,
     redact_diagnostic,
+    redact_lane_text,
 )
 from .local_ci import LocalCiError, parse_comment, parse_payload, render_block, verify_comment
 from .model_slots import (
@@ -2478,7 +2479,7 @@ def _interactive_runtime_preflight(
     *,
     meta: dict[str, Any] | None = None,
     provider: str | None = None,
-) -> None:
+) -> str | None:
     """Preflight a Grok-bound runtime while leaving raw terminals unchanged."""
     if meta is None:
         row = store.row("session", sid)
@@ -2494,8 +2495,9 @@ def _interactive_runtime_preflight(
             meta["tmux_session"]
         )
         if provider != "grok" or raw_terminal:
-            return
-    _interactive_preflight(store, sid, meta=meta)
+            return None
+    selected, _binding, _existing = _interactive_preflight(store, sid, meta=meta)
+    return selected.account.config_dir
 
 
 def _is_grok_runtime(meta: dict[str, Any]) -> bool:
@@ -2788,7 +2790,6 @@ def _publish_terminals(
     last_capture: dict[str, str],
 ) -> None:
     device = store.device_id()
-    runtime = _preflight_runtime(store, runtime)
     for session in store.rows("session"):
         if session.get("_origin_device_id") != device:
             continue
@@ -2797,7 +2798,10 @@ def _publish_terminals(
             continue
         sid = session["id"]
         try:
-            text = redact_secrets(runtime.capture(sid), limit=None)
+            config_dir = _interactive_runtime_preflight(store, sid, meta=meta)
+            text = redact_lane_text(
+                runtime.capture(sid), config_dir=config_dir, limit=None
+            )
         except StoreConnectionError:
             raise
         except (SystemExit, StoreError, ValueError) as exc:

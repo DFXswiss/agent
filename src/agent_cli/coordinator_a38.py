@@ -12,6 +12,7 @@ import json
 import shutil
 import sys
 import uuid
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -71,7 +72,13 @@ from .coordinator_lanes import (
     review_rules_bound,
     set_checklist,
 )
-from .github_act import ACTIVITY_MARKER
+from .github_act import (
+    ACTIVITY_MARKER,
+    A38_REPORT_BINDING_KEY,
+    a38_report_activity_lock,
+    coordinator_a38_report_activity_id,
+    is_coordinator_a38_report_activity_for_task,
+)
 from .local_ci import LocalCiError, parse_comment
 from .pr_guard_config import CONFIG_PATH as PR_GUARD_CONFIG_PATH
 from .readme_only import (
@@ -92,7 +99,6 @@ SECOND_REVIEW_KIND = "a38.second-review/v1"
 SECOND_REVIEW_NOTE_LIMIT = 1000
 GITHUB_COMMENT_LIMIT = 65_536
 A38_CONTEXT_READ_ATTEMPTS = 3
-_A38_REPORT_BINDING_KEY = "_coordinator_a38_report"
 # The executor appends "\n" plus the activity marker with a 36-character activity id.
 ACTIVITY_MARKER_LENGTH = len("\n" + ACTIVITY_MARKER.format(id="0" * 36))
 # Both prompts appear twice in the comment (record and machine block) and the findings once;
@@ -383,11 +389,11 @@ def _report_activity_id(
     task_id: str, *, head: str, base_sha: str, policy_revision: str
 ) -> str:
     """Bind a report publication intent to every revision the report covers."""
-    return str(
-        uuid5(
-            NAMESPACE_URL,
-            f"coordinator-a38-report:{task_id}:{head}:{base_sha}:{policy_revision}",
-        )
+    return coordinator_a38_report_activity_id(
+        task_id,
+        head=head,
+        base_sha=base_sha,
+        policy_revision=policy_revision,
     )
 
 
@@ -492,7 +498,7 @@ def _report_activity_payload(
         "body": body,
         "target": "pr",
         "exact_body": True,
-        _A38_REPORT_BINDING_KEY: {
+        A38_REPORT_BINDING_KEY: {
             "task_id": str(task["id"]),
             "head": head,
             "base_sha": base_sha,
@@ -525,6 +531,69 @@ def _retire_pending_report_activity(
     store.write("activity", "update", activity_id, updated)
 
 
+def _task_pending_report_activity_ids(
+    store: Store, task: dict[str, Any]
+) -> list[str]:
+    """Owned pending exact-body A38 report rows for this task's pull request."""
+    c = coord(task)
+    repo = target_repo(task)
+    number = as_int(c.get("pr_number") or task.get("ref"))
+    matches: list[str] = []
+    for row in store.rows("activity"):
+        payload = row.get("payload")
+        if (
+            row.get("_origin_device_id") == store.device_id()
+            and row.get("session_id") == task.get("session_id")
+            and row.get("type") == "comment.post"
+            and row.get("execution_status") == "pending"
+            and isinstance(payload, dict)
+            and payload.get("repo") == repo
+            and as_int(payload.get("number")) == number
+            and payload.get("target") == "pr"
+            and payload.get("exact_body") is True
+            and is_coordinator_a38_report_activity_for_task(row, task)
+        ):
+            matches.append(str(row["id"]))
+    return sorted(matches)
+
+
+def _checkpoint_report_intent(
+    store: Store,
+    task: dict[str, Any],
+    *,
+    activity_id: str,
+    session_id: str,
+    payload: dict[str, Any],
+) -> None:
+    """Atomically save one intent and retire every superseded pending report."""
+    task_lock = f"coordinator-a38-report-task:{task['id']}"
+    with store.exclusive(task_lock):
+        pending_ids = _task_pending_report_activity_ids(store, task)
+        lock_ids = sorted(set((*pending_ids, activity_id)))
+        with ExitStack() as locks:
+            for pending_id in lock_ids:
+                locks.enter_context(
+                    store.exclusive(a38_report_activity_lock(pending_id))
+                )
+            with store.conn.transaction():
+                for pending_id in _task_pending_report_activity_ids(store, task):
+                    if pending_id == activity_id:
+                        continue
+                    _retire_pending_report_activity(
+                        store,
+                        {"activity_id": pending_id},
+                        reason="A38 report activity superseded by the current report intent",
+                    )
+                save_task(store, task)
+                queue_activity(
+                    store,
+                    activity_id=activity_id,
+                    session_id=session_id,
+                    typ="comment.post",
+                    payload=payload,
+                )
+
+
 def _discard_report_intent(
     store: Store, task: dict[str, Any], *, reason: str
 ) -> None:
@@ -533,7 +602,9 @@ def _discard_report_intent(
     intent = a38.get("report_intent")
     if intent is None:
         return
-    with store.conn.transaction():
+    activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
+    lock_key = a38_report_activity_lock(str(activity_id or "missing"))
+    with store.exclusive(lock_key), store.conn.transaction():
         _retire_pending_report_activity(store, intent, reason=reason)
         a38.pop("report_intent", None)
         save_task(store, task)
@@ -1070,17 +1141,15 @@ def phase_tests(
         "private": visibility,
     }
     # The exact verified body digest and its pending publication become visible
-    # together. The generic GitHub executor must never observe the row without
-    # the matching current task intent.
-    with store.conn.transaction():
-        save_task(store, task)
-        queue_activity(
-            store,
-            activity_id=activity_id,
-            session_id=worker.session_id,
-            typ="comment.post",
-            payload=expected_payload,
-        )
+    # together. Superseded exact-body reports are retired under their executor
+    # locks in the same transaction.
+    _checkpoint_report_intent(
+        store,
+        task,
+        activity_id=activity_id,
+        session_id=worker.session_id,
+        payload=expected_payload,
+    )
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
     if row is None or row.get("execution_status") != "done":
@@ -2550,7 +2619,9 @@ def invalidate_base_evidence(
         raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
     c = coord(task)
     intent = _a38_state(c).get("report_intent")
-    with store.conn.transaction():
+    activity_id = intent.get("activity_id") if isinstance(intent, dict) else None
+    lock_key = a38_report_activity_lock(str(activity_id or "missing"))
+    with store.exclusive(lock_key), store.conn.transaction():
         _retire_pending_report_activity(
             store,
             intent,
