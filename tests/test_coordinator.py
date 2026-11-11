@@ -6,6 +6,7 @@ not call real GitHub, models, or repository test suites.
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 from pathlib import Path
@@ -10639,6 +10640,244 @@ def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
     round_one = store.row("task_round", "round-1")
     assert round_one["reviewer_verdict"] == "rejected"
     assert "hunter2" not in recovered_c["findings"]
+
+
+def test_reviewer_checkpoint_rollback_keeps_live_task_and_agent_unmodified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.lane import LaneResult
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    tid = "aa000001-0000-4000-8000-0000000000eb"
+    aid = "aa000001-0000-4000-8000-0000000000ec"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "reviewing",
+        "payload": {"coordinator": {"phase": "inner_review"}},
+    }
+    agent = {
+        "id": aid,
+        "session_id": "worker-session",
+        "task_id": tid,
+        "round": 1,
+        "role": "reviewer",
+        "vendor": "grok",
+        "status": "working",
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+        "note": None,
+    }
+    store.write("task", "insert", tid, task)
+    store.write("agent", "insert", aid, agent)
+    live_task = store.row("task", tid)
+    live_agent = store.row("agent", aid)
+    assert live_task is not None
+    assert live_agent is not None
+    before_task = copy.deepcopy(live_task)
+    before_agent = copy.deepcopy(live_agent)
+
+    def fail_save(*_args: Any, **_kwargs: Any) -> None:
+        raise StoreError("save failed")
+
+    monkeypatch.setattr(
+        coordinator_lanes,
+        "save_task",
+        fail_save,
+    )
+    with pytest.raises(StoreError, match="save failed"):
+        coordinator_lanes._checkpoint_reviewer_outcome(
+            store,
+            live_task,
+            live_agent,
+            LaneResult(
+                role="reviewer",
+                vendor="grok",
+                model="model",
+                status="complete",
+                argv=[],
+                returncode=0,
+                stdout="STATUS: complete\nRESULT: approved\n",
+                stderr="",
+            ),
+            round_num=1,
+            head="a" * 40,
+            dimension="inner",
+            stage="inner-review",
+        )
+
+    assert live_task == before_task
+    assert live_agent == before_agent
+    assert store.row("task", tid) == before_task
+    assert store.row("agent", aid) == before_agent
+
+
+@pytest.mark.parametrize(
+    ("status", "result"),
+    [("complete", "approved"), ("complete", "rejected"), ("partial", "")],
+)
+def test_inner_reviewer_replay_rollback_keeps_live_task_and_round_unmodified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    result: str,
+) -> None:
+    from agent_cli import coordinator_runtime
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000ed"
+    aid = "aa000001-0000-4000-8000-0000000000ee"
+    outcome = {
+        "role": "reviewer",
+        "vendor": "grok",
+        "model": "model",
+        "round": 1,
+        "head": "a" * 40,
+        "dimension": "inner",
+        "stage": "inner-review",
+        "agent_id": aid,
+        "status": status,
+        "result": result,
+        "returncode": 0,
+        "stdout": "diagnostic",
+        "stderr": "",
+    }
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "lane_outcome": {"role": "reviewer-results", "outcomes": [outcome]},
+            }
+        },
+    }
+    task_round = {
+        "id": "round-1",
+        "task_id": tid,
+        "round": 1,
+        "implementer_verdict": "done",
+        "reviewer_verdict": None,
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": None,
+    }
+    store.write("task", "insert", tid, task)
+    store.write("task_round", "insert", task_round["id"], task_round)
+    live_task = store.row("task", tid)
+    live_round = store.row("task_round", task_round["id"])
+    assert live_task is not None
+    assert live_round is not None
+    before_task = copy.deepcopy(live_task)
+    before_round = copy.deepcopy(live_round)
+
+    def fail_save(*_args: Any, **_kwargs: Any) -> None:
+        raise StoreError("save failed")
+
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "set_checklist",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "save_task",
+        fail_save,
+    )
+    with pytest.raises(StoreError, match="save failed"):
+        coordinator_runtime._apply_inner_reviewer_replay(
+            store,
+            worker,
+            live_task,
+            lambda _argv: Completed(0, "", ""),
+            live_round,
+            outcome,
+        )
+
+    assert live_task == before_task
+    assert live_round == before_round
+    assert store.row("task", tid) == before_task
+    assert store.row("task_round", task_round["id"]) == before_round
+    assert [
+        row
+        for row in store.rows("task_round")
+        if row.get("task_id") == tid and row.get("id") != task_round["id"]
+    ] == []
+
+
+def test_parallel_pr_review_uses_checkpointed_result_after_diagnostic_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000ef"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+    )
+    task["ref"] = "42"
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    patch_execute_github(monkeypatch)
+
+    def review(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        protocol = (
+            "STATUS: complete\nRESULT: rejected\n"
+            if "pr-reviewer-quality" in material
+            else "STATUS: complete\nRESULT: approved\n"
+        )
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(("diagnostic line\n" * 400) + protocol, encoding="utf-8")
+        return Completed(0, "", "")
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda _argv: Completed(0, "", ""),
+        review,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    saved = store.row("task", tid)
+    assert saved is not None
+    gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("stage") == "review-2"
+    ]
+    assert saved["payload"]["coordinator"]["phase"] == "implement", lines
+    assert {gate["dimension"]: gate["verdict"] for gate in gates} == {
+        "quality": "rejected",
+        "logic": "approved",
+    }
+    assert not [gate for gate in gates if gate["verdict"] == "unavailable"]
 
 
 @pytest.mark.parametrize("failure", ["decode", "oserror"])

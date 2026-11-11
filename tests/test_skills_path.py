@@ -103,6 +103,14 @@ def test_pr_review_contract_distinguishes_a38_model_slots() -> None:
     assert "A coordinator A38 task requires `models.second: null`" in contract
 
 
+def test_review_loop_contract_distinguishes_a38_model_slots() -> None:
+    contract = (packaged_skills_dir() / "review-loop" / "SKILL.md").read_text()
+
+    assert "Model slot `first` is required for review-loop" in contract
+    assert "Non-A38 tasks also require model slot `second`" in contract
+    assert "coordinator A38 tasks must set `models.second: null`" in contract
+
+
 def test_the_contract_says_what_evidence_should_look_like() -> None:
     # The evidence becomes the review body unaltered. Without this the
     # contract specified the mechanism and left the presentation unsaid, and what

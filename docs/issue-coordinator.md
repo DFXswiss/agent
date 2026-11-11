@@ -599,10 +599,13 @@ retained. The sanitized
 checkpoint is parsed by the same summary and surface validators before it is
 committed. If that cannot produce a safe valid checkpoint, the lane is not
 checkpointed as finished and the implementation step remains retryable. Gate
-transactions stage task-checkpoint mutations on a copy and adopt them only
-after commit, so a database rollback cannot leave the task pointing at
-rolled-back gates or publication intents. Authorized replies
-(`reply_logins` only), listed with
+transactions, reviewer checkpoints, and inner-review replay transactions stage
+task, agent, and task-round mutations on copies and adopt them only after
+commit, so a database rollback cannot leave live state pointing at rolled-back
+agents, verdicts, gates, or publication intents. Reviewer replay routes by the
+separately checkpointed validated result; bounded stdout and stderr remain
+diagnostic evidence and are not reparsed as the protocol record. Authorized
+replies (`reply_logins` only), listed with
 `gh api --paginate --slurp`, resume the exact `resume_phase` after the pinned
 `question_activity_id` checkpoint only when `reply_checkpoint_eligible` holds
 (not blindly `implement` for CI authorization / incomplete review / checkout
