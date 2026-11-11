@@ -428,6 +428,29 @@ def test_redact_replaces_unterminated_string_control_before_tokenization(
     assert redact_shared(raw) == "before [redacted]"
 
 
+def test_issue_coordinator_documents_terminal_redaction_order() -> None:
+    documented = (
+        Path(__file__).parents[1] / "docs" / "issue-coordinator.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "first replaces every complete or unterminated OSC, DCS, PM, APC, or SOS span\n"
+        "with `[redacted]` on the full raw text, before whitespace tokenization"
+        in documented
+    )
+    assert (
+        "Before granting that exemption, the secret\n"
+        "matcher checks the SGR parameter bytes joined to the visible text"
+        in documented
+    )
+    assert "a match\nredacts the entire token" in documented
+    assert (
+        "complete and unterminated string-control spans are replaced with\n"
+        "`[redacted]` before tokenization"
+        in documented
+    )
+
+
 @pytest.mark.parametrize(
     "split_secret",
     [

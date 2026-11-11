@@ -3473,6 +3473,125 @@ def _patch_pr_gate_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     )
 
 
+def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-00000000006a"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={
+            "review_2_quality": "pending",
+            "review_2_logic": "pending",
+        },
+    )
+    task["ref"] = "42"
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    patch_execute_github(monkeypatch)
+    launches: list[str] = []
+
+    def review(argv: list[str], stdin: str | None = None) -> Completed:
+        material = " ".join(argv) + "\n" + (stdin or "")
+        role = (
+            "pr-reviewer-quality"
+            if "pr-reviewer-quality" in material
+            else "pr-reviewer-logic"
+        )
+        launches.append(role)
+        result = (
+            "STATUS: complete\nRESULT: rejected\npassword=hunter2 quality defect"
+            if role.endswith("quality")
+            else "STATUS: complete\nRESULT: approved\n"
+        )
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(result, encoding="utf-8")
+        return Completed(0, "", "")
+
+    real_record_gate = coordinator_lanes.record_gate
+
+    def crash_before_verdict(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("simulated crash before reviewer verdict")
+
+    monkeypatch.setattr(coordinator_lanes, "record_gate", crash_before_verdict)
+    with pytest.raises(
+        RuntimeError, match="simulated crash before reviewer verdict"
+    ):
+        coordinator_lanes.phase_pr_gates(
+            store,
+            worker,
+            task,
+            lambda argv: Completed(0, "", ""),
+            review,
+            vendor="codex",
+            stage="review-2",
+        )
+
+    saved = store.row("task", tid)
+    checkpoint = saved["payload"]["coordinator"]["lane_outcome"]
+    assert checkpoint["role"] == "reviewer-results"
+    assert {item["dimension"] for item in checkpoint["outcomes"]} == {
+        "quality",
+        "logic",
+    }
+    assert "hunter2" not in str(checkpoint)
+    agents = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == tid
+        and str(row.get("role") or "").startswith("pr-reviewer-")
+    ]
+    assert len(agents) == 2
+    assert all(row["status"] == "done" for row in agents)
+    assert not [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("stage") == "review-2"
+    ]
+
+    monkeypatch.setattr(coordinator_lanes, "record_gate", real_record_gate)
+    lines = coordinator_lanes.phase_pr_gates(
+        store,
+        worker,
+        saved,
+        lambda argv: Completed(0, "", ""),
+        lambda *args, **kwargs: pytest.fail("recovery relaunched PR reviewer"),
+        vendor="codex",
+        stage="review-2",
+    )
+
+    recovered = store.row("task", tid)
+    recovered_c = recovered["payload"]["coordinator"]
+    gates = [
+        gate
+        for gate in store.rows("review_gate")
+        if gate.get("task_id") == tid and gate.get("stage") == "review-2"
+    ]
+    assert len(launches) == 2
+    assert recovered_c["phase"] == "implement", lines
+    assert "lane_outcome" not in recovered_c
+    assert {gate["dimension"]: gate["verdict"] for gate in gates} == {
+        "quality": "rejected",
+        "logic": "approved",
+    }
+    assert "hunter2" not in recovered_c["findings"]
+
+
 def _codex_prelaunch_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tid: str
 ) -> tuple[Store, Any, dict[str, Any]]:
@@ -5016,11 +5135,12 @@ def test_a38_preflight_requires_null_second_and_excludes_worker_login(
 def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The pass count is checkpointed before the atomic gate/checklist write.
+    """The pass count and reviewer outcome survive gate/checklist rollback.
 
     A crash during checklist reconciliation must roll back the new quality gate
-    and its checklist close. Recovery therefore reruns only quality, while the
-    durable pass checkpoint prevents the successful retry from counting twice.
+    and its checklist close. Recovery replays the saved quality approval without
+    relaunching its reviewer, while the durable pass checkpoint prevents the
+    replay from counting twice.
     """
     from dataclasses import replace
 
@@ -5199,15 +5319,17 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         "review_1_quality": "unavailable",
         "review_1_logic": "ja",
     }
+    saved_outcome = approved["payload"]["coordinator"]["lane_outcome"]
+    assert saved_outcome["role"] == "reviewer-results"
+    assert len(saved_outcome["outcomes"]) == 1
+    saved_quality = saved_outcome["outcomes"][0]
+    assert saved_quality["dimension"] == "quality"
+    assert saved_quality["result"] == "approved"
 
-    recovery_dimensions: list[str] = []
+    recovery_invocations: list[list[str]] = []
 
     def recovery_lane(argv: list[str], stdin: str | None = None) -> Completed:
-        invocation = " ".join(str(part) for part in argv) + "\n" + (stdin or "")
-        if "pr-reviewer-quality" in invocation or "Quality:" in invocation:
-            recovery_dimensions.append("quality")
-        elif "pr-reviewer-logic" in invocation or "Logic:" in invocation:
-            recovery_dimensions.append("logic")
+        recovery_invocations.append(argv)
         return Completed(0, "STATUS: complete\nRESULT: approved\n", "")
 
     recovery_lines = phase_pr_gates(
@@ -5219,7 +5341,11 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         vendor="grok",
         stage="review-1",
     )
-    assert recovery_dimensions == ["quality"]
+    assert recovery_invocations == []
+    assert any(
+        "review-1/quality=replaying saved outcome" in line
+        for line in recovery_lines
+    )
     assert any("review-1/quality=approved" in line for line in recovery_lines)
     approved = store.row("task", tid)
     assert approved["payload"]["coordinator"]["a38"]["first_review_passes"] == 1
@@ -5233,6 +5359,11 @@ def test_a38_first_review_pass_count_survives_crash_after_gate_rows(
         if gate.get("task_id") == tid and gate.get("verdict") == "approved"
     ]
     assert {gate.get("dimension") for gate in approved_gates} == {"quality", "logic"}
+    replayed_quality_gates = [
+        gate for gate in approved_gates if gate.get("dimension") == "quality"
+    ]
+    assert len(replayed_quality_gates) == 1
+    assert replayed_quality_gates[0]["agent_id"] == saved_quality["agent_id"]
     checklist_after_recovery = {
         key: store.row("checklist_item", f"{tid}-{key}")["status"]
         for key in ("review_1_quality", "review_1_logic")
@@ -10395,6 +10526,119 @@ def test_sequential_inner_reviewer_output_failure_is_retryable(
     ]
     assert len(runs) == 1
     assert runs[0]["payload"]["status"] == "unavailable"
+
+
+def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_lanes import launch_lane as real_launch_lane
+    from agent_cli.coordinator_runtime import phase_inner_review
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "inner-replay"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000000ea"
+    task = {
+        "id": tid,
+        "session_id": "worker-session",
+        "workflow": "implement",
+        "state": "reviewing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "inner_review",
+                "worktree": str(worktree),
+                "pr_number": 5,
+                "head_sha": "a" * 40,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        "round-1",
+        {
+            "id": "round-1",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": "done",
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *args, **kwargs: {},
+    )
+
+    launches = 0
+
+    def crash_after_checkpoint(*args: Any, **kwargs: Any):
+        nonlocal launches
+        launches += 1
+        real_launch_lane(*args, **kwargs)
+        raise RuntimeError("simulated crash after reviewer checkpoint")
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.launch_lane", crash_after_checkpoint
+    )
+    with pytest.raises(
+        RuntimeError, match="simulated crash after reviewer checkpoint"
+    ):
+        phase_inner_review(
+            store,
+            worker,
+            store.row("task", tid),
+            lambda argv: Completed(0, "", ""),
+            lambda argv, stdin=None: Completed(
+                0,
+                "STATUS: complete\nRESULT: rejected\npassword=hunter2 defect",
+                "",
+            ),
+        )
+
+    saved = store.row("task", tid)
+    checkpoint = saved["payload"]["coordinator"]["lane_outcome"]
+    assert checkpoint["role"] == "reviewer-results"
+    assert len(checkpoint["outcomes"]) == 1
+    assert checkpoint["outcomes"][0]["result"] == "rejected"
+    assert "hunter2" not in str(checkpoint)
+    agents = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == tid and row.get("role") == "reviewer"
+    ]
+    assert len(agents) == 1
+    assert agents[0]["status"] == "done"
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.launch_lane",
+        lambda *args, **kwargs: pytest.fail("recovery relaunched inner reviewer"),
+    )
+    lines = phase_inner_review(
+        store,
+        worker,
+        saved,
+        lambda argv: Completed(0, "", ""),
+        None,
+    )
+
+    recovered = store.row("task", tid)
+    recovered_c = recovered["payload"]["coordinator"]
+    assert launches == 1
+    assert recovered_c["phase"] == "implement", lines
+    assert recovered["current_round"] == 2
+    assert "lane_outcome" not in recovered_c
+    round_one = store.row("task_round", "round-1")
+    assert round_one["reviewer_verdict"] == "rejected"
+    assert "hunter2" not in recovered_c["findings"]
 
 
 @pytest.mark.parametrize("failure", ["decode", "oserror"])

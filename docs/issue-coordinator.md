@@ -382,9 +382,11 @@ for worker in workers.values():
    comparison. All completed and unavailable parallel gates, their checklist
    reconciliation, every rejection intent, the combined findings, and the task
    transition share one local transaction. For an approved A38 first review,
-   the pass count and a recovery marker are checkpointed before that
-   transaction; the marker is cleared with the atomic gate/checklist commit, so
-   recovery reruns a rolled-back lane without counting the same pass twice.
+   the pass count, a recovery marker, and each completed reviewer outcome are
+   checkpointed before that transaction. The marker and applied outcomes are
+   cleared with the atomic gate/checklist commit, so recovery replays a saved
+   outcome after a rollback without relaunching its reviewer or counting the
+   same pass twice.
    GitHub publication runs only after that commit, using the saved intent batch,
    and a restart reuses every pending intent. A transient publication error
    reopens that same
@@ -585,9 +587,15 @@ aborts the row and leaves the same round retryable. Reviewer `RESULT` must be
 `approved|rejected`; `ask` /
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
-starting another model. Parsed implementer summaries and reused/added surface
-lines are redacted structurally: summary sentence terminators and
-surface-reference backticks plus line numbers are retained. The sanitized
+starting another model. The inner reviewer and each dimension of a parallel PR
+review atomically persist a bounded, redacted, structured outcome with the
+finished agent, bound to the task, round, head, stage, and dimension. Before
+starting a reviewer, the coordinator replays a matching saved outcome; it
+removes that outcome only in the transaction that records the round verdict or
+the gates, rejection intents, and phase transition. Parsed implementer
+summaries and reused/added surface lines are redacted structurally: summary
+sentence terminators and surface-reference backticks plus line numbers are
+retained. The sanitized
 checkpoint is parsed by the same summary and surface validators before it is
 committed. If that cannot produce a safe valid checkpoint, the lane is not
 checkpointed as finished and the implementation step remains retryable. Gate
@@ -639,13 +647,20 @@ evidence human spec input; the script never invents human grants.
 ## Evidence hygiene
 
 Persisted outputs and diagnostics are redacted and bounded. The shared pipeline
-first replaces any whitespace-delimited raw token containing an ESC or C1
-sequence, including a sequence at either token boundary. It preserves the
-separating whitespace. The only exemption is a token whose sequences are
-exclusively one leading and/or one trailing `ESC [` SGR wrapper containing only
-digits and semicolons before `m`, around otherwise escape-free text. It then
-applies control-tolerant secret matching to raw text, removes terminal escapes
-and controls, redacts again, and finally applies its length bound.
+first replaces every complete or unterminated OSC, DCS, PM, APC, or SOS span
+with `[redacted]` on the full raw text, before whitespace tokenization. A
+complete span includes its seven- or eight-bit introducer and terminator; an
+unterminated span consumes the remainder of the text and is replaced rather
+than merely removed. The pipeline then replaces any whitespace-delimited raw
+token containing another ESC or C1 sequence, including a sequence at either
+token boundary, while preserving the separating whitespace. The only possible
+exemption is a token whose sequences are exclusively one leading and/or one
+trailing `ESC [` SGR wrapper containing only digits and semicolons before `m`,
+around otherwise escape-free text. Before granting that exemption, the secret
+matcher checks the SGR parameter bytes joined to the visible text; a match
+redacts the entire token. The pipeline then applies control-tolerant secret
+matching to raw text, removes terminal escapes and controls, redacts again, and
+finally applies its length bound.
 Configured paths
 are matched in both raw and resolved form despite interleaved terminal controls,
 then hidden again after sanitization and before the diagnostic length bound is
@@ -683,7 +698,8 @@ notes, terminal output, hub/GitHub errors, and evidence. Its raw matcher treats
 a CSI/ESC final byte as a possible token character, so the terminal sanitizer
 cannot assemble an unredacted token by deleting that byte.
 Seven-bit DCS, PM, APC, and SOS strings accept either the 8-bit ST byte or
-`ESC \`; an unterminated string control is removed through the end of the text.
+`ESC \`; complete and unterminated string-control spans are replaced with
+`[redacted]` before tokenization.
 Failure to read or decode the lane output file (`OSError`,
 `UnicodeDecodeError`) is not an interruption: the lane ends as an `unavailable`
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
