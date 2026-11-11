@@ -1016,6 +1016,11 @@ class GitHubApi:
         self.requests_by_family[family] = self.requests_by_family.get(family, 0) + 1
 
     def _note_pool(self, headers: Mapping[str, Any]) -> None:
+        resource_present, resource = _header_ci(headers, "x-ratelimit-resource")
+        if resource_present and not (
+            isinstance(resource, str) and resource.strip().lower() == "core"
+        ):
+            return
         sample = _pool_sample(headers)
         if self.pool_first is None:
             self.pool_first = sample
@@ -1042,11 +1047,23 @@ class GitHubApi:
         method_u = method.upper()
         parsed = urllib.parse.urlparse(url)
         query = urllib.parse.parse_qs(parsed.query)
-        immutable = method_u == "GET" and (
+        existing_immutable = method_u == "GET" and (
             ("/contents/" in parsed.path and HEAD_SHA_RE.fullmatch(query.get("ref", [""])[0]) is not None)
             or re.search(r"/git/trees/[0-9a-f]{40}$", parsed.path) is not None
             or re.search(r"/git/blobs/[0-9a-f]{40}$", parsed.path) is not None
         )
+        sha_immutable = method_u == "GET" and (
+            re.search(
+                r"^/repos/[^/]+/[^/]+/commits/[0-9a-f]{40}$", parsed.path
+            )
+            is not None
+            or re.search(
+                r"^/repos/[^/]+/[^/]+/compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$",
+                parsed.path,
+            )
+            is not None
+        )
+        immutable = existing_immutable or sha_immutable
         if immutable and url in self._immutable_cache:
             return self._immutable_cache[url]
         do_retry = retry if retry is not None else method_u == "GET"
@@ -1084,7 +1101,11 @@ class GitHubApi:
                 self._rate_limit = _rate_limit_error(status, url, headers)
                 raise self._rate_limit
             result = (status, data, headers)
-            if immutable and status in {200, 404} and len(self._immutable_cache) < 128:
+            if (
+                immutable
+                and (status == 200 or (existing_immutable and status == 404))
+                and len(self._immutable_cache) < 256
+            ):
                 self._immutable_cache[url] = result
             return result
         raise GuardError(f"GitHub API {method_u} failed: {last_exc}")
@@ -1645,6 +1666,73 @@ def _fetch_git_blob(api: GitHubApi, repo: str, sha: str) -> bytes:
     return raw
 
 
+def _prefetch_git_blobs(api: GitHubApi, repo: str, shas: set[str]) -> None:
+    if not shas or repo.count("/") != 1:
+        return
+    owner, name = repo.split("/", 1)
+    ordered = sorted(shas)
+    for offset in range(0, len(ordered), 50):
+        chunk = ordered[offset : offset + 50]
+        declarations = ["$owner: String!", "$name: String!"]
+        fields: list[str] = []
+        variables = {"owner": owner, "name": name}
+        for index, sha in enumerate(chunk):
+            variable = f"oid{index}"
+            declarations.append(f"${variable}: GitObjectID!")
+            fields.append(
+                f"b{index}: object(oid: ${variable}) {{ "
+                "... on Blob { oid text isBinary isTruncated } }"
+            )
+            variables[variable] = sha
+        query = (
+            f"query({', '.join(declarations)}) {{ "
+            "repository(owner: $owner, name: $name) { "
+            f"{' '.join(fields)}"
+            " } }"
+        )
+        try:
+            status, data, _headers = api.request(
+                "POST",
+                "/graphql",
+                body={"query": query, "variables": variables},
+                retry=False,
+            )
+        except Exception as exc:
+            _reraise_rate_limit(exc)
+            return
+        if status != 200 or not isinstance(data, Mapping):
+            return
+        root = data.get("data")
+        repository = root.get("repository") if isinstance(root, Mapping) else None
+        for index, sha in enumerate(chunk):
+            blob = repository.get(f"b{index}") if isinstance(repository, Mapping) else None
+            if not isinstance(blob, Mapping):
+                continue
+            oid = blob.get("oid")
+            text = blob.get("text")
+            if (
+                not isinstance(oid, str)
+                or oid.lower() != sha.lower()
+                or blob.get("isBinary") is not False
+                or blob.get("isTruncated") is not False
+                or not isinstance(text, str)
+            ):
+                continue
+            try:
+                raw = text.encode("utf-8")
+            except UnicodeEncodeError:
+                continue
+            if len(raw) > MAX_FILE_BYTES:
+                continue
+            digest = hashlib.sha1(
+                b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+            ).hexdigest()
+            if digest != sha.lower():
+                continue
+            if len(_blob_cache) < _BLOB_CACHE_LIMIT:
+                _blob_cache[sha] = raw
+
+
 def _workflow_file_bytes(
     api: GitHubApi,
     repo: str,
@@ -1811,6 +1899,15 @@ def check_workflows_against_policy(
     # Only an inventory successfully fetched and assessed can be advisory.
     head_map = workflow_blobs_at(api, repo, head_sha)
     base_map = workflow_blobs_at(api, repo, base_sha)
+    _prefetch_git_blobs(
+        api,
+        repo,
+        {
+            sha
+            for sha in (*head_map.values(), *base_map.values())
+            if isinstance(sha, str) and sha not in _blob_cache
+        },
+    )
 
     allowed = classified_pairs(policy)
     actual: set[tuple[str, str]] = set()
