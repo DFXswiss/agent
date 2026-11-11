@@ -265,12 +265,84 @@ def test_redact_strips_otel_ids_of_non_standard_length() -> None:
     assert "span_id=[redacted]" in cleaned
 
 
+def test_redact_strips_camel_case_otel_ids() -> None:
+    trace_id = "a" * 32
+    span_id = "b" * 16
+    parent_span_id = "c" * 16
+    cleaned = redact(f"traceId={trace_id} spanId={span_id} parentSpanId={parent_span_id}")
+    for raw_id in (trace_id, span_id, parent_span_id):
+        assert raw_id not in cleaned
+    for labelled in (
+        "traceId=[redacted]",
+        "spanId=[redacted]",
+        "parentSpanId=[redacted]",
+    ):
+        assert labelled in cleaned
+
+    json_cleaned = redact(
+        f'"traceId":"{trace_id}","spanId":"{span_id}","parentSpanId":"{parent_span_id}"'
+    )
+    for raw_id in (trace_id, span_id, parent_span_id):
+        assert raw_id not in json_cleaned
+    for labelled in (
+        '"traceId":"[redacted]"',
+        '"spanId":"[redacted]"',
+        '"parentSpanId":"[redacted]"',
+    ):
+        assert labelled in json_cleaned
+
+    snake_cleaned = redact(f"parent_span_id={parent_span_id}")
+    assert parent_span_id not in snake_cleaned
+    assert snake_cleaned == "parent_span_id=[redacted]"
+
+
+def test_redact_strips_hyphenated_otel_trace_id() -> None:
+    trace_id = "550e8400-e29b-41d4-a716-446655440000"
+    cleaned = redact(f"trace_id={trace_id}")
+    assert cleaned == "trace_id=[redacted]"
+    for segment in ("550e8400", "e29b", "41d4", "a716", "446655440000"):
+        assert segment not in cleaned
+
+
+def test_redact_keeps_non_otel_span_keys() -> None:
+    span_id = "b" * 16
+    cleaned = redact(f"myspan_id={span_id}")
+    assert cleaned == f"myspan_id={span_id}"
+    assert "myspan_id=[redacted]" not in cleaned
+
+
 def test_stack_sig_ignores_otel_ids() -> None:
     first = "TimeoutError trace_id=" + "a" * 32 + " span_id=" + "b" * 16 + " boom"
     second = "TimeoutError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
     other = "ValueError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
     assert stack_sig(first) == stack_sig(second)
     assert stack_sig(first) != stack_sig(other)
+
+
+def test_stack_sig_ignores_camel_case_and_hyphenated_otel_ids() -> None:
+    first = (
+        "TimeoutError traceId="
+        + "a" * 32
+        + " spanId="
+        + "b" * 16
+        + " parentSpanId="
+        + "c" * 16
+        + " boom"
+    )
+    second = (
+        "TimeoutError traceId="
+        + "d" * 32
+        + " spanId="
+        + "e" * 16
+        + " parentSpanId="
+        + "f" * 16
+        + " boom"
+    )
+    assert stack_sig(first) == stack_sig(second)
+
+    first_uuid = "TimeoutError trace_id=550e8400-e29b-41d4-a716-446655440000 boom"
+    second_uuid = "TimeoutError trace_id=550e8400-e29b-41d4-a716-44665544000a boom"
+    assert stack_sig(first_uuid) == stack_sig(second_uuid)
 
 
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
