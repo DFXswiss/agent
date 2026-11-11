@@ -59,6 +59,7 @@ from .coordinator_common import (
 )
 from .coordinator_config import RepositoryConfig, WorkerConfig
 from .coordinator_a38 import (
+    A38ReportCheckpointConflict,
     fresh_pr_head,
     intake_second_reviews,
     pr_state,
@@ -1019,6 +1020,21 @@ def _apply_implementer_outcome(
         tr.clear()
         tr.update(committed_tr)
 
+    def _commit_replay_blocker(blocker: str) -> dict[str, Any]:
+        """Consume a replay checkpoint only after its blocker commits."""
+        committed_task = copy.deepcopy(task)
+        committed_c = coord(committed_task)
+        committed_c["phase"] = "blocked"
+        committed_c["resume_phase"] = "implement"
+        committed_c["blocker"] = blocker
+        _mark_applied(committed_c)
+        committed_task["state"] = "open"
+        with store.conn.transaction():
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
+        return coord(task)
+
     if status != "complete":
         provider_unavailable = status == "unavailable"
         _commit_early_outcome(
@@ -1080,12 +1096,17 @@ def _apply_implementer_outcome(
             )
         except (CoordinatorError, StoreError) as exc:
             # Preserve the actual question across draft/publication failures.
-            c["pending_question"] = question
-            c["phase"] = "blocked"
-            c["resume_phase"] = "implement"
-            c["blocker"] = f"ask publish failed: {exc}"
-            task["state"] = "open"
-            save_task(store, task)
+            committed_task = copy.deepcopy(task)
+            committed_c = coord(committed_task)
+            committed_c["pending_question"] = question
+            committed_c["phase"] = "blocked"
+            committed_c["resume_phase"] = "implement"
+            committed_c["blocker"] = f"ask publish failed: {exc}"
+            committed_task["state"] = "open"
+            with store.conn.transaction():
+                save_task(store, committed_task)
+            task.clear()
+            task.update(committed_task)
             return publish_blocker(
                 store,
                 worker,
@@ -1145,12 +1166,7 @@ def _apply_implementer_outcome(
 
     if model_result == "no-change":
         if not c.get("pr_number") and not sha:
-            c["phase"] = "blocked"
-            c["resume_phase"] = "implement"
-            c["blocker"] = "no-change and no pull request"
-            _mark_applied(c)
-            task["state"] = "open"
-            save_task(store, task)
+            c = _commit_replay_blocker("no-change and no pull request")
             return publish_blocker(
                 store,
                 worker,
@@ -1171,14 +1187,9 @@ def _apply_implementer_outcome(
             )
     summaries = structured_summaries or parse_change_summaries(stdout)
     if summaries is None:
-        c.update(
-            phase="blocked",
-            resume_phase="implement",
-            blocker="completed patch lacks concrete English/German change summaries",
+        c = _commit_replay_blocker(
+            "completed patch lacks concrete English/German change summaries"
         )
-        _mark_applied(c)
-        task["state"] = "open"
-        save_task(store, task)
         return publish_blocker(
             store,
             worker,
@@ -1197,14 +1208,9 @@ def _apply_implementer_outcome(
         if _held_surface_list(task) is None:
             listed = _replayed_surface_list(replay) or parse_surface_list(stdout)
             if listed is None:
-                c.update(
-                    phase="blocked",
-                    resume_phase="implement",
-                    blocker="completed patch lacks a reused and added list with file and line",
+                c = _commit_replay_blocker(
+                    "completed patch lacks a reused and added list with file and line"
                 )
-                _mark_applied(c)
-                task["state"] = "open"
-                save_task(store, task)
                 return publish_blocker(
                     store,
                     worker,
@@ -1305,11 +1311,17 @@ def phase_implement(
             invalidate_head_evidence(c, sha)
             draft_lines = ensure_draft(store, worker, task, runner)
             if not coord(task).get("pr_number"):
-                c["phase"] = "publish_draft"
-                c["resume_phase"] = "implement"
-                pending_outcome["sha"] = sha
-                c["lane_outcome"] = pending_outcome
-                save_task(store, task)
+                committed_task = copy.deepcopy(task)
+                committed_c = coord(committed_task)
+                committed_outcome = copy.deepcopy(pending_outcome)
+                committed_c["phase"] = "publish_draft"
+                committed_c["resume_phase"] = "implement"
+                committed_outcome["sha"] = sha
+                committed_c["lane_outcome"] = committed_outcome
+                with store.conn.transaction():
+                    save_task(store, committed_task)
+                task.clear()
+                task.update(committed_task)
                 return ["implementer outcome recovery; draft pending"] + draft_lines
         else:
             draft_lines = ensure_draft(store, worker, task, runner)
@@ -1435,14 +1447,20 @@ def phase_implement(
         invalidate_head_evidence(c, sha)
         draft_lines = ensure_draft(store, worker, task, runner)
         if not coord(task).get("pr_number"):
-            c = coord(task)
+            committed_task = copy.deepcopy(task)
+            committed_c = coord(committed_task)
             # Resume implement after draft so persisted lane_outcome is applied
             # (including ask publish) rather than skipping straight to inner_review.
-            c["phase"] = "publish_draft"
-            c["resume_phase"] = "implement"
+            committed_c["phase"] = "publish_draft"
+            committed_c["resume_phase"] = "implement"
             if status == "complete" and model_result == "ask":
-                c["pending_question"] = redact(result.stdout or "Question from implementer.")
-            save_task(store, task)
+                committed_c["pending_question"] = redact(
+                    result.stdout or "Question from implementer."
+                )
+            with store.conn.transaction():
+                save_task(store, committed_task)
+            task.clear()
+            task.update(committed_task)
             return ["implementer committed; draft pending"] + draft_lines
     else:
         draft_lines = ensure_draft(store, worker, task, runner)
@@ -2087,6 +2105,17 @@ def advance_one(
             save_task(store, task)
             return [*(str(item) for item in lane_observations), *lines]
         return lines
+    except A38ReportCheckpointConflict:
+        # The report checkpoint reloaded a newer task than this tick holds.
+        # Replace the caller snapshot and retry without publishing or saving it.
+        fresh = store.row("task", str(task["id"]))
+        if fresh is not None:
+            task.clear()
+            task.update(fresh)
+        return [
+            *rejection_publication_lines,
+            "A38 report checkpoint changed concurrently; retrying",
+        ]
     except CiObservedFailureError as exc:
         # Ready-side observed actual failed CI: hand off to script phase_ci.
         # Do not reply-gate on the Ready phase, and do not let same-phase retry
