@@ -904,6 +904,8 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
     owner, name = repo.split("/", 1)
     page = 1
     runs: list[dict[str, Any]] = []
+    identities: set[int] = set()
+    total_count: int | None = None
     while page <= 20:
         try:
             raw = gh_json(
@@ -923,13 +925,38 @@ def _paginate_workflow_runs(runner: Runner, repo: str, head: str) -> list[dict[s
         batch = raw.get("workflow_runs")
         if not isinstance(batch, list):
             raise CiInventoryProtocolError("workflow inventory missing workflow_runs")
+        page_total = raw.get("total_count")
+        if (
+            isinstance(page_total, bool)
+            or not isinstance(page_total, int)
+            or page_total < 0
+        ):
+            raise CiInventoryProtocolError("workflow inventory has invalid total_count")
+        if total_count is None:
+            total_count = page_total
+        elif page_total != total_count:
+            raise CiInventoryProtocolError(
+                "workflow inventory has inconsistent total_count"
+            )
         for item in batch:
-            runs.append(_validate_workflow_run(item, head))
-        total = as_int(raw.get("total_count"))
-        if total is not None and len(runs) >= total:
+            run = _validate_workflow_run(item, head)
+            identity = run["id"]
+            if identity in identities:
+                raise CiInventoryProtocolError(
+                    f"workflow inventory has duplicate run identity {identity}"
+                )
+            identities.add(identity)
+            runs.append(run)
+        if len(identities) > total_count:
+            raise CiInventoryProtocolError(
+                "workflow inventory contains more runs than total_count"
+            )
+        if len(identities) == total_count:
             break
         if len(batch) < 100:
-            break
+            raise CiInventoryProtocolError(
+                "workflow inventory ended before total_count was reached"
+            )
         page += 1
     else:
         raise CiInventoryProtocolError("workflow inventory pagination truncated")

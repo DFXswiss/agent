@@ -151,6 +151,42 @@ def test_owner_discovery_rejects_incomplete_search_results(tmp_path, monkeypatch
     store.close()
 
 
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"total_count": 0, "items": []},
+        {"incomplete_results": "true", "total_count": 0, "items": []},
+        {"incomplete_results": 0, "total_count": 0, "items": []},
+    ],
+)
+def test_owner_discovery_requires_boolean_false_incomplete_results(
+    tmp_path, monkeypatch, page
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = [page]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert (
+        "discover owner example: owner issue search returned incomplete results"
+        in lines
+    )
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
 def test_owner_discovery_rejects_total_count_truncation(tmp_path, monkeypatch):
     store = Store(tmp_path)
     write_accounts(store.home)

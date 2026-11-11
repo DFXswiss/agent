@@ -766,8 +766,12 @@ the workflow is enabled on a deployment:
   making the unchanged head Ready, then waits for the verified human merge. If
   the human merge arrives during the A38 second-review, CI, readiness, or Ready
   wait, merge observation runs the same readiness closing on that merged head
-  before `task-done`, unless readiness already ran on exactly that head. Non-A38
-  workers retain the formal-review and leave-draft path described above.
+  before `task-done` only when the merged base equals the promoted evidence base
+  and a report or waiver plus the local gate are bound to that base, unless
+  readiness already ran on exactly that head. A pending base, a missing evidence
+  base, or a base move first observed after merge instead stops at a
+  non-recoverable `task-done` boundary and does not run readiness. Non-A38 workers
+  retain the formal-review and leave-draft path described above.
 
 This section defines the required responsibility boundary. It does not claim
 that a sandbox or other technical enforcement has been implemented.

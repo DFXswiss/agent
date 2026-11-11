@@ -92,6 +92,10 @@ itself explicitly:
 Agent does not provide its own remote lane transport or workspace mirroring.
 The local harness's lane starter starts the Agent lane command on the external
 lane host, with its workspace and provider configuration already present there.
+Every lane child, including subprocess, tmux, and injected-runner paths, clears
+the four GitHub token environment variables and receives a fresh empty temporary
+`GH_CONFIG_DIR` that exists for the lifetime of that child. It never inherits an
+ambient `gh` login from the lane host.
 Interactive tmux sessions may still use `$AGENT_HOME/runtime-targets.json` after
 the `models` and `lane_execution` checks pass. The `remote` mode, remote
 manifests, and copy-back are not supported by Agent.

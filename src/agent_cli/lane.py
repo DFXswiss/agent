@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,6 +36,12 @@ NPROC_CAP = 800
 LANE_MODEL_LIMIT = 200
 LANE_TOOL_LIMIT = 200
 LANE_USAGE_VALUE_LIMIT = 1_000_000_000_000_000
+LANE_GITHUB_TOKEN_ENV = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+)
 # Stripped from every lane and every lane pane: a lane runs on its own provider
 # login, never on the orchestrator's ambient Claude credentials, its API route
 # (gateway, Bedrock, Vertex, Foundry), Claude Code session markers, or ambient
@@ -117,6 +124,17 @@ class LaneResult:
 
 # runner(argv, stdin_text) -> object with returncode, stdout, stderr
 Runner = Callable[[list[str], str | None], object]
+
+
+@contextmanager
+def sanitized_lane_argv(argv: list[str]):
+    """Yield lane argv with no ambient GitHub login available to the child."""
+    with tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-") as profile:
+        prefix = ["env"]
+        for key in LANE_GITHUB_TOKEN_ENV:
+            prefix.extend(["-u", key])
+        prefix.append(f"GH_CONFIG_DIR={profile}")
+        yield [*prefix, *argv]
 
 
 def _env_strip_prefix() -> list[str]:
@@ -916,48 +934,57 @@ def launch(
     # Apply the selected provider home inside the tmux child too. The builders'
     # credential-clearing prefix is nested, never a process-global mutation.
     argv = [*selected.env_prefix(), *argv]
+    github_environment = sanitized_lane_argv(argv)
+    argv = github_environment.__enter__()
 
     tmux_session: str | None = None
     claude_redirect = False
-    if tmux:
-        unique = "" if dry_run else uuid.uuid4().hex[:8]
-        tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
-        if vendor == "claude":
-            # Claude's stream-json lines can exceed a tmux pane width and its
-            # history. Keep the stream in a file and use pane capture only as
-            # process diagnostics, never as the parser input.
-            if output_file is None:
-                raise SystemExit("claude tmux lane requires an output file")
-            argv = [
-                "sh",
-                "-c",
-                'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
-                "sh",
-                spec_file,
-                output_file,
-                *argv,
-            ]
-            claude_redirect = True
-        elif vendor == "openrouter":
-            # Claude Code reads the prompt from stdin only when stdin is not a
-            # TTY; in a tmux pane it is. Redirect this adapter's spec file.
-            argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
-            claude_redirect = True
-        argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
+    try:
+        if tmux:
+            unique = "" if dry_run else uuid.uuid4().hex[:8]
+            tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
+            if vendor == "claude":
+                # Claude's stream-json lines can exceed a tmux pane width and its
+                # history. Keep the stream in a file and use pane capture only as
+                # process diagnostics, never as the parser input.
+                if output_file is None:
+                    raise SystemExit("claude tmux lane requires an output file")
+                argv = [
+                    "sh",
+                    "-c",
+                    'spec=$1; out=$2; shift 2; exec "$@" < "$spec" > "$out"',
+                    "sh",
+                    spec_file,
+                    output_file,
+                    *argv,
+                ]
+                claude_redirect = True
+            elif vendor == "openrouter":
+                # Claude Code reads the prompt from stdin only when stdin is not a
+                # TTY; in a tmux pane it is. Redirect this adapter's spec file.
+                argv = ["sh", "-c", 'f=$1; shift; exec "$@" < "$f"', "sh", spec_file, *argv]
+                claude_redirect = True
+            argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
+    except BaseException:
+        github_environment.__exit__(None, None, None)
+        raise
 
     if dry_run:
-        return LaneResult(
-            role=role,
-            vendor=vendor,
-            model=selected.model,
-            status="",
-            argv=argv,
-            returncode=0,
-            stdout="",
-            stderr="",
-            tmux_session=tmux_session,
-            config_dir=selected.account.config_dir,
-        )
+        try:
+            return LaneResult(
+                role=role,
+                vendor=vendor,
+                model=selected.model,
+                status="",
+                argv=argv,
+                returncode=0,
+                stdout="",
+                stderr="",
+                tmux_session=tmux_session,
+                config_dir=selected.account.config_dir,
+            )
+        finally:
+            github_environment.__exit__(None, None, None)
 
     stdin_text: str | None = spec_text if vendor in SPEC_VIA_STDIN else None
     if claude_redirect:
@@ -1045,3 +1072,4 @@ def launch(
                 os.unlink(lane_output_file)
             except OSError:
                 pass
+        github_environment.__exit__(None, None, None)
