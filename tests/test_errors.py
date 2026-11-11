@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,199 @@ def test_redact_and_fingerprint() -> None:
     assert fp.endswith("|prod")
 
 
+def test_redact_strips_otel_ids() -> None:
+    trace_id = "a" * 32
+    span_id = "b" * 16
+    traceparent = f"00-{trace_id}-{span_id}-01"
+    cases = [
+        (
+            f"trace_id={trace_id} span_id={span_id}",
+            (trace_id, span_id),
+            ("trace_id=[redacted]", "span_id=[redacted]"),
+        ),
+        (
+            f"TRACE_ID={trace_id.upper()} SPAN_ID={span_id.upper()}",
+            (trace_id.upper(), span_id.upper()),
+            ("TRACE_ID=[redacted]", "SPAN_ID=[redacted]"),
+        ),
+        (
+            f"trace_id: {trace_id} span_id: {span_id}",
+            (trace_id, span_id),
+            ("trace_id: [redacted]", "span_id: [redacted]"),
+        ),
+        (
+            f'"trace_id":"{trace_id}","span_id":"{span_id}"',
+            (trace_id, span_id),
+            ('"trace_id":"[redacted]"', '"span_id":"[redacted]"'),
+        ),
+        (
+            f'"trace_id": "{trace_id}", "span_id": "{span_id}"',
+            (trace_id, span_id),
+            ('"trace_id": "[redacted]"', '"span_id": "[redacted]"'),
+        ),
+        (
+            f'trace_id="{trace_id}" span_id="{span_id}"',
+            (trace_id, span_id),
+            ('trace_id="[redacted]"', 'span_id="[redacted]"'),
+        ),
+        (
+            '{"log":"...{\\"trace_id\\":\\"'
+            + trace_id
+            + '\\",\\"span_id\\":\\"'
+            + span_id
+            + '\\"}..."}',
+            (trace_id, span_id),
+            ('\\"trace_id\\":\\"[redacted]\\"', '\\"span_id\\":\\"[redacted]\\"'),
+        ),
+        (
+            f"traceparent: {traceparent}",
+            (traceparent, trace_id, span_id),
+            ("traceparent: [redacted]",),
+        ),
+        (
+            f"traceparent={traceparent}",
+            (traceparent, trace_id, span_id),
+            ("traceparent=[redacted]",),
+        ),
+        (
+            f'"traceparent":"{traceparent}"',
+            (traceparent, trace_id, span_id),
+            ('"traceparent":"[redacted]"',),
+        ),
+        (
+            f'"traceparent": "{traceparent}"',
+            (traceparent, trace_id, span_id),
+            ('"traceparent": "[redacted]"',),
+        ),
+        (
+            f'traceparent="{traceparent}"',
+            (traceparent, trace_id, span_id),
+            ('traceparent="[redacted]"',),
+        ),
+        (
+            '{"log":"...{\\"traceparent\\":\\"'
+            + traceparent
+            + '\\"}..."}',
+            (traceparent, trace_id, span_id),
+            ('\\"traceparent\\":\\"[redacted]\\"',),
+        ),
+    ]
+    for shape, raw_ids, labelled in cases:
+        cleaned = redact(shape)
+        for raw_id in raw_ids:
+            assert raw_id not in cleaned
+        for fragment in labelled:
+            assert fragment in cleaned
+
+
+def test_redact_strips_otel_ids_of_non_standard_length() -> None:
+    trace_id = "c" * 10
+    span_id = "d" * 18
+    cleaned = redact(f"trace_id={trace_id} span_id={span_id}")
+    assert trace_id not in cleaned
+    assert span_id not in cleaned
+    assert "trace_id=[redacted]" in cleaned
+    assert "span_id=[redacted]" in cleaned
+
+
+def test_redact_strips_camel_case_otel_ids() -> None:
+    trace_id = "a" * 32
+    span_id = "b" * 16
+    parent_span_id = "c" * 16
+    cleaned = redact(f"traceId={trace_id} spanId={span_id} parentSpanId={parent_span_id}")
+    for raw_id in (trace_id, span_id, parent_span_id):
+        assert raw_id not in cleaned
+    for labelled in (
+        "traceId=[redacted]",
+        "spanId=[redacted]",
+        "parentSpanId=[redacted]",
+    ):
+        assert labelled in cleaned
+
+    json_cleaned = redact(
+        f'"traceId":"{trace_id}","spanId":"{span_id}","parentSpanId":"{parent_span_id}"'
+    )
+    for raw_id in (trace_id, span_id, parent_span_id):
+        assert raw_id not in json_cleaned
+    for labelled in (
+        '"traceId":"[redacted]"',
+        '"spanId":"[redacted]"',
+        '"parentSpanId":"[redacted]"',
+    ):
+        assert labelled in json_cleaned
+
+    snake_cleaned = redact(f"parent_span_id={parent_span_id}")
+    assert parent_span_id not in snake_cleaned
+    assert snake_cleaned == "parent_span_id=[redacted]"
+
+
+def test_redact_strips_hyphenated_otel_trace_id() -> None:
+    trace_id = "550e8400-e29b-41d4-a716-446655440000"
+    cleaned = redact(f"trace_id={trace_id}")
+    assert cleaned == "trace_id=[redacted]"
+    for segment in ("550e8400", "e29b", "41d4", "a716", "446655440000"):
+        assert segment not in cleaned
+
+
+def test_redact_keeps_partial_non_otel_values() -> None:
+    for raw in (
+        "trace_id=deadbeef-cafe-x",
+        "span_id=deadbeef-cafe-x",
+        "traceparent=00-aaaa-bbbb-01x",
+        "trace_id=deadbeefzz",
+    ):
+        assert redact(raw) == raw
+
+
+def test_redact_strips_hyphenated_otel_span_id() -> None:
+    span_id = "550e8400-e29b-41d4-a716-446655440000"
+    assert redact(f"span_id={span_id}") == "span_id=[redacted]"
+
+
+def test_redact_keeps_non_otel_span_keys() -> None:
+    span_id = "b" * 16
+    cleaned = redact(f"myspan_id={span_id}")
+    assert cleaned == f"myspan_id={span_id}"
+    assert "myspan_id=[redacted]" not in cleaned
+
+
+def test_stack_sig_ignores_otel_ids() -> None:
+    first = "TimeoutError trace_id=" + "a" * 32 + " span_id=" + "b" * 16 + " boom"
+    second = "TimeoutError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
+    other = "ValueError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
+    assert stack_sig(first) == stack_sig(second)
+    assert stack_sig(first) != stack_sig(other)
+
+
+def test_stack_sig_ignores_camel_case_and_hyphenated_otel_ids() -> None:
+    first = (
+        "TimeoutError traceId="
+        + "a" * 32
+        + " spanId="
+        + "b" * 16
+        + " parentSpanId="
+        + "c" * 16
+        + " boom"
+    )
+    second = (
+        "TimeoutError traceId="
+        + "d" * 32
+        + " spanId="
+        + "e" * 16
+        + " parentSpanId="
+        + "f" * 16
+        + " boom"
+    )
+    assert stack_sig(first) == stack_sig(second)
+
+    first_hyphen = "TimeoutError trace_id=aabb-ccdd-eeff-abcd-bcde-cdef boom"
+    second_hyphen = "TimeoutError trace_id=bbcc-ddee-ffaa-bcde-cdef-defa boom"
+    assert re.sub(r"\d+", "", first_hyphen) != re.sub(r"\d+", "", second_hyphen)
+    assert "trace_id=[redacted]" in redact(first_hyphen)
+    assert "trace_id=[redacted]" in redact(second_hyphen)
+    assert stack_sig(first_hyphen) == stack_sig(second_hyphen)
+
+
 def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _runner_session(store)
@@ -206,6 +400,31 @@ def test_scan_inserts_once_then_enriches(tmp_path: Path) -> None:
     assert again["payload"]["count"] == 2
     assert len([w for w in store.pending_wakes() if w["activity_id"] == created[0]]) == 1
     assert "line_fingerprint" not in payload
+
+
+def test_scan_dedups_across_different_otel_ids(tmp_path: Path) -> None:
+    store = Store(tmp_path)
+    _runner_session(store)
+    _write_config(tmp_path)
+    first = "TimeoutError trace_id=" + "a" * 32 + " span_id=" + "b" * 16 + " boom"
+    second = "TimeoutError trace_id=" + "c" * 32 + " span_id=" + "d" * 16 + " boom"
+
+    def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
+        return (
+            [
+                {"ts": "2026-08-23T16:00:00Z", "line": first},
+                {"ts": "2026-08-23T16:00:01Z", "line": second},
+            ],
+            None,
+        )
+
+    created, enriched = scan_errors(store, fetch)
+    assert len(created) == 1
+    assert enriched == created
+    seen = [row for row in store.rows("activity") if row["type"] == "error.seen"]
+    assert len(seen) == 1
+    assert seen[0]["payload"]["count"] == 2
+    assert len({row["payload"]["fingerprint"] for row in seen}) == 1
 
 
 def test_line_fingerprint_is_sha256_of_server_container_line() -> None:
