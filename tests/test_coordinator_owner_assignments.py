@@ -43,6 +43,7 @@ class OwnerDiscoveryGh(FakeGh):
     def __init__(self) -> None:
         super().__init__()
         self.search_queries: list[str] = []
+        self.search_pages: list[dict] | None = None
 
     def __call__(self, argv: list[str]) -> Completed:
         joined = " ".join(argv)
@@ -56,6 +57,8 @@ class OwnerDiscoveryGh(FakeGh):
             self.search_queries.append(joined)
             qualifier = "org" if self.owner_type == "Organization" else "user"
             assert f"+{qualifier}:example&per_page=100" in joined
+            if self.search_pages is not None:
+                return Completed(0, json.dumps(self.search_pages), "")
             items = [
                 {**self.issues[0], "repository_url": "https://api.github.com/repos/example/project"},
                 {
@@ -163,6 +166,107 @@ def test_owner_discovery_rejects_total_count_truncation(tmp_path, monkeypatch):
     sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
     assert any(source["repo"].casefold() == "example/project" for source in sources)
     assert not any(source["repo"] == "Example/owned" for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_duplicate_identity_hiding_missing_issue(
+    tmp_path, monkeypatch
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    items = [
+        {
+            "number": number,
+            "state": "open",
+            "repository_url": f"https://api.github.com/repos/Example/project-{number}",
+        }
+        for number in range(1, 101)
+    ]
+    items.append(dict(items[0]))
+    fake.search_pages = [
+        {"incomplete_results": False, "total_count": 101, "items": items}
+    ]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert any(
+        line.startswith(
+            "discover owner example: owner issue search returned incomplete results "
+            "(duplicate issue identity example/project-1#1)"
+        )
+        for line in lines
+    )
+    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        [],
+        [
+            {
+                "incomplete_results": False,
+                "total_count": 1,
+                "items": [{"number": 1, "state": "open"}],
+            }
+        ],
+        [
+            {
+                "incomplete_results": False,
+                "total_count": 1,
+                "items": [
+                    {
+                        "number": 1,
+                        "state": "open",
+                        "repository_url": "https://api.github.com/repos/Example/one",
+                    },
+                    {
+                        "number": 2,
+                        "state": "open",
+                        "repository_url": "https://api.github.com/repos/Example/two",
+                    },
+                ],
+            }
+        ],
+    ],
+)
+def test_owner_discovery_rejects_invalid_page_sets_and_issue_identities(
+    tmp_path, monkeypatch, pages
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = pages
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert any(
+        line.startswith(
+            "discover owner example: owner issue search returned incomplete results"
+        )
+        for line in lines
+    )
+    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    assert any(source["repo"].casefold() == "example/project" for source in sources)
+    assert not any(source.get("owner_scoped") is True for source in sources)
     store.close()
 
 

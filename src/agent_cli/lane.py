@@ -398,9 +398,7 @@ def _plain_inside_worktree_target(value: str, root: Path) -> str | None:
     return remainder
 
 
-def _tool_target(
-    target: object, cwd: str, kind: str = "path", *, tool: str = ""
-) -> str:
+def _tool_target(target: object, cwd: str, kind: str = "path") -> str:
     """Keep worktree paths useful while retaining redaction outside it."""
     from .coordinator_common import redact
 
@@ -590,7 +588,7 @@ def _finalize_lane_output(
                 tool_name = str(name) if name is not None else ""
                 row = {
                     "tool": tool_name,
-                    "target": _tool_target(target, cwd, target_kind, tool=tool_name),
+                    "target": _tool_target(target, cwd, target_kind),
                     "error": False,
                 }
                 use_id = block.get("id")

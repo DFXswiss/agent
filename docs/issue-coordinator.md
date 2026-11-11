@@ -46,15 +46,16 @@ and each bounded A38 command; there is no separate A38 timeout setting.
 `repository_owners` is a distinct, case-insensitive list of valid 1–39 character
 GitHub organization or user logins (no leading, trailing, or consecutive
 hyphens). Each owner gets its own owner-qualified, paginated GitHub issue search
-per tick. `incomplete_results`, a missing result count, or a `total_count` larger
-than the fetched item count fails that owner's discovery loudly instead of
-silently accepting a capped result set. An explicit `repositories` entry wins
-for the same repository. At acceptance, an owner-scoped task pins the repository's
-current default branch and its publication route: direct push when the worker
-has push permission, otherwise `<worker-login>/<repository-name>`. A missing
-fork is requested once per persisted request (a crash before the request is
-recorded repeats it). If it is not yet visible, acceptance stays in the same
-phase and the worker's `poll_seconds` loop retries; after 300 seconds the
+per tick. An empty page set, `incomplete_results`, a missing result count, a
+malformed or duplicate issue identity, or a `total_count` that differs from the
+unique fetched issue count fails that owner's discovery loudly instead of
+silently accepting an incomplete result set. An explicit `repositories` entry
+wins for the same repository. At acceptance, an owner-scoped task pins the
+repository's current default branch and its publication route: direct push when
+the worker has push permission, otherwise `<worker-login>/<repository-name>`.
+A missing fork is requested once per persisted request (a crash before the
+request is recorded repeats it). If it is not yet visible, acceptance stays in
+the same phase and the worker's `poll_seconds` loop retries; after 300 seconds the
 coordinator publishes a blocker. An existing fork with another parent is
 refused. Outside A38 mode,
 `owner_check_argv` is required and nonempty for owner-scoped repositories; A38
