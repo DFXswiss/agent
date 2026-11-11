@@ -7,9 +7,11 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from .coordinator_common import redact
+from .github_accounts import AccountError, load_accounts
 from .runtime import Completed
 from .store import Store
-from .github_accounts import AccountError, load_accounts
+from .text_sanitize import redact_terminal_interleaved_secret
 
 Runner = Callable[[list[str]], Completed]
 
@@ -40,6 +42,28 @@ def _strip(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
+def _safe_execution_error(store: Store, row: dict[str, Any], error: object) -> str:
+    """Redact raw executor detail, including selected account paths, then bound it."""
+    safe = str(error)
+    try:
+        account = load_accounts(store.home).for_session(
+            str(row.get("session_id") or "")
+        )
+    except AccountError:
+        account = None
+    if account is not None:
+        configured_paths = [(account.gh_config_dir, "<gh_config_dir>")]
+        if account.git_identity is not None:
+            configured_paths.append(
+                (account.git_identity["signing_key"], "<signing_key>")
+            )
+        for path, replacement in configured_paths:
+            safe = redact_terminal_interleaved_secret(
+                safe, path, replacement=replacement
+            )
+    return redact(safe, limit=500)
+
+
 def _mark(
     store: Store,
     row: dict[str, Any],
@@ -53,7 +77,7 @@ def _mark(
     if error is None:
         updated.pop("execution_error", None)
     else:
-        updated["execution_error"] = str(error)[:500]
+        updated["execution_error"] = _safe_execution_error(store, row, error)
     if result is not None:
         updated["result"] = result
     store.write("activity", "update", updated["id"], updated)

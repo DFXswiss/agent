@@ -571,14 +571,19 @@ aborts the row and leaves the same round retryable. Reviewer `RESULT` must be
 `approved|rejected`; `ask` /
 `blocked` are not code rejections. Completed lane outcomes are persisted before
 signing/publishing so crash recovery applies the recorded result instead of
-starting another model. Authorized replies (`reply_logins` only), listed with
+starting another model. Gate transactions stage task-checkpoint mutations on a
+copy and adopt them only after commit, so a database rollback cannot leave the
+task pointing at rolled-back gates or publication intents. Authorized replies
+(`reply_logins` only), listed with
 `gh api --paginate --slurp`, resume the exact `resume_phase` after the pinned
 `question_activity_id` checkpoint only when `reply_checkpoint_eligible` holds
 (not blindly `implement` for CI authorization / incomplete review / checkout
 blockers, and not at all for terminal failed / done / uncertain /
 closed-unmerged / non-human-merge outcomes). Uncertain prior agents refuse a
 second model start even when a human replies. Inner and PR reviewers receive a
-script-generated base→head diff artifact outside the worktree.
+script-generated merge-base diff artifact (`base...head`) outside the worktree,
+so commits added only to the base branch are not presented as pull-request
+deletions.
 
 ## Model output protocol
 
@@ -631,7 +636,10 @@ an escape- and control-tolerant matcher and then use that same generic pipeline;
 exact bearer removal is repeated after sanitization.
 Profile credentials, config directory paths, signing-key paths, and raw auth
 errors must not appear
-in replicated rows or GitHub text. User-facing blockers and questions are
+in replicated rows or GitHub text. GitHub activity failures replace the exact
+configured profile and signing-key paths in raw text before terminal
+sanitization, the second redaction pass, and the replicated-row length bound.
+User-facing blockers and questions are
 published on the source issue only when `execution_status=done` is verified;
 otherwise they remain locally visible (`CoordinatorError` / `StoreError`
 subclass `SystemExit` and must not be mistaken for success). Preflight
@@ -803,6 +811,9 @@ payloads before treating either outside effect as complete. Legacy saved
 first-comment intents that contain only `head` and `activity_id` are upgraded
 from the exact owned activity payload; when that activity does not exist yet,
 the coordinator renders and checkpoints `body` and `passes` before publication.
+Every saved first-comment body is parsed and checked against the declaration,
+visible record, and machine block before checkpointing, publication, or result
+reconciliation; its declared head and pass count must equal the checkpoint.
 
 The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 `a38_first_comment` → `await_second_review` → `ci` → `readiness` →
@@ -817,6 +828,15 @@ new comment. A moved live value first updates
 the recorded local gate promotes it to `coordinator.a38.base_sha`, while the
 checkout's `coordinator.base_sha` remains unchanged; A38 policy, readiness,
 report validation, and review diffs use the live evidence value. The script
+reconciles an existing pending SHA on every stable open-PR context read. A
+missing or non-40-hex pull-request base revision during `tests` is a transient
+read: the phase returns `PR state temporarily unavailable; retrying` without
+changing the saved task phase, base evidence, or pending base. Other invalid
+metadata remains a hard error. A merged or closed pull request moves to merge
+verification before pending-base reconciliation.
+If the branch returns to an earlier trusted SHA before remeasurement, the stale
+pending SHA is replaced and evidence for the currently observed SHA is
+reconstructed before promotion. The script
 fetches the configured base ref and verifies that this exact observed base
 commit exists locally before either running the suite or taking an inventory
 waiver. Independently confirmed markdown-only and guard-docs inventories

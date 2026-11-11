@@ -4109,6 +4109,97 @@ def test_rejection_comment_retries_across_phase_transition_and_closed_pr(
     assert not any(row.get("type") == "comment.post" for row in store.rows("activity"))
 
 
+def test_advance_one_does_not_save_task_mutations_from_rolled_back_rejections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes, coordinator_runtime
+    from agent_cli.coordinator_runtime import advance_one
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000000f8"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+    )
+    task["payload"]["coordinator"]["pr_number"] = 42
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    for dimension, suffix in (("quality", "a1"), ("logic", "a2")):
+        gate_id = f"aa000001-0000-4000-8000-0000000000{suffix}"
+        store.write(
+            "review_gate",
+            "insert",
+            gate_id,
+            {
+                "id": gate_id,
+                "task_id": tid,
+                "stage": "review-2",
+                "dimension": dimension,
+                "vendor": "codex",
+                "verdict": "rejected",
+                "evidence": f"{dimension} defect",
+                "head_sha": _POSTED_HEAD,
+                "agent_id": f"aa000001-0000-4000-8000-0000000000{suffix}",
+                "recorded_at": (
+                    f"2026-01-01T00:00:0"
+                    f"{1 if dimension == 'quality' else 2}Z"
+                ),
+            },
+        )
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    real_queue = coordinator_lanes.queue_comment_review
+    queued = 0
+
+    def fail_after_first_mutation(*args, **kwargs):  # noqa: ANN002, ANN003
+        nonlocal queued
+        queued += 1
+        if queued == 2:
+            raise CoordinatorError(
+                "deterministic activity id is occupied by a foreign row"
+            )
+        return real_queue(*args, **kwargs)
+
+    monkeypatch.setattr(
+        coordinator_lanes, "queue_comment_review", fail_after_first_mutation
+    )
+    monkeypatch.setattr(coordinator_runtime, "refresh_execution_binding", lambda *a: None)
+    monkeypatch.setattr(coordinator_runtime, "_verify_source_assigned", lambda *a: None)
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "publish_blocker",
+        lambda *args, **kwargs: ["phase blocker recorded"],
+    )
+
+    lines = advance_one(
+        store,
+        worker,
+        runner=lambda argv: Completed(0, "", ""),
+        lane_runner=None,
+    )
+
+    assert lines == ["phase blocker recorded"]
+    saved = store.row("task", tid)["payload"]["coordinator"]
+    assert saved["phase"] == "blocked"
+    assert saved["resume_phase"] == "pr_gates_codex"
+    assert "rejection_review_activity_ids" not in saved
+    assert "handled_rejected_gate_ids" not in saved
+    assert "findings" not in saved
+    assert not [
+        row for row in store.rows("activity") if row.get("type") == "review.post"
+    ]
+
+
 def test_cached_codex_dimension_replaces_n_a_while_the_other_lane_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7463,6 +7554,47 @@ def test_a38_reconciliation_upgrades_legacy_first_comment_from_owned_activity(
     assert upgraded["passes"] == 1
 
 
+@pytest.mark.parametrize("mutation", ["wrong-head", "wrong-passes", "bad-visible"])
+def test_a38_completed_first_comment_reconciliation_validates_saved_full_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    from agent_cli.coordinator_a38 import (
+        phase_first_comment,
+        reconcile_a38_publication_intents,
+    )
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    phase_first_comment(store, worker, store.row("task", task_id), fake)
+    task = store.row("task", task_id)
+    first = task["payload"]["coordinator"]["a38"]["first_comment"]
+    row = store.row("activity", first["activity_id"])
+    changed = {key: value for key, value in row.items() if not key.startswith("_")}
+    if mutation == "wrong-head":
+        first["body"] = first["body"].replace(fake.head, "e" * 40)
+        changed["payload"] = dict(changed["payload"], body=first["body"])
+    elif mutation == "wrong-passes":
+        first["passes"] = 2
+    else:
+        first["body"] = first["body"].replace("EN:\n", "", 1)
+        changed["payload"] = dict(changed["payload"], body=first["body"])
+    store.write("activity", "update", changed["id"], changed)
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    with pytest.raises(
+        CoordinatorError, match="saved A38 first comment payload is invalid"
+    ):
+        reconcile_a38_publication_intents(
+            store, worker, store.row("task", task_id), fake
+        )
+
+
 def test_a38_first_comment_partial_ping_crash_adds_only_the_missing_ping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -8380,13 +8512,16 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
                 "",
                 "" if moved_base in fetched_bases else "unknown revision",
             )
-        if parts and parts[0] == "diff" and parts[-1] == f"{moved_base}..{fake.head}":
+        if parts and parts[0] == "diff" and parts[-1] == f"{moved_base}...{fake.head}":
             original_git(argv)
             return Completed(
                 0 if moved_base in fetched_bases else 128,
-                "",
+                "diff --git a/pr-only.py b/pr-only.py\n+PR-only change\n",
                 "" if moved_base in fetched_bases else "unknown revision",
             )
+        if parts and parts[0] == "diff" and parts[-1] == f"{moved_base}..{fake.head}":
+            original_git(argv)
+            return Completed(0, "Base-only commit shown as a deletion\n", "")
         return original_git(argv)
 
     fake._git = require_fetched_base  # type: ignore[method-assign]
@@ -8436,7 +8571,11 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
         head=fake.head,
         base_sha=moved_base,
     )
-    write_review_diff(store, worker, store.row("task", task_id), fake, head=fake.head)
+    diff_path = write_review_diff(
+        store, worker, store.row("task", task_id), fake, head=fake.head
+    )
+    assert "PR-only change" in diff_path.read_text(encoding="utf-8")
+    assert "Base-only commit" not in diff_path.read_text(encoding="utf-8")
     assert moved_base in fetched_bases
     assert [
         "git",
@@ -8447,7 +8586,7 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
         f"{moved_base}^{{commit}}",
     ] in fake.git_commands
     assert any(
-        command[-2:] == ["diff", f"{moved_base}..{fake.head}"]
+        command[-2:] == ["diff", f"{moved_base}...{fake.head}"]
         for command in fake.git_commands
     )
 
@@ -8512,6 +8651,65 @@ def test_a38_base_move_remeasures_then_allows_merge_completion(
         store, worker, store.row("task", task_id), fake
     ) == ["human merge verified example/project#42; task done"]
     assert store.row("task", task_id)["state"] == "done"
+
+
+def test_a38_pending_base_reconciles_when_live_base_returns_before_remeasurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_await_ready, phase_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    original_base = checkpoint["a38"]["base_sha"]
+    checkpoint["phase"] = "await_ready"
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    moved_base = "c" * 40
+    fake.pr["baseRefOid"] = moved_base
+    assert phase_await_ready(
+        store, worker, store.row("task", task_id), fake
+    ) == [
+        "PR base changed while awaiting guard Ready; invalidating A38 report evidence"
+    ]
+    assert store.row("task", task_id)["payload"]["coordinator"]["a38"][
+        "pending_base_sha"
+    ] == moved_base
+
+    saved_before_retry = store.row("task", task_id)
+    for unreadable_base in (None, "not-a-sha"):
+        if unreadable_base is None:
+            fake.pr.pop("baseRefOid", None)
+        else:
+            fake.pr["baseRefOid"] = unreadable_base
+        assert phase_tests(
+            store, worker, store.row("task", task_id), fake
+        ) == ["PR state temporarily unavailable; retrying"]
+        # A transient base read must not alter any persisted task checkpoint field.
+        assert store.row("task", task_id) == saved_before_retry
+
+    fake.pr["baseRefOid"] = original_base
+    fake.remotes["origin"] = "https://github.com/example/project.git"
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *args, **kwargs: (original_base, ["README.md"]),
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *args: [])
+
+    lines = phase_tests(store, worker, store.row("task", task_id), fake)
+
+    saved = store.row("task", task_id)["payload"]["coordinator"]["a38"]
+    assert lines == [
+        f"A38 report waived on {fake.head[:7]} (markdown-only change set)"
+    ]
+    assert saved["base_sha"] == original_base
+    assert saved["report_waiver"]["base_sha"] == original_base
+    assert "pending_base_sha" not in saved
 
 
 @pytest.mark.parametrize(("pr_state", "verb"), [("MERGED", "merged"), ("CLOSED", "closed")])

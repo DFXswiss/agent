@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import copy
 import json
 import os
 import tempfile
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -813,7 +814,7 @@ def write_review_diff(
     *,
     head: str,
 ) -> Path:
-    """Script-generated base..head diff outside the model worktree."""
+    """Script-generated merge-base diff outside the model worktree."""
     from .coordinator_git import git
 
     c = coord(task)
@@ -824,7 +825,7 @@ def write_review_diff(
     ctrl = control_dir(worker, task["id"])
     ctrl.mkdir(parents=True, exist_ok=True)
     diff_path = ctrl / f"review-diff-{head[:12]}.patch"
-    completed = git(store, worker, runner, worktree, "diff", f"{base_sha}..{head}")
+    completed = git(store, worker, runner, worktree, "diff", f"{base_sha}...{head}")
     if completed.returncode != 0:
         raise CoordinatorError(redact(completed.stderr or completed.stdout or "git diff failed"))
     diff_text = completed.stdout or ""
@@ -1186,7 +1187,7 @@ def _pr_review_scope(dimension: str) -> str:
     if dimension == "quality":
         return (
             f"{COMPLIANCE_PROMPT} "
-            "Quality: judge this exact base→head diff against CONTRIBUTING.md, "
+            "Quality: judge this exact merge-base→head diff against CONTRIBUTING.md, "
             "REVIEW.md, and the attached skills, read at the base revision. "
             "Also judge it against the linked issue. "
             "A missing issue is not a defect. "
@@ -1195,7 +1196,7 @@ def _pr_review_scope(dimension: str) -> str:
         )
     return (
         f"{COMPLIANCE_PROMPT} "
-        "Logic: judge whether this exact base→head diff is sound and "
+        "Logic: judge whether this exact merge-base→head diff is sound and "
         "complete for the linked issue, and whether it adds a second "
         "mechanism for a job those files say to reuse. "
         "A missing issue is not a defect. "
@@ -1390,6 +1391,7 @@ def phase_pr_gates(
             for gate in persisted_rejections
         ]
         activity_ids: list[str] = []
+        committed_task = copy.deepcopy(task)
         with store.conn.transaction():
             for gate, evidence in zip(
                 persisted_rejections, recovered_evidence, strict=True
@@ -1397,7 +1399,7 @@ def phase_pr_gates(
                 activity_id = queue_comment_review(
                     store,
                     worker,
-                    task,
+                    committed_task,
                     gate_id=str(gate["id"]),
                     body=(
                         f"**{vendor} {gate.get('dimension')} — rejected** "
@@ -1405,14 +1407,17 @@ def phase_pr_gates(
                     ),
                 )
                 activity_ids.append(activity_id)
-                _remember_rejection_review(task, activity_id)
+                _remember_rejection_review(committed_task, activity_id)
             _apply_rejected_gate_transition(
-                task,
+                committed_task,
                 head=head,
                 evidence=recovered_evidence,
                 gate_ids=[str(gate["id"]) for gate in persisted_rejections],
             )
-            save_task(store, task)
+            save_task(store, committed_task)
+        task.clear()
+        task.update(committed_task)
+        c = coord(task)
         if activity_ids:
             execute_github(store, runner, activity_ids=tuple(activity_ids))
             _checkpoint_rejection_reviews(store, worker, task)
@@ -1681,6 +1686,8 @@ def phase_pr_gates(
     # A crash in GitHub publication must leave every parallel verdict, every
     # rejection intent, the combined findings, and the implementation route
     # available to the next coordinator tick.
+    committed_task = copy.deepcopy(task)
+    committed_c = coord(committed_task)
     with store.conn.transaction():
         rejection_index = 0
         for prep, _outcome, status, model_result in parsed_outcomes:
@@ -1692,7 +1699,7 @@ def phase_pr_gates(
                 rejection_index += 1
             gate_id = record_gate(
                 store,
-                task,
+                committed_task,
                 stage=stage,
                 dimension=dimension,
                 vendor=vendor,
@@ -1704,7 +1711,11 @@ def phase_pr_gates(
             if approved:
                 if not rejection_evidence:
                     blocker = _reconcile_approved_gate_checklist(
-                        store, task, stage=stage, head=head, dimension=dimension
+                        store,
+                        committed_task,
+                        stage=stage,
+                        head=head,
+                        dimension=dimension,
                     )
                     if blocker is not None:
                         reconciliation_blockers[blocker[0]] = blocker[1]
@@ -1713,7 +1724,7 @@ def phase_pr_gates(
             activity_id = queue_comment_review(
                 store,
                 worker,
-                task,
+                committed_task,
                 gate_id=gate_id,
                 body=(
                     f"**{vendor} {dimension} — rejected** at `{head[:7]}`\n\n"
@@ -1722,7 +1733,7 @@ def phase_pr_gates(
             )
             rejection_activity_ids.append(activity_id)
             rejection_gate_ids.append(gate_id)
-            _remember_rejection_review(task, activity_id)
+            _remember_rejection_review(committed_task, activity_id)
             lines.append(f"{stage}/{dimension} rejected on {head[:7]}")
 
         # Persist incomplete dimensions only after every complete result. This
@@ -1731,7 +1742,7 @@ def phase_pr_gates(
             dimension = str(prep["dimension"])
             record_gate(
                 store,
-                task,
+                committed_task,
                 stage=stage,
                 dimension=dimension,
                 vendor=vendor,
@@ -1743,7 +1754,7 @@ def phase_pr_gates(
             key = checklist_key_for_stage(stage, dimension)
             denial = _try_set_checklist(
                 store,
-                task,
+                committed_task,
                 key=key,
                 status="unavailable",
                 evidence=evidence,
@@ -1753,21 +1764,21 @@ def phase_pr_gates(
 
         if rejection_evidence:
             _apply_rejected_gate_transition(
-                task,
+                committed_task,
                 head=head,
                 evidence=rejection_evidence,
                 gate_ids=rejection_gate_ids,
             )
-            save_task(store, task)
+            save_task(store, committed_task)
         elif incomplete_outcomes:
             from .coordinator_github import queue_issue_comment
 
-            c["phase"] = "blocked"
-            c["resume_phase"] = incomplete_resume
-            c["blocker"] = incomplete_blocker
-            c["blocker_publish_once"] = True
-            c["blocker_publish_kind"] = "provider-incomplete"
-            source = c["source"]
+            committed_c["phase"] = "blocked"
+            committed_c["resume_phase"] = incomplete_resume
+            committed_c["blocker"] = incomplete_blocker
+            committed_c["blocker_publish_once"] = True
+            committed_c["blocker_publish_kind"] = "provider-incomplete"
+            source = committed_c["source"]
             qid = queue_issue_comment(
                 store,
                 worker,
@@ -1776,25 +1787,29 @@ def phase_pr_gates(
                 body=f"Blocked: {incomplete_blocker}",
                 kind="provider-incomplete",
             )
-            prior = c.get("question_activity_id")
-            c["question_activity_id"] = qid
+            prior = committed_c.get("question_activity_id")
+            committed_c["question_activity_id"] = qid
             if prior != qid:
-                c["replies_consumed_through"] = None
-            save_task(store, task)
+                committed_c["replies_consumed_through"] = None
+            save_task(store, committed_task)
         elif (
             worker.a38
             and not second_stage
             and not incomplete_outcomes
-            and isinstance(c.get("a38"), dict)
+            and isinstance(committed_c.get("a38"), dict)
         ):
-            pending_pass = c["a38"].get("first_review_pass_pending")
+            pending_pass = committed_c["a38"].get("first_review_pass_pending")
             if (
                 isinstance(pending_pass, dict)
                 and pending_pass.get("head") == head
                 and pending_pass.get("stage") == stage
             ):
-                c["a38"].pop("first_review_pass_pending", None)
-                save_task(store, task)
+                committed_c["a38"].pop("first_review_pass_pending", None)
+                save_task(store, committed_task)
+
+    task.clear()
+    task.update(committed_task)
+    c = coord(task)
 
     if rejection_activity_ids:
         execute_github(
