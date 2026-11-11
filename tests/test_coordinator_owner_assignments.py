@@ -114,7 +114,9 @@ def test_owner_discovery_filters_results_and_explicit_repository_wins(
     assert len(fake.search_queries) == 1
     assert sum("example/project#7" in line for line in lines) == 1
     assert sum("Example/owned#8" in line for line in lines) == 1
-    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
     explicit = next(source for source in sources if source["repo"].casefold() == "example/project")
     owned = next(source for source in sources if source["repo"] == "Example/owned")
     assert "owner_scoped" not in explicit
@@ -141,7 +143,9 @@ def test_owner_discovery_rejects_incomplete_search_results(tmp_path, monkeypatch
     lines = discover_assignments(store, worker, fake)
 
     assert "discover owner example: owner issue search returned incomplete results" in lines
-    sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
     assert any(source["repo"].casefold() == "example/project" for source in sources)
     assert not any(source["repo"] == "Example/owned" for source in sources)
     store.close()
@@ -166,6 +170,84 @@ def test_owner_discovery_rejects_total_count_truncation(tmp_path, monkeypatch):
     sources = [row["payload"]["coordinator"]["source"] for row in store.rows("task")]
     assert any(source["repo"].casefold() == "example/project" for source in sources)
     assert not any(source["repo"] == "Example/owned" for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_total_count_changes_between_pages(
+    tmp_path, monkeypatch
+):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = [
+        {
+            "incomplete_results": False,
+            "total_count": 1,
+            "items": [
+                {
+                    **fake.issues[0],
+                    "repository_url": "https://api.github.com/repos/example/project",
+                }
+            ],
+        },
+        {
+            "incomplete_results": False,
+            "total_count": 2,
+            "items": [
+                {
+                    "number": 8,
+                    "state": "open",
+                    "repository_url": "https://api.github.com/repos/Example/owned",
+                }
+            ],
+        },
+    ]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert (
+        "discover owner example: owner issue search returned inconsistent "
+        "total_count across pages"
+    ) in lines
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert not any(source.get("owner_scoped") is True for source in sources)
+    store.close()
+
+
+def test_owner_discovery_rejects_negative_page_total_count(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        repository_owners=("example",),
+        owner_readiness_argv=("/operator/owner-readiness",),
+    )
+    fake = OwnerDiscoveryGh()
+    fake.search_pages = [
+        {"incomplete_results": False, "total_count": -1, "items": []}
+    ]
+    patch_account_runners(monkeypatch, fake)
+
+    lines = discover_assignments(store, worker, fake)
+
+    assert (
+        "discover owner example: owner issue search page has negative total_count"
+        in lines
+    )
+    sources = [
+        row["payload"]["coordinator"]["source"] for row in store.rows("task")
+    ]
+    assert not any(source.get("owner_scoped") is True for source in sources)
     store.close()
 
 

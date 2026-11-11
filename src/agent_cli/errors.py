@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from .coordinator_common import redact as redact_shared
 from .skills import has_skill
 from .store import Store, StoreError, utcnow
 from .text_sanitize import sanitize_terminal_text
@@ -180,7 +181,7 @@ def is_incident_line(line: str, cfg: dict[str, Any] | None = None) -> bool:
     return False
 
 
-def redact(text: str) -> str:
+def _redact_error_patterns(text: str) -> str:
     out = _AUTHORIZATION.sub(r"\1[redacted]", text)
     out = _BEARER.sub("[redacted]", out)
     out = _COOKIE.sub(r"\1[redacted]", out)
@@ -195,6 +196,11 @@ def redact(text: str) -> str:
     out = _OTEL_TRACEPARENT.sub(r"\1[redacted]", out)
     out = _HEX.sub("[redacted]", out)
     return out
+
+
+def redact(text: str) -> str:
+    """Redact raw log text before and after terminal sanitization."""
+    return _redact_error_patterns(redact_shared(text, limit=None))
 
 
 def fingerprint(*, service: str, error_class: str, stack_sig: str, environment: str) -> str:
@@ -214,7 +220,7 @@ def error_class(line: str) -> str:
 
 
 def stack_sig(line: str) -> str:
-    norm = redact(strip_ansi(line))
+    norm = redact(line)
     norm = _UUID.sub("", norm)
     norm = _DIGITS.sub("", norm)
     norm = _SPACE.sub(" ", norm).strip().lower()
@@ -476,7 +482,7 @@ def _apply_lines(
         repo = item.get("repo")
         if not isinstance(repo, str) or repo == "":
             repo = default_repo if isinstance(default_repo, str) and default_repo else None
-        redacted = redact(strip_ansi(line))
+        redacted = redact(line)
         excerpt = redacted[:500]
         cls = error_class(redacted)
         fp = fingerprint(

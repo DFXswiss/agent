@@ -26,7 +26,9 @@ from .coordinator_common import (
     evidence_base_sha,
     harden_grok_write_argv,
     is_sha,
+    parse_change_summaries,
     parse_model_result,
+    parse_surface_list,
     prompt_prohibitions,
     redact,
     review_is_approved,
@@ -69,6 +71,42 @@ PR_REVIEW_PROMPT_LIMIT = 20_000
 A38_REVIEW_PROMPT_LIMIT = 14_000
 PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
 PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
+
+
+def implementer_replay_fields(
+    stdout: str, *, config_dir: str | None
+) -> dict[str, Any]:
+    """Bounded structured fields needed to replay a finished implementer."""
+    summaries = parse_change_summaries(stdout)
+    surfaces = parse_surface_list(stdout)
+    return {
+        "summary_en": (
+            redact_lane_text(summaries[0], config_dir=config_dir, limit=800)
+            if summaries is not None
+            else None
+        ),
+        "summary_de": (
+            redact_lane_text(summaries[1], config_dir=config_dir, limit=800)
+            if summaries is not None
+            else None
+        ),
+        "reused_lines": (
+            [
+                redact_lane_text(line, config_dir=config_dir, limit=400)
+                for line in surfaces[0]
+            ]
+            if surfaces is not None
+            else None
+        ),
+        "added_lines": (
+            [
+                redact_lane_text(line, config_dir=config_dir, limit=400)
+                for line in surfaces[1]
+            ]
+            if surfaces is not None
+            else None
+        ),
+    }
 
 
 def write_spec(path: Path, role: str, body: str) -> None:
@@ -388,6 +426,9 @@ def launch_lane(
             'status': status, 'result': model_result, 'returncode': result.returncode,
             'stdout': redact_lane_text(
                 result.stdout, config_dir=result.config_dir, limit=4000
+            ),
+            **implementer_replay_fields(
+                result.stdout, config_dir=result.config_dir
             ),
             'applied': False,
         }
