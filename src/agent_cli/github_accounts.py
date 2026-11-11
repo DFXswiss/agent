@@ -34,6 +34,7 @@ _GIT_OPTS_WITH_ARG = frozenset({
     "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
     "--buffered-output-size",
 })
+_GIT_OPTS_WITHOUT_ARG = frozenset({"--literal-pathspecs"})
 _TRANSFER_FLAGS = {
     "fetch": frozenset({"--prune", "-p", "--tags", "-t", "--no-tags", "-n",
                         "--quiet", "-q", "--verbose", "-v", "--dry-run", "--no-recurse-submodules"}),
@@ -254,6 +255,8 @@ def _clear_http_headers(run: Runner, cwd: str | None) -> list[str]:
 def _skip_git_option(args: list[str], index: int) -> int:
     arg = args[index]
     name = arg.split("=", 1)[0]
+    if arg in _GIT_OPTS_WITHOUT_ARG:
+        return index + 1
     if arg.startswith("--") and "=" in arg:
         return index + 1
     if arg in _GIT_OPTS_WITH_ARG or name in _GIT_OPTS_WITH_ARG:
@@ -295,14 +298,18 @@ def _network_remote_targets(
 
     Unknown options fail closed rather than guessing whether the next token is
     their value or a repository. Network calls permit only an optional single
-    global -C; configuration/context overrides cannot differ between validation
-    and execution. Other local Git commands remain available.
+    global -C and --literal-pathspecs; configuration/context overrides cannot
+    differ between validation and execution. Other local Git commands remain
+    available.
     """
     verb, rest = _split_git_command(git_args)
     if verb not in _NETWORK_GIT:
         return None
     leading = git_args[:len(git_args) - len(rest) - 1]
-    if leading and (len(leading) != 2 or leading[0] != "-C"):
+    if leading.count("--literal-pathspecs") > 1:
+        raise GitHubHttpsRemoteError("unsupported git network configuration")
+    context = [arg for arg in leading if arg != "--literal-pathspecs"]
+    if context and (len(context) != 2 or context[0] != "-C"):
         raise GitHubHttpsRemoteError("unsupported git network configuration")
     operands: list[str] = []
     index = 0

@@ -35,6 +35,7 @@ def _argv(worktree: str, *parts: str) -> list[str]:
         "git",
         "-C",
         worktree,
+        "--literal-pathspecs",
         "-c",
         "core.hooksPath=/dev/null",
         "-c",
@@ -44,7 +45,7 @@ def _argv(worktree: str, *parts: str) -> list[str]:
 
 
 def _transfer_argv(worktree: str, *parts: str) -> list[str]:
-    return ["git", "-C", worktree, *parts]
+    return ["git", "-C", worktree, "--literal-pathspecs", *parts]
 
 
 def _fail(completed: Completed, label: str) -> None:
