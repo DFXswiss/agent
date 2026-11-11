@@ -1036,7 +1036,12 @@ def _finish_blocker(
             remove_repository(ctx.worktree)
             remove_repository(ctx.control / "git")
         else:
-            rebase_abort(request_runtime.git, str(ctx.worktree))
+            try:
+                rebase_abort(request_runtime.git, str(ctx.worktree))
+            except (CoordinatorError, OSError):
+                remove_repository(ctx.worktree)
+                remove_repository(ctx.control / "git")
+                skip_git = True
         body = comment_body(ctx.worker, "blocker", safe_reason, safe_facts)
         save_state(
             ctx,
