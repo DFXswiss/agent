@@ -3914,6 +3914,14 @@ def test_parallel_pr_review_execution_exception_uses_fixed_safe_agent_note(
     assert raw_failure not in exposed
     assert private_worktree not in exposed
     assert private_config not in exposed
+    assert checkpoint["uncertain_lane"] is True
+    assert checkpoint.get("resume_phase") in (None, "")
+    assert "PR review lane execution failed" not in str(checkpoint["blocker"])
+    assert "outcome uncertain" in str(checkpoint["blocker"])
+    assert all(
+        "PR review lane execution failed" not in str(row.get("payload"))
+        for row in comments
+    )
     assert lines == ["review-2 uncertain; blocked"]
 
 
@@ -9555,13 +9563,16 @@ def test_a38_pr_left_open_routes_only_a_definite_merge_or_close(monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
-    ("paths", "reason"),
+    ("paths", "reason", "live_state"),
     [
-        (["docs/guide.md", "README.md"], "markdown-only change set"),
+        (["docs/guide.md", "README.md"], "markdown-only change set", None),
         (
             ["docs/guide.md", ".github/workflows/a38-guard.yml"],
             "guard-docs change set",
+            None,
         ),
+        (["docs/guide.md"], "markdown-only change set", "MERGED"),
+        (["docs/guide.md"], "markdown-only change set", "CLOSED"),
     ],
 )
 def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
@@ -9569,6 +9580,7 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
     monkeypatch: pytest.MonkeyPatch,
     paths: list[str],
     reason: str,
+    live_state: str | None,
 ) -> None:
     from dataclasses import replace
 
@@ -9655,7 +9667,20 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
         "agent_cli.coordinator_a38._run_cli",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("suite must be waived")),
     )
-    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    if live_state is None:
+        monkeypatch.setattr(
+            "agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: []
+        )
+    else:
+        monkeypatch.setattr(
+            "agent_cli.coordinator_a38.pr_state", lambda *a, **k: live_state
+        )
+        monkeypatch.setattr(
+            "agent_cli.coordinator_a38.ensure_draft",
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("must not reconcile a merged waiver PR")
+            ),
+        )
     git_calls: list[tuple[str, ...]] = []
 
     def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
@@ -9670,6 +9695,13 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
 
     saved = store.row("task", tid)
     checkpoint = saved["payload"]["coordinator"]
+    if live_state is not None:
+        assert lines == [
+            f"PR {live_state.lower()} during the A38 inventory waiver; "
+            "verifying the merge"
+        ]
+        assert checkpoint["phase"] == "await_merge"
+        return
     assert lines == [f"A38 report waived on {head[:7]} ({reason})"]
     assert checkpoint["phase"] == "pr_gates_grok"
     assert checkpoint["a38"]["report_waiver"] == {
@@ -9689,8 +9721,17 @@ def test_a38_inventory_waiver_skips_suite_and_report_but_continues_reviews(
     assert ("cat-file", "-e", f"{base}^{{commit}}") in git_calls
 
 
+@pytest.mark.parametrize(
+    "changed_path",
+    [
+        ".github/a38.json",
+        ".github/pr-guard.json",
+        ".github/workflows/a38-guard.yml",
+        ".github/workflows/other.yml",
+    ],
+)
 def test_a38_policy_change_fails_before_old_base_evidence_is_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed_path: str
 ) -> None:
     from dataclasses import replace
 
@@ -9720,7 +9761,7 @@ def test_a38_policy_change_fails_before_old_base_evidence_is_run(
         "agent_cli.coordinator_a38._pull_a38_context",
         lambda *a, **k: (
             "b" * 40,
-            [".github/a38.json", "src/app.py"],
+            [changed_path, "src/app.py"],
             False,
             False,
         ),
@@ -10341,15 +10382,31 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
         "session_id": "worker-session",
         "workflow": "implement",
         "state": "implementing",
+        "current_round": 1,
         "models": {"first": "openrouter", "second": "codex"},
         "payload": {
             "coordinator": {
+                "phase": "implement",
                 "worktree": str(worktree),
                 "source": {"repo": "example/project", "number": 7},
             }
         },
     }
     store.write("task", "insert", task["id"], task)
+    store.write(
+        "task_round",
+        "insert",
+        "openrouter-output-round",
+        {
+            "id": "openrouter-output-round",
+            "task_id": task["id"],
+            "round": 1,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
     monkeypatch.setattr(
         "agent_cli.coordinator_lanes.verify_checkout_identity",
         lambda *args, **kwargs: {},
@@ -10410,6 +10467,29 @@ def test_sequential_openrouter_output_failure_ends_agent_and_lane(
     ]
     assert len(runs) == 1
     assert runs[0]["payload"]["status"] == "unavailable"
+
+    from agent_cli.coordinator_runtime import phase_implement
+
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.stage_sign_commit_if_changes",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.ensure_draft", lambda *args, **kwargs: []
+    )
+    phase_lines = phase_implement(
+        store,
+        worker,
+        store.row("task", task["id"]),
+        lambda argv: Completed(0, "", ""),
+        lambda *_args: pytest.fail("persisted unavailable outcome relaunched"),
+    )
+    checkpoint = store.row("task", task["id"])["payload"]["coordinator"]
+    assert checkpoint["phase"] == "blocked", phase_lines
+    assert checkpoint["resume_phase"] == "implement"
+    assert checkpoint["blocker_publish_kind"] == "provider-incomplete"
+    assert checkpoint.get("uncertain_lane") is not True
+    assert any("provider output is unavailable" in line for line in phase_lines)
 
     # The finished agent does not block a retry of the same safe step.
     def valid_output(argv: list[str], _stdin: str | None) -> Completed:
@@ -10816,6 +10896,76 @@ def test_implementer_checkpoint_rollback_keeps_running_state(
     assert agents[0]["status"] == "working"
 
 
+@pytest.mark.parametrize(
+    "surface_path",
+    ["/srv/agent/tasks/private-id/src/app.py", "../private-id/src/app.py"],
+    ids=("absolute", "traversal"),
+)
+def test_implementer_checkpoint_rejects_non_relative_surface_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface_path: str,
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "invalid-surface"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000001a3"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {"coordinator": {"phase": "implement", "worktree": str(worktree)}},
+    }
+    store.write("task", "insert", tid, task)
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_args, **_kwargs: {}
+    )
+    output = (
+        "STATUS: complete\nRESULT: done\n"
+        "SUMMARY_EN: Change the handler.\n"
+        "SUMMARY_DE: Ändere den Handler.\n"
+        "REUSED: none — no existing surface\n"
+        f"ADDED: `{surface_path}:12` changed handler\n"
+    )
+
+    with pytest.raises(CoordinatorError, match="surface checkpoint is malformed"):
+        coordinator_lanes.launch_lane(
+            store,
+            worker,
+            task,
+            role="implementer",
+            vendor="grok",
+            round_num=1,
+            spec_body="Implement.",
+            runner=lambda argv: Completed(0, "", ""),
+            lane_runner=lambda _argv, _stdin: Completed(0, output, ""),
+        )
+
+    saved = store.row("task", tid)
+    assert "lane_outcome" not in saved["payload"]["coordinator"]
+    assert saved["payload"]["coordinator"]["phase"] == "implement"
+    assert saved["payload"]["coordinator"]["lane"]["state"] == "checkpoint-failed"
+    assert surface_path not in str(saved)
+    agents = [row for row in store.rows("agent") if row.get("task_id") == tid]
+    assert len(agents) == 1 and agents[0]["status"] == "done"
+    runs = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "lane.run" and row["payload"].get("task_id") == tid
+    ]
+    assert len(runs) == 1
+    assert surface_path not in str(runs[0])
+    assert "[redacted]" in str(runs[0])
+
+
 def test_implementer_ask_replay_rollback_keeps_live_task_and_round_unmodified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -11187,6 +11337,151 @@ def test_parallel_pr_review_uses_checkpointed_result_after_diagnostic_truncation
         "logic": "approved",
     }
     assert not [gate for gate in gates if gate["verdict"] == "unavailable"]
+
+
+@pytest.mark.parametrize(
+    "hidden_records",
+    [
+        "\x1b]0;STATUS: partial\nRESULT: rejected\x07",
+        (
+            "-----BEGIN PRIVATE KEY-----\n"
+            "STATUS: partial\nRESULT: rejected\n"
+            "-----END PRIVATE KEY-----"
+        ),
+    ],
+    ids=("osc", "pem"),
+)
+def test_hidden_duplicate_protocol_records_cannot_approve_pr_gates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hidden_records: str,
+) -> None:
+    from agent_cli.coordinator_lanes import phase_pr_gates
+
+    tid = "aa000001-0000-4000-8000-0000000001a1"
+    store, worker, task = _codex_prelaunch_fixture(tmp_path, monkeypatch, tid)
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    patch_execute_github(monkeypatch)
+
+    def review(argv, _stdin=None):  # noqa: ANN001
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n" + hidden_records,
+            encoding="utf-8",
+        )
+        return Completed(0, "", "")
+
+    lines = phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        review,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    gates = [
+        row
+        for row in store.rows("review_gate")
+        if row.get("task_id") == tid and row.get("stage") == "review-2"
+    ]
+    assert len(gates) == 2, lines
+    assert all(row["verdict"] == "unavailable" for row in gates)
+    assert not any(row["verdict"] == "approved" for row in gates)
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["phase"] == "blocked"
+
+
+@pytest.mark.parametrize(
+    "hidden_records",
+    [
+        "\x1b]0;STATUS: partial\nRESULT: blocked\x07",
+        (
+            "-----BEGIN PRIVATE KEY-----\n"
+            "STATUS: partial\nRESULT: blocked\n"
+            "-----END PRIVATE KEY-----"
+        ),
+    ],
+    ids=("osc", "pem"),
+)
+def test_hidden_duplicate_protocol_records_cannot_finish_implementer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hidden_records: str,
+) -> None:
+    from agent_cli.coordinator_runtime import phase_implement
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    patch_execute_github(monkeypatch)
+    tid = "aa000001-0000-4000-8000-0000000001a2"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {
+            "coordinator": {
+                "phase": "implement",
+                "worktree": str(worktree),
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "task_round",
+        "insert",
+        f"{tid}-round",
+        {
+            "id": f"{tid}-round",
+            "task_id": tid,
+            "round": 1,
+            "implementer_verdict": None,
+            "reviewer_verdict": None,
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": None,
+        },
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_lanes.verify_checkout_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.stage_sign_commit_if_changes",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_runtime.ensure_draft", lambda *_args, **_kwargs: []
+    )
+    output = "STATUS: complete\nRESULT: done\n" + hidden_records
+
+    lines = phase_implement(
+        store,
+        worker,
+        task,
+        lambda argv: Completed(0, "", ""),
+        lambda _argv, _stdin: Completed(0, output, ""),
+    )
+
+    saved = store.row("task", tid)
+    assert saved["payload"]["coordinator"]["phase"] == "blocked", lines
+    assert saved["state"] != "reviewing"
+    round_row = store.row("task_round", f"{tid}-round")
+    assert round_row["implementer_verdict"] == "blocked"
+    checklist = [
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == tid and row.get("key") == "implementer_done"
+    ]
+    assert not any(row.get("status") == "ja" for row in checklist)
 
 
 @pytest.mark.parametrize("failure", ["decode", "oserror"])

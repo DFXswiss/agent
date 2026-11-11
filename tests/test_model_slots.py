@@ -349,7 +349,11 @@ def test_launch_claude_lane_feeds_spec_on_stdin(tmp_path: Path) -> None:
     def runner(argv: list[str], stdin_text: str | None):
         seen["argv"] = argv
         seen["stdin"] = stdin_text
-        event = {"type": "result", "result": "ok\nSTATUS: complete\n", "usage": {}}
+        event = {
+            "type": "result",
+            "result": "ok\nSTATUS: complete\nRESULT: done\n",
+            "usage": {},
+        }
         return type("Done", (), {"returncode": 0, "stdout": json.dumps(event) + "\n", "stderr": ""})()
 
     result = launch(

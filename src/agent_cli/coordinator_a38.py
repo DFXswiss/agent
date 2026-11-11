@@ -71,8 +71,10 @@ from .coordinator_lanes import (
 )
 from .github_act import ACTIVITY_MARKER
 from .local_ci import LocalCiError, parse_comment
+from .pr_guard_config import CONFIG_PATH as PR_GUARD_CONFIG_PATH
 from .readme_only import (
     GITHUB_PR_FILES_CAP,
+    GUARD_WORKFLOW_PATH,
     github_file_paths,
     github_is_guard_docs_only,
     github_is_markdown_only,
@@ -424,11 +426,21 @@ def phase_tests(
     elif saved_base != base_sha:
         a38["pending_base_sha"] = base_sha
     # Policy migration is intentionally not implemented by this coordinator.
-    # Never publish evidence against the obsolete base policy when the manifest
-    # itself changed; the caller receives a loud, stable unsupported boundary.
-    if POLICY_PATH in changed_paths:
+    # Never publish evidence against obsolete base policy or workflow controls.
+    # Guard-docs alone has the one standard exception for its integration file.
+    unsupported_policy_paths = [
+        path
+        for path in changed_paths
+        if path in (POLICY_PATH, PR_GUARD_CONFIG_PATH)
+        or (
+            path.startswith(".github/workflows/")
+            and not (guard_docs_only and path == GUARD_WORKFLOW_PATH)
+        )
+    ]
+    if unsupported_policy_paths:
         raise NonRecoverableCoordinatorError(
-            "A38 policy migrations are not supported by coordinator A38 mode"
+            "A38 policy migrations are not supported by coordinator A38 mode: "
+            + ", ".join(sorted(unsupported_policy_paths))
         )
     policy_revision = base_sha
     fetched = git(
@@ -489,6 +501,14 @@ def phase_tests(
             source="script",
         )
         _promote_base_evidence(store, task, head=head, base_sha=base_sha)
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            return [
+                f"PR {live_state.lower()} during the A38 inventory waiver; "
+                "verifying the merge"
+            ]
         draft_lines = ensure_draft(store, worker, task, runner)
         if str(coord(task).get("head_sha") or "") != head:
             raise CoordinatorError(

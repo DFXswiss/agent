@@ -373,6 +373,20 @@ def test_redact_checks_sgr_parameter_bytes_with_shared_and_error_matchers() -> N
 
 
 @pytest.mark.parametrize(
+    "raw",
+    [
+        "\x1bopaque-credential",
+        "opaque\x1b-credential",
+        "opaque-credential\x1b",
+    ],
+    ids=("start", "middle", "end"),
+)
+def test_lone_escape_redacts_the_complete_token_in_shared_sinks(raw: str) -> None:
+    assert redact_shared(raw) == "[redacted]"
+    assert redact(raw) == "[redacted]"
+
+
+@pytest.mark.parametrize(
     ("introducer", "terminator"),
     (
         ("\x1b]", "\x07"),

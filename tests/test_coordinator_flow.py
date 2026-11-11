@@ -402,6 +402,7 @@ def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytes
     """REVIEW.md at the base makes the script post the implementer's list. It does not invent one."""
     from agent_cli.coordinator_common import parse_surface_list
     from agent_cli.coordinator_git import refresh_draft_body
+    from agent_cli.coordinator_runtime import _replayed_surface_list
 
     assert parse_surface_list("STATUS: complete\n") is None
     assert parse_surface_list("REUSED: none — nothing\nADDED: bare\n") is None
@@ -439,6 +440,22 @@ def test_surface_list_is_posted_by_the_script(tmp_path: Path, monkeypatch: pytes
         ["`src/pay.ts:40` existing gift invoice"],
         ["`src/habit.ts:12` member habit route"],
     )
+    assert parse_surface_list(
+        "REUSED: `src/pay.ts:40` existing gift invoice\n"
+        "ADDED: `/srv/private/src/habit.ts:12` member habit route\n"
+    ) is None
+    assert parse_surface_list(
+        "REUSED: `src/pay.ts:40` existing gift invoice\n"
+        "ADDED: `../private/habit.ts:12` member habit route\n"
+    ) is None
+    assert _replayed_surface_list(
+        {
+            "reused_lines": ["`src/pay.ts:40` existing gift invoice"],
+            "added_lines": [
+                "`/srv/private/src/habit.ts:12` member habit route"
+            ],
+        }
+    ) is None
 
     store = Store(tmp_path)
     write_accounts(store.home)
@@ -575,13 +592,17 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     tid = "66666666-6666-6666-6666-666666666666"
     worktree = worker.workspace_root / tid
     worktree.mkdir()
-    reused = "`/Users/operator/private/pay.ts:40` existing password=value helper"
-    added = "`/home/operator/private/habit.ts:12` token=value route"
+    control = worker.workspace_root / ".coordinator-control" / tid
+    reused = (
+        f"`src/pay.ts:40` existing password=value helper in {control} "
+        f"under {worker.workspace_root}"
+    )
+    added = f"`src/habit.ts:12` token=value route in {worktree}"
     full = (
         "STATUS: complete\nRESULT: done\n"
         + ("note " * 1200)
-        + "\nSUMMARY_EN: Mask password=values.\n"
-        + "SUMMARY_DE: Maskiere token=werte.\n"
+        + f"\nSUMMARY_EN: Mask password=values under {worktree}.\n"
+        + f"SUMMARY_DE: Maskiere token=werte unter {store.home} und {Path.home()}.\n"
         + f"\nREUSED: {reused}\nADDED: {added}\n"
     )
     calls = {"n": 0}
@@ -666,12 +687,17 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     assert outcome.get("applied") is not True
     assert "SUMMARY_EN" not in str(outcome.get("stdout") or "")
     assert "habit.ts" not in str(outcome.get("stdout") or "")
-    assert outcome["summary_en"] == "Mask [redacted]."
-    assert outcome["summary_de"] == "Maskiere [redacted]."
+    assert outcome["summary_en"] == "Mask [redacted] under <worktree>."
+    assert outcome["summary_de"] == (
+        "Maskiere [redacted] unter <agent-home> und ~."
+    )
     assert outcome["reused_lines"] == [
-        "`[redacted]:40` existing [redacted] helper"
+        "`src/pay.ts:40` existing [redacted] helper in <control-dir> "
+        "under <workspace>"
     ]
-    assert outcome["added_lines"] == ["`[redacted]:12` [redacted] route"]
+    assert outcome["added_lines"] == [
+        "`src/habit.ts:12` [redacted] route in <worktree>"
+    ]
     assert "reused_lines" not in saved
     assert saved["state"] != "reviewing"
     assert calls["n"] == 1
@@ -686,12 +712,18 @@ def test_first_lane_checkpoint_replays_summaries_and_surface_list_after_crash(
     assert calls["n"] == 1, lines
     assert "lane_outcome" not in saved["payload"]["coordinator"]
     assert saved["payload"]["coordinator"]["phase"] == "inner_review", lines
-    assert saved["change_summary_en"] == "Mask [redacted]."
-    assert saved["change_summary_de"] == "Maskiere [redacted]."
-    assert "`[redacted]:12` [redacted] route" in fake.pr["body"]
-    assert "`[redacted]:40` existing [redacted] helper" in fake.pr["body"]
-    assert "/Users/operator" not in fake.pr["body"]
-    assert "/home/operator" not in fake.pr["body"]
+    assert saved["change_summary_en"] == "Mask [redacted] under <worktree>."
+    assert saved["change_summary_de"] == (
+        "Maskiere [redacted] unter <agent-home> und ~."
+    )
+    assert "`src/habit.ts:12` [redacted] route in <worktree>" in fake.pr["body"]
+    assert (
+        "`src/pay.ts:40` existing [redacted] helper in <control-dir> "
+        "under <workspace>"
+    ) in fake.pr["body"]
+    assert str(worker.workspace_root) not in fake.pr["body"]
+    assert str(store.home) not in fake.pr["body"]
+    assert str(Path.home()) not in fake.pr["body"]
 
 
 def test_real_implementer_launch_reuses_checkpoint_and_invalidates_head_same_tick(

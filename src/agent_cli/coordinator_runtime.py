@@ -95,6 +95,7 @@ from .coordinator_github import (
 from .coordinator_lanes import (
     _IMPLEMENTER_RESULTS,
     _REVIEWER_RESULTS,
+    _coordinator_path_replacements,
     clear_reviewer_replay_outcomes,
     implementer_replay_fields,
     invalidate_head_evidence,
@@ -978,6 +979,11 @@ def _apply_implementer_outcome(
         c["phase"] = "blocked"
         c["resume_phase"] = "implement"
         c["blocker"] = f"implementer status={status}"
+        provider_unavailable = status == "unavailable"
+        if provider_unavailable:
+            c["blocker_publish_once"] = True
+            c["blocker_publish_kind"] = "provider-incomplete"
+            c.pop("uncertain_lane", None)
         _mark_applied()
         task["state"] = "open"
         save_task(store, task)
@@ -986,8 +992,16 @@ def _apply_implementer_outcome(
             worker,
             task,
             runner,
-            f"Implementer returned incomplete status={status}",
-            kind="implementer-incomplete",
+            (
+                "Implementer provider output is unavailable"
+                if provider_unavailable
+                else f"Implementer returned incomplete status={status}"
+            ),
+            kind=(
+                "provider-incomplete"
+                if provider_unavailable
+                else "implementer-incomplete"
+            ),
             reply_checkpoint=True,
         ) + draft_lines
 
@@ -1321,14 +1335,17 @@ def phase_implement(
         lane_runner=lane_runner,
     )
     c = coord(task)
-    status, model_result = parse_model_result(result.stdout, result.returncode)
+    status = result.status
+    model_result = result.protocol_result
     # Keep the launch checkpoint intact while supporting mocked/external launch
     # implementations that return without writing it themselves.
     checkpoint = c.get("lane_outcome")
     if not isinstance(checkpoint, dict) or checkpoint.get("agent_id") != agent["id"]:
         checkpoint = {}
     replay_fields = implementer_replay_fields(
-        result.stdout or "", config_dir=getattr(result, "config_dir", None)
+        result.stdout or "",
+        config_dir=getattr(result, "config_dir", None),
+        path_replacements=_coordinator_path_replacements(store, worker, task),
     )
     for key, value in replay_fields.items():
         if key not in checkpoint:

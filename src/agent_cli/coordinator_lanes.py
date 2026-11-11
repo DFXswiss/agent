@@ -34,6 +34,7 @@ from .coordinator_common import (
     redact,
     review_is_approved,
     save_task,
+    _surface_ref_is_repository_relative,
     strip_row,
 )
 from .coordinator_config import WorkerConfig
@@ -49,6 +50,7 @@ from .lane import (
     provider_argv,
     redact_lane_text,
     record_lane_run,
+    replace_path_roots,
     unreadable_output_result,
 )
 from .allow import EXTERNAL_SECOND_REVIEW_PREFIX, SECOND_REVIEW_KEYS
@@ -75,29 +77,86 @@ PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
 _CHECKPOINT_SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
 
 
-def _redact_checkpoint_summary(summary: str, *, config_dir: str | None) -> str:
+def _coordinator_path_replacements(
+    store: Store, worker: WorkerConfig, task: dict[str, Any]
+) -> tuple[tuple[str, str], ...]:
+    """Local roots that must not survive a coordinator lane checkpoint."""
+    c = coord(task)
+    return (
+        (str(control_dir(worker, str(task["id"]))), "<control-dir>"),
+        (str(c.get("worktree") or ""), "<worktree>"),
+        (str(worker.workspace_root), "<workspace>"),
+        (str(store.home), "<agent-home>"),
+        (str(Path.home()), "~"),
+    )
+
+
+def _redact_coordinator_lane_text(
+    text: str,
+    *,
+    config_dir: str | None,
+    path_replacements: tuple[tuple[str, str], ...],
+    limit: int | None,
+) -> str:
+    hidden = replace_path_roots(text or "", path_replacements)
+    hidden = _CHECKPOINT_SURFACE_REF.sub(
+        lambda match: (
+            match.group(0)
+            if _surface_ref_is_repository_relative(match.group(1))
+            else f"`[redacted]:{match.group(2)}`"
+        ),
+        hidden,
+    )
+    return redact_lane_text(hidden, config_dir=config_dir, limit=limit)
+
+
+def _redact_checkpoint_summary(
+    summary: str,
+    *,
+    config_dir: str | None,
+    path_replacements: tuple[tuple[str, str], ...],
+) -> str:
     """Redact summary content while retaining its validated terminator."""
-    body = redact_lane_text(summary[:-1], config_dir=config_dir, limit=None)
+    body = _redact_coordinator_lane_text(
+        summary[:-1],
+        config_dir=config_dir,
+        path_replacements=path_replacements,
+        limit=None,
+    )
     return f"{body}."
 
 
 def _redact_checkpoint_surface_line(
-    line: str, *, config_dir: str | None
+    line: str,
+    *,
+    config_dir: str | None,
+    path_replacements: tuple[tuple[str, str], ...],
 ) -> str:
     """Redact a surface line without allowing redaction to eat ref delimiters."""
     matches = list(_CHECKPOINT_SURFACE_REF.finditer(line))
     if not matches:
-        return redact_lane_text(line, config_dir=config_dir, limit=None)
+        return _redact_coordinator_lane_text(
+            line,
+            config_dir=config_dir,
+            path_replacements=path_replacements,
+            limit=None,
+        )
     parts: list[str] = []
     start = 0
     for match in matches:
         parts.append(
-            redact_lane_text(
-                line[start : match.start()], config_dir=config_dir, limit=None
+            _redact_coordinator_lane_text(
+                line[start : match.start()],
+                config_dir=config_dir,
+                path_replacements=path_replacements,
+                limit=None,
             )
         )
-        safe_path = redact_lane_text(
-            match.group(1), config_dir=config_dir, limit=None
+        safe_path = _redact_coordinator_lane_text(
+            match.group(1),
+            config_dir=config_dir,
+            path_replacements=path_replacements,
+            limit=None,
         )
         if (
             not safe_path
@@ -108,21 +167,41 @@ def _redact_checkpoint_surface_line(
             raise CoordinatorError("implementer checkpoint redaction is not schema-safe")
         parts.append(f"`{safe_path}:{match.group(2)}`")
         start = match.end()
-    parts.append(redact_lane_text(line[start:], config_dir=config_dir, limit=None))
+    parts.append(
+        _redact_coordinator_lane_text(
+            line[start:],
+            config_dir=config_dir,
+            path_replacements=path_replacements,
+            limit=None,
+        )
+    )
     return "".join(parts)
 
 
 def implementer_replay_fields(
-    stdout: str, *, config_dir: str | None
+    stdout: str,
+    *,
+    config_dir: str | None,
+    path_replacements: tuple[tuple[str, str], ...],
 ) -> dict[str, Any]:
     """Schema-preserving structured fields needed to replay an implementer."""
     summaries = parse_change_summaries(stdout)
     surfaces = parse_surface_list(stdout)
+    if surfaces is None and re.search(r"(?m)^(?:REUSED|ADDED):", stdout):
+        raise CoordinatorError("implementer surface checkpoint is malformed")
     safe_summaries: tuple[str, str] | None = None
     if summaries is not None:
         candidate = (
-            _redact_checkpoint_summary(summaries[0], config_dir=config_dir),
-            _redact_checkpoint_summary(summaries[1], config_dir=config_dir),
+            _redact_checkpoint_summary(
+                summaries[0],
+                config_dir=config_dir,
+                path_replacements=path_replacements,
+            ),
+            _redact_checkpoint_summary(
+                summaries[1],
+                config_dir=config_dir,
+                path_replacements=path_replacements,
+            ),
         )
         safe_summaries = parse_change_summaries(
             f"SUMMARY_EN: {candidate[0]}\nSUMMARY_DE: {candidate[1]}\n"
@@ -132,11 +211,19 @@ def implementer_replay_fields(
     safe_surfaces: tuple[list[str], list[str]] | None = None
     if surfaces is not None:
         candidate_reused = [
-            _redact_checkpoint_surface_line(line, config_dir=config_dir)
+            _redact_checkpoint_surface_line(
+                line,
+                config_dir=config_dir,
+                path_replacements=path_replacements,
+            )
             for line in surfaces[0]
         ]
         candidate_added = [
-            _redact_checkpoint_surface_line(line, config_dir=config_dir)
+            _redact_checkpoint_surface_line(
+                line,
+                config_dir=config_dir,
+                path_replacements=path_replacements,
+            )
             for line in surfaces[1]
         ]
         safe_surfaces = parse_surface_list(
@@ -167,7 +254,6 @@ def _reviewer_replay_fields(
     stage: str,
 ) -> dict[str, Any]:
     """Return one bounded, redacted reviewer result for durable replay."""
-    _, model_result = parse_model_result(result.stdout, result.returncode)
     return {
         "role": result.role,
         "vendor": result.vendor,
@@ -178,7 +264,7 @@ def _reviewer_replay_fields(
         "stage": stage,
         "agent_id": agent_id,
         "status": result.status,
-        "result": model_result,
+        "result": result.protocol_result,
         "returncode": result.returncode,
         "stdout": redact_lane_text(
             result.stdout, config_dir=result.config_dir, limit=4000
@@ -355,6 +441,7 @@ def _lane_result_from_reviewer_replay(outcome: dict[str, Any]) -> LaneResult:
         stdout=str(outcome.get("stdout") or ""),
         stderr=str(outcome.get("stderr") or ""),
         config_dir=None,
+        protocol_result=str(outcome.get("result") or ""),
     )
 
 
@@ -452,6 +539,7 @@ def launch_lane(
     except ModelSlotsError as exc:
         raise CoordinatorError(str(exc)) from exc
     c = coord(task)
+    path_replacements = _coordinator_path_replacements(store, worker, task)
     verify_checkout_identity(store, worker, runner, str(c.get('worktree') or ''))
     existing = blocking_working_agent(store, task["id"], role=role, vendor=vendor)
     if existing is not None:
@@ -569,9 +657,10 @@ def launch_lane(
                 )
             returncode = int(getattr(completed, "returncode"))
             stdout = str(getattr(completed, "stdout") or "")
-            stderr = redact_lane_text(
+            stderr = _redact_coordinator_lane_text(
                 str(getattr(completed, "stderr") or ""),
                 config_dir=selected.account.config_dir,
+                path_replacements=path_replacements,
                 limit=None,
             )
             lane_output_read_error: BaseException | None = None
@@ -608,8 +697,11 @@ def launch_lane(
                 )
                 replay_source = finalized.source_text
         except Exception as exc:
-            safe_exc = redact_lane_text(
-                str(exc), config_dir=selected.account.config_dir, limit=4000
+            safe_exc = _redact_coordinator_lane_text(
+                str(exc),
+                config_dir=selected.account.config_dir,
+                path_replacements=path_replacements,
+                limit=4000,
             )
             agent = store.row("agent", aid)
             if agent is not None and agent.get("status") == "working":
@@ -633,19 +725,29 @@ def launch_lane(
             )
             raise CoordinatorError(f"lane interrupted: {safe_exc}") from exc
         if finalized is not None:
+            status, model_result = parse_model_result(
+                finalized.source_text, returncode
+            )
+            safe_stdout = _redact_coordinator_lane_text(
+                finalized.text,
+                config_dir=selected.account.config_dir,
+                path_replacements=path_replacements,
+                limit=None,
+            )
             result = LaneResult(
                 role=role,
                 vendor=vendor,
                 model=selected.model,
-                status=parse_model_result(finalized.text, returncode)[0],
+                status=status,
                 argv=argv,
                 returncode=returncode,
-                stdout=finalized.text,
+                stdout=safe_stdout,
                 stderr=stderr,
                 config_dir=selected.account.config_dir,
                 usage=finalized.usage,
                 tools=finalized.tools,
                 tools_truncated=finalized.tools_truncated,
+                protocol_result=model_result,
             )
         _record_lane_audit(
             store, worker, c, result, task_id=str(task["id"]), agent_id=aid, round_num=round_num
@@ -660,8 +762,8 @@ def launch_lane(
     # The lane verdict is the script-owned result status. For a normal run it
     # already equals the parsed output status; an unreadable output file keeps
     # its unavailable status even though there is no status line to parse.
-    _, model_result = parse_model_result(result.stdout, result.returncode)
     status = result.status
+    model_result = result.protocol_result
     note = redact_lane_text(
         result.stdout or result.stderr or "",
         config_dir=result.config_dir,
@@ -675,6 +777,7 @@ def launch_lane(
             replay_fields = implementer_replay_fields(
                 replay_source if replay_source is not None else result.stdout,
                 config_dir=result.config_dir,
+                path_replacements=path_replacements,
             )
         except CoordinatorError:
             # The process ended, but no finished-lane checkpoint is committed.
@@ -1460,6 +1563,7 @@ def _prepare_pr_review_agent(
         "worktree": worktree,
         "model": selected.model,
         "config_dir": selected.account.config_dir,
+        "path_replacements": _coordinator_path_replacements(store, worker, task),
         "dimension": "quality" if role.endswith("quality") else "logic",
     }
 
@@ -1490,9 +1594,11 @@ def _run_prepared(
                 pass
         return prepared["agent_id"], exc
     stdout = str(getattr(completed, "stdout") or "")
-    stderr = redact_lane_text(
+    path_replacements = tuple(prepared.get("path_replacements") or ())
+    stderr = _redact_coordinator_lane_text(
         str(getattr(completed, "stderr") or ""),
         config_dir=prepared.get("config_dir"),
+        path_replacements=path_replacements,
         limit=None,
     )
     returncode = int(getattr(completed, "returncode"))
@@ -1527,19 +1633,27 @@ def _run_prepared(
         stream_from_output_file=str(prepared["vendor"]) in OUTPUT_FILE_VENDORS,
         config_dir=prepared.get("config_dir"),
     )
+    status, model_result = parse_model_result(finalized.source_text, returncode)
+    safe_stdout = _redact_coordinator_lane_text(
+        finalized.text,
+        config_dir=prepared.get("config_dir"),
+        path_replacements=path_replacements,
+        limit=None,
+    )
     return prepared["agent_id"], LaneResult(
         role=str(prepared["role"]),
         vendor=str(prepared["vendor"]),
         model=str(prepared["model"]),
-        status=parse_model_result(finalized.text, returncode)[0],
+        status=status,
         argv=argv,
         returncode=returncode,
-        stdout=finalized.text,
+        stdout=safe_stdout,
         stderr=stderr,
         config_dir=prepared.get("config_dir"),
         usage=finalized.usage,
         tools=finalized.tools,
         tools_truncated=finalized.tools_truncated,
+        protocol_result=model_result,
     )
 
 

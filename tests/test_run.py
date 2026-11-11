@@ -364,6 +364,7 @@ def test_run_prints_vendor_stdout(
                 "STATUS: complete\nRESULT: done\n"
             ),
             stderr="",
+            protocol_result="done",
         )
 
     monkeypatch.setattr("agent_cli.main.launch", fake_launch)
@@ -518,6 +519,7 @@ def test_run_store_error_on_lane_audit_keeps_the_verdict(
             returncode=0,
             stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
+            protocol_result="done",
         ),
     )
     monkeypatch.setattr(
@@ -553,6 +555,7 @@ def test_run_spec_file_implementer_complete(
             returncode=0,
             stdout="STATUS: complete\nRESULT: done\n",
             stderr="",
+            protocol_result="done",
         )
 
     monkeypatch.setattr("agent_cli.main.launch", fake_launch)
@@ -650,6 +653,52 @@ def test_run_implementer_complete_without_one_role_valid_result_is_retryable(
         assert all("invalid implementer STATUS/RESULT" in str(agent["note"]) for agent in implementers)
 
 
+def test_run_uses_the_raw_lane_verdict_without_reparsing_redacted_stdout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tid = _bootstrap_implement(tmp_path, capsys)
+    write_operator_ai_accounts(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("implement this\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_cli.main.launch",
+        lambda **_kwargs: LaneResult(
+            role="implementer",
+            vendor="grok",
+            model=OPERATOR_GROK_MODEL,
+            # The raw source contained a hidden duplicate record. Its redacted
+            # body looks valid, but the one raw parse already failed closed.
+            status="partial",
+            protocol_result="",
+            argv=["grok"],
+            returncode=0,
+            stdout="STATUS: complete\nRESULT: done\n[redacted]",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run(
+            tmp_path,
+            [
+                "run",
+                "--task",
+                tid,
+                "--spec-file",
+                str(spec),
+                "--no-tmux",
+                "--cwd",
+                str(tmp_path),
+            ],
+        )
+
+    assert exc.value.code == 2
+    assert _checklist(tmp_path, tid).get("implementer_done") != "ja"
+    assert _task_state(tmp_path, tid) == "implementing"
+
+
 def test_run_implementer_no_change_counts_as_implemented(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -668,6 +717,7 @@ def test_run_implementer_no_change_counts_as_implemented(
             returncode=0,
             stdout="STATUS: complete\nRESULT: no-change\n",
             stderr="",
+            protocol_result="no-change",
         ),
     )
     run(
@@ -798,6 +848,7 @@ def test_run_only_parsed_implementer_blocked_result_fails_the_task(
             returncode=0,
             stdout="STATUS: complete\nRESULT: blocked\n",
             stderr="",
+            protocol_result="blocked",
         ),
     )
 
@@ -1510,6 +1561,7 @@ def test_run_launches_the_provider_pinned_on_the_task(
             role="implementer", vendor=kwargs["vendor"], model="claude-model",
             status="complete", argv=["claude"],
             returncode=0, stdout="done\nSTATUS: complete\nRESULT: done\n", stderr="",
+            protocol_result="done",
         )
 
     monkeypatch.setattr("agent_cli.main.launch", fake_launch)

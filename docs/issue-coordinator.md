@@ -595,7 +595,11 @@ removes that outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
 summaries and reused/added surface lines are redacted structurally: summary
 sentence terminators and surface-reference backticks plus line numbers are
-retained. The sanitized
+retained. Before persistence, the control directory, worktree, workspace root,
+Agent home, and user home are replaced with fixed placeholders. Every
+backticked surface path must be repository-relative and traversal-free; an
+absolute, drive, home, backslash, `.` or `..` form is malformed in both normal
+flow and replay. The sanitized
 checkpoint is parsed by the same summary and surface validators before it is
 committed. If that cannot produce a safe valid checkpoint, the lane is not
 checkpointed as finished and the implementation step remains retryable. Gate
@@ -607,7 +611,9 @@ checkpoint in one transaction, so a database rollback cannot leave live state
 pointing at rolled-back agents, verdicts, gates, or publication intents.
 Reviewer replay routes by the separately checkpointed validated result; bounded
 stdout and stderr remain diagnostic evidence and are not reparsed as the
-protocol record. Authorized
+protocol record. `STATUS` and `RESULT` are counted and validated exactly once
+on the raw final lane text before multiline or terminal redaction; only the
+redacted body and that parsed verdict are persisted. Authorized
 replies (`reply_logins` only), listed with
 `gh api --paginate --slurp`, resume the exact `resume_phase` after the pinned
 `question_activity_id` checkpoint only when `reply_checkpoint_eligible` holds
@@ -658,8 +664,9 @@ with `[redacted]` on the full raw text, before whitespace tokenization. A
 complete span includes its seven- or eight-bit introducer and terminator; an
 unterminated span consumes the remainder of the text and is replaced rather
 than merely removed. The pipeline then replaces any whitespace-delimited raw
-token containing another ESC or C1 sequence, including a sequence at either
-token boundary, while preserving the separating whitespace. The only possible
+token containing another ESC or C1 sequence, including a lone ESC byte and a
+sequence at either token boundary, while preserving the separating whitespace.
+The only possible
 exemption is a token whose sequences are exclusively one leading and/or one
 trailing `ESC [` SGR wrapper containing only digits and semicolons before `m`,
 around otherwise escape-free text. Before granting that exemption, the secret
@@ -711,9 +718,12 @@ Failure to read or decode the lane output file (`OSError`,
 result with a bounded, redacted diagnostic, its `lane.run` row is still written,
 and the normal provider-incomplete retry checkpoint (`resume_phase`, never
 `uncertain_lane`) applies in both the sequential and the parallel PR-gate path.
-Other parallel PR-review preparation or execution exceptions persist and
-publish only their fixed failure category; raw exception text, worktree paths,
-and account configuration paths do not enter task blockers or agent notes.
+Parallel PR-review preparation exceptions remain reply-gated and publish only
+`PR review lane preparation failed`. A parallel execution exception is a final
+uncertain-lane stop: the agent note alone says `PR review lane execution failed`,
+while the task blocker and issue comment publish only the fixed uncertain-outcome
+text. Raw exception text, worktree paths, and account configuration paths do not
+enter task blockers, issue comments, or agent notes.
 Failure to write the audit row itself is an observation and does not rewrite the
 lane verdict. File-tool targets use one fail-closed rule after terminal,
 separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
@@ -896,11 +906,16 @@ commit exists locally before either running the suite or taking an inventory
 waiver. Independently confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
+Immediately before draft reconciliation, the waiver path rechecks pull-request
+state and routes a merged or closed pull request directly to merge verification.
 The 500-file waiver ceiling counts GitHub file entries before rename/copy
 entries expand into their old and new paths.
 Coordinator A38 mode does not implement policy migrations; a changed
-`.github/a38.json` fails loudly instead of publishing evidence against the old
-base policy. This blocker is non-recoverable and has no reply checkpoint. A
+`.github/a38.json`, `.github/pr-guard.json`, or any path below
+`.github/workflows/` fails loudly before a suite or inventory waiver can publish
+evidence against old base policy. The sole exception is
+`.github/workflows/a38-guard.yml` in an independently confirmed guard-docs change
+set. This blocker is non-recoverable and has no reply checkpoint. A
 legacy same-head report without `base_sha` or `policy_revision` is invalidated
 at readiness and routes the task back to `tests` for current base-bound
 measurement and publication.
