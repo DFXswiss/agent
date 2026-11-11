@@ -140,6 +140,56 @@ def patch_run_bounded(monkeypatch: Any, fake: FakeGh) -> None:
     monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_bounded)
 
 
+def _a38_policy_text() -> str:
+    return json.dumps(
+        {
+            "jobs": [
+                {
+                    "id": "unit",
+                    "name": "Unit tests",
+                    "command": "pytest",
+                    "timeout_s": 60,
+                }
+            ]
+        }
+    )
+
+
+def _write_coordinator_a38_report(
+    path: Path, *, head: str, base: str, private: bool = False
+) -> str:
+    from agent_cli.a38 import _build_report_dict, _write_report
+
+    payload = _build_report_dict(
+        repo="example/project",
+        head=head,
+        private=private,
+        recorded_at="2026-11-01T00:00:00Z",
+        required=["unit"],
+        runs=[
+            {
+                "id": "unit",
+                "name": "Unit tests",
+                "command": "pytest",
+                "result": "pass",
+                "exit_code": 0,
+                "duration_s": 1,
+                "timeout_s": 60,
+            }
+        ],
+        base=base,
+        changed_paths=["src/app.py"],
+        omit_reason=None,
+    )
+    _write_report(
+        path,
+        payload,
+        base_sha=base,
+        changed_paths=["src/app.py"],
+    )
+    return path.read_text(encoding="utf-8")
+
+
 def test_harden_grok_write_adds_denies() -> None:
     argv = ["env", "-u", "X", "grok", "--permission-mode", "acceptEdits", "--allow", "Write"]
     out = harden_grok_write_argv(argv)
@@ -2295,6 +2345,52 @@ def test_assignment_discovery_flattens_slurped_issue_pages(
     assert tasks[0]["payload"]["coordinator"]["source"]["number"] == 7
 
 
+def test_assignment_activity_and_task_retry_in_one_source_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import NAMESPACE_URL, uuid5
+
+    from agent_cli import coordinator_runtime
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    real_create = coordinator_runtime._create_implement_task
+
+    def crash_after_assignment(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise StoreError("crash before task insert")
+
+    monkeypatch.setattr(
+        coordinator_runtime, "_create_implement_task", crash_after_assignment
+    )
+    with pytest.raises(StoreError, match="crash before task insert"):
+        coordinator_runtime.discover_assignments(store, worker, fake)
+
+    assert store.rows("activity") == []
+    assert store.rows("task") == []
+
+    monkeypatch.setattr(coordinator_runtime, "_create_implement_task", real_create)
+    lines = coordinator_runtime.discover_assignments(store, worker, fake)
+
+    assigned = [row for row in store.rows("activity") if row.get("type") == "issue.assigned"]
+    tasks = store.rows("task")
+    assert len(assigned) == 1
+    assert len(tasks) == 1
+    assert "accepted source example/project#7" in lines[0]
+    assert assigned[0]["id"] == str(
+        uuid5(
+            NAMESPACE_URL,
+            "coordinator-assigned:example/project:7:worker-bot",
+        )
+    )
+    assert tasks[0]["payload"]["coordinator"]["source"]["assigned_id"] == assigned[0]["id"]
+
+
 def test_implementer_result_blocked_sets_task_failed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3633,6 +3729,115 @@ def test_parallel_pr_rejection_replays_after_agent_checkpoint_crash(
     assert "hunter2" not in recovered_c["findings"]
 
 
+def test_parallel_reviewer_audit_retry_keeps_sibling_and_output_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+    from agent_cli.store import StoreError
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = make_worker(tmp_path)
+    tid = "aa000001-0000-4000-8000-0000000001c2"
+    task = _seed_posted_codex_task(
+        store,
+        worker,
+        tid,
+        codex_dims=(),
+        codex_status={"review_2_quality": "pending", "review_2_logic": "pending"},
+    )
+    task["ref"] = "42"
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    Path(task["payload"]["coordinator"]["worktree"]).mkdir(parents=True)
+    _patch_pr_gate_git(monkeypatch, tmp_path)
+    patch_execute_github(monkeypatch)
+    output_paths: dict[str, Path] = {}
+    launches = 0
+
+    def review(argv: list[str], _stdin: str | None = None) -> Completed:
+        nonlocal launches
+        launches += 1
+        material = " ".join(argv) + "\n" + (_stdin or "")
+        role = "quality" if "pr-reviewer-quality" in material else "logic"
+        output = Path(argv[argv.index("--output-last-message") + 1])
+        output_paths[role] = output
+        output.write_text(
+            "STATUS: complete\nRESULT: approved\n", encoding="utf-8"
+        )
+        return Completed(0, "", "")
+
+    real_record_lane_run = coordinator_lanes.record_lane_run
+    audit_calls = 0
+
+    def fail_second_audit(*args: Any, **kwargs: Any) -> str:
+        nonlocal audit_calls
+        audit_calls += 1
+        if audit_calls == 2:
+            raise StoreError("second audit failed")
+        return real_record_lane_run(*args, **kwargs)
+
+    monkeypatch.setattr(
+        coordinator_lanes, "record_lane_run", fail_second_audit
+    )
+    lines = coordinator_lanes.phase_pr_gates(
+        store,
+        worker,
+        task,
+        lambda _argv: Completed(0, "", ""),
+        review,
+        vendor="codex",
+        stage="review-2",
+    )
+
+    assert "database checkpoint will be retried" in lines[0]
+    saved = store.row("task", tid)
+    outcomes = saved["payload"]["coordinator"]["lane_outcome"]["outcomes"]
+    assert len(outcomes) == 1
+    agents = [
+        row
+        for row in store.rows("agent")
+        if row.get("task_id") == tid
+        and str(row.get("role") or "").startswith("pr-reviewer-")
+    ]
+    assert sorted(row["status"] for row in agents) == ["done", "working"]
+    done_role = str(next(row for row in agents if row["status"] == "done")["dimension"])
+    working_role = str(
+        next(row for row in agents if row["status"] == "working")["dimension"]
+    )
+    assert output_paths[done_role].exists() is False
+    assert output_paths[working_role].exists() is True
+    assert saved["payload"]["coordinator"].get("uncertain_lane") is not True
+
+    recovered_lines = coordinator_lanes.phase_pr_gates(
+        store,
+        worker,
+        saved,
+        lambda _argv: Completed(0, "", ""),
+        lambda *_args: pytest.fail("parallel reviewer was relaunched"),
+        vendor="codex",
+        stage="review-2",
+    )
+
+    recovered = store.row("task", tid)
+    assert launches == 2
+    assert all(path.exists() is False for path in output_paths.values())
+    assert recovered["payload"]["coordinator"].get("uncertain_lane") is not True
+    assert recovered["payload"]["coordinator"]["phase"] == "ci", recovered_lines
+    gates = [
+        row
+        for row in store.rows("review_gate")
+        if row.get("task_id") == tid and row.get("stage") == "review-2"
+    ]
+    assert {row["dimension"] for row in gates} == {"quality", "logic"}
+
+
 def _codex_prelaunch_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tid: str
 ) -> tuple[Store, Any, dict[str, Any]]:
@@ -3799,7 +4004,7 @@ def test_preparation_failure_after_mkstemp_removes_owned_output(
 
 
 @pytest.mark.parametrize("failure", ["decode", "oserror"])
-def test_run_prepared_returns_unavailable_and_removes_owned_output(
+def test_run_prepared_returns_unavailable_and_leaves_output_for_checkpoint(
     tmp_path: Path, failure: str
 ) -> None:
     from agent_cli import coordinator_lanes
@@ -3832,7 +4037,7 @@ def test_run_prepared_returns_unavailable_and_removes_owned_output(
     assert outcome.stdout == ""
     if failure == "decode":
         assert "not valid UTF-8" in outcome.stderr
-        assert not output.exists()
+        assert output.exists()
     else:
         assert "lane output file is unavailable" in outcome.stderr
     assert len(outcome.stderr) <= 4000
@@ -9529,6 +9734,7 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     )
     patch_execute_github(monkeypatch)
     head = "a" * 40
+    base = "b" * 40
     tid = "33333333-3333-4333-8333-33333333334f"
     worktree = worker.workspace_root / tid
     worktree.mkdir()
@@ -9539,7 +9745,34 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
         "payload": {"coordinator": {"phase": "tests", "head_sha": head, "worktree": str(worktree), "pr_number": 42, "source": {"repo": "example/project", "number": 7}, "a38": {"enabled": True}}},
     }
     store.write("task", "insert", tid, task)
-    store.write("checklist_item", "insert", "a38-fail-local", {"id": "a38-fail-local", "task_id": tid, "key": "local_check_pass", "status": "pending"})
+    checklist = {
+        "session_registered": "ja",
+        "spec_written": "ja",
+        "implementer_done": "ja",
+        "reviewer_approved": "ja",
+        "local_check_pass": "pending",
+        "pushed": "pending",
+        "review_1_quality": "pending",
+        "review_1_logic": "pending",
+        "review_2_quality": "pending",
+        "review_2_logic": "pending",
+        "contributing_ok": "pending",
+        "deviation_declared": "pending",
+        "deviation_granted": "pending",
+    }
+    for key, status in checklist.items():
+        checklist_id = f"a38-merged-{key}"
+        store.write(
+            "checklist_item",
+            "insert",
+            checklist_id,
+            {
+                "id": checklist_id,
+                "task_id": tid,
+                "key": key,
+                "status": status,
+            },
+        )
     monkeypatch.setattr("agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head)
     monkeypatch.setattr(
         "agent_cli.coordinator_a38._pull_a38_context",
@@ -9559,9 +9792,9 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
         if parts[:2] == ("cat-file", "-e"):
             return Completed(0, "", "")
         if parts[0] == "rev-parse":
-            return Completed(0, "b" * 40 + "\n", "")
+            return Completed(0, base + "\n", "")
         if parts[0] == "show":
-            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+            return Completed(0, _a38_policy_text(), "")
         raise AssertionError(parts)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
@@ -9570,12 +9803,19 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
         calls.append(argv[0])
         if argv[0] == "run":
-            Path(argv[argv.index("--output") + 1]).write_text("report", encoding="utf-8")
+            output_path = Path(argv[argv.index("--output") + 1])
+            if failing == "none":
+                _write_coordinator_a38_report(output_path, head=head, base=base)
+            else:
+                output_path.write_text("report", encoding="utf-8")
         return Completed(1 if argv[0] == failing else 0, f"{argv[0]} output", "")
 
     monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.pr_state", lambda *a, **k: "MERGED")
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.fresh_pr_head", lambda *a, **k: head
+    )
     monkeypatch.setattr(
         "agent_cli.coordinator_a38.ensure_draft",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not push a merged PR")),
@@ -9584,8 +9824,31 @@ def test_a38_tests_after_a_merge_during_the_suite_go_to_the_merge_check(
     lines = phase_a38_tests(store, worker, store.row("task", tid), lambda argv: Completed(0, "", ""))
 
     saved = store.row("task", tid)
-    assert lines == ["PR merged during the A38 suite; verifying the merge"]
-    assert saved["payload"]["coordinator"]["phase"] == "await_merge"
+    checkpoint = saved["payload"]["coordinator"]
+    assert checkpoint["phase"] == "await_merge"
+    if failing == "run":
+        assert lines == ["PR merged during the A38 suite; verifying the merge"]
+        assert "report" not in checkpoint["a38"]
+        return
+    assert lines == [
+        f"A38 passed and report posted on {head[:7]}; PR merged, verifying the merge"
+    ]
+    assert checkpoint["evidence"] == {
+        "tests_pass": True,
+        "tests_head": head,
+    }
+    assert checkpoint["a38"]["report"]["head"] == head
+    assert checkpoint["a38"]["report"]["base_sha"] == base
+    assert checkpoint["a38"]["base_sha"] == base
+    local = next(
+        row
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == tid and row.get("key") == "local_check_pass"
+    )
+    assert local["status"] == "ja"
+    reports = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
+    assert len(reports) == 1
+    assert reports[0]["execution_status"] == "done"
 
 
 def test_a38_pr_left_open_routes_only_a_definite_merge_or_close(monkeypatch) -> None:
@@ -10111,6 +10374,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
 ) -> None:
     from dataclasses import replace
 
+    from agent_cli import coordinator_a38
     from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
 
     store = Store(tmp_path)
@@ -10170,23 +10434,57 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
         if parts[0] == "rev-parse":
             return Completed(0, base + "\n", "")
         if parts[0] == "show":
-            return Completed(0, '{"schema":"a38-policy/v1","jobs":[]}', "")
+            return Completed(0, _a38_policy_text(), "")
         raise AssertionError(parts)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
     calls: list[str] = []
-    report_body = "<!-- DFX-LOCAL-CI:v1 -->\nverified report\n<!-- /DFX-LOCAL-CI:v1 -->"
+    report_body = ""
 
     def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        nonlocal report_body
         calls.append(argv[0])
         if argv[0] == "run":
-            Path(argv[argv.index("--output") + 1]).write_text(report_body, encoding="utf-8")
+            report_body = _write_coordinator_a38_report(
+                Path(argv[argv.index("--output") + 1]), head=head, base=base
+            )
         return Completed(0, "ok", "")
 
     monkeypatch.setattr("agent_cli.coordinator_a38._run_cli", fake_cli)
 
-    def crash_before_task_save(*_args, **_kwargs):
-        raise RuntimeError("simulated task save failure")
+    from agent_cli.coordinator_a38 import _report_activity_id
+
+    fabricated_id = _report_activity_id(
+        tid, head=head, base_sha=base, policy_revision=base
+    )
+    store.write(
+        "activity",
+        "insert",
+        fabricated_id,
+        {
+            "id": fabricated_id,
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": {
+                "repo": "example/project",
+                "number": 42,
+                "body": "fabricated pass",
+                "target": "pr",
+                "exact_body": True,
+            },
+            "execution_status": "done",
+            "result": {"id": 1, "url": "https://x/fabricated"},
+        },
+    )
+    real_save_task = coordinator_a38.save_task
+    save_count = 0
+
+    def crash_before_task_save(store_arg, candidate):  # noqa: ANN001
+        nonlocal save_count
+        save_count += 1
+        if save_count == 2:
+            raise RuntimeError("simulated task save failure")
+        real_save_task(store_arg, candidate)
 
     def runner(_argv: list[str]) -> Completed:
         return Completed(0, "", "")
@@ -10197,8 +10495,14 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
             phase_a38_tests(store, worker, store.row("task", tid), runner)
     assert calls == ["policy", "run", "verify"]
     assert len(prechecks) == 1
-    report_rows = [row for row in store.rows("activity") if row.get("type") == "comment.post"]
-    assert report_rows[0]["payload"]["body"] == report_body
+    report_rows = [
+        row
+        for row in store.rows("activity")
+        if row.get("type") == "comment.post"
+        and row.get("payload", {}).get("body") == report_body
+    ]
+    assert len(report_rows) == 1
+    assert report_rows[0]["id"] != fabricated_id
     assert report_rows[0]["payload"]["exact_body"] is True
     checks = [row for row in store.rows("local_check") if row.get("task_id") == tid]
     assert any(row.get("name") == "a38" and row.get("result") == "pass" for row in checks)
@@ -10234,7 +10538,7 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     assert retried_bodies == [report_body]
     assert len(
         [row for row in store.rows("activity") if row.get("type") == "comment.post"]
-    ) == 1
+    ) == 2
     assert "already posted" in lines[0]
     saved = store.row("task", tid)
     recovered_report = saved["payload"]["coordinator"]["a38"]["report"]
@@ -10243,6 +10547,9 @@ def test_a38_tests_run_policy_run_verify_and_post_exact_report(
     assert recovered_report["policy_revision"] == base
     assert recovered_report["activity_id"] == report_rows[0]["id"]
     assert recovered_report["url"] == "https://x"
+    intent = saved["payload"]["coordinator"]["a38"]["report_intent"]
+    assert intent["activity_id"] == report_rows[0]["id"]
+    assert intent["body_sha256"] != ""
     assert saved["payload"]["coordinator"]["evidence"]["tests_pass"] is True
     assert saved["payload"]["coordinator"]["evidence"]["tests_head"] == head
     assert saved["payload"]["coordinator"]["phase"] == "pr_gates_grok"
@@ -10788,6 +11095,71 @@ def test_inner_reviewer_rejection_replays_after_agent_checkpoint_crash(
     assert "hunter2" not in recovered_c["findings"]
 
 
+def test_implementer_agent_model_is_redacted_but_provider_argv_keeps_raw_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_lanes
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    accounts_path = store.home / "ai-accounts.json"
+    accounts = json.loads(accounts_path.read_text(encoding="utf-8"))
+    raw_model = "api_key=model-secret /opt/private/profile"
+    accounts["accounts"]["grok-w"]["config_dir"] = "/opt/private/profile"
+    accounts["roles"]["impl"]["model"] = raw_model
+    accounts_path.write_text(json.dumps(accounts), encoding="utf-8")
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = make_worker(tmp_path)
+    worktree = worker.workspace_root / "implementer-model-redaction"
+    worktree.mkdir()
+    tid = "aa000001-0000-4000-8000-0000000001c1"
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "implementing",
+        "current_round": 1,
+        "models": {"first": "grok", "second": "codex"},
+        "payload": {"coordinator": {"phase": "implement", "worktree": str(worktree)}},
+    }
+    store.write("task", "insert", tid, task)
+    monkeypatch.setattr(
+        coordinator_lanes, "verify_checkout_identity", lambda *_args, **_kwargs: {}
+    )
+    launched: list[list[str]] = []
+
+    def lane(argv: list[str], _stdin: str | None) -> Completed:
+        launched.append(argv)
+        return Completed(
+            0,
+            "STATUS: complete\nRESULT: done\n"
+            "SUMMARY_EN: Apply the requested fix.\n"
+            "SUMMARY_DE: Setze die angeforderte Korrektur um.\n"
+            "REUSED: none — no existing surface\n"
+            "ADDED: `src/example.py:1` add behavior\n",
+            "",
+        )
+
+    coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="implementer",
+        vendor="grok",
+        round_num=1,
+        spec_body="Implement.",
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=lane,
+    )
+
+    assert len(launched) == 1
+    assert raw_model in launched[0]
+    agent = next(row for row in store.rows("agent") if row.get("task_id") == tid)
+    assert agent["model"] != raw_model
+    assert "model-secret" not in agent["model"]
+    assert "/opt/private/profile" not in agent["model"]
+
+
 def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -10842,20 +11214,21 @@ def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
         "save_task",
         fail_checkpoint_save,
     )
-    with pytest.raises(StoreError, match="save failed"):
-        coordinator_lanes.launch_lane(
-            store,
-            worker,
-            task,
-            role="reviewer",
-            vendor="grok",
-            round_num=1,
-            spec_body="Review.",
-            runner=lambda _argv: Completed(0, "", ""),
-            lane_runner=lambda _argv, _stdin: Completed(
-                0, "STATUS: complete\nRESULT: approved\n", ""
-            ),
-        )
+    agent, result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="reviewer",
+        vendor="grok",
+        round_num=1,
+        spec_body="Review.",
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=lambda _argv, _stdin: Completed(
+            0, "STATUS: complete\nRESULT: approved\n", ""
+        ),
+    )
+    assert agent["status"] == "working"
+    assert result.protocol_result == "approved"
 
     assert before_live_task is not None
     assert before_stored_task is not None
@@ -10872,7 +11245,7 @@ def test_inner_reviewer_checkpoint_rollback_through_launch_keeps_running_state(
     assert agents[0]["status"] == "working"
 
 
-def test_reviewer_audit_failure_rolls_back_checkpoint_and_finished_agent(
+def test_reviewer_audit_failure_retries_checkpoint_without_relaunch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent_cli import coordinator_lanes
@@ -10906,26 +11279,32 @@ def test_reviewer_audit_failure_rolls_back_checkpoint_and_finished_agent(
         "verify_checkout_identity",
         lambda *_args, **_kwargs: {},
     )
-    monkeypatch.setattr(
-        coordinator_lanes,
-        "record_lane_run",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(StoreError("audit failed")),
-    )
+    real_record_lane_run = coordinator_lanes.record_lane_run
+    audit_calls = 0
 
-    with pytest.raises(StoreError, match="audit failed"):
-        coordinator_lanes.launch_lane(
-            store,
-            worker,
-            task,
-            role="reviewer",
-            vendor="grok",
-            round_num=1,
-            spec_body="Review.",
-            runner=lambda _argv: Completed(0, "", ""),
-            lane_runner=lambda _argv, _stdin: Completed(
-                0, "STATUS: complete\nRESULT: approved\n", ""
-            ),
-        )
+    def fail_once(*args: Any, **kwargs: Any) -> str:
+        nonlocal audit_calls
+        audit_calls += 1
+        if audit_calls == 1:
+            raise StoreError("audit failed")
+        return real_record_lane_run(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator_lanes, "record_lane_run", fail_once)
+    first_agent, first_result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        task,
+        role="reviewer",
+        vendor="grok",
+        round_num=1,
+        spec_body="Review.",
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=lambda _argv, _stdin: Completed(
+            0, "STATUS: complete\nRESULT: approved\n", ""
+        ),
+    )
+    assert first_agent["status"] == "working"
+    assert first_result.protocol_result == "approved"
 
     saved = store.row("task", tid)
     assert saved is not None
@@ -10939,6 +11318,27 @@ def test_reviewer_audit_failure_rolls_back_checkpoint_and_finished_agent(
         for row in store.rows("activity")
         if row.get("type") == "lane.run" and row.get("payload", {}).get("task_id") == tid
     ] == []
+
+    recovered_task = store.row("task", tid)
+    assert recovered_task is not None
+    recovered_agent, recovered_result = coordinator_lanes.launch_lane(
+        store,
+        worker,
+        recovered_task,
+        role="reviewer",
+        vendor="grok",
+        round_num=1,
+        spec_body="Review.",
+        runner=lambda _argv: Completed(0, "", ""),
+        lane_runner=lambda *_args: pytest.fail("reviewer was relaunched"),
+    )
+
+    assert recovered_agent["status"] == "done"
+    assert recovered_result.protocol_result == "approved"
+    checkpoint = recovered_task["payload"]["coordinator"]["lane_outcome"]
+    assert checkpoint["outcomes"][0]["result"] == "approved"
+    assert recovered_task["payload"]["coordinator"].get("uncertain_lane") is not True
+    assert audit_calls == 2
 
 
 @pytest.mark.parametrize("checkpoint_redaction_failure", [False, True])

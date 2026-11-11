@@ -541,7 +541,7 @@ def _insert_assigned_activity(
     activity_id = str(
         uuid5(
             NAMESPACE_URL,
-            f"coordinator-assigned:{repo.casefold()}:{number}:{assigned_at}:{assignee}",
+            f"coordinator-assigned:{repo.casefold()}:{number}:{assignee.casefold()}",
         )
     )
     existing = store.row("activity", activity_id)
@@ -750,27 +750,34 @@ def discover_assignments(store: Store, worker: WorkerConfig, runner: Runner) -> 
         url = verified.get("html_url") if isinstance(verified.get("html_url"), str) else ""
         # updated_at is not assigned_at — record observation honestly.
         observed = utcnow()
-        assigned_id = _insert_assigned_activity(
-            store,
-            worker,
-            repo=repo,
-            number=number,
-            title=title or "",
-            body=body or "",
-            url=url or "",
-            assignee=login.casefold(),
-            assigned_at=observed,
-        )
-        task = _create_implement_task(
-            store,
-            worker,
-            repo=repo,
-            number=number,
-            title=title or f"Issue {number}",
-            assigned_id=assigned_id,
-            repository_config=repo_cfg_item,
-            body=body or "",
-        )
+        source_lock = f"coordinator-source:{repo.casefold()}:{number}"
+        with store.advisory_transaction(source_lock):
+            # Recheck admission while holding the same transaction lock that
+            # covers both source evidence and task creation. A losing worker
+            # therefore cannot leave an orphan assignment activity behind.
+            task = _find_task_for_issue_device_wide(store, repo, number)
+            if task is None:
+                assigned_id = _insert_assigned_activity(
+                    store,
+                    worker,
+                    repo=repo,
+                    number=number,
+                    title=title or "",
+                    body=body or "",
+                    url=url or "",
+                    assignee=login.casefold(),
+                    assigned_at=observed,
+                )
+                task = _create_implement_task(
+                    store,
+                    worker,
+                    repo=repo,
+                    number=number,
+                    title=title or f"Issue {number}",
+                    assigned_id=assigned_id,
+                    repository_config=repo_cfg_item,
+                    body=body or "",
+                )
         if task is None:
             other = _find_task_for_issue_device_wide(store, repo, number)
             if other is not None and other.get("session_id") != worker.session_id:
@@ -1650,6 +1657,8 @@ def phase_inner_review(
         runner=runner,
         lane_runner=lane_runner,
     )
+    if agent.get("status") == "working":
+        return ["inner reviewer finished; database checkpoint will be retried"]
     c = coord(task)
     head = str(c.get("head_sha") or "")
     replay = reviewer_replay_outcomes(

@@ -7,6 +7,7 @@ never submits a GitHub review approval and never changes draft state.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import NAMESPACE_URL, uuid5, uuid4
 
+from .a38 import report_fact_reasons, verify_report
 from .a38_guard import POLICY_PATH, status_context_enforce
 from .a38_review import (
     REVIEW_BEGIN,
@@ -388,6 +390,88 @@ def _report_activity_id(
     )
 
 
+def _report_body_digest(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _load_report_policy(
+    store: Store,
+    worker: WorkerConfig,
+    runner: Runner,
+    worktree: str,
+    base_sha: str,
+) -> tuple[Any, dict[str, Any]]:
+    result = git(
+        store, worker, runner, worktree, "show", f"{base_sha}:.github/a38.json"
+    )
+    require_git_ok(result, "load A38 policy from base")
+    try:
+        policy = json.loads(result.stdout or "")
+        if not isinstance(policy, dict):
+            raise ValueError("policy is not an object")
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise CoordinatorError("A38 base policy is invalid") from exc
+    return result, policy
+
+
+def _repository_visibility(api: Runner, repo: str) -> bool:
+    visibility = gh_json(api, ["gh", "api", f"repos/{repo}", "--jq", ".private"])
+    if not isinstance(visibility, bool):
+        raise CoordinatorError("target repository visibility lookup did not return a boolean")
+    return visibility
+
+
+def _validate_report_body(
+    body: str,
+    *,
+    policy: dict[str, Any],
+    repo: str,
+    head: str,
+    base_sha: str,
+    private: bool,
+    changed_paths: list[str],
+) -> None:
+    """Revalidate every fact needed before a report intent may be recovered."""
+    verdict = verify_report(body, policy, repo=repo, head=head, private=private)
+    try:
+        report = parse_comment(body)
+    except LocalCiError as exc:
+        raise CoordinatorError("A38 report checkpoint body is invalid") from exc
+    reasons = list(verdict.get("reasons") or [])
+    if report.schema != "dfx-local-ci/v2":
+        reasons.append("report schema is not dfx-local-ci/v2")
+    reasons.extend(
+        report_fact_reasons(
+            body,
+            report,
+            base_sha=base_sha,
+            changed_paths=changed_paths,
+        )
+    )
+    if verdict.get("ok") is not True or verdict.get("status") != "pass" or reasons:
+        raise CoordinatorError("A38 report checkpoint does not satisfy the current policy")
+
+
+def _report_intent_matches(
+    value: Any,
+    *,
+    head: str,
+    base_sha: str,
+    policy_revision: str,
+) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("head") == head
+        and value.get("base_sha") == base_sha
+        and value.get("policy_revision") == policy_revision
+        and isinstance(value.get("activity_id"), str)
+        and bool(value["activity_id"])
+        and isinstance(value.get("body_sha256"), str)
+        and len(value["body_sha256"]) == 64
+        and isinstance(value.get("private"), bool)
+    )
+
+
 def phase_tests(
     store: Store, worker: WorkerConfig, task: dict[str, Any], runner: Runner
 ) -> list[str]:
@@ -539,15 +623,67 @@ def phase_tests(
     evidence = c.get("evidence")
     if isinstance(evidence, dict):
         evidence.pop("tests_waiver", None)
-    activity_id = _report_activity_id(
+    default_activity_id = _report_activity_id(
         str(task["id"]),
         head=head,
         base_sha=base_sha,
         policy_revision=policy_revision,
     )
+    intent = a38.get("report_intent")
+    intent_matches = _report_intent_matches(
+        intent,
+        head=head,
+        base_sha=base_sha,
+        policy_revision=policy_revision,
+    )
+    activity_id = str(intent["activity_id"]) if intent_matches else default_activity_id
     activity = store.row("activity", activity_id)
     if isinstance(activity, dict) and not _own_report_activity(store, worker, task, activity, head):
         raise CoordinatorError("A38 report activity id is held by a row this worker did not write")
+    policy_result = None
+    policy = None
+    visibility = None
+    if isinstance(activity, dict):
+        payload = activity.get("payload")
+        body = payload.get("body") if isinstance(payload, dict) else None
+        if intent_matches:
+            policy_result, policy = _load_report_policy(
+                store, worker, runner, worktree, base_sha
+            )
+            visibility = _repository_visibility(api, cfg.repo)
+        expected_recovery_payload = {
+            "repo": target_repo(task),
+            "number": number,
+            "body": body,
+            "target": "pr",
+            "exact_body": True,
+        }
+        if (
+            not intent_matches
+            or not isinstance(body, str)
+            or payload != expected_recovery_payload
+            or _report_body_digest(body) != intent.get("body_sha256")
+            or visibility is not intent.get("private")
+        ):
+            # A deterministic id alone is not evidence. Ignore the row and
+            # measure again; the verified body will use a digest-bound fallback
+            # id if this id remains occupied by different content.
+            activity = None
+        else:
+            assert policy is not None
+            assert visibility is not None
+            try:
+                _validate_report_body(
+                    body,
+                    policy=policy,
+                    repo=cfg.repo,
+                    head=head,
+                    base_sha=base_sha,
+                    private=visibility,
+                    changed_paths=changed_paths,
+                )
+            except CoordinatorError:
+                activity = None
     if isinstance(activity, dict):
         payload = activity.get("payload")
         if activity.get("execution_status") != "done":
@@ -591,9 +727,18 @@ def phase_tests(
             evidence["tests_head"] = head
         set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
         _promote_base_evidence(store, task, head=head, base_sha=base_sha)
-        c["phase"] = "pr_gates_grok"
-        task["state"] = "pr-review"
+        live_state = pr_state(store, worker, task, runner)
+        if live_state in ("MERGED", "CLOSED"):
+            c["phase"] = "await_merge"
+        else:
+            c["phase"] = "pr_gates_grok"
+            task["state"] = "pr-review"
         save_task(store, task)
+        if live_state in ("MERGED", "CLOSED"):
+            return [
+                f"A38 report already posted on {head[:7]}; "
+                f"PR {live_state.lower()}, verifying the merge"
+            ]
         return [f"A38 report already posted on {head[:7]}"]
 
     if cfg.check_argv:
@@ -640,8 +785,12 @@ def phase_tests(
             head=head,
         )
 
-    policy_result = git(store, worker, runner, worktree, "show", f"{base_sha}:.github/a38.json")
-    require_git_ok(policy_result, "load A38 policy from base")
+    if policy_result is None or policy is None:
+        policy_result, policy = _load_report_policy(
+            store, worker, runner, worktree, base_sha
+        )
+    if visibility is None:
+        visibility = _repository_visibility(api, cfg.repo)
 
     run_dir = control_dir(worker, str(task["id"])) / "a38" / head
     try:
@@ -657,9 +806,6 @@ def phase_tests(
     logs_dir = run_dir / "logs"
     policy_path.write_text(policy_result.stdout or "", encoding="utf-8")
 
-    visibility = gh_json(api, ["gh", "api", f"repos/{cfg.repo}", "--jq", ".private"])
-    if not isinstance(visibility, bool):
-        raise CoordinatorError("target repository visibility lookup did not return a boolean")
     visibility_flag = "--private" if visibility else "--public"
     steps = [
         ["policy", "--file", str(policy_path)],
@@ -713,14 +859,14 @@ def phase_tests(
         output=output,
         head=head,
     )
+    live_state = None
     if as_int(c.get("pr_number") or task.get("ref")) is not None:
-        # A merge during the suite, passed or failed, goes to the merge check first.
         live_state = pr_state(store, worker, task, runner)
+    if not passed:
         if live_state in ("MERGED", "CLOSED"):
             c["phase"] = "await_merge"
             save_task(store, task)
             return [f"PR {live_state.lower()} during the A38 suite; verifying the merge"]
-    if not passed:
         details = _a38_failure_summary(report_path, logs_dir, output or "A38 failed")
         c["findings"] = f"A38 failed on {head[:7]}:\n{details}"
         evidence = c.setdefault("evidence", {})
@@ -737,10 +883,30 @@ def phase_tests(
         report_body = report_path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise CoordinatorError("verified A38 report cannot be read") from exc
-    draft_lines = ensure_draft(store, worker, task, runner)
-    if str(coord(task).get("head_sha") or "") != head:
-        raise CoordinatorError("published pull request head differs from verified A38 head")
-    if c.get("pr_number"):
+    _validate_report_body(
+        report_body,
+        policy=policy,
+        repo=cfg.repo,
+        head=head,
+        base_sha=base_sha,
+        private=visibility,
+        changed_paths=changed_paths,
+    )
+    draft_lines: list[str] = []
+    if live_state in ("MERGED", "CLOSED"):
+        live_head = fresh_pr_head(store, worker, task, runner)
+        if live_head != head:
+            c["phase"] = "await_merge"
+            save_task(store, task)
+            return [
+                f"PR {live_state.lower()} during the A38 suite with an unbound head; "
+                "verifying the merge"
+            ]
+    else:
+        draft_lines = ensure_draft(store, worker, task, runner)
+        if str(coord(task).get("head_sha") or "") != head:
+            raise CoordinatorError("published pull request head differs from verified A38 head")
+    if c.get("pr_number") and live_state not in ("MERGED", "CLOSED"):
         try:
             set_checklist(
                 store,
@@ -755,18 +921,51 @@ def phase_tests(
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 report comment requires a pull request number")
+    body_sha256 = _report_body_digest(report_body)
+    activity_id = default_activity_id
+    occupied = store.row("activity", activity_id)
+    expected_payload = {
+        "repo": target_repo(task),
+        "number": number,
+        "body": report_body,
+        "target": "pr",
+        "exact_body": True,
+    }
+    if isinstance(occupied, dict):
+        if not _own_report_activity(store, worker, task, occupied, head):
+            raise CoordinatorError(
+                "A38 report activity id is held by a row this worker did not write"
+            )
+        if occupied.get("payload") != expected_payload:
+            activity_id = str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"coordinator-a38-report-body:{task['id']}:{head}:"
+                    f"{base_sha}:{policy_revision}:{body_sha256}",
+                )
+            )
+            fallback = store.row("activity", activity_id)
+            if isinstance(fallback, dict) and (
+                not _own_report_activity(store, worker, task, fallback, head)
+                or fallback.get("payload") != expected_payload
+            ):
+                raise CoordinatorError("verified A38 report activity id is occupied")
+    a38["report_intent"] = {
+        "head": head,
+        "base_sha": base_sha,
+        "policy_revision": policy_revision,
+        "activity_id": activity_id,
+        "body_sha256": body_sha256,
+        "private": visibility,
+    }
+    # The exact verified body digest is durable before publication is queued.
+    save_task(store, task)
     queue_activity(
         store,
         activity_id=activity_id,
         session_id=worker.session_id,
         typ="comment.post",
-        payload={
-            "repo": target_repo(task),
-            "number": number,
-            "body": report_body,
-            "target": "pr",
-            "exact_body": True,
-        },
+        payload=expected_payload,
     )
     execute_github(store, runner, activity_ids=(activity_id,))
     row = store.row("activity", activity_id)
@@ -789,9 +988,17 @@ def phase_tests(
         evidence["tests_head"] = head
     set_checklist(store, task, "local_check_pass", "ja", f"A38 pass on {head}", source="script")
     _promote_base_evidence(store, task, head=head, base_sha=base_sha)
-    c["phase"] = "pr_gates_grok"
-    task["state"] = "pr-review"
+    if live_state in ("MERGED", "CLOSED"):
+        c["phase"] = "await_merge"
+    else:
+        c["phase"] = "pr_gates_grok"
+        task["state"] = "pr-review"
     save_task(store, task)
+    if live_state in ("MERGED", "CLOSED"):
+        return [
+            f"A38 passed and report posted on {head[:7]}; "
+            f"PR {live_state.lower()}, verifying the merge"
+        ]
     return [f"A38 passed and report posted on {head[:7]}", *draft_lines]
 
 
@@ -2216,7 +2423,7 @@ def _drop_base_evidence(c: dict[str, Any]) -> None:
         evidence.pop("readiness_base", None)
         evidence.pop("readiness_at", None)
     a38 = _a38_state(c)
-    for key in ("report", "report_waiver", "guard_status"):
+    for key in ("report", "report_intent", "report_waiver", "guard_status"):
         a38.pop(key, None)
     a38.pop("policy_revision", None)
 
