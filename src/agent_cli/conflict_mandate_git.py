@@ -551,34 +551,6 @@ def push_with_lease(
     ))
 
 
-def remote_head(runner: Runner, worktree: str, *, ref: str) -> str:
-    if (
-        not branch_ref_valid(ref)
-        or ref in {"develop", "main", "master"}
-    ):
-        raise CoordinatorError(f"refusing to read protected or invalid head ref {ref}")
-    completed = runner(_transfer_argv(
-        worktree,
-        "ls-remote",
-        "publication",
-        f"refs/heads/{ref}",
-    ))
-    if completed.returncode != 0:
-        _fail(completed, "publication branch")
-    matches: list[str] = []
-    for line in (completed.stdout or "").splitlines():
-        parts = line.split()
-        if len(parts) != 2 or parts[1] != f"refs/heads/{ref}":
-            continue
-        sha = parts[0].lower()
-        if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
-            raise CoordinatorError("cannot read the publication branch head")
-        matches.append(sha)
-    if len(matches) > 1:
-        raise CoordinatorError("publication branch returned more than one head")
-    return matches[0] if matches else ""
-
-
 __all__ = [
     "RepositoryState",
     "UnmergedPath",
@@ -599,7 +571,6 @@ __all__ = [
     "rebase_abort",
     "rebase_continue",
     "rebase_complete",
-    "remote_head",
     "record_git_file",
     "remove_repository",
     "repository_state",
