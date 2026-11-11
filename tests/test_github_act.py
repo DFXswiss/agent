@@ -176,6 +176,40 @@ def test_pr_open_view_auth_error_no_create(tmp_path: Path) -> None:
     assert "HTTP 401" in (row.get("execution_error") or "")
 
 
+def test_github_failure_row_redacts_controls_credentials_and_account_paths(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path)
+    _owned_session(store)
+    act_id = "pr-redacted-error"
+    _pending(
+        store,
+        act_id,
+        "pr.open",
+        {"repo": "dfxswiss/agent", "title": "T", "head": "feat"},
+    )
+    raw_error = (
+        "profile /test/\x1b[31mgh and key /test/\x1b[32mkey\n"
+        + ("x" * 410)
+        + " token=g\x1b[33mh\x1b[0mp_CONTROL_INTERLEAVED_SECRET"
+    )
+
+    def runner(argv: list[str]) -> Completed:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return Completed(1, "", raw_error)
+        raise AssertionError(argv)
+
+    assert scan_github(store, runner) == [f"pr.open {act_id} error"]
+    error = str(store.row("activity", act_id)["execution_error"])
+    assert len(error) <= 500
+    assert "\x1b" not in error
+    assert "/test/gh" not in error
+    assert "/test/key" not in error
+    assert "CONTROL_INTERLEAVED_SECRET" not in error
+    assert "<gh_config_dir>" in error
+    assert "<signing_key>" in error
+
+
 def test_pr_open_view_token_not_found_no_create(tmp_path: Path) -> None:
     store = Store(tmp_path)
     _owned_session(store)

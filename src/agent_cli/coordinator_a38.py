@@ -101,6 +101,10 @@ _LANE_KEYS = frozenset(
 )
 
 
+class _PullRequestBaseUnavailable(CoordinatorError):
+    """Transient missing or malformed base revision from a pull-request read."""
+
+
 def _bounded_text(value: Any, label: str, *, maximum: int = 20000) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise CoordinatorError(f"{label} requires nonempty text of at most {maximum} characters")
@@ -355,7 +359,7 @@ def _pull_a38_context(
             "A38 pull request head differs from the clean signed head"
         )
     if last_before is not None and not is_sha(last_before[1]):
-        raise CoordinatorError(
+        raise _PullRequestBaseUnavailable(
             "A38 pull request base revision is not a 40-hex SHA"
         )
     if last_before is not None and last_before[2] != expected_base:
@@ -390,19 +394,24 @@ def phase_tests(
     cfg = repo_cfg(worker, str(source["repo"]), task)
     worktree = str(c["worktree"])
     head = verify_signed_clean_head(store, worker, runner, worktree)
-    c["head_sha"] = head
     a38 = _a38_state(c)
     number = as_int(c.get("pr_number") or task.get("ref"))
     if number is None:
         raise CoordinatorError("A38 measurement requires a pull request number")
     api = scoped(store, worker.session_id, runner)
-    base_sha, changed_paths = _pull_a38_context(
-        api,
-        repo=cfg.repo,
-        number=number,
-        expected_head=head,
-        expected_base=cfg.base,
-    )
+    try:
+        base_sha, changed_paths = _pull_a38_context(
+            api,
+            repo=cfg.repo,
+            number=number,
+            expected_head=head,
+            expected_base=cfg.base,
+        )
+    except _PullRequestBaseUnavailable:
+        return ["PR state temporarily unavailable; retrying"]
+    c["head_sha"] = head
+    _reconcile_pending_base(store, task, base_sha)
+    a38 = _a38_state(c)
     saved_base = evidence_base_sha(c, a38=True)
     if is_sha(saved_base) and saved_base != base_sha:
         invalidate_base_evidence(store, task, base_sha)
@@ -983,15 +992,52 @@ def _first_comment_body(
     return body, int(payload["passes"])
 
 
-def _first_comment_passes(body: str, head: str) -> int:
-    """Read the pass count from an already-rendered owned comment body."""
+def _validated_first_comment_passes(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    runner: Runner,
+    body: str,
+    head: str,
+    *,
+    checkpoint_passes: int | None = None,
+) -> int:
+    """Validate every persisted representation of a first-review comment."""
     try:
         payload = parse_review_block(body)
     except ReviewError as exc:
         raise CoordinatorError("saved A38 first comment payload is invalid") from exc
     passes = payload.get("passes")
-    if payload.get("head") != head or type(passes) is not int or passes < 1:
+    lanes = payload.get("lanes")
+    lane_ids = (
+        {lane.get("id") for lane in lanes if isinstance(lane, Mapping)}
+        if isinstance(lanes, list)
+        else set()
+    )
+    if (
+        payload.get("head") != head
+        or type(passes) is not int
+        or passes < 1
+        or (checkpoint_passes is not None and passes != checkpoint_passes)
+        or lane_ids != {"conformity-a", "logic-a"}
+    ):
         raise CoordinatorError("saved A38 first comment payload is invalid")
+    rules_bound = review_rules_bound(store, worker, runner, task)
+    reasons = [
+        *validate_declaration(
+            payload,
+            head=head,
+            markdown_only=False,
+            rules_bound=rules_bound,
+        ),
+        *validate_visible(body, passes),
+        *validate_review_record(body, payload, rules_bound=rules_bound),
+    ]
+    if reasons:
+        raise CoordinatorError(
+            "saved A38 first comment payload is invalid: "
+            + "; ".join(dict.fromkeys(reasons))
+        )
     return passes
 
 
@@ -1013,7 +1059,18 @@ def _upgrade_first_comment_intent(
     upgraded = dict(first)
     body = upgraded.get("body")
     passes = upgraded.get("passes")
-    if isinstance(body, str) and body and type(passes) is int and passes >= 1:
+    if isinstance(body, str) and body:
+        if type(passes) is not int or passes < 1:
+            raise CoordinatorError("saved A38 first comment payload is invalid")
+        _validated_first_comment_passes(
+            store,
+            worker,
+            task,
+            runner,
+            body,
+            head,
+            checkpoint_passes=passes,
+        )
         upgraded.update(head=head, activity_id=expected_id)
         _a38_state(coord(task))["first_comment"] = upgraded
         return upgraded
@@ -1039,9 +1096,9 @@ def _upgrade_first_comment_intent(
                 "saved A38 first comment activity is foreign or mismatched"
             )
         body = row_body
-        passes = _first_comment_passes(body, head)
-    elif isinstance(body, str) and body:
-        passes = _first_comment_passes(body, head)
+        passes = _validated_first_comment_passes(
+            store, worker, task, runner, body, head
+        )
     else:
         body, passes = _first_comment_body(
             store, worker, task, runner, head=head
@@ -1114,7 +1171,7 @@ def phase_first_comment(
     # is sent. Their deterministic ids make the incomplete steps resumable.
     save_task(store, task)
     completed_result = _first_comment_result_verified(
-        store, worker, task, comment_intent, head
+        store, worker, task, runner, comment_intent, head
     )
     already_posted = completed_result is not None
     result = completed_result or _post_comment(
@@ -1398,6 +1455,7 @@ def _first_comment_result_verified(
     store: Store,
     worker: WorkerConfig,
     task: Mapping[str, Any],
+    runner: Runner,
     first: Mapping[str, Any],
     head: str,
 ) -> dict[str, Any] | None:
@@ -1412,6 +1470,18 @@ def _first_comment_result_verified(
     number = as_int(coord(dict(task)).get("pr_number") or task.get("ref"))
     if not isinstance(body, str) or not body or number is None:
         raise CoordinatorError("saved A38 first comment payload is invalid")
+    saved_passes = first.get("passes")
+    if type(saved_passes) is not int:
+        raise CoordinatorError("saved A38 first comment payload is invalid")
+    _validated_first_comment_passes(
+        store,
+        worker,
+        dict(task),
+        runner,
+        body,
+        head,
+        checkpoint_passes=saved_passes,
+    )
     payload = {
         "repo": target_repo(dict(task)),
         "number": number,
@@ -1528,7 +1598,7 @@ def reconcile_a38_publication_intents(
         and bool(first.get("activity_id"))
     )
     first_result = (
-        _first_comment_result_verified(store, worker, task, first, head)
+        _first_comment_result_verified(store, worker, task, runner, first, head)
         if first_saved
         else None
     )
@@ -2128,6 +2198,19 @@ def invalidate_base_evidence(
     reopen_base_bound_checklist(store, task)
 
 
+def _reconcile_pending_base(
+    store: Store, task: dict[str, Any], observed_base: str
+) -> bool:
+    """Replace a stale pending base after a stable live-context read."""
+    if not is_sha(observed_base):
+        raise CoordinatorError("current pull request base revision is not a 40-hex SHA")
+    pending = str(_a38_state(coord(task)).get("pending_base_sha") or "").lower()
+    if pending and pending != observed_base:
+        invalidate_base_evidence(store, task, observed_base)
+        return True
+    return False
+
+
 def _bound_base_evidence(
     a38: Mapping[str, Any], *, head: str, base_sha: str
 ) -> bool:
@@ -2269,13 +2352,6 @@ def phase_await_ready(
         c["phase"] = "tests"
         save_task(store, task)
         return ["PR head changed while awaiting guard Ready; invalidating evidence"]
-    observed_base = str(view.get("baseRefOid") or "").lower() if isinstance(view, dict) else ""
-    saved_base = evidence_base_sha(c, a38=True)
-    if is_sha(saved_base) and observed_base != saved_base:
-        invalidate_base_evidence(store, task, observed_base)
-        c["phase"] = "tests"
-        save_task(store, task)
-        return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]
     pr_state = str(view.get("state") or "").upper()
     if pr_state in ("MERGED", "CLOSED"):
         # A human may merge (or close) before this poll sees Ready; await_merge
@@ -2289,6 +2365,25 @@ def phase_await_ready(
     is_draft = view.get("isDraft")
     if is_draft is not True and is_draft is not False:
         raise CoordinatorError("pull request draft state is unavailable")
+    a38 = _a38_state(c)
+    pending_base = str(a38.get("pending_base_sha") or "").lower()
+    saved_base = evidence_base_sha(c, a38=True)
+    observed_base = (
+        str(view.get("baseRefOid") or "").lower()
+        if isinstance(view, dict)
+        else ""
+    )
+    if (pending_base or is_sha(saved_base)) and not is_sha(observed_base):
+        return ["PR state temporarily unavailable; retrying"]
+    if pending_base and _reconcile_pending_base(store, task, observed_base):
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]
+    if is_sha(saved_base) and observed_base != saved_base:
+        invalidate_base_evidence(store, task, observed_base)
+        c["phase"] = "tests"
+        save_task(store, task)
+        return ["PR base changed while awaiting guard Ready; invalidating A38 report evidence"]
     try:
         status_data = gh_json(
             api,
