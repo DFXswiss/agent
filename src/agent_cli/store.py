@@ -278,6 +278,13 @@ class Store:
             finally:
                 self.conn.execute("SELECT pg_advisory_unlock(hashtext(%s))", (key,))
 
+    @contextmanager
+    def advisory_transaction(self, key: str) -> Iterator[None]:
+        """Hold one transaction-scoped logical lock across related writes."""
+        with self._lock, self.conn.transaction():
+            self.conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
+            yield
+
     @_wrap_pg_errors
     def write(self, table: str, op: str, row_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self.conn.transaction():

@@ -278,7 +278,11 @@ for worker in workers.values():
    issue result that is fetched once and then filtered by owner. Initial scan
    includes current assignments (no silent first-run ignore). Idempotent source key:
    `repo + issue number` device-wide — first session owns; one task/PR until
-   terminal. Failed tasks are **not** auto-reopened merely because the issue is
+   terminal. The deterministic `issue.assigned` identity uses that source and
+   the assignee, not the observation clock. Assignment activity and task
+   admission are checked and written under one advisory transaction, so a
+   crash or a losing worker leaves neither an orphan activity nor a duplicate.
+   Failed tasks are **not** auto-reopened merely because the issue is
    still assigned, and this coordinator does **not** implement automatic
    recovery of `state=failed` tasks on reply alone. Assignment evidence is
    verified on GitHub; forged model activity payloads are not trusted. Issue
@@ -594,7 +598,10 @@ signing/publishing so crash recovery applies the recorded result instead of
 starting another model. The inner reviewer and each dimension of a parallel PR
 review atomically persist a bounded, redacted, structured outcome, its
 deterministically identified `lane.run` audit, and the finished agent, bound to
-the task, round, head, stage, and dimension. Before
+the task, round, head, stage, and dimension. A finished reviewer result remains
+in a local checkpoint with its provider output until that transaction commits.
+An audit-only rollback retries only this checkpoint on the next tick and never
+discards an already committed parallel sibling. Before
 starting a reviewer, the coordinator replays a matching saved outcome; it
 removes that outcome only in the transaction that records the round verdict or
 the gates, rejection intents, and phase transition. Parsed implementer
@@ -711,7 +718,7 @@ No silent failure.
 Every lane process writes script-owned `lane.run` evidence with the configured
 and provider-reported model (both bounded and redacted), token usage when
 supplied, a bounded redacted file-tool transcript, and bounded final text.
-Reviewer agent rows and replay checkpoints store that same bounded,
+All agent rows and reviewer replay checkpoints store that same bounded,
 config-path-hidden redacted model value; only provider argv retains the raw
 configured model.
 One shared redaction pipeline handles final text, models, diagnostics, agent
@@ -734,7 +741,10 @@ text. Raw exception text, worktree paths, and account configuration paths do not
 enter task blockers, issue comments, or agent notes.
 Failure to write an implementer audit row itself is an observation and does not
 rewrite the lane verdict. A reviewer audit failure rolls back its finished agent
-and outcome checkpoint because all three records share one transaction.
+and replicated outcome checkpoint because all three records share one
+transaction; the local finished-result checkpoint and provider output remain
+for the next tick's transaction retry, without a model relaunch or an
+`uncertain_lane` stop.
 File-tool targets use one fail-closed rule after terminal,
 separator, and regex-escape normalization: `..` anywhere, `~`, a drive fragment,
 or an absolute/UNC fragment at the start or after any character outside
@@ -895,7 +905,12 @@ The A38 phase route is `publish_draft` → `tests` → `pr_gates_grok` →
 The tests phase reads pull-request metadata, the paginated file inventory, and
 the metadata again. Head SHA, base SHA, and base name must match across both
 metadata reads; a race is retried a bounded number of times and then blocks
-recoverably. Its report publication identity includes the head,
+recoverably. Before publication is queued, the task checkpoints the exact
+verified report-body digest, visibility, head, base, policy revision, and
+activity id. Recovery requires full payload equality and revalidates the v2
+schema, repository, head, live inventory facts, and trusted policy jobs; a row
+that merely occupies the deterministic id is measured again and is not test
+evidence. Its report publication identity includes the head,
 base, and active policy revision, so a base move requires new evidence and a
 new comment. A moved live value first updates
 `coordinator.a38.pending_base_sha`; only bound report-or-waiver evidence plus
@@ -916,6 +931,10 @@ commit exists locally before either running the suite or taking an inventory
 waiver. Independently confirmed markdown-only and guard-docs inventories
 record an exact-head author-report waiver, skip local report execution,
 verification, and publication, and continue to both required review comments.
+After a successful suite, a pull request that merged on the measured head skips
+draft reconciliation but still receives the verified report and records the
+same report, local-test, and promoted-base bindings before merge verification.
+Failed suites and results whose live head no longer matches remain unbound.
 When a trusted coordinator precheck is configured, the waiver records a
 current-head `coordinator-check` skip so an older failure cannot remain the
 selected result.

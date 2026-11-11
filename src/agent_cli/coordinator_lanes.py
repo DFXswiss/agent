@@ -46,6 +46,7 @@ from .lane import (
     OUTPUT_FILE_VENDORS,
     SPEC_VIA_STDIN,
     LaneResult,
+    LaneUsage,
     finalize_lane_output,
     openrouter_path_error,
     provider_argv,
@@ -76,6 +77,7 @@ A38_REVIEW_PROMPT_LIMIT = 14_000
 PR_REVIEW_PREPARATION_ERROR = "PR review lane preparation failed"
 PR_REVIEW_EXECUTION_ERROR = "PR review lane execution failed"
 _CHECKPOINT_SURFACE_REF = re.compile(r"`([^`\n]+):(\d+)`")
+_REVIEWER_SPOOL_VERSION = 1
 
 
 def _coordinator_path_replacements(
@@ -425,6 +427,208 @@ def _checkpoint_reviewer_outcome(
     return entry
 
 
+def _reviewer_spool_path(
+    worker: WorkerConfig, task_id: str, agent_id: str
+) -> Path:
+    return control_dir(worker, task_id) / "reviewer-checkpoints" / f"{agent_id}.json"
+
+
+def _write_reviewer_spool(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    agent: dict[str, Any],
+    result: LaneResult,
+    *,
+    round_num: int | None,
+    head: str,
+    dimension: str,
+    stage: str,
+    output_file: str | None,
+) -> Path:
+    """Persist a finished reviewer result until its database checkpoint commits."""
+    path = _reviewer_spool_path(worker, str(task["id"]), str(agent["id"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    usage = result.usage
+    payload = {
+        "version": _REVIEWER_SPOOL_VERSION,
+        "task_id": str(task["id"]),
+        "agent_id": str(agent["id"]),
+        "round": round_num,
+        "head": head,
+        "dimension": dimension,
+        "stage": stage,
+        "output_file": output_file,
+        "result": {
+            "role": result.role,
+            "vendor": result.vendor,
+            "model": redact_lane_text(
+                result.model,
+                config_dir=result.config_dir,
+                limit=LANE_MODEL_LIMIT,
+            ),
+            "status": result.status,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "config_dir": result.config_dir,
+            "usage": (
+                {
+                    "model": usage.model,
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_read_input_tokens": usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+                    "num_turns": usage.num_turns,
+                    "duration_ms": usage.duration_ms,
+                }
+                if usage is not None
+                else None
+            ),
+            "tools": list(result.tools),
+            "tools_truncated": result.tools_truncated,
+            "protocol_result": result.protocol_result,
+        },
+    }
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+    return path
+
+
+def _read_reviewer_spool(
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    agent: dict[str, Any],
+    *,
+    round_num: int | None,
+    head: str,
+    dimension: str,
+    stage: str,
+) -> tuple[LaneResult, str | None] | None:
+    path = _reviewer_spool_path(worker, str(task["id"]), str(agent["id"]))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or any(
+        payload.get(key) != expected
+        for key, expected in (
+            ("version", _REVIEWER_SPOOL_VERSION),
+            ("task_id", str(task["id"])),
+            ("agent_id", str(agent["id"])),
+            ("round", round_num),
+            ("head", head),
+            ("dimension", dimension),
+            ("stage", stage),
+        )
+    ):
+        return None
+    saved = payload.get("result")
+    if not isinstance(saved, dict):
+        return None
+    usage_payload = saved.get("usage")
+    try:
+        usage = LaneUsage(**usage_payload) if isinstance(usage_payload, dict) else None
+        result = LaneResult(
+            role=str(saved["role"]),
+            vendor=str(saved["vendor"]),
+            model=str(saved["model"]),
+            status=str(saved["status"]),
+            argv=[],
+            returncode=int(saved["returncode"]),
+            stdout=str(saved["stdout"]),
+            stderr=str(saved["stderr"]),
+            config_dir=(
+                str(saved["config_dir"])
+                if isinstance(saved.get("config_dir"), str)
+                else None
+            ),
+            usage=usage,
+            tools=tuple(saved.get("tools") or ()),
+            tools_truncated=saved.get("tools_truncated") is True,
+            protocol_result=str(saved["protocol_result"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (
+        result.role != agent.get("role")
+        or result.vendor != agent.get("vendor")
+        or result.status != "complete"
+        or result.protocol_result not in _REVIEWER_RESULTS
+    ):
+        return None
+    output_file = payload.get("output_file")
+    if output_file is not None and not isinstance(output_file, str):
+        return None
+    return result, output_file
+
+
+def _cleanup_reviewer_spool(
+    worker: WorkerConfig,
+    task_id: str,
+    agent_id: str,
+    output_file: str | None,
+) -> None:
+    for path in (
+        Path(output_file) if output_file else None,
+        _reviewer_spool_path(worker, task_id, agent_id),
+    ):
+        if path is None:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _retry_reviewer_checkpoint(
+    store: Store,
+    worker: WorkerConfig,
+    task: dict[str, Any],
+    agent: dict[str, Any],
+    *,
+    round_num: int | None,
+    head: str,
+    dimension: str,
+    stage: str,
+    lane_marker: dict[str, Any] | None = None,
+) -> LaneResult | None:
+    recovered = _read_reviewer_spool(
+        worker,
+        task,
+        agent,
+        round_num=round_num,
+        head=head,
+        dimension=dimension,
+        stage=stage,
+    )
+    if recovered is None:
+        return None
+    result, output_file = recovered
+    if lane_marker is not None:
+        lane_marker = {
+            **lane_marker,
+            "status": result.status,
+            "result": result.protocol_result,
+        }
+    _checkpoint_reviewer_outcome(
+        store,
+        task,
+        agent,
+        result,
+        round_num=round_num,
+        head=head,
+        dimension=dimension,
+        stage=stage,
+        session_id=worker.session_id,
+        lane_marker=lane_marker,
+    )
+    _cleanup_reviewer_spool(
+        worker, str(task["id"]), str(agent["id"]), output_file
+    )
+    return result
+
+
 def clear_reviewer_replay_outcomes(
     task: dict[str, Any], *, agent_ids: set[str]
 ) -> None:
@@ -564,6 +768,40 @@ def launch_lane(
     verify_checkout_identity(store, worker, runner, str(c.get('worktree') or ''))
     existing = blocking_working_agent(store, task["id"], role=role, vendor=vendor)
     if existing is not None:
+        if role == "reviewer" and existing.get("role") == "reviewer":
+            recovered_marker = {
+                "agent_id": str(existing["id"]),
+                "role": role,
+                "vendor": vendor,
+                "state": "finished",
+            }
+            try:
+                recovered = _retry_reviewer_checkpoint(
+                    store,
+                    worker,
+                    task,
+                    existing,
+                    round_num=round_num,
+                    head=str(c.get("head_sha") or ""),
+                    dimension="inner",
+                    stage="inner-review",
+                    lane_marker=recovered_marker,
+                )
+            except StoreError:
+                pending = _read_reviewer_spool(
+                    worker,
+                    task,
+                    existing,
+                    round_num=round_num,
+                    head=str(c.get("head_sha") or ""),
+                    dimension="inner",
+                    stage="inner-review",
+                )
+                if pending is not None:
+                    return existing, pending[0]
+                raise
+            if recovered is not None:
+                return existing, recovered
         c["phase"] = "blocked"
         c["blocker"] = "uncertain prior lane outcome; refusing second model start"
         c["uncertain_lane"] = True
@@ -641,14 +879,10 @@ def launch_lane(
                 "role": role,
                 "vendor": vendor,
                 "provider": vendor,
-                "model": (
-                    redact_lane_text(
-                        selected.model,
-                        config_dir=selected.account.config_dir,
-                        limit=LANE_MODEL_LIMIT,
-                    )
-                    if role == "reviewer"
-                    else selected.model
+                "model": redact_lane_text(
+                    selected.model,
+                    config_dir=selected.account.config_dir,
+                    limit=LANE_MODEL_LIMIT,
                 ),
                 "prompt": spec_text,
                 **(
@@ -789,7 +1023,7 @@ def launch_lane(
                 round_num=round_num,
             )
     finally:
-        if lane_output is not None:
+        if lane_output is not None and role != "reviewer":
             try:
                 os.unlink(lane_output)
             except OSError:
@@ -879,8 +1113,8 @@ def launch_lane(
         agent.update(committed_agent)
         return agent, result
     elif role == "reviewer":
-        _checkpoint_reviewer_outcome(
-            store,
+        _write_reviewer_spool(
+            worker,
             task,
             agent,
             result,
@@ -888,8 +1122,25 @@ def launch_lane(
             head=str(c.get("head_sha") or ""),
             dimension="inner",
             stage="inner-review",
-            session_id=worker.session_id,
-            lane_marker=finished_lane,
+            output_file=lane_output,
+        )
+        try:
+            _checkpoint_reviewer_outcome(
+                store,
+                task,
+                agent,
+                result,
+                round_num=round_num,
+                head=str(c.get("head_sha") or ""),
+                dimension="inner",
+                stage="inner-review",
+                session_id=worker.session_id,
+                lane_marker=finished_lane,
+            )
+        except StoreError:
+            return agent, result
+        _cleanup_reviewer_spool(
+            worker, str(task["id"]), str(agent["id"]), lane_output
         )
         return agent, result
     committed_task = copy.deepcopy(task)
@@ -1648,10 +1899,6 @@ def _run_prepared(
         try:
             output_file_text = Path(str(output_file)).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            try:
-                os.unlink(str(output_file))
-            except OSError:
-                pass
             return prepared["agent_id"], unreadable_output_result(
                 role=str(prepared["role"]),
                 vendor=str(prepared["vendor"]),
@@ -1662,10 +1909,6 @@ def _run_prepared(
                 exc=exc,
                 config_dir=prepared.get("config_dir"),
             )
-        try:
-            os.unlink(str(output_file))
-        except OSError:
-            pass
     finalized = finalize_lane_output(
         str(prepared["vendor"]),
         stdout,
@@ -1864,6 +2107,38 @@ def phase_pr_gates(
     verify_checkout_identity(store, worker, runner, worktree)
     head = verify_signed_clean_head(store, worker, runner, worktree)
     c["head_sha"] = head
+    # A prior tick may have a fully parsed result whose atomic database
+    # checkpoint alone rolled back. Retry only that checkpoint before treating
+    # any working row as an uncertain process outcome.
+    for pending_agent in store.rows("agent"):
+        role = str(pending_agent.get("role") or "")
+        if (
+            pending_agent.get("task_id") != task["id"]
+            or pending_agent.get("status") != "working"
+            or pending_agent.get("vendor") != vendor
+            or role not in ("pr-reviewer-quality", "pr-reviewer-logic")
+            or pending_agent.get("head_sha") != head
+            or canonical_stage(str(pending_agent.get("stage") or ""))
+            != canonical_stage(stage)
+        ):
+            continue
+        dimension = str(pending_agent.get("dimension") or "")
+        try:
+            recovered = _retry_reviewer_checkpoint(
+                store,
+                worker,
+                task,
+                pending_agent,
+                round_num=None,
+                head=head,
+                dimension=dimension,
+                stage=canonical_stage(stage),
+            )
+        except StoreError:
+            return [f"{stage}/{dimension} database checkpoint will be retried"]
+        if recovered is None:
+            break
+    c = coord(task)
     # Recheck prior working agents for the whole vendor stage BEFORE any inserts.
     prior = vendor_stage_has_working_agents(store, task["id"], vendor=vendor)
     if prior is not None:
@@ -2127,6 +2402,29 @@ def phase_pr_gates(
         )
         raise CoordinatorError(PR_REVIEW_PREPARATION_ERROR) from exc
 
+    # Persist every completed result locally before attempting any database
+    # checkpoint. If one audit transaction rolls back, its sibling result is
+    # still available on the next tick and an already committed sibling stays
+    # in the task checkpoint.
+    for prep in prepared_list:
+        outcome = results.get(prep["agent_id"])
+        agent = store.row("agent", prep["agent_id"])
+        assert agent is not None
+        if isinstance(outcome, LaneResult):
+            _write_reviewer_spool(
+                worker,
+                task,
+                agent,
+                outcome,
+                round_num=None,
+                head=head,
+                dimension=str(prep["dimension"]),
+                stage=canonical_stage(stage),
+                output_file=(
+                    str(prep["output_file"]) if prep.get("output_file") else None
+                ),
+            )
+
     # Persist actual results on the main thread.
     failed_agents: list[str] = []
     for prep in prepared_list:
@@ -2141,16 +2439,28 @@ def phase_pr_gates(
             failed_agents.append(str(agent["id"]))
         else:
             assert isinstance(outcome, LaneResult)
-            _checkpoint_reviewer_outcome(
-                store,
-                task,
-                agent,
-                outcome,
-                round_num=None,
-                head=head,
-                dimension=str(prep["dimension"]),
-                stage=canonical_stage(stage),
-                session_id=worker.session_id,
+            try:
+                _checkpoint_reviewer_outcome(
+                    store,
+                    task,
+                    agent,
+                    outcome,
+                    round_num=None,
+                    head=head,
+                    dimension=str(prep["dimension"]),
+                    stage=canonical_stage(stage),
+                    session_id=worker.session_id,
+                )
+            except StoreError:
+                return [
+                    f"{stage}/{prep['dimension']} reviewer finished; "
+                    "database checkpoint will be retried"
+                ]
+            _cleanup_reviewer_spool(
+                worker,
+                str(task["id"]),
+                str(agent["id"]),
+                str(prep["output_file"]) if prep.get("output_file") else None,
             )
 
     # Each reviewer checkpoint replaces ``task`` with its committed copy.
