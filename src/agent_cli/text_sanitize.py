@@ -19,6 +19,11 @@ _TERMINAL_ESCAPE_RE = re.compile(
     r")"
 )
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_ESC_OR_C1_SEQUENCE_RE = re.compile(
+    rf"(?:{_TERMINAL_ESCAPE_RE.pattern}|[\x80-\x9f])"
+)
+_SGR_RE = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*m")
+_SGR_RESET_RE = re.compile(r"(?:\x1b\[|\x9b)(?:0)?m")
 
 # Before ordinary terminal sanitization, a known secret needs a stricter path:
 # a CSI final byte may itself be the next secret character. The first two
@@ -34,6 +39,74 @@ TERMINAL_INTERLEAVE_PATTERN = (
     rf"|{_TERMINAL_CONTROL_RE.pattern}"
     r")*"
 )
+
+
+def _ordinary_coloured_token_sequence(
+    token: str, matches: list[re.Match[str]], index: int
+) -> bool:
+    """Keep a normal SGR-wrapped token, including punctuation after reset."""
+    match = matches[index]
+    if _SGR_RE.fullmatch(match.group()) is None:
+        return False
+    if match.start() == 0:
+        return True
+    first = matches[0]
+    if first.start() != 0 or _SGR_RE.fullmatch(first.group()) is None:
+        return False
+    # A reset following a colour introduced at the token boundary is ordinary
+    # presentation, even when punctuation immediately follows it (``ERROR:``).
+    return _SGR_RESET_RE.fullmatch(match.group()) is not None
+
+
+def _token_has_interior_terminal_sequence(token: str) -> bool:
+    matches = list(_ESC_OR_C1_SEQUENCE_RE.finditer(token))
+    for index, match in enumerate(matches):
+        if match.start() == 0 or match.end() == len(token):
+            continue
+        if token[match.start() - 1].isspace() or token[match.end()].isspace():
+            continue
+        if _ordinary_coloured_token_sequence(token, matches, index):
+            continue
+        return True
+    return False
+
+
+def redact_terminal_interleaved_tokens(
+    text: str, *, replacement: str = "[redacted]"
+) -> str:
+    """Fail closed on a raw token split by an interior ESC/C1 sequence.
+
+    Replacement happens before terminal sanitization and preserves every token
+    separator verbatim.  Sequences at a token boundary and ordinary SGR colour
+    wrappers are presentation rather than evidence of an interleaved token.
+    """
+    if not text:
+        return text
+    pieces: list[str] = []
+    start = 0
+    index = 0
+    while index < len(text):
+        codepoint = ord(text[index])
+        boundary = text[index].isspace() and not 0x80 <= codepoint <= 0x9F
+        if boundary:
+            if start < index:
+                token = text[start:index]
+                pieces.append(
+                    replacement
+                    if _token_has_interior_terminal_sequence(token)
+                    else token
+                )
+            pieces.append(text[index])
+            index += 1
+            start = index
+            continue
+        index += 1
+    if start < len(text):
+        token = text[start:]
+        pieces.append(
+            replacement if _token_has_interior_terminal_sequence(token) else token
+        )
+    return "".join(pieces)
 
 
 def redact_terminal_interleaved_secret(

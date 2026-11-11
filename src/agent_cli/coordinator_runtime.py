@@ -1295,6 +1295,12 @@ def phase_implement(
     checkpoint = c.get("lane_outcome")
     if not isinstance(checkpoint, dict) or checkpoint.get("agent_id") != agent["id"]:
         checkpoint = {}
+    replay_fields = implementer_replay_fields(
+        result.stdout or "", config_dir=getattr(result, "config_dir", None)
+    )
+    for key, value in replay_fields.items():
+        if key not in checkpoint:
+            checkpoint[key] = value
     checkpoint.update(
         {
             "role": "implementer",
@@ -1305,9 +1311,6 @@ def phase_implement(
             "result": model_result,
             "returncode": result.returncode,
             "stdout": redact(result.stdout or ""),
-            **implementer_replay_fields(
-                result.stdout or "", config_dir=getattr(result, "config_dir", None)
-            ),
             "applied": False,
         }
     )

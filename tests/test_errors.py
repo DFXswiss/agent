@@ -364,21 +364,32 @@ def test_stack_sig_ignores_camel_case_and_hyphenated_otel_ids() -> None:
     assert stack_sig(first_hyphen) == stack_sig(second_hyphen)
 
 
-def test_scan_redacts_aws_key_split_by_csi_final_byte(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "split_secret",
+    [
+        "ey\x1b[31JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc_def-ghi",
+        "use\x1b[31Jr@example.com",
+        "0123456789\x1b[31abcdefABCD",
+        "AKI\x9b31AIOSFODNN7EXAMPLE",
+    ],
+    ids=("jwt", "email", "hex", "aws-key"),
+)
+def test_scan_redacts_error_tokens_split_by_csi_final_byte(
+    tmp_path: Path, split_secret: str
+) -> None:
     store = Store(tmp_path)
     _runner_session(store)
     _write_config(tmp_path)
-    split_key = "AKI\x1b[AIOSFODNN7EXAMPLE"
 
     def fetch(_cfg: dict, _cursor: str | None) -> tuple[list[dict], str | None]:
-        return ([{"line": f"ERROR RuntimeError key {split_key}"}], None)
+        return ([{"line": f"ERROR RuntimeError key {split_secret}"}], None)
 
     created, enriched = scan_errors(store, fetch)
 
     assert enriched == []
     assert len(created) == 1
     excerpt = store.row("activity", created[0])["payload"]["excerpt"]
-    assert "AKIIOSFODNN7EXAMPLE" not in excerpt
+    assert "\x1b" not in excerpt
     assert "[redacted]" in excerpt
 
 

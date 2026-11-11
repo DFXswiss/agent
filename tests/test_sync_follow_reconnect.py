@@ -691,7 +691,7 @@ def test_publish_terminals_keeps_capture_beyond_diagnostic_limit(
             "s1",
             {"id": "s1", "runtime": {"control": "attached"}},
         )
-        capture = "start-" + ("x" * 4500) + "\x1b[31mend\x1b[0m token=secret-value tail"
+        capture = "start-" + ("x" * 4500) + " \x1b[31mend\x1b[0m token=secret-value tail"
 
         class _LongRuntime(Runtime):
             def __init__(self) -> None:
@@ -810,7 +810,56 @@ def test_publish_terminals_redacts_raw_csi_overlap_before_sanitizing(
         assert len(ws.sent) == 1
         frame = json.loads(ws.sent[0])
         published = base64.b64decode(frame["data"]).decode("utf-8")
-        assert published == "credential=[redacted]\n"
+        # Fail closed: the escape is inside one raw token, so redact it whole.
+        assert published == "[redacted]\n"
+    finally:
+        store.close()
+
+
+def test_publish_terminals_redacts_error_only_tokens_split_by_csi(
+    tmp_path: Path,
+) -> None:
+    _init_paired_store(tmp_path)
+    store = open_store()
+    try:
+        store.write(
+            "session",
+            "insert",
+            "s1",
+            {"id": "s1", "runtime": {"control": "attached"}},
+        )
+        capture = (
+            "ey\x1b[31JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc_def-ghi\t"
+            "use\x1b[31Jr@example.com\n"
+            "0123456789\x1b[31abcdefABCD "
+            "AKI\x9b31AIOSFODNN7EXAMPLE\n"
+        )
+
+        class _RawRuntime(Runtime):
+            def __init__(self) -> None:
+                super().__init__(
+                    runner=lambda argv: Completed(
+                        0,
+                        capture if argv[:2] == ["tmux", "capture-pane"] else "",
+                        "",
+                    )
+                )
+
+        class _Ws:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            def send(self, data: str) -> None:
+                self.sent.append(data)
+
+        ws = _Ws()
+        main_mod._publish_terminals(store, _RawRuntime(), ws, {}, {})
+
+        frame = json.loads(ws.sent[0])
+        published = base64.b64decode(frame["data"]).decode("utf-8")
+        assert published == (
+            "[redacted]\t[redacted]\n[redacted] [redacted]\n"
+        )
     finally:
         store.close()
 
